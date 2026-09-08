@@ -66,16 +66,21 @@ it('uses hash routes for native protocol navigation and reloads', async () => {
     '',
     '/#/sessions?pr=https%3A%2F%2Fgithub.com%2Fexample%2Fproject%2Fpull%2F1',
   );
-  const view = render(
-    <ThemeProvider>
-      <App />
-    </ThemeProvider>,
-  );
+  let view!: ReturnType<typeof render>;
+  await act(async () => {
+    view = render(
+      <ThemeProvider>
+        <App />
+      </ThemeProvider>,
+    );
+  });
   await screen.findByRole('heading', { name: 'Sessions' });
   expect(
     screen.getByText('Pull request filter: https://github.com/example/project/pull/1'),
   ).toBeTruthy();
-  fireEvent.keyDown(window, { key: ',', metaKey: true });
+  await act(async () => {
+    fireEvent.keyDown(window, { key: ',', metaKey: true });
+  });
   expect(location.hash).toBe('#/settings');
   expect(location.pathname).toBe('/');
   view.unmount();
