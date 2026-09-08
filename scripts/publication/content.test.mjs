@@ -326,10 +326,13 @@ test('issue edits invalidate the check and refreshed disclosure passes without w
   assert.ok(state.writes.every((write) => write.path.includes('/check-runs')));
 });
 
-test('content and source-head races cannot overwrite a pending check with success', async () => {
+test('content and source base/head races cannot overwrite a pending check with success', async () => {
   for (const mutate of [
     (s) => {
       s.pr.head.sha = 'c'.repeat(40);
+    },
+    (s) => {
+      s.pr.base.sha = 'c'.repeat(40);
     },
     (s) => {
       s.comments.push({ id: 12, body: 'Changed during scan.' });
@@ -354,6 +357,21 @@ test('content and source-head races cannot overwrite a pending check with succes
   assert.equal(state.writes.at(-1).body.conclusion, 'failure');
 });
 
+test('a base advance immediately before certification remains blocking', async () => {
+  const state = fixture();
+  await seal(state);
+  const api = state.api;
+  let reads = 0;
+  state.api = async (...args) => {
+    if (args[0] === '/repos/' + repository + '/pulls/3' && ++reads === 5)
+      state.pr.base.sha = 'c'.repeat(40);
+    return api(...args);
+  };
+  assert.equal((await reconcile(state)).failures, 1);
+  assert.equal(reads, 5);
+  assert.equal(state.writes.at(-1).body.conclusion, 'failure');
+});
+
 test('raw API or scanner errors cannot become public diagnostics or successful checks', async () => {
   const state = fixture();
   await seal(state);
@@ -375,25 +393,53 @@ test('raw API or scanner errors cannot become public diagnostics or successful c
   await assert.rejects(reconcile(state), /pagination/);
 });
 
-test('trusted workflow signals require the expected repository and workflow identity', async () => {
-  const state = fixture();
-  await assert.rejects(reconcile(state, undefined, 'pull_request_review'), /Unsupported/);
-  const api = state.api;
-  state.api = async (...args) => {
-    if (args[0].endsWith('/actions/runs/1'))
-      return { repository: { full_name: 'other/project' }, workflow_id: 7, status: 'completed' };
-    if (args[0].endsWith('/actions/workflows/publication.yml')) return { id: 7 };
-    return api(...args);
-  };
-  await assert.rejects(
-    reconcile(state, undefined, 'workflow_run', { ...event, workflow_run: { id: 1 } }),
-    /expected repository workflow/,
-  );
-  assert.equal(state.writes.length, 0);
+test('trusted workflow signals require an allowed workflow, event and repository identity', async () => {
+  for (const variant of [
+    'publication',
+    'review',
+    'review-comment',
+    'repository',
+    'workflow',
+    'event',
+    'missing-workflow',
+  ]) {
+    const state = fixture();
+    await seal(state);
+    const api = state.api;
+    state.api = async (...args) => {
+      if (args[0].endsWith('/actions/runs/1'))
+        return {
+          repository: { full_name: variant === 'repository' ? 'other/project' : repository },
+          workflow_id: variant === 'workflow' ? 99 : variant === 'publication' ? 7 : 8,
+          event:
+            variant === 'publication'
+              ? 'pull_request'
+              : variant === 'review-comment'
+                ? 'pull_request_review_comment'
+                : variant === 'event'
+                  ? 'workflow_dispatch'
+                  : 'pull_request_review',
+          status: 'completed',
+        };
+      if (args[0].endsWith('/actions/workflows/publication.yml')) return { id: 7 };
+      if (args[0].endsWith('/actions/workflows/publication-review.yml'))
+        return variant === 'missing-workflow' ? {} : { id: 8 };
+      return api(...args);
+    };
+    const run = () =>
+      reconcile(state, undefined, 'workflow_run', { ...event, workflow_run: { id: 1 } });
+    if (['publication', 'review', 'review-comment'].includes(variant))
+      assert.equal((await run()).failures, 0);
+    else {
+      await assert.rejects(run(), /expected repository workflow|identities are unavailable/);
+      assert.equal(state.writes.length, 0);
+    }
+  }
+  await assert.rejects(reconcile(fixture(), undefined, 'pull_request_review'), /Unsupported/);
 });
 
 test('queue checks certify the original source digest and reject later content changes', async () => {
-  for (const change of [false, true]) {
+  for (const change of [false, 'comment', 'base']) {
     const state = fixture();
     const queueHead = 'c'.repeat(40);
     state.queue = [
@@ -408,8 +454,10 @@ test('queue checks certify the original source digest and reject later content c
       const api = state.api;
       let queueReads = 0;
       state.api = async (...args) => {
-        if (args[0] === '/graphql' && args[1].variables.branch && ++queueReads === 2)
-          state.comments.push({ id: 20, body: 'Added after the source scan.' });
+        if (args[0] === '/graphql' && args[1].variables.branch && ++queueReads === 2) {
+          if (change === 'base') state.pr.base.sha = 'd'.repeat(40);
+          else state.comments.push({ id: 20, body: 'Added after the source scan.' });
+        }
         return api(...args);
       };
     }

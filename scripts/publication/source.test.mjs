@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { scanRepository } from '../security/scan-secrets.mjs';
 import { scanText } from './recheck.mjs';
 import { withCandidateSource } from './source.mjs';
+
+const relayPath = '.github/workflows/publication-review.yml';
+const relayText = await readFile(new URL('../../' + relayPath, import.meta.url), 'utf8');
 
 const marker = () => ['gh', 'p_'].join('') + randomBytes(18).toString('hex');
 
@@ -28,6 +31,8 @@ async function fixture(t) {
   git(repo, 'config', 'user.name', 'Synthetic Contributor');
   git(repo, 'config', 'user.email', 'contributor@example.invalid');
   await writeFile(join(repo, 'README.md'), 'Synthetic trusted baseline.\n');
+  await mkdir(join(repo, '.github/workflows'), { recursive: true });
+  await writeFile(join(repo, relayPath), relayText);
   git(repo, 'add', '.');
   git(repo, 'commit', '-qm', 'Synthetic baseline');
   const base = git(repo, 'rev-parse', 'HEAD');
@@ -157,4 +162,51 @@ test('fetch failure and head mismatch clean temporary refs and never expose raw 
     },
   );
   assert.equal(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/publication-content/'), '');
+});
+
+test('candidate and base relay changes cannot disable trusted review reconciliation', async (t) => {
+  for (const side of ['head', 'base']) {
+    for (const change of ['missing', 'renamed', 'symlink', 'events', 'condition']) {
+      await t.test(`${side}-${change}`, async (t) => {
+        const { repo, base: trusted } = await fixture(t);
+        git(repo, 'checkout', '--detach', '-q');
+        const relay = join(repo, relayPath);
+        if (change === 'missing') await rm(relay);
+        if (change === 'renamed') git(repo, 'mv', relayPath, '.github/workflows/renamed.yml');
+        if (change === 'symlink') {
+          await writeFile(join(repo, '.github/workflows/target.yml'), relayText);
+          await rm(relay);
+          await symlink('target.yml', relay);
+        }
+        if (change === 'events')
+          await writeFile(
+            relay,
+            relayText.replace(/on:[\s\S]*?# This/, 'on: workflow_dispatch\n\n# This'),
+          );
+        if (change === 'condition')
+          await writeFile(relay, relayText.replace('  signal:\n', '  signal:\n    if: false\n'));
+        git(repo, 'add', '-A');
+        git(repo, 'commit', '-qm', 'Synthetic relay change');
+        const changed = git(repo, 'rev-parse', 'HEAD');
+        git(repo, 'checkout', '-q', 'main');
+        const base = side === 'base' ? changed : trusted;
+        const head = side === 'head' ? changed : trusted;
+        await assert.rejects(
+          withCandidateSource(
+            repo,
+            { repository: 'example/project', number: 3, base, head },
+            () => assert.fail('Changed relay must not reach the scanner or certification'),
+            { token: 'synthetic-token', run: transport(repo, head) },
+          ),
+          /relay/,
+        );
+        assert.equal(git(repo, 'rev-parse', 'HEAD'), trusted);
+        assert.equal(git(repo, 'status', '--porcelain'), '');
+        assert.equal(
+          git(repo, 'for-each-ref', '--format=%(refname)', 'refs/publication-content/'),
+          '',
+        );
+      });
+    }
+  }
 });

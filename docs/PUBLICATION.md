@@ -118,8 +118,11 @@ uses its actual event payload; the manual PR override is unavailable there.
 
 The trusted `publication-content` workflow rechecks open PRs and current default-
 branch merge-queue heads after PR/issue edits and conversation comments. Review
-and review-comment events run the read-only Publication workflow; its completion
-signals the trusted workflow. Runs reconcile current API state, rather than
+and review-comment events run a dedicated `Publication review signal` workflow;
+its completion signals the trusted workflow independently of candidate tests.
+The relay contains no checkout, actions, script dependencies or token permissions.
+GitHub runs review workflows from the PR merge commit, as described in its
+[event trust model](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target). Runs reconcile current API state, rather than
 trusting an old event's PR content, and reject changes observed during scanning.
 Current queue heads receive blocking pending checks before sequential PR scans;
 a later read or scan failure cannot preserve an earlier successful queue result.
@@ -127,7 +130,11 @@ They execute only the default branch, use `checks:write` solely to update the
 named content check, and never run PR scripts or consume workflow artifacts.
 The trusted scanner fetches each exact source PR head into a temporary Git ref,
 verifies its SHA and scans its base/head range without checking out candidate
-files or importing candidate scanner code. Fetch authentication is transient and
+files or importing candidate scanner code. Before scanning, it requires both
+actual base and source commits to contain the trusted relay’s exact Git blob and
+regular-file mode. This rejects deletion, renaming, trigger changes and conditional
+job changes; checking trigger names alone would not protect event delivery.
+Both base and head must remain unchanged through the final success check. Fetch authentication is transient and
 restricted to the validated repository's GitHub URL; it is not passed to scanner
 processes. Every outcome removes the temporary ref. Pre-existing reachable refs
 remain in the whole-history scan, so an existing repository leak still blocks.
@@ -135,13 +142,30 @@ Queue results require the current identities of those scanned source PRs.
 
 Disposable Git regressions verify that replacing the candidate scanner with a
 success stub cannot hide a source secret, that the candidate code is not executed,
-and that failure/head mismatch removes temporary refs. Synthetic transport tests
+and that failure/head mismatch removes temporary refs. Relay regressions alter
+real base/source Git commits, remove events, add a false job condition, rename or
+symlink the file; none may reach scanning or certification. Synthetic transport tests
 inspect credential handling; they do not establish live default-branch workflow
 delivery. Separate empty-file tests detect secrets found only in staged, current
 and removed historical Git names, without printing the name.
 
 Pending events can coalesce because each run rechecks every open PR and queue
 head. A manual workflow dispatch retries an incomplete run.
+
+Install the dedicated relay first in a small, maintainer-reviewed prerequisite
+change on the default branch. Then update the publication-gate branch so its
+actual base and head both include that relay, and review/install the remaining
+trusted workflow. The initial gate cannot certify a base lacking the relay;
+stacking the gate on the prerequisite makes this dependency reviewable but does
+not activate trusted default-branch execution. Keep activation and queue evidence
+pending until those reviewed changes actually land.
+
+The relay is immutable while it is pinned. To change it later, first add a
+separately named replacement while preserving the current relay. A subsequent
+maintainer-reviewed trusted-code change can switch to that installed replacement;
+retire the old relay only after the switch and branch synchronization. Direct
+changes to the currently pinned relay remain blocked. No automatic exception or
+repository-setting change is provided.
 
 The event workflow becomes active only after it lands on the default branch.
 Live issue/comment-event delivery, check creation and queue success remain

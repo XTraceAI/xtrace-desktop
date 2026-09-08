@@ -1,0 +1,18 @@
+name: Publication review signal
+
+on:
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+
+# This immutable relay never checks out code, invokes actions or reads secrets.
+permissions: {}
+
+jobs:
+  signal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Signal current disclosure reconciliation
+        run: 'true'
