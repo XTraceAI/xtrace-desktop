@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { acceptedLicense, renderNotices } from './licenses.mjs';
 import { rustNotices } from './rust-notices.mjs';
+import { packageText } from './package-text.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const run = (command, args) =>
@@ -50,7 +51,7 @@ async function main() {
           entries.push({
             package: `npm: ${manifest.name}@${manifest.version}`,
             license,
-            text: await readFile(join(packageRoot, file), 'utf8'),
+            text: await packageText(packageRoot, file),
           });
       }
     }
