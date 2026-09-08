@@ -96,11 +96,11 @@ export async function preparePublication({ api, repository, eventName, event, ru
   for (const entry of queue) {
     const head = sha(entry.headCommit?.oid);
     const check = await api(path + '/check-runs', {
-      name: 'publication-content',
+      name: 'publication-content-advisory',
       head_sha: head,
       status: 'completed',
       conclusion: 'failure',
-      external_id: 'publication-content:' + runId,
+      external_id: 'publication-content-advisory:' + runId,
       output: {
         title: 'Queue publication checks are not activated',
         summary:
@@ -119,15 +119,15 @@ export async function preparePublication({ api, repository, eventName, event, ru
     requireValue(pr.state === 'open' && !seen.has(pr.number), 'Open PR pagination is incomplete.');
     seen.add(pr.number);
     const check = await api(path + '/check-runs', {
-      name: 'publication-content',
+      name: 'publication-content-advisory',
       head_sha: pr.head.sha,
       status: 'completed',
       conclusion: 'failure',
-      external_id: 'publication-content:' + runId,
+      external_id: 'publication-content-advisory:' + runId,
       output: {
         title: 'Disclosure scan has not completed',
         summary:
-          'Publication remains blocked until this independently scheduled scan succeeds. Retry incomplete runs.',
+          'Advisory scan incomplete. Retry incomplete runs; a maintainer must perform current disclosure review.',
       },
     });
     requireValue(Number.isSafeInteger(check.id), 'GitHub did not create the content check.');
@@ -158,15 +158,15 @@ export async function checkPublication({
   const path = '/repos/' + repository;
   const check = await api(path + '/check-runs/' + member.check);
   requireValue(
-    check.name === 'publication-content' &&
+    check.name === 'publication-content-advisory' &&
       check.head_sha === member.head &&
-      check.external_id === 'publication-content:' + runId &&
+      check.external_id === 'publication-content-advisory:' + runId &&
       check.status === 'completed' &&
       check.conclusion === 'failure',
     'Content check does not belong to this run and source head.',
   );
   let conclusion = 'failure';
-  let summary = 'Content check could not complete; publication remains blocked.';
+  let summary = 'Advisory scan could not complete; maintainer disclosure review is required.';
   try {
     const before = await readPublicContent(api, repository, member.number);
     requireValue(before.pr.head.sha === member.head, 'Source PR changed; rerun content checks.');
@@ -205,7 +205,7 @@ export async function checkPublication({
     );
     conclusion = 'success';
     summary =
-      'Trusted scanning found no detected secret in candidate source or current disclosure content. The snapshot is current; semantic review remains the reviewer’s responsibility.';
+      'Advisory scan found no detected secret in the observed source and disclosure snapshot. This check is not merge authorization; perform current local disclosure review.';
   } catch (error) {
     if (error instanceof PublicationError) summary = error.message;
   }
@@ -216,7 +216,9 @@ export async function checkPublication({
       conclusion,
       output: {
         title:
-          conclusion === 'success' ? 'Disclosure snapshot current' : 'Disclosure review required',
+          conclusion === 'success'
+            ? 'Advisory disclosure snapshot current'
+            : 'Disclosure review required',
         summary,
       },
     },
@@ -286,7 +288,7 @@ async function main() {
         member: JSON.parse(process.env.PUBLICATION_MEMBER),
         trustedHead: actual,
       });
-      console.log('Content scan completed; blocked: ' + result.failures + '.');
+      console.log('Advisory scan completed; failures: ' + result.failures + '.');
       process.exitCode = result.failures ? 1 : 0;
     }
   } catch (error) {

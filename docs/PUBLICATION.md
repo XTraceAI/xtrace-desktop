@@ -56,6 +56,13 @@ it does not establish semantic approval or inspect attachment bytes. Version 2
 snapshots also bind retained source PR body-edit identities and title-change
 events. Existing version 1 snapshots must be refreshed once after upgrading.
 
+Submitted reviews bind GraphQL `updatedAt`, `lastEditedAt` and retained edit IDs/text,
+including edit-and-revert pairs with unchanged submission timestamps. Source and
+linked-PR reviews use the same reader. Missing or inconsistent history fails
+closed; more than 100 retained edits on one review also fails closed. Deleted
+versions contribute opaque deletion identities. API omissions still limit history
+coverage.
+
 Comments from people and bots are included. The gate writes check results only,
 so its own operation does not change the discussion or create an attestation
 loop. Wait for review comments to settle before preparing the final snapshot.
@@ -123,16 +130,27 @@ scanning, and a value deleted from the current tree can still be detected in his
 
 ## CI boundary
 
-Two checks form the publication gate: `publication-checks` covers source/tests
-and `publication-content` runs trusted candidate scanning plus current disclosure review. Require both
-through repository rules after the workflows land. The former combines tests
-with the candidate merge diff and reachable Git history. Candidate scripts and
-runtime dependencies receive no repository API token, and their jobs have no
-issue or pull-request metadata permissions. The pinned checkout action uses
-read-only contents access without persisting credentials. API reads and disclosure
-attestation belong exclusively to the default-branch `publication-content` jobs.
-A passing candidate scan cannot replace that independently required trusted check.
-A failed, cancelled or skipped dependency cannot produce a successful aggregate.
+Manual disclosure review is the publication gate. `publication-checks` supplies
+candidate source/test diagnostics, and `publication-content-advisory` supplies
+current-content diagnostics from reviewed default-branch code. Neither a check
+name nor the GitHub Actions app identity proves the producer: a candidate workflow
+can emit an automatic job check with the same name and app. The custom
+`external_id` protects worker ownership internally but repository rules do not
+validate it. Do not require these contexts as a disclosure security boundary or
+use their green status to authorize a merge.
+
+Before each serialized manual merge, review the exact source/base and workflow
+provenance, run the local disclosure check from reviewed code against current
+public content, and inspect the result and attestation. Automated enforcement is
+deferred until a separately trusted publisher (such as a dedicated GitHub App)
+and live same-name spoofing acceptance demonstrate an unforgeable required
+identity. No App credential or repository setting is installed by this change.
+
+Candidate scripts and runtime dependencies receive no repository API token,
+and their jobs have no issue or pull-request metadata permissions. The pinned
+checkout uses read-only contents access without persisting credentials. Metadata
+reads remain confined to reviewed default-branch diagnostic jobs. Failed,
+cancelled or skipped dependencies cannot produce a successful aggregate.
 
 Tests cover the credential boundary, metadata/queue-resolution helpers and real
 CLI error paths without live credentials. They do not demonstrate a successful
@@ -153,7 +171,7 @@ uses its actual event payload; the manual PR override is unavailable there.
 Fetched refs are invocation-specific and removed after success, rejection or fetch
 failure. Existing refs created by other work remain in the whole-history scan.
 
-The trusted `publication-content` workflow rechecks open PRs and current default-
+The `Publication content advisory` workflow rechecks open PRs and current default-
 branch merge-queue heads after PR/issue edits and conversation comments. Review
 and review-comment events run a dedicated `Publication review signal` workflow;
 its completion signals the trusted workflow independently of candidate tests.
@@ -194,10 +212,10 @@ Pending events can coalesce because each run rechecks every open PR and queue
 head. A manual workflow dispatch retries an incomplete run.
 
 The preparation job enumerates up to 256 open PRs and emits one matrix job per
-PR. Every created `publication-content` check starts as a completed failure,
+PR. Every created `publication-content-advisory` check starts as a completed failure,
 labelled as an unfinished scan. Successful validation replaces only that run's
 matching head/check identity with success. Setup failure, cancellation, timeout
-or a failed result update leaves a terminal blocking result. The check can
+or a failed result update leaves a terminal failure result. The check can
 therefore appear red while a scan is running; this is deliberate.
 
 Each matrix job gets an isolated checkout of the preparation job's trusted
@@ -210,7 +228,7 @@ a prefix of PRs. Default-branch advances invalidate old-policy workers; source,
 base and disclosure content are reread before success. Jobs never consume
 candidate artifacts or share fetched candidate refs.
 
-Above 256 open PRs, preparation fails after creating blocking results for the
+Above 256 open PRs, preparation fails after creating failure results for the
 enumerated PRs; it never silently truncates the matrix. The existing bounded
 API pagination limit still applies. GitHub event delivery, runner availability
 and successful API writes remain prerequisites: an API outage cannot guarantee
@@ -267,8 +285,8 @@ bounded API reader and fail closed until a paginated incremental design is added
 
 Attachment bytes, embedded metadata and earlier GitHub edits require the separate
 review above. Review changes to the scanner and workflows themselves. Future
-FND-02 CI may fold the immutable tests/scanning into `ci-ok`; the separate current-
-content check must remain required so metadata edits cannot reuse stale CI.
+FND-02 CI may fold source tests/scanning into `ci-ok`; manual current-content
+review remains required because metadata edits cannot be authorized by old CI.
 
 These checks do not publish content, change repository visibility or merge a PR.
 They cover disclosure prevention; the broader build/test CI, dependency-license

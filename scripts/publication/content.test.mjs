@@ -32,6 +32,7 @@ export function fixture() {
     titleEdits: [],
     comments: [],
     reviews: [],
+    reviewEdits: {},
     reviewComments: [],
     commitComments: [],
     commits: [{ sha: head }],
@@ -49,6 +50,33 @@ export function fixture() {
   state.api = async (path, body, method) => {
     state.calls.push(path);
     if (path === '/graphql') {
+      if (body.query.includes('query ReviewRevisions')) {
+        const nodes = state.reviews.map((review) => {
+          const edits = state.reviewEdits[review.id] ?? [];
+          return {
+            id: 'review-' + review.id,
+            fullDatabaseId: String(review.id),
+            body: review.body,
+            state: review.state,
+            updatedAt: review.updated_at ?? timestamp,
+            lastEditedAt: edits[0]?.editedAt ?? null,
+            userContentEdits: {
+              totalCount: edits.length,
+              nodes: structuredClone(edits),
+              pageInfo: { hasNextPage: false },
+            },
+          };
+        });
+        return {
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: { totalCount: nodes.length, nodes, pageInfo: { hasNextPage: false } },
+              },
+            },
+          },
+        };
+      }
       if (body.query.includes('query SourceRevisions')) {
         const field = body.query.includes('userContentEdits(')
           ? 'userContentEdits'
@@ -296,6 +324,16 @@ const reconcile = async (
     failures: results.reduce((sum, result) => sum + result.failures, plan.queue.length),
   };
 };
+
+test('automated disclosure output is advisory and cannot claim merge authorization', async () => {
+  const state = fixture();
+  await seal(state);
+  assert.equal((await reconcile(state)).failures, 0);
+  assert.equal(state.writes[0].body.name, 'publication-content-advisory');
+  assert.match(state.writes.at(-1).body.output.title, /Advisory/);
+  assert.match(state.writes.at(-1).body.output.summary, /not merge authorization/);
+  assert.match(state.writes.at(-1).body.output.summary, /current local disclosure review/);
+});
 
 test('source commit comments and attachments invalidate snapshots on creation, edit and deletion', async () => {
   for (const change of ['create', 'edit', 'delete']) {
@@ -721,14 +759,14 @@ test('linked issue and PR edit-and-revert revisions invalidate the old disclosur
 });
 
 test('discussion revision timestamps are required and detect reverted text when the API advances them', async () => {
-  for (const kind of ['comments', 'reviewComments', 'commitComments', 'reviews']) {
+  for (const kind of ['comments', 'reviewComments', 'commitComments']) {
     const state = fixture();
     const comment = {
       id: 90,
       body: 'Reviewed text.',
       commit_id: head,
       diff_hunk: '',
-      ...(kind === 'reviews' ? { submitted_at: timestamp } : { updated_at: timestamp }),
+      updated_at: timestamp,
     };
     state[kind] = [comment];
     await seal(state);
@@ -745,7 +783,6 @@ test('discussion revision timestamps are required and detect reverted text when 
     comment.updated_at = 'invalid';
     await assert.rejects(readPublicContent(state.api, repository, 3), /revision timestamp/);
     comment.updated_at = undefined;
-    comment.submitted_at = undefined;
     await assert.rejects(readPublicContent(state.api, repository, 3), /revision timestamp/);
   }
 });
@@ -788,7 +825,7 @@ test('every scheduled check is already terminal when work is cancelled or metada
 test('a scan cannot update a check from another run, head or context', async () => {
   for (const change of [
     (check) => {
-      check.external_id = 'publication-content:2';
+      check.external_id = 'publication-content-advisory:2';
     },
     (check) => {
       check.head_sha = 'd'.repeat(40);
@@ -925,4 +962,58 @@ test('GH-number references without closing relationships include issue text and 
       .failures,
     1,
   );
+});
+
+test('source and linked review edit-and-revert retains history despite identical timestamps', async (t) => {
+  for (const linked of [false, true]) {
+    await t.test(linked ? 'linked review' : 'source review', async () => {
+      const state = fixture();
+      const review = {
+        id: 91,
+        body: 'Reviewed text.',
+        state: 'COMMENTED',
+        submitted_at: timestamp,
+      };
+      state.reviews = [review];
+      if (linked) {
+        state.references = [{ number: 9, repository: { nameWithOwner: repository } }];
+        state.issue.pull_request = {};
+        const api = state.api;
+        state.api = async (...args) => {
+          const route = args[0].split('?')[0];
+          const pull = '/repos/' + repository + '/pulls/9';
+          if (route === pull) return { commits: 1 };
+          if (route === pull + '/commits') return [{ sha: base }];
+          if (route === pull + '/comments') return [];
+          if (route === pull + '/reviews') return structuredClone(state.reviews);
+          if (route === '/repos/' + repository + '/pulls/3/reviews') return [];
+          return api(...args);
+        };
+      }
+      const original = await seal(state);
+      state.reviewEdits[91] = [
+        { id: 'restored', editedAt: timestamp, deletedAt: null, diff: review.body },
+        {
+          id: 'intermediate',
+          editedAt: timestamp,
+          deletedAt: null,
+          diff: 'Retained private draft.',
+        },
+        { id: 'initial', editedAt: timestamp, deletedAt: null, diff: review.body },
+      ];
+      const changed = await readPublicContent(state.api, repository, 3);
+      assert.notEqual(changed.digest, original);
+      assert.throws(() => requireDisclosure(changed), /stale/);
+      assert.ok(changed.texts.includes('Retained private draft.'));
+      const records = linked ? changed.content.linked[0].reviews : changed.content.reviews;
+      assert.equal(records[0].revisions.edits.length, 3);
+      await seal(state);
+      requireDisclosure(await readPublicContent(state.api, repository, 3));
+      state.reviewEdits[91][1].deletedAt = timestamp;
+      state.reviewEdits[91][1].diff = null;
+      const deleted = await readPublicContent(state.api, repository, 3);
+      assert.throws(() => requireDisclosure(deleted), /stale/);
+      assert.ok(!deleted.texts.includes('Retained private draft.'));
+    });
+  }
 });

@@ -1,4 +1,4 @@
-name: Publication content
+name: Publication content advisory
 
 on:
   pull_request_target:
@@ -16,6 +16,8 @@ on:
     types: [completed]
   workflow_dispatch:
 
+# Diagnostic results only. GitHub Actions check names are candidate-spoofable;
+# manual disclosure review remains authoritative. Do not require this context.
 permissions:
   contents: read
 

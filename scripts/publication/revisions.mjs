@@ -4,6 +4,93 @@ import { prNumber, repositoryName, requireValue, revisionTimestamp } from './met
 
 const hash = (text) => createHash('sha256').update(text).digest('hex');
 
+// REST submitted_at is immutable. Bind each submitted review to mutable GraphQL
+// metadata and retained edits, without normalizing another record's controls.
+export async function readReviewRevisions(api, repository, number, reviews) {
+  if (!reviews.length) return [];
+  const [owner, name] = repositoryName(repository).split('/');
+  prNumber(number);
+  const query = `query ReviewRevisions($owner:String!,$name:String!,$number:Int!,$after:String) {
+    repository(owner:$owner,name:$name) { pullRequest(number:$number) {
+      reviews(first:100,after:$after) {
+        totalCount pageInfo { hasNextPage endCursor }
+        nodes { fullDatabaseId body state updatedAt lastEditedAt
+          userContentEdits(first:100) {
+            totalCount pageInfo { hasNextPage }
+            nodes { id editedAt deletedAt diff }
+          }
+        }
+      }
+    } }
+  }`;
+  const expected = new Map(reviews.map((review) => [String(review.id), review]));
+  const found = new Map();
+  const cursors = new Set();
+  let after = null;
+  for (let page = 0; ; page++) {
+    requireValue(page < 10, 'Review revision history exceeds the supported limit.');
+    const response = await api('/graphql', { query, variables: { owner, name, number, after } });
+    const connection = response.data?.repository?.pullRequest?.reviews;
+    requireValue(
+      !response.errors &&
+        connection?.totalCount === reviews.length &&
+        Array.isArray(connection.nodes) &&
+        typeof connection.pageInfo?.hasNextPage === 'boolean',
+      'Review revision pagination is incomplete or changed.',
+    );
+    for (const node of connection.nodes) {
+      const id = String(node?.fullDatabaseId);
+      const review = expected.get(id);
+      requireValue(
+        review && !found.has(id) && node.body === review.body && node.state === review.state,
+        'Review changed or its revision identity is unavailable.',
+      );
+      const updated = revisionTimestamp(node.updatedAt);
+      const edited = node.lastEditedAt === null ? null : revisionTimestamp(node.lastEditedAt);
+      const history = node.userContentEdits;
+      requireValue(
+        Array.isArray(history?.nodes) &&
+          history.pageInfo?.hasNextPage === false &&
+          history.totalCount === history.nodes.length &&
+          history.nodes.length <= 100,
+        'Review edit history is incomplete or exceeds 100 retained edits.',
+      );
+      const seen = new Set();
+      const edits = history.nodes.map((edit) => {
+        requireValue(
+          typeof edit?.id === 'string' && edit.id.length > 0 && !seen.has(edit.id),
+          'Review edit identity is missing or duplicated.',
+        );
+        seen.add(edit.id);
+        const deleted = edit.deletedAt === null ? null : revisionTimestamp(edit.deletedAt);
+        requireValue(deleted || typeof edit.diff === 'string', 'Review edit text is unavailable.');
+        return {
+          id: edit.id,
+          edited: revisionTimestamp(edit.editedAt),
+          deleted,
+          body: deleted ? null : edit.diff,
+        };
+      });
+      requireValue(
+        edits.length
+          ? edits[0].edited === edited && edits[0].body === review.body
+          : edited === null,
+        'Review edit history is not current.',
+      );
+      found.set(id, { ...review, updated_at: updated, revisions: { edited, edits } });
+    }
+    if (!connection.pageInfo.hasNextPage) break;
+    after = connection.pageInfo.endCursor;
+    requireValue(
+      typeof after === 'string' && after && !cursors.has(after),
+      'Review revision cursor is incomplete.',
+    );
+    cursors.add(after);
+  }
+  requireValue(found.size === expected.size, 'Review revision history is incomplete.');
+  return reviews.map((review) => found.get(String(review.id)));
+}
+
 // Keep chronological content-changing revisions, including edit-and-revert pairs.
 // Consecutive edits of only our own two controls belong to the same revision.
 export function bodyRevisionIdentity(edits, currentBody) {

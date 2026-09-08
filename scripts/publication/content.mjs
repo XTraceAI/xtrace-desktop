@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { pages } from './api.mjs';
 import { disclosureControls, normalizedBody } from './markdown.mjs';
-import { readSourceRevisions } from './revisions.mjs';
+import { readReviewRevisions, readSourceRevisions } from './revisions.mjs';
 import {
   linkedIssues,
   prNumber,
@@ -80,7 +80,8 @@ function discussion(items, includeDiff = false) {
         state: item.state ?? null,
         path: item.path ?? null,
         line: item.line ?? null,
-        updated: revisionTimestamp(item.updated_at ?? item.submitted_at),
+        updated: revisionTimestamp(item.updated_at),
+        ...(item.revisions ? { revisions: item.revisions } : {}),
         commit: item.commit_id ?? null,
       };
     })
@@ -93,7 +94,14 @@ async function conversations(api, repository, number, isPullRequest, repositoryC
     comments: discussion(await pages(api, path + '/issues/' + number + '/comments')),
   };
   if (isPullRequest) {
-    result.reviews = discussion(await pages(api, path + '/pulls/' + number + '/reviews'));
+    result.reviews = discussion(
+      await readReviewRevisions(
+        api,
+        repository,
+        number,
+        await pages(api, path + '/pulls/' + number + '/reviews'),
+      ),
+    );
     result.reviewComments = discussion(
       await pages(api, path + '/pulls/' + number + '/comments'),
       true,
@@ -192,6 +200,8 @@ export async function readPublicContent(api, repository, number, candidateBody) 
     ])
       for (const comment of group) {
         texts.push(comment.body);
+        for (const edit of comment.revisions?.edits ?? [])
+          if (edit.body !== null) texts.push(edit.body);
         if (typeof comment.diff_hunk === 'string') texts.push(comment.diff_hunk);
       }
   texts.push(JSON.stringify(content));
