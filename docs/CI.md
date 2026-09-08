@@ -122,7 +122,7 @@ and `CARGO_ABOUT` to their executables. The pinned installer adds them to
 `GITHUB_PATH` in Actions. Syft 1.51.1 produces the schema-validated CycloneDX 1.5
 artifact; cargo-about 0.9.2 and actual npm license texts produce notices. The active
 license allowlist is enforced, including when it rejects an existing dependency.
-SBOM generation succeeds independently of notice approval. CI uploads only the
+SBOM generation succeeds independently of notice approval. CI scans the generated artifact for secrets and uploads only the
 validated SBOM, without browser traces or native logs.
 
 The native smoke launches the built debug app, observes that exact process's
