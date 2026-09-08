@@ -1,10 +1,10 @@
 use crate::{
     Result, SessionMeta, Store, Usage, model::CacheCreation, model::RecordType, timestamp,
 };
-use rusqlite::{Connection, OptionalExtension, Row, types::Type};
+use rusqlite::{Connection, OptionalExtension, Row, ToSql, types::Type};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredSession {
@@ -62,37 +62,7 @@ impl Store {
     /// Related usage/tool rows are read from the same SQLite snapshot.
     pub fn records(&self, session_id: &str) -> Result<Vec<StoredRecord>> {
         let transaction = self.connection.unchecked_transaction()?;
-        let mut records = transaction
-            .prepare(&format!(
-                "SELECT {RECORD_FIELDS} FROM records r WHERE r.session_id=?1"
-            ))?
-            .query_map([session_id], record_from_row)?
-            .collect::<rusqlite::Result<Vec<_>>>()?
-            .into_iter()
-            .map(|record| (record.uuid.clone(), record))
-            .collect::<BTreeMap<_, _>>();
-        for entry in transaction.prepare(&format!(
-            "SELECT u.uuid,{USAGE_FIELDS} FROM usage u JOIN records r ON r.uuid=u.uuid WHERE r.session_id=?1"
-        ))?.query_map([session_id], |row| Ok((row.get::<_, String>(0)?, usage_from_row(row, 1)?)))? {
-            let (uuid, usage) = entry?;
-            records.get_mut(&uuid).ok_or(crate::Error::IncompatibleSchema)?.usage = Some(usage);
-        }
-        for entry in transaction
-            .prepare(&format!(
-                "SELECT t.uuid,{TOOL_FIELDS} FROM tool_uses t JOIN records r ON r.uuid=t.uuid
-             WHERE r.session_id=?1 ORDER BY t.uuid,t.block_index"
-            ))?
-            .query_map([session_id], |row| {
-                Ok((row.get::<_, String>(0)?, tool_from_row(row, 1)?))
-            })?
-        {
-            let (uuid, tool) = entry?;
-            records
-                .get_mut(&uuid)
-                .ok_or(crate::Error::IncompatibleSchema)?
-                .tool_uses
-                .push(tool);
-        }
+        let records = records_matching(&transaction, "r.session_id=?1", &[&session_id])?;
         transaction.commit()?;
         // Sort owned rows after releasing the snapshot. No child-row read occurs
         // after commit, and UUID only breaks ties between equal native instants.
@@ -214,31 +184,68 @@ const USAGE_FIELDS: &str =
     u.cache_creation_5m,u.cache_creation_1h,u.service_tier";
 const TOOL_FIELDS: &str = "t.id,t.block_index,t.name,t.input_json";
 
-pub(crate) fn record(connection: &Connection, uuid: &str) -> Result<Option<StoredRecord>> {
-    let Some(mut record) = connection
-        .query_row(
-            &format!("SELECT {RECORD_FIELDS} FROM records r WHERE r.uuid=?1"),
-            [uuid],
-            record_from_row,
-        )
-        .optional()?
-    else {
-        return Ok(None);
-    };
-    record.usage = connection
-        .query_row(
-            &format!("SELECT {USAGE_FIELDS} FROM usage u WHERE u.uuid=?1"),
-            [uuid],
-            |row| usage_from_row(row, 0),
-        )
-        .optional()?;
-    record.tool_uses = connection
+/// Read only the incoming UUID set, in groups below SQLite's minimum default
+/// variable limit (999). The caller owns the transaction/snapshot for all groups.
+pub(crate) fn records_by_uuid<'a>(
+    connection: &Connection,
+    uuids: impl Iterator<Item = &'a str>,
+) -> Result<BTreeMap<String, StoredRecord>> {
+    let uuids = uuids
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let mut records = BTreeMap::new();
+    for group in uuids.chunks(500) {
+        let slots = vec!["?"; group.len()].join(",");
+        let parameters = group.iter().map(|id| id as &dyn ToSql).collect::<Vec<_>>();
+        records.extend(records_matching(
+            connection,
+            &format!("r.uuid IN ({slots})"),
+            &parameters,
+        )?);
+    }
+    Ok(records)
+}
+
+// Both public session reads and writer prefetches share the same child assembly.
+// The predicate is internal SQL, never supplied by an input record or caller.
+fn records_matching(
+    connection: &Connection,
+    predicate: &str,
+    parameters: &[&dyn ToSql],
+) -> Result<BTreeMap<String, StoredRecord>> {
+    let mut records = connection
         .prepare(&format!(
-            "SELECT {TOOL_FIELDS} FROM tool_uses t WHERE t.uuid=?1 ORDER BY t.block_index"
+            "SELECT {RECORD_FIELDS} FROM records r WHERE {predicate}"
         ))?
-        .query_map([uuid], |row| tool_from_row(row, 0))?
-        .collect::<rusqlite::Result<_>>()?;
-    Ok(Some(record))
+        .query_map(parameters, record_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .map(|record| (record.uuid.clone(), record))
+        .collect::<BTreeMap<_, _>>();
+    for entry in connection.prepare(&format!(
+        "SELECT u.uuid,{USAGE_FIELDS} FROM usage u JOIN records r ON r.uuid=u.uuid WHERE {predicate}"
+    ))?.query_map(parameters, |row| Ok((row.get::<_, String>(0)?, usage_from_row(row, 1)?)))? {
+        let (uuid, usage) = entry?;
+        records.get_mut(&uuid).ok_or(crate::Error::IncompatibleSchema)?.usage = Some(usage);
+    }
+    for entry in connection
+        .prepare(&format!(
+            "SELECT t.uuid,{TOOL_FIELDS} FROM tool_uses t JOIN records r ON r.uuid=t.uuid
+             WHERE {predicate} ORDER BY t.uuid,t.block_index"
+        ))?
+        .query_map(parameters, |row| {
+            Ok((row.get::<_, String>(0)?, tool_from_row(row, 1)?))
+        })?
+    {
+        let (uuid, tool) = entry?;
+        records
+            .get_mut(&uuid)
+            .ok_or(crate::Error::IncompatibleSchema)?
+            .tool_uses
+            .push(tool);
+    }
+    Ok(records)
 }
 
 fn record_from_row(row: &Row<'_>) -> rusqlite::Result<StoredRecord> {

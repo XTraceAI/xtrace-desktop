@@ -3,9 +3,7 @@
   "status": "skeleton",
   "author": "XTrace fixture maintainers",
   "shape": "Append and new-file events during initial scan with no later writes.",
-  "proves": [
-    "O-13"
-  ],
+  "proves": ["O-13"],
   "now": "2026-09-08T00:00:00Z",
   "window_days": 7,
   "sessions": [
