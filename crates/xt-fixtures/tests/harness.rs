@@ -386,6 +386,37 @@ fn unknown_rule_ids_in_either_manifest_or_goldens_fail_with_locations() {
 }
 
 #[test]
+fn duplicate_golden_keys_fail_before_identical_or_conflicting_values_are_lost() {
+    for (key, identical) in [
+        (r#""M-04""#, true),
+        (r#""M-04""#, false),
+        (r#""M-\u0030\u0034""#, false),
+    ] {
+        let directory = editable("F1");
+        let path = directory.path().join("expected.json");
+        let original = fs::read_to_string(&path).unwrap();
+        let parsed: Value = serde_json::from_str(&original).unwrap();
+        let first_value = if identical {
+            parsed["M-04"].clone()
+        } else {
+            Value::Null
+        };
+        // Write literal JSON entries: constructing a Value/map here would erase
+        // the duplicate before the loader under test ever receives it.
+        let duplicated = format!(
+            "{{{key}:{first_value},{}",
+            original.trim_start().strip_prefix('{').unwrap()
+        );
+        fs::write(path, duplicated).unwrap();
+        let error = load_error(directory.path());
+        assert!(
+            error.contains("expected.json:") && error.contains("duplicate golden key M-04"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn missing_inputs_and_invalid_uuid_or_timestamp_identify_source_location() {
     let directory = editable("F1");
     fs::remove_file(directory.path().join("input/sessions/session.jsonl")).unwrap();
