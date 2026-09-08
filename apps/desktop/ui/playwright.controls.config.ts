@@ -6,7 +6,7 @@ export default defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:5178',
     viewport: { width: 900, height: 900 },
-    reducedMotion: 'reduce',
+    contextOptions: { reducedMotion: 'reduce' },
     trace: 'retain-on-failure',
   },
   projects: [{ name: 'webkit', use: { browserName: 'webkit' } }],

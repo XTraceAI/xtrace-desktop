@@ -26,3 +26,5 @@ no unavailable design-export parity is claimed.
 ![Dark synthetic controls](FND-07b/controls-dark.png)
 
 ![Light synthetic controls](FND-07b/controls-light.png)
+
+The focused browser check also passes with Playwright 1.58.2, which retains macOS 14 WebKit support. Reduced-motion emulation is supplied through `contextOptions` for that runner, and the scenario verifies the media query before checking the stopped animation. Retained captures were made with the initial 1.63.0 runner.
