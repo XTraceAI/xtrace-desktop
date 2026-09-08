@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { readFile, readdir, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { packageText } from './package-text.mjs';
 
 const upstream = fileURLToPath(new URL('./upstream-licenses/', import.meta.url));
 const licenseName = /^(?:licen[sc]e|copying|notice|ofl)(?:[._-].*)?$/i;
@@ -26,16 +27,16 @@ export async function rustNotices(rust) {
     const identity = `${pkg.name}@${pkg.version}`;
     const directory = await realpath(dirname(pkg.manifest_path));
     const files = (await readdir(directory, { withFileTypes: true }))
-      .filter((entry) => entry.isFile() && licenseName.test(entry.name))
+      .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && licenseName.test(entry.name))
       .map((entry) => entry.name)
       .sort();
     if (pkg.license_file && !files.includes(pkg.license_file)) files.push(pkg.license_file);
     for (const file of files) {
-      const path = await realpath(join(directory, file));
-      const rel = relative(directory, path);
-      if (rel === '..' || rel.startsWith('../') || isAbsolute(rel))
-        throw new Error('Rust license source is outside its package.');
-      entries.push({ package: `cargo: ${identity}`, license, text: await readFile(path, 'utf8') });
+      entries.push({
+        package: `cargo: ${identity}`,
+        license,
+        text: await packageText(directory, file),
+      });
     }
     if (files.length) continue;
     const sources = manifest[identity];
