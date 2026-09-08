@@ -43,8 +43,9 @@ This read-only command prints a SHA-256 snapshot line. Replace the placeholder
 with that line and check the disclosure checkbox after reviewing the content.
 The digest covers the current source head, exact PR prose, linked issue
 relationships and text, and discussion/review content, including attachment
-links. Only the review checkbox and snapshot values are normalized to avoid
-hashing their own values. The digest establishes which content was attested;
+links. Only the source PR’s review checkbox and snapshot values are normalized to avoid
+hashing their own values. Linked issue and PR bodies are hashed verbatim, including
+their disclosure controls. The digest establishes which content was attested;
 it does not establish semantic approval or inspect attachment bytes.
 
 Comments from people and bots are included. The gate writes check results only,
@@ -119,6 +120,8 @@ branch merge-queue heads after PR/issue edits and conversation comments. Review
 and review-comment events run the read-only Publication workflow; its completion
 signals the trusted workflow. Runs reconcile current API state, rather than
 trusting an old event's PR content, and reject changes observed during scanning.
+Current queue heads receive blocking pending checks before sequential PR scans;
+a later read or scan failure cannot preserve an earlier successful queue result.
 They execute only the default branch, use `checks:write` solely to update the
 named content check, and never run PR scripts or consume workflow artifacts.
 The trusted scanner fetches each exact source PR head into a temporary Git ref,
