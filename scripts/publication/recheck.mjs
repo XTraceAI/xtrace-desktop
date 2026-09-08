@@ -71,10 +71,25 @@ export async function recheckPublication({
   if (eventName === 'workflow_run') {
     prNumber(event.workflow_run?.id);
     const run = await api(path + '/actions/runs/' + event.workflow_run.id);
-    const workflow = await api(path + '/actions/workflows/publication.yml');
+    const workflows = await Promise.all(
+      ['publication.yml', 'publication-review.yml'].map((file) =>
+        api(path + '/actions/workflows/' + file),
+      ),
+    );
+    requireValue(
+      workflows.every((workflow) => Number.isSafeInteger(workflow.id) && workflow.id > 0),
+      'Publication signal workflow identities are unavailable.',
+    );
+    const allowedEvents = [
+      ['pull_request', 'merge_group'],
+      ['pull_request_review', 'pull_request_review_comment'],
+    ];
     requireValue(
       run.repository?.full_name === repository &&
-        run.workflow_id === workflow.id &&
+        workflows.some(
+          (workflow, index) =>
+            run.workflow_id === workflow.id && allowedEvents[index].includes(run.event),
+        ) &&
         run.status === 'completed',
       'Publication signal does not belong to the expected repository workflow.',
     );
@@ -127,6 +142,7 @@ export async function recheckPublication({
   for (const member of pending) {
     let conclusion = 'failure';
     let verifiedDigest;
+    let verifiedBase;
     let summary = 'Content check could not complete; publication remains blocked.';
     try {
       const before = await readPublicContent(api, repository, member.number);
@@ -141,19 +157,23 @@ export async function recheckPublication({
       const after = await readPublicContent(api, repository, member.number);
       requireDisclosure(after);
       requireValue(
-        after.pr.head.sha === member.head && after.digest === before.digest,
+        after.pr.head.sha === member.head &&
+          after.pr.base.sha === before.pr.base.sha &&
+          after.digest === before.digest,
         'Public content changed during the check; repeat disclosure review.',
       );
-      // Read the exact current head immediately before writing a successful result.
+      // Read the exact current base and head immediately before writing success.
       const current = await api(path + '/pulls/' + member.number);
       requireValue(
         current.state === 'open' &&
           current.head?.sha === member.head &&
+          current.base?.sha === before.pr.base.sha &&
           current.body === after.pr.body,
         'Source PR changed before the result was written; rerun content checks.',
       );
       conclusion = 'success';
       verifiedDigest = before.digest;
+      verifiedBase = before.pr.base.sha;
       summary =
         'Trusted scanning found no detected secret in candidate source or current disclosure content. The snapshot is current; semantic review remains the reviewer’s responsibility.';
     } catch (error) {
@@ -173,7 +193,12 @@ export async function recheckPublication({
       },
       'PATCH',
     );
-    outcomes.set(member.number, { head: member.head, conclusion, digest: verifiedDigest });
+    outcomes.set(member.number, {
+      head: member.head,
+      base: verifiedBase,
+      conclusion,
+      digest: verifiedDigest,
+    });
   }
   for (const { head, check } of queuePending) {
     let conclusion = 'failure';
@@ -200,6 +225,7 @@ export async function recheckPublication({
         requireDisclosure(current);
         requireValue(
           current.pr.head.sha === member.head &&
+            current.pr.base.sha === outcomes.get(member.number)?.base &&
             current.digest === outcomes.get(member.number)?.digest,
           'Queue source content changed after scanning.',
         );
