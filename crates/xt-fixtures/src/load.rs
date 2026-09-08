@@ -140,27 +140,34 @@ impl Fixture {
                     "session_id must be nonempty and unique within a manifest",
                 ));
             }
-            let platform = input
-                .source_platform
-                .as_deref()
-                .unwrap_or(input.host.as_str());
-            if platform.trim().is_empty() || Host::from_platform(platform) != input.host {
+            if let Some(platform) = &input.source_platform
+                && (platform.trim().is_empty() || Host::from_platform(platform) != input.host)
+            {
                 return Err(invalid(
                     &loc,
                     "source_platform must map to the declared host",
                 ));
             }
-            let mut metadata =
-                SessionMeta::new(&input.session_id, platform, SessionSource::Fixture);
-            metadata.surface = input.source_surface.clone();
-            metadata.native_session_id = input.native_session_id.clone();
-            metadata.started_at_ms = input
-                .started_at
-                .as_ref()
-                .map(|value| {
-                    parse_time(value, &format!("{loc}:started_at")).map(|ts| ts.timestamp_millis())
-                })
-                .transpose()?;
+            let metadata = SessionMeta {
+                session_id: input.session_id.clone(),
+                host: input.host,
+                source_platform: input.source_platform.clone(),
+                source: SessionSource::Fixture,
+                cwd: None,
+                git_branch: None,
+                title: None,
+                surface: input.source_surface.clone(),
+                surface_evidence: None,
+                native_session_id: input.native_session_id.clone(),
+                started_at_ms: input
+                    .started_at
+                    .as_ref()
+                    .map(|value| {
+                        parse_time(value, &format!("{loc}:started_at"))
+                            .map(|ts| ts.timestamp_millis())
+                    })
+                    .transpose()?,
+            };
             let path = declared_path(&root, &input.file)?;
             let text = fs::read_to_string(&path)
                 .map_err(|e| invalid(path.display().to_string(), e.to_string()))?;

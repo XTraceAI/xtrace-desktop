@@ -551,3 +551,43 @@ fn raw_platform_is_preserved_and_known_host_mismatches_fail() {
     });
     assert!(load_error(directory.path()).contains("source_platform must map"));
 }
+
+#[test]
+fn absent_raw_platform_stays_unknown_independently_of_declared_host() {
+    use xt_store::Host;
+    for (host, raw) in [
+        (Host::Claude, None),
+        (Host::Codex, None),
+        (Host::Cursor, None),
+        (Host::Other, None),
+        (Host::Claude, Some("claude")),
+        (Host::Other, Some("future-agent")),
+    ] {
+        let directory = editable("F1");
+        edit_json(&directory.path().join("manifest.json"), |m| {
+            m["sessions"][0]["host"] = json!(host);
+            if let Some(raw) = raw {
+                m["sessions"][0]["source_platform"] = json!(raw);
+            } else {
+                m["sessions"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("source_platform");
+            }
+        });
+        let fixture = Fixture::load(directory.path()).unwrap();
+        let metadata = &fixture.sessions()[0].metadata;
+        assert_eq!(metadata.host, host);
+        assert_eq!(metadata.source_platform.as_deref(), raw);
+        let export = serde_json::to_value(fixture.export()).unwrap();
+        assert_eq!(export["sessions"][0]["metadata"]["host"], json!(host));
+        assert_eq!(
+            export["sessions"][0]["metadata"]["source_platform"],
+            json!(raw)
+        );
+        let db = fixture.build_db(false).unwrap();
+        let stored = db.store().session(&metadata.session_id).unwrap().unwrap();
+        assert_eq!(stored.meta.host, host);
+        assert_eq!(stored.meta.source_platform.as_deref(), raw);
+    }
+}

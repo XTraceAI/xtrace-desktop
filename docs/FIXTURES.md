@@ -75,6 +75,8 @@ input. No input glob is used. For example, a session may point to
   UUIDs; repeated valid UUIDs remain inputs to the canonical storage boundary.
 - `host` is `claude`, `codex`, `cursor` or `other`. Optional `source_platform`
   preserves unknown raw platforms and must agree with the known-host mapping.
+  Omission preserves an unknown raw platform independently of the declared host;
+  exports and databases never infer a raw observation from the host name.
   `source_surface`, `native_session_id` and `started_at` are optional.
 - Each nonblank JSONL line deserializes into `xt_store::CanonicalRecord`.
   The harness passes session metadata and records through `Store` with an
