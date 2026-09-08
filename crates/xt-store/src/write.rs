@@ -73,6 +73,12 @@ impl Store {
         let mut session = read::session(&transaction, session_id)?.ok_or(Error::InvalidInput(
             "session must be created before writing records",
         ))?;
+        let mut existing_records = read::records_by_uuid(
+            &transaction,
+            records
+                .iter()
+                .filter_map(|record| record.uuid.as_deref().filter(|id| !id.trim().is_empty())),
+        )?;
         let mut stats = WriteStats::default();
         for input in records {
             let Some(uuid) = input.uuid.as_deref().filter(|id| !id.trim().is_empty()) else {
@@ -80,11 +86,11 @@ impl Store {
                 continue;
             };
             let incoming = prepare(input, uuid, session_id, keep_content)?;
-            let existing = read::record(&transaction, uuid)?;
-            if let Some(existing) = &existing
-                && (existing.session_id != session_id
-                    || existing.record_type != incoming.record_type)
+            let mut existing = existing_records.get_mut(uuid);
+            if let Some(stored) = existing.as_mut()
+                && (stored.session_id != session_id || stored.record_type != incoming.record_type)
             {
+                stored.has_conflict = true;
                 transaction.execute("UPDATE records SET has_conflict=1 WHERE uuid=?1", [uuid])?;
                 stats.ignored += 1;
                 continue;
@@ -111,13 +117,14 @@ impl Store {
             match existing {
                 None => {
                     save_record(&transaction, &incoming)?;
+                    existing_records.insert(uuid.to_owned(), incoming);
                     stats.inserted += 1;
                 }
-                Some(mut stored) => {
+                Some(stored) => {
                     let before = stored.clone();
-                    let enriched = merge_record(&mut stored, &incoming) || session_enriched;
-                    if before != stored {
-                        save_record(&transaction, &stored)?;
+                    let enriched = merge_record(stored, &incoming) || session_enriched;
+                    if before != *stored {
+                        save_record(&transaction, stored)?;
                     }
                     if enriched {
                         stats.enriched += 1;
@@ -485,3 +492,7 @@ fn save_record(connection: &Connection, record: &StoredRecord) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "write_tests.rs"]
+mod tests;
