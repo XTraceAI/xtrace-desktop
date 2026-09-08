@@ -59,9 +59,11 @@ See [the gallery guide](../GALLERY.md) for the complete state-family summary,
 machine-readable inventory, adding stories and updating evidence. Browser
 traces and unrelated desktop captures are not committed.
 
-These local checks do not claim an actual macOS 14/Safari 17 floor run for the
-new gallery. CI includes both gallery commands on its macOS 14 runner. No native
-app launch is required by this change. The current components and gallery serve as the working design reference.
+The gallery browser job also passed on macOS 14 in
+[CI run 34231186368](https://github.com/XTraceAI/xtrace-desktop/actions/runs/34231186368),
+which tested source `84bce77f0f987658f41b9e10280c2dc970c27c8f`. Its aggregate
+failed on policy/bootstrap and the previous license policy, so it is not a green
+foundation acceptance run. No local native app launch is required by this change. The current components and gallery serve as the working design reference.
 These captures remain review evidence; FND-11 must establish explicitly reviewed,
 versioned regression baselines before claiming automated visual coverage. This
 does not approve every current pixel or claim parity with independent exports;
