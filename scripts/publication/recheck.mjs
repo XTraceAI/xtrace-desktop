@@ -20,6 +20,8 @@ const events = new Set([
   'pull_request_target',
   'issues',
   'issue_comment',
+  'commit_comment',
+  'schedule',
   'workflow_run',
   'workflow_dispatch',
 ]);
@@ -54,7 +56,8 @@ export async function recheckPublication({
 }) {
   repositoryName(repository);
   requireValue(
-    events.has(eventName) && event.repository?.full_name === repository,
+    events.has(eventName) &&
+      (event.repository?.full_name === repository || eventName === 'schedule'),
     'Unsupported publication content event.',
   );
   const path = '/repos/' + repository;

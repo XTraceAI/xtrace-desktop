@@ -7,6 +7,12 @@ on:
     types: [edited, deleted, closed, reopened, transferred]
   issue_comment:
     types: [created, edited, deleted]
+  commit_comment:
+    types: [created]
+  # GitHub has no commit-comment edit/delete or relationship-edit trigger.
+  # Reconcile those changes periodically as well as on delivered events.
+  schedule:
+    - cron: '7,22,37,52 * * * *'
   workflow_run:
     workflows: [Publication]
     types: [completed]

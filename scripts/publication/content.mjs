@@ -9,6 +9,7 @@ import {
   repositoryName,
   requireAttestation,
   requireValue,
+  sha,
   validatePullRequest,
 } from './metadata.mjs';
 
@@ -83,12 +84,13 @@ function discussion(items) {
         path: item.path ?? null,
         line: item.line ?? null,
         updated: item.updated_at ?? item.submitted_at ?? null,
+        commit: item.commit_id ?? null,
       };
     })
     .sort((a, b) => a.id - b.id);
 }
 
-async function conversations(api, repository, number, isPullRequest) {
+async function conversations(api, repository, number, isPullRequest, repositoryComments) {
   const path = '/repos/' + repository;
   const result = {
     comments: discussion(await pages(api, path + '/issues/' + number + '/comments')),
@@ -96,6 +98,20 @@ async function conversations(api, repository, number, isPullRequest) {
   if (isPullRequest) {
     result.reviews = discussion(await pages(api, path + '/pulls/' + number + '/reviews'));
     result.reviewComments = discussion(await pages(api, path + '/pulls/' + number + '/comments'));
+    const pr = await api(path + '/pulls/' + number);
+    const commits = await pages(api, path + '/pulls/' + number + '/commits');
+    const ids = new Set(commits.map((commit) => sha(commit.sha)));
+    // GitHub caps this endpoint at 250 commits. Never accept a truncated list.
+    requireValue(
+      Number.isSafeInteger(pr.commits) &&
+        pr.commits > 0 &&
+        ids.size === pr.commits &&
+        commits.length === ids.size,
+      'Source commit pagination is incomplete.',
+    );
+    result.commitComments = discussion(
+      repositoryComments.filter((comment) => ids.has(sha(comment.commit_id))),
+    );
   }
   return result;
 }
@@ -106,6 +122,9 @@ export async function readPublicContent(api, repository, number, candidateBody) 
   const pr = await api('/repos/' + repository + '/pulls/' + number);
   if (candidateBody !== undefined) pr.body = candidateBody;
   validatePullRequest(pr, repository, pr.head?.sha, { attestation: false });
+  const repositoryComments = await pages(api, '/repos/' + repository + '/comments');
+  // Detect duplicate pages even for comments outside this PR's commit set.
+  discussion(repositoryComments);
   const references = new Map();
   for (const reference of [
     ...linkedIssues(pr.body, repository),
@@ -137,6 +156,7 @@ export async function readPublicContent(api, repository, number, candidateBody) 
         reference.repository,
         reference.number,
         Boolean(issue.pull_request),
+        repositoryComments,
       )),
     });
   }
@@ -149,11 +169,16 @@ export async function readPublicContent(api, repository, number, candidateBody) 
     headBranch: pr.head.ref,
     title: pr.title,
     body: normalizedBody(pr.body),
-    ...(await conversations(api, repository, number, true)),
+    ...(await conversations(api, repository, number, true, repositoryComments)),
     linked,
   };
   for (const item of [content, ...linked])
-    for (const group of [item.comments, item.reviews ?? [], item.reviewComments ?? []])
+    for (const group of [
+      item.comments,
+      item.reviews ?? [],
+      item.reviewComments ?? [],
+      item.commitComments ?? [],
+    ])
       for (const comment of group) texts.push(comment.body);
   texts.push(JSON.stringify(content));
   const digest = createHash('sha256').update(JSON.stringify(content)).digest('hex');

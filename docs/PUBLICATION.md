@@ -129,6 +129,15 @@ paths. GitHub must deliver an event and start the run to invalidate an earlier
 result. Repeat the review and update the snapshot when manually changing linked
 relationships. No repository rule is changed by these files.
 
+Comments on the source PR's commits are included, with complete source-commit
+pagination required. New commit comments trigger reconciliation. GitHub exposes
+only the `created` activity for `commit_comment`, so edits/deletions and manual
+relationship changes also use a 15-minute scheduled reconciliation. Scheduled
+runs can be delayed by GitHub; this is eventual detection, not an instantaneous
+publication barrier. Run the local current-content check immediately before a
+publication decision. Repositories with 1,000 or more commit comments exceed the
+bounded API reader and fail closed until a paginated incremental design is added.
+
 Attachment bytes, embedded metadata and earlier GitHub edits require the separate
 review above. Review changes to the scanner and workflows themselves. Future
 FND-02 CI may fold the immutable tests/scanning into `ci-ok`; the separate current-

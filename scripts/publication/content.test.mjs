@@ -11,6 +11,7 @@ export function fixture() {
   const state = {
     pr: {
       number: 3,
+      commits: 1,
       state: 'open',
       title: 'Synthetic change',
       body: 'Reviewed description.\n\n- [x] ' + ATTESTATION + '\n\nDisclosure snapshot: pending\n',
@@ -21,6 +22,8 @@ export function fixture() {
     comments: [],
     reviews: [],
     reviewComments: [],
+    commitComments: [],
+    commits: [{ sha: head }],
     queue: [],
     issue: { number: 9, title: 'Synthetic issue', body: 'Public technical acceptance.' },
     issueComments: [],
@@ -73,6 +76,8 @@ export function fixture() {
     if (route === root + '/issues/3/comments') return structuredClone(state.comments);
     if (route === root + '/pulls/3/reviews') return structuredClone(state.reviews);
     if (route === root + '/pulls/3/comments') return structuredClone(state.reviewComments);
+    if (route === root + '/pulls/3/commits') return structuredClone(state.commits);
+    if (route === root + '/comments') return structuredClone(state.commitComments);
     if (route === root + '/issues/9') return structuredClone(state.issue);
     if (route === root + '/issues/9/comments') return structuredClone(state.issueComments);
     throw new Error('Unexpected synthetic API route');
@@ -200,6 +205,59 @@ const reconcile = (state, scan = async () => {}, eventName = 'issue_comment', pa
     event: payload,
     scan,
   });
+
+test('source commit comments and attachments invalidate snapshots on creation, edit and deletion', async () => {
+  for (const change of ['create', 'edit', 'delete']) {
+    const state = fixture();
+    state.commitComments = [{ id: 80, commit_id: head, body: 'Original synthetic comment.' }];
+    await seal(state);
+    if (change === 'create')
+      state.commitComments.push({
+        id: 81,
+        commit_id: head,
+        body: '![Attachment](https://example.invalid/synthetic.png)',
+      });
+    if (change === 'edit') state.commitComments[0].body = 'Edited synthetic comment.';
+    if (change === 'delete') state.commitComments = [];
+    const review = await readPublicContent(state.api, repository, 3);
+    assert.throws(() => requireDisclosure(review), /stale/);
+    assert.equal(
+      (await reconcile(state, async () => {}, change === 'create' ? 'commit_comment' : 'schedule'))
+        .failures,
+      1,
+    );
+    await seal(state);
+    assert.equal(
+      (
+        await reconcile(
+          state,
+          async (_, texts) => {
+            for (const comment of state.commitComments) assert.ok(texts.includes(comment.body));
+          },
+          'schedule',
+          {},
+        )
+      ).failures,
+      0,
+    );
+  }
+});
+
+test('commit pagination fails closed and unrelated commit comments do not stale a PR', async () => {
+  const state = fixture();
+  const digest = await seal(state);
+  state.commitComments.push({
+    id: 90,
+    commit_id: 'd'.repeat(40),
+    body: 'Unrelated synthetic comment.',
+  });
+  assert.equal((await readPublicContent(state.api, repository, 3)).digest, digest);
+  state.pr.commits = 251;
+  await assert.rejects(readPublicContent(state.api, repository, 3), /commit pagination/);
+  state.pr.commits = 1;
+  state.commits.push(state.commits[0]);
+  await assert.rejects(readPublicContent(state.api, repository, 3), /commit pagination/);
+});
 
 test('issue edits invalidate the check and refreshed disclosure passes without writing comments', async () => {
   const state = fixture();
