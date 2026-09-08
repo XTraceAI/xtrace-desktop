@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <title>Table component acceptance</title>
+    <style>
+      .table-fixture {
+        padding: 24px;
+        display: grid;
+        gap: 16px;
+        min-width: 0;
+        max-width: 100%;
+        color: var(--ink);
+      }
+      .table-fixture h1 {
+        font-size: 24px;
+        letter-spacing: -0.4px;
+      }
+      .table-fixture > p {
+        color: var(--meta);
+      }
+      .fixture-actions {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .fixture-pair {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 16px;
+      }
+      .fixture-pair .xt-section-panel {
+        display: grid;
+        gap: 14px;
+      }
+      .table-fixture output {
+        font-size: 11px;
+        color: var(--meta);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./table-overflow.fixture.tsx"></script>
+  </body>
+</html>
