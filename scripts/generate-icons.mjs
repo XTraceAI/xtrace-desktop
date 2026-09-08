@@ -10,10 +10,10 @@ const temporary = await mkdtemp(join(tmpdir(), 'xtrace-icons-'));
 try {
   const mark = await readFile(join(assets, 'mark.png'));
   const input = join(temporary, 'app-icon.svg');
-  // Keep the published artwork intact, on dark charcoal with a 12% inset at each edge.
+  // Keep the published artwork intact, on dark charcoal with a 15% inset at each edge.
   await writeFile(
     input,
-    `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100"><rect width="100" height="100" fill="#17181b"/><image x="12" y="12" width="76" height="76" href="data:image/png;base64,${mark.toString('base64')}"/></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100"><rect width="100" height="100" fill="#17181b"/><image x="15" y="15" width="70" height="70" href="data:image/png;base64,${mark.toString('base64')}"/></svg>`,
   );
   const result = spawnSync('pnpm', ['tauri', 'icon', input, '--output', temporary], {
     cwd: root,
