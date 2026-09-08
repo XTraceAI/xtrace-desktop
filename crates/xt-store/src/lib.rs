@@ -9,6 +9,7 @@
 mod migrations;
 pub mod model;
 mod read;
+mod timestamp;
 mod write;
 
 pub use model::{

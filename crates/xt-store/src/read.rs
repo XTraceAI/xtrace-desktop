@@ -1,4 +1,6 @@
-use crate::{Result, SessionMeta, Store, Usage, model::CacheCreation, model::RecordType};
+use crate::{
+    Result, SessionMeta, Store, Usage, model::CacheCreation, model::RecordType, timestamp,
+};
 use rusqlite::{Connection, OptionalExtension, Row, types::Type};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -25,6 +27,7 @@ pub struct StoredRecord {
     pub session_id: String,
     pub record_type: RecordType,
     pub ts: Option<String>,
+    /// Coarse POSIX millisecond projection for indexing, not precise ordering.
     pub ts_ms: Option<i64>,
     pub api_message_id: Option<String>,
     pub request_id: Option<String>,
@@ -53,19 +56,19 @@ impl Store {
         session(&self.connection, id)
     }
 
-    /// Timestamp order, with unknown timestamps last and UUID as a stable tie.
+    /// Native timestamp order at full fractional precision, with unknown times
+    /// last and UUID as a stable tie only when instants are equal.
     /// Related usage/tool rows are read from the same SQLite snapshot.
     pub fn records(&self, session_id: &str) -> Result<Vec<StoredRecord>> {
         let transaction = self.connection.unchecked_transaction()?;
-        let uuids = transaction
-            .prepare(
-                "SELECT uuid FROM records WHERE session_id=?1 ORDER BY ts_ms IS NULL, ts_ms, uuid",
-            )?
-            .query_map([session_id], |row| row.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        let records = uuids
+        let timestamps = ordered_timestamps(
+            &transaction,
+            session_id,
+            "SELECT uuid, ts FROM records WHERE session_id=?1",
+        )?;
+        let records = timestamps
             .iter()
-            .map(|uuid| record(&transaction, uuid)?.ok_or(crate::Error::IncompatibleSchema))
+            .map(|(uuid, _)| record(&transaction, uuid)?.ok_or(crate::Error::IncompatibleSchema))
             .collect::<Result<_>>()?;
         transaction.commit()?;
         Ok(records)
@@ -85,6 +88,53 @@ impl Store {
             },
         )?)
     }
+}
+
+pub(crate) fn timestamp_range(
+    connection: &Connection,
+    session_id: &str,
+) -> Result<(Option<String>, Option<String>)> {
+    // Use the millisecond index to limit precise comparison to endpoint buckets.
+    // The 999ms guard includes a leap second whose POSIX projection overlaps the
+    // following UTC second, so the coarse projection cannot discard an endpoint.
+    let timestamps = ordered_timestamps(
+        connection,
+        session_id,
+        "SELECT uuid, ts FROM records WHERE session_id=?1 AND (
+            ts_ms BETWEEN (SELECT min(ts_ms) FROM records WHERE session_id=?1)
+                AND (SELECT min(ts_ms)+999 FROM records WHERE session_id=?1)
+            OR ts_ms BETWEEN (SELECT max(ts_ms)-999 FROM records WHERE session_id=?1)
+                AND (SELECT max(ts_ms) FROM records WHERE session_id=?1))",
+    )?;
+    Ok((
+        timestamps.first().and_then(|(_, ts)| ts.clone()),
+        timestamps.last().and_then(|(_, ts)| ts.clone()),
+    ))
+}
+
+fn ordered_timestamps(
+    connection: &Connection,
+    session_id: &str,
+    query: &str,
+) -> Result<Vec<(String, Option<String>)>> {
+    let rows = connection
+        .prepare(query)?
+        .query_map([session_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut keyed = rows
+        .into_iter()
+        .map(|(uuid, ts)| {
+            let key = ts
+                .as_deref()
+                .map(|value| timestamp::parse(value).map(|(key, _)| key))
+                .transpose()?;
+            Ok((key, uuid, ts))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    keyed.sort_unstable_by(|a, b| (a.0.is_none(), &a.0, &a.1).cmp(&(b.0.is_none(), &b.0, &b.1)));
+    Ok(keyed.into_iter().map(|(_, uuid, ts)| (uuid, ts)).collect())
 }
 
 pub(crate) fn session(connection: &Connection, id: &str) -> Result<Option<StoredSession>> {
