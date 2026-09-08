@@ -193,6 +193,14 @@ impl Fixture {
             }
             sessions.push(LoadedSession { metadata, records });
         }
+        if manifest.status == FixtureStatus::Skeleton
+            && sessions.iter().any(|session| !session.records.is_empty())
+        {
+            return Err(invalid(
+                &location,
+                "skeleton canonical inputs must be empty",
+            ));
+        }
         if manifest.status == FixtureStatus::Populated
             && sessions.iter().all(|session| session.records.is_empty())
         {
