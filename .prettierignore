@@ -1,0 +1,7 @@
+target/
+node_modules/
+apps/desktop/ui/dist/
+apps/desktop/src-tauri/gen/
+Cargo.lock
+pnpm-lock.yaml
+artifacts/

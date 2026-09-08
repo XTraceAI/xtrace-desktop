@@ -1,0 +1,14 @@
+/target/
+node_modules/
+/apps/desktop/ui/dist/
+/apps/desktop/src-tauri/gen/
+/artifacts/private/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.DS_Store
+test-results/
+playwright-report/
+.env
+.env.*
+!.env.example

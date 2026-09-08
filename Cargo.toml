@@ -1,0 +1,24 @@
+[workspace]
+members = [
+    "crates/xt-server",
+    "crates/xt-store",
+    "crates/xt-ingest",
+    "crates/xt-metrics",
+    "crates/xt-probes",
+    "crates/xt-judge",
+    "crates/xt-fixtures",
+    "crates/xt-rulebook",
+    "xtask",
+    "apps/desktop/src-tauri",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "Apache-2.0"
+authors = ["XTrace Inc."]
+
+[workspace.dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }

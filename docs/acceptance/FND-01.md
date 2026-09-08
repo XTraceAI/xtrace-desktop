@@ -1,0 +1,52 @@
+# FND-01 acceptance
+
+The first foundation PR creates a reproducible shell and workspace. It closes no capture, metric, storage or Rulebook behavior. Required commands are in [DEVELOPING.md](../../DEVELOPING.md).
+
+| Setup and action                                                                                                                | Expected result                                                                                                                                                                                                                        | Required evidence                                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Fresh macOS checkout: frozen pnpm install, UI checks, workspace fmt/Clippy/tests and debug app build                            | All checks succeed without changing lockfiles; a conflicting `MACOSX_DEPLOYMENT_TARGET=15.0` still builds for macOS 14.0. All eight subsystem crates, xtask and the Tauri application compile.                                         | Command results tied to the PR head; OS/toolchain versions.                                                                   |
+| Open the native bundle; refresh application information                                                                         | XTrace brand and real app name/version appear through the Rust command; browser preview labels its own limitation.                                                                                                                     | Native UI observation; Vitest success/error/retry coverage.                                                                   |
+| Resize between default and minimum size; drag sidebar/header; use Refresh, minimize/restore, fullscreen/return and close/reopen | Native buttons retain roughly 16-point top/left margins, including after maximize → fullscreen → exit without a manual resize. No overlap or separate title strip; dragging preserves button clicks.                                   | Native observations on the actual bundle.                                                                                     |
+| Launch a second copy while the first is running                                                                                 | The existing process/window is focused; no second application owner remains.                                                                                                                                                           | Process/window observation.                                                                                                   |
+| Inspect source layout, toolchain pins and legal files                                                                           | Binding subsystem ownership is documented. Apache LICENSE, NOTICE, DCO, trademarks and contribution/conduct/security guidance exist. Every PR commit is signed off.                                                                    | Reviewed file list, provenance and git log.                                                                                   |
+| Regenerate icons; build and open the native bundle; inspect the browser preview                                                 | The published XTrace mark appears without clipping in the sidebar and welcome screen. The favicon and native icon center it on dark charcoal with 15% padding per edge; the bundle contains the generated ICNS selected by Info.plist. | Source checksum/provenance, background/border measurement, generated-asset parity, browser screenshot and native observation. |
+
+Rust placeholder crates are validated by compilation. The evidence below applies to this scaffold's source and native bundle. FND-02 supplies repository CI; its acceptance remains separate.
+
+Packaged-font acceptance: after `pnpm build`, inspect every font URL in `apps/desktop/ui/dist/assets/*.css`. Each must point to an existing bundled asset, with no `data:font` URLs. Open the rebuilt native bundle and check Web Inspector for font-loading/CSP errors. Expected: Manrope and Geist Mono load from the app origin under `font-src 'self'`; no font requests are blocked. Record build inspection and native console results separately from browser-preview checks.
+
+## Recorded evidence
+
+Source commit `70f233da74d6f1fe5244096ef56c9efaf8ec1396` passed a fresh-clone frozen install, `pnpm check` (four UI tests), `pnpm test -- --run`, workspace fmt/Clippy/tests and a debug macOS app build, with unchanged lockfiles. Rust placeholder crates have no behavior tests; compilation validates their initial boundaries. The built executable declares macOS 14.0 as its minimum version.
+
+Native observations on macOS 26.5.2 confirmed real application metadata, refresh, default/minimum window layouts, sidebar/header dragging, fullscreen/return, minimize/restore and close/reopen. A second launch exited successfully while one application process remained. These observations apply to the packaged native app.
+
+The [browser preview screenshot](FND-01-browser.jpg) records the renderer layout only. The original smoke check reported no browser errors and only same-origin requests, including locally bundled fonts. It is not evidence for native window controls.
+
+## Logo correction
+
+The current screenshot was refreshed at 1440×900 after replacing the placeholder with the published XTrace mark. [TRADEMARKS.md](../../TRADEMARKS.md) records the original asset URL and checksum. The PNG source is unchanged from that published asset; both rendered images loaded at their full 436×436 source resolution, and the browser reported no warnings or errors.
+
+`node scripts/generate-icons.mjs`, `pnpm check` (four UI tests) and `pnpm tauri build --debug --bundles app` passed for this correction. The rebuilt bundle's `icon.icns` matches the generated source byte-for-byte and is selected by `CFBundleIconFile`. Native inspection confirmed the correct sidebar/welcome mark and real application name/version in a single process launched from that rebuilt bundle. The correction changes brand assets, image references and image clipping; earlier full workspace/native-interaction results remain historical evidence for the otherwise unchanged scaffold.
+
+## Current icon treatment
+
+The favicon and native icon center the unchanged published mark on opaque dark charcoal (`#17181b`) with 15% padding per edge. Two complete generations are byte-identical. The generated PNG matches the built browser favicon, and the generated ICNS matches the native bundle selected by `CFBundleIconFile`. The ICNS retains eight PNG-backed representations to avoid a native decoder color artifact in the pinned CLI's legacy RGB records.
+
+`pnpm check` (TypeScript, ESLint, formatting and four UI tests) and `pnpm tauri build --debug --bundles app` passed for this asset change. The sidebar and welcome-screen artwork remain unchanged.
+
+## Native window control spacing
+
+The current configuration `{ x: 16, y: 26 }` places the close-button frame 15 points from the left and 16 points from the top. Capture-free accessibility measurements verified the same inset at startup, after fullscreen return and after minimize/restore, with 16×16 native buttons and their system spacing. UI checks (four tests) and the debug native build pass. AppKit retains its standard active/inactive window appearance.
+
+The earlier native scaffold (`aed47c5`) measured the close button at 19 points from the left and 20 points from the top, with all three 16×16 controls retaining their native 23-point spacing. Read-only accessibility measurements confirmed the same margins after native menu Zoom/maximize, maximize → fullscreen → exit, and minimize → restore. Fullscreen-exit geometry was read before any focus, capture or manual resize. The 1120×720 minimum layout and Refresh were also exercised. UI checks (four tests), workspace fmt/strict Clippy/compilation tests and debug native builds pass; the lockfile adds only a direct edge to the already pinned AppKit crate.
+
+On this host, activating macOS window capture adds the system sharing indicator and temporarily moves the controls to the system 8-point margins. The geometry checks above deliberately exclude capture. Refresh succeeded. Automated drag attempts did not establish window movement, but a manual check on `faeaf21` confirmed that both the empty top header and the space beside the native window buttons drag normally. This is manual native evidence, separate from the earlier event-dispatch probes.
+
+## Deployment-target override
+
+With an inherited `MACOSX_DEPLOYMENT_TARGET=15.0`, `cargo build --workspace --locked` succeeds and Mach-O inspection reports `minos 14.0`. An isolated Cargo build-script probe using this repository’s exact configuration also receives `14.0`; without `force = true`, the same probe receives the inherited `15.0`. UI checks (four tests) pass.
+
+## Packaged fonts
+
+The debug native bundle previously reported CSP refusals for small fonts embedded as data URLs. Disabling Vite asset inlining keeps those fonts on the app origin under the existing CSP. `pnpm check` (four UI tests) and the debug native build pass. All 60 generated CSS font references resolve to existing bundled files, with no inline font URLs. A fresh process launched from the rebuilt bundle shows no font/CSP errors in Web Inspector.

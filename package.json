@@ -1,0 +1,31 @@
+{
+  "name": "xtrace-desktop-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": "22.23.1",
+    "pnpm": "10.33.0"
+  },
+  "scripts": {
+    "dev": "pnpm --dir apps/desktop/ui dev",
+    "build": "pnpm --dir apps/desktop/ui build",
+    "test": "pnpm --dir apps/desktop/ui test",
+    "typecheck": "pnpm --dir apps/desktop/ui typecheck",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
+    "tauri": "pnpm --dir apps/desktop/ui tauri"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.10.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.12.0",
+    "prettier": "3.9.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.0"
+  }
+}
