@@ -74,6 +74,36 @@ test('code and HTML comments cannot invent issue references', () => {
   );
 });
 
+test('rendered HTML issue anchors are included without reading comments or code examples', () => {
+  const url = 'https://github.com/XTraceAI/xtrace-desktop/issues/7';
+  for (const body of [
+    `<a href="${url}">Issue</a>`,
+    `<div><a href="${url}">Issue</a></div>`,
+    '<a href="/XTraceAI/xtrace-desktop/issues/7">Issue</a>',
+    '<a href="//github.com/XTraceAI/xtrace-desktop/%69ssues/7">Issue</a>',
+    `<a href="${url.replace('issues', '&#105;ssues')}">Issue</a>`,
+  ])
+    assert.deepEqual(linkedIssues(body, repository), [{ repository, number: 7 }]);
+  for (const body of [
+    `<!-- <a href="${url}">Issue</a> -->`,
+    `\`<a href="${url}">Issue</a>\``,
+    `\`\`\`html\n<a href="${url}">Issue</a>\n\`\`\``,
+    `    <a href="${url}">Issue</a>`,
+    `<pre><a href="${url}">#7</a></pre>`,
+    `<code><a href="${url}">#7</a></code>`,
+    `<textarea><a href="${url}">#7</a></textarea>`,
+    `<script><a href="${url}">#7</a></script>`,
+    `<span title="${url}">Description</span>`,
+    '<a href="#7">Section</a>',
+    '[Section](#7)',
+    '<a href="https://example.invalid/other/project#7">External page</a>',
+    '<a href="https://github.com.evil.invalid/other/project/issues/7">External page</a>',
+    '<a href="javascript:alert(7)">Example</a>',
+    '<a href="http://[">Invalid destination</a>',
+  ])
+    assert.deepEqual(linkedIssues(body, repository), []);
+});
+
 test('queue resolution includes every constituent original head and excludes later entries', () => {
   const entries = [
     entry(3, head, commit('f'), commit('1')),

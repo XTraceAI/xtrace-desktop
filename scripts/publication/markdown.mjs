@@ -49,17 +49,38 @@ export function disclosureControls(body) {
 }
 
 export function referenceProse(body) {
-  const walker = new Parser().parse(body).walker();
+  const document = parseFragment(new HtmlRenderer().render(new Parser().parse(body)));
   const parts = [];
-  let event;
-  while ((event = walker.next())) {
-    if (!event.entering) continue;
-    const node = event.node;
-    if (node.type === 'text') parts.push(node.literal);
-    else if (node.type === 'link') parts.push(' ' + node.destination + ' ');
-    else if (['code', 'code_block', 'html_inline', 'html_block'].includes(node.type))
-      parts.push(' ');
-    else if (['paragraph', 'softbreak', 'linebreak'].includes(node.type)) parts.push('\n');
-  }
+  const excluded = new Set(['code', 'pre', 'script', 'style', 'textarea']);
+  const visit = (node) => {
+    if (excluded.has(node.nodeName)) return;
+    if (node.nodeName === '#text') {
+      parts.push(node.value);
+      return;
+    }
+    if (node.nodeName === 'a') {
+      const href = node.attrs.find((attribute) => attribute.name === 'href')?.value;
+      if (href) {
+        try {
+          const url = new URL(href, 'https://github.com/');
+          if (
+            ['http:', 'https:'].includes(url.protocol) &&
+            url.hostname === 'github.com' &&
+            !url.port
+          )
+            parts.push(' https://github.com' + decodeURI(url.pathname) + ' ');
+        } catch {
+          // An invalid destination cannot identify a GitHub issue.
+        }
+      }
+    }
+    const block = /^(?:p|div|li|br|tr|td|th|h[1-6]|blockquote)$/.test(node.nodeName);
+    if (block) parts.push('\n');
+    for (const child of node.childNodes ?? []) visit(child);
+    if (block) parts.push('\n');
+  };
+  // HTML comments have no text children; code/raw-text containers are skipped.
+  // Rendering first preserves the context of inline HTML tags across AST nodes.
+  visit(document);
   return parts.join('');
 }
