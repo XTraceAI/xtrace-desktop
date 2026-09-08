@@ -176,6 +176,7 @@ export async function checkPublication({
       number: member.number,
       head: member.head,
       base: before.pr.base.sha,
+      retainedHeads: before.content.headRevisions.heads,
     });
     const after = await readPublicContent(api, repository, member.number);
     requireDisclosure(after);

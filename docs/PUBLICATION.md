@@ -56,6 +56,19 @@ it does not establish semantic approval or inspect attachment bytes. Version 2
 snapshots also bind retained source PR body-edit identities and title-change
 events. Existing version 1 snapshots must be refreshed once after upgrading.
 
+Force-push timeline events bind both former and replacement head identities.
+The local checker and advisory workflow fetch retained source heads into owned
+temporary refs and scan their reachable history without checking out their code.
+The refs are removed after success or failure. Current Git refs alone cannot
+establish this retained-history coverage; use the metadata-aware checker.
+
+Commit comments and attachment links on retained head ancestry remain included
+for source and linked PRs even after those commits leave the current PR list.
+This conservatively includes ancestor comments. Inaccessible history fails closed.
+The reader supports up to 100 distinct retained heads, 1,000 ancestors per head
+and 10,000 distinct retained commits, with bounded timeline pagination. Provider
+omissions cannot establish that inaccessible history is clean.
+
 Submitted reviews bind GraphQL `updatedAt`, `lastEditedAt` and retained edit IDs/text,
 including edit-and-revert pairs with unchanged submission timestamps. Source and
 linked-PR reviews use the same reader. Missing or inconsistent history fails
@@ -119,6 +132,11 @@ The scan fails if it exceeds 20,000 commits, 50,000 prepared inputs, 32 MiB per
 input or 256 MiB in total. Inputs include commit metadata, ref names, unique Git paths, file versions, diffs
 and supplied outbound text. Reaching a limit is an incomplete scan, not a clean
 result; unsupported repository entries, including submodules, also fail.
+
+Git LFS pointer blobs are rejected with an unsupported-object error, including
+historical versions and direct blob refs. Their external bytes are not available
+through ordinary Git blob scanning. Verified LFS object retrieval and scanning
+must be implemented before LFS-backed content can pass this checker.
 
 The scanner exits 0 for no detected findings, 1 for findings and 2 for a tooling,
 configuration or Git error. Either nonzero result prevents a successful gate.

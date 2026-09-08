@@ -112,6 +112,14 @@ export async function scanRepository(options) {
         )
       )
         throw new ScanFailure('invalid-source-kind');
+      // LFS pointers publish external bytes that this Git-object scanner cannot verify.
+      if (
+        ['git-blob', 'worktree', 'ref-target', 'tag-target'].includes(kind) &&
+        /^version https:\/\/(?:git-lfs\.github\.com\/spec\/v1|hawser\.github\.com\/spec\/v1|git-media\.io\/v2)\r?\n/.test(
+          data.subarray(0, 1024).toString('utf8'),
+        )
+      )
+        throw new ScanFailure('git-lfs-object-unsupported');
       bytes += data.length;
       count++;
       if (data.length > MAX_FILE_BYTES || bytes > MAX_BYTES || count > MAX_VERSIONS)

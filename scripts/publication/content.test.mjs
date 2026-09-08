@@ -33,6 +33,8 @@ export function fixture() {
     comments: [],
     reviews: [],
     reviewEdits: {},
+    headEvents: [],
+    retainedCommits: {},
     reviewComments: [],
     commitComments: [],
     commits: [{ sha: head }],
@@ -50,6 +52,37 @@ export function fixture() {
   state.api = async (path, body, method) => {
     state.calls.push(path);
     if (path === '/graphql') {
+      if (body.query.includes('query HeadRevisions'))
+        return {
+          data: {
+            repository: {
+              pullRequest: {
+                timelineItems: {
+                  nodes: structuredClone(state.headEvents),
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            },
+          },
+        };
+      if (body.query.includes('query RetainedHeadCommits')) {
+        const head = body.variables.head;
+        const nodes = (state.retainedCommits[head] ?? [head]).map((oid) => ({ oid }));
+        return {
+          data: {
+            repository: {
+              object: {
+                oid: head,
+                history: {
+                  totalCount: nodes.length,
+                  nodes,
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            },
+          },
+        };
+      }
       if (body.query.includes('query ReviewRevisions')) {
         const nodes = state.reviews.map((review) => {
           const edits = state.reviewEdits[review.id] ?? [];
@@ -1015,5 +1048,68 @@ test('source and linked review edit-and-revert retains history despite identical
       assert.throws(() => requireDisclosure(deleted), /stale/);
       assert.ok(!deleted.texts.includes('Retained private draft.'));
     });
+  }
+});
+
+test('force-pushed commit comments and attachments remain in source and linked disclosure', async () => {
+  for (const linked of [false, true]) {
+    const state = fixture();
+    const former = 'c'.repeat(40);
+    const ancestor = 'd'.repeat(40);
+    state.headEvents = [
+      {
+        id: 'force-1',
+        createdAt: timestamp,
+        beforeCommit: { oid: former },
+        afterCommit: { oid: head },
+      },
+    ];
+    state.retainedCommits[former] = [former, ancestor];
+    state.commitComments = [
+      {
+        id: 97,
+        commit_id: ancestor,
+        body: '![Retained attachment](https://example.invalid/old.png)',
+      },
+    ];
+    if (linked) {
+      state.references = [{ number: 9, repository: { nameWithOwner: repository } }];
+      state.issue.pull_request = {};
+      const api = state.api;
+      state.api = async (...args) => {
+        const route = args[0].split('?')[0];
+        const pull = '/repos/' + repository + '/pulls/9';
+        if (route === pull) return { commits: 1 };
+        if (route === pull + '/commits') return [{ sha: base }];
+        if ([pull + '/reviews', pull + '/comments'].includes(route)) return [];
+        if (
+          args[0] === '/graphql' &&
+          args[1].query.includes('query HeadRevisions') &&
+          args[1].variables.number === 3
+        )
+          return {
+            data: {
+              repository: {
+                pullRequest: {
+                  timelineItems: {
+                    nodes: [],
+                    pageInfo: { hasNextPage: false },
+                  },
+                },
+              },
+            },
+          };
+        return api(...args);
+      };
+    }
+    await seal(state);
+    const review = await readPublicContent(state.api, repository, 3);
+    assert.ok(review.texts.includes(state.commitComments[0].body));
+    const content = linked ? review.content.linked[0] : review.content;
+    assert.ok(content.headRevisions.commits.includes(ancestor));
+    assert.equal(content.commitComments[0].id, 97);
+    state.commitComments[0].body += ' Edited.';
+    const changed = await readPublicContent(state.api, repository, 3);
+    assert.throws(() => requireDisclosure(changed), /stale/);
   }
 });

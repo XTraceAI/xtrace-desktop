@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { pages } from './api.mjs';
 import { disclosureControls, normalizedBody } from './markdown.mjs';
-import { readReviewRevisions, readSourceRevisions } from './revisions.mjs';
+import { readHeadRevisions, readReviewRevisions, readSourceRevisions } from './revisions.mjs';
 import {
   linkedIssues,
   prNumber,
@@ -117,6 +117,8 @@ async function conversations(api, repository, number, isPullRequest, repositoryC
         commits.length === ids.size,
       'Source commit pagination is incomplete.',
     );
+    result.headRevisions = await readHeadRevisions(api, repository, number);
+    for (const oid of result.headRevisions.commits) ids.add(oid);
     result.commitComments = discussion(
       repositoryComments.filter((comment) => ids.has(sha(comment.commit_id))),
     );

@@ -59,7 +59,7 @@ test('real CLI hides paths and credentials when event-file loading fails', async
 
 test('real local CLI removes fetched refs after success, fetch failure, mismatch and scan rejection', async (t) => {
   const realGit = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
-  for (const outcome of ['success', 'fetch-failure', 'mismatch', 'secret']) {
+  for (const outcome of ['success', 'fetch-failure', 'mismatch', 'secret', 'retained-secret']) {
     await t.test(outcome, async (t) => {
       const temporary = await mkdtemp(join(tmpdir(), 'publication-local-'));
       t.after(() => rm(temporary, { recursive: true, force: true }));
@@ -87,6 +87,15 @@ test('real local CLI removes fetched refs after success, fetch failure, mismatch
       git('add', '.');
       git('commit', '-qm', 'Synthetic candidate');
       const head = git('rev-parse', 'HEAD');
+      let former;
+      if (outcome === 'retained-secret') {
+        git('checkout', '--detach', '-q');
+        await writeFile(join(repo, 'retained.txt'), secret);
+        git('add', '.');
+        git('commit', '-qm', 'Synthetic removed head');
+        former = git('rev-parse', 'HEAD');
+        git('checkout', '-q', 'main');
+      }
       const repository = 'example/project';
       const pr = {
         number: 3,
@@ -123,11 +132,49 @@ test('real local CLI removes fetched refs after success, fetch failure, mismatch
         '/repos/example/project/issues/3/comments': [],
         '/repos/example/project/comments': [],
       };
-      const review = await readPublicContent(
-        async (path) => structuredClone(responses[path.split('?')[0]]),
-        repository,
-        3,
-      );
+      const responseFor = (path, body) => {
+        if (path === '/graphql' && former) {
+          if (body.query.includes('query HeadRevisions'))
+            return {
+              data: {
+                repository: {
+                  pullRequest: {
+                    timelineItems: {
+                      nodes: [
+                        {
+                          id: 'force-1',
+                          createdAt: '2026-01-01T00:00:00Z',
+                          beforeCommit: { oid: former },
+                          afterCommit: { oid: head },
+                        },
+                      ],
+                      pageInfo: { hasNextPage: false },
+                    },
+                  },
+                },
+              },
+            };
+          if (body.query.includes('query RetainedHeadCommits')) {
+            const oid = body.variables.head;
+            return {
+              data: {
+                repository: {
+                  object: {
+                    oid,
+                    history: {
+                      totalCount: 1,
+                      nodes: [{ oid }],
+                      pageInfo: { hasNextPage: false },
+                    },
+                  },
+                },
+              },
+            };
+          }
+        }
+        return structuredClone(responses[path.split('?')[0]]);
+      };
+      const review = await readPublicContent(responseFor, repository, 3);
       pr.body = pr.body.replace('pending', review.digest);
       responses['/graphql'].data.repository.pullRequest.body = pr.body;
       const data = join(temporary, 'responses.json');
@@ -141,7 +188,11 @@ const original = globalThis.fetch;
 globalThis.fetch = async (url, options) => {
   if (new URL(url).hostname !== 'api.github.com') return original(url, options);
   const responses = JSON.parse(readFileSync(${JSON.stringify(data)}, 'utf8'));
-  const response = responses[new URL(url).pathname];
+  const path = new URL(url).pathname;
+  const former = ${JSON.stringify(former ?? null)};
+  const head = ${JSON.stringify(head)};
+  const responseFor = ${responseFor.toString()};
+  const response = responseFor(path, options.body ? JSON.parse(options.body) : undefined);
   if (!response) throw new Error('Unexpected synthetic API route');
   return new Response(JSON.stringify(response), { status: 200 });
 };
@@ -158,7 +209,9 @@ const args = process.argv.slice(2);
 if (args.includes('fetch')) {
   const ref = args.at(-1).split(':')[1];
   writeFileSync(${JSON.stringify(observed)}, ref, { mode: 0o600 });
-  const result = spawnSync(${JSON.stringify(realGit)}, ['update-ref', ref, ${JSON.stringify(outcome === 'mismatch' ? base : head)}]);
+  const requested = args.at(-1).slice(1).split(':')[0];
+  const target = requested.startsWith('refs/pull/') ? ${JSON.stringify(outcome === 'mismatch' ? base : head)} : requested;
+  const result = spawnSync(${JSON.stringify(realGit)}, ['update-ref', ref, target]);
   process.exit(${outcome === 'fetch-failure' ? 128 : 'result.status'});
 }
 const result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: 'inherit' });

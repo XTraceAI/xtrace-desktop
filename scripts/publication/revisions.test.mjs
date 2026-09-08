@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PublicationError } from './metadata.mjs';
-import { bodyRevisionIdentity, readReviewRevisions, readSourceRevisions } from './revisions.mjs';
+import {
+  bodyRevisionIdentity,
+  readHeadRevisions,
+  readReviewRevisions,
+  readSourceRevisions,
+} from './revisions.mjs';
 
 const time = '2026-01-01T00:00:00Z';
 const current = { body: 'Public description.', title: 'Public title' };
@@ -199,4 +204,78 @@ test('review revisions paginate by review and reject incomplete history', async 
   };
   for (const [name, mutate] of Object.entries(cases))
     await t.test(name, async () => assert.rejects(readReviews(makeApi(mutate)), PublicationError));
+});
+
+test('retained head timeline and ancestry reject missing or incomplete pages', async (t) => {
+  const former = 'c'.repeat(40);
+  const next = 'd'.repeat(40);
+  const ancestor = 'a'.repeat(40);
+  const makeApi =
+    (mutate = () => {}) =>
+    async (_path, request) => {
+      const timeline = request.query.includes('query HeadRevisions');
+      const index = request.variables.after === null ? 0 : 1;
+      const oid = request.variables.head;
+      const connection = timeline
+        ? {
+            nodes: [
+              {
+                id: 'force-1',
+                createdAt: time,
+                beforeCommit: { oid: former },
+                afterCommit: { oid: next },
+              },
+            ],
+            pageInfo: { hasNextPage: false },
+          }
+        : {
+            totalCount: 2,
+            nodes: [{ oid: index ? ancestor : oid }],
+            pageInfo: { hasNextPage: !index, endCursor: 'next' },
+          };
+      const response = {
+        data: {
+          repository: timeline
+            ? { pullRequest: { timelineItems: connection } }
+            : { object: { oid, history: connection } },
+        },
+      };
+      mutate(connection, response, timeline, index);
+      return response;
+    };
+  const read = (api) => readHeadRevisions(api, 'example/project', 3);
+  const result = await read(makeApi());
+  assert.deepEqual(result.heads, [former, next]);
+  assert.deepEqual(result.commits, [ancestor, former, next]);
+  for (const [name, mutate] of Object.entries({
+    'API error': (_c, r) => (r.errors = [{}]),
+    'missing former object': (c, _r, timeline) => {
+      if (timeline) c.nodes[0].beforeCommit = null;
+    },
+    'missing event identity': (c, _r, timeline) => {
+      if (timeline) delete c.nodes[0].id;
+    },
+    'invalid event time': (c, _r, timeline) => {
+      if (timeline) c.nodes[0].createdAt = 'invalid';
+    },
+    'repeated timeline page': (c, _r, timeline) => {
+      if (timeline) c.pageInfo = { hasNextPage: true, endCursor: 'repeat' };
+    },
+    'wrong history head': (_c, r, timeline) => {
+      if (!timeline) r.data.repository.object.oid = ancestor;
+    },
+    'truncated history': (c, _r, timeline) => {
+      if (!timeline) c.totalCount++;
+    },
+    'duplicate ancestor': (c, _r, timeline) => {
+      if (!timeline) c.nodes = [{ oid: ancestor }];
+    },
+    'missing history cursor': (c, _r, timeline) => {
+      if (!timeline) delete c.pageInfo.endCursor;
+    },
+    'changed count': (c, _r, timeline, index) => {
+      if (!timeline && index) c.totalCount++;
+    },
+  }))
+    await t.test(name, async () => assert.rejects(read(makeApi(mutate)), PublicationError));
 });

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { normalizedBody } from './markdown.mjs';
-import { prNumber, repositoryName, requireValue, revisionTimestamp } from './metadata.mjs';
+import { prNumber, repositoryName, requireValue, revisionTimestamp, sha } from './metadata.mjs';
 
 const hash = (text) => createHash('sha256').update(text).digest('hex');
 
@@ -209,4 +209,110 @@ export async function readSourceRevisions(api, repository, number, current) {
       ...records.title.flatMap((edit) => [edit.previousTitle, edit.currentTitle]),
     ],
   };
+}
+
+// Force-push timeline entries retain both sides even after branch refs move.
+export async function readHeadRevisions(api, repository, number) {
+  const [owner, name] = repositoryName(repository).split('/');
+  prNumber(number);
+  const query = `query HeadRevisions($owner:String!,$name:String!,$number:Int!,$after:String) {
+    repository(owner:$owner,name:$name) { pullRequest(number:$number) {
+      timelineItems(first:100,after:$after,itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT]) {
+        nodes { ... on HeadRefForcePushedEvent {
+          id createdAt beforeCommit { oid } afterCommit { oid }
+        } } pageInfo { hasNextPage endCursor }
+      }
+    } }
+  }`;
+  const events = [];
+  const ids = new Set();
+  const cursors = new Set();
+  const heads = new Set();
+  let after = null;
+  for (let page = 0; ; page++) {
+    requireValue(page < 10, 'Retained head timeline exceeds the supported limit.');
+    const response = await api('/graphql', { query, variables: { owner, name, number, after } });
+    const connection = response.data?.repository?.pullRequest?.timelineItems;
+    requireValue(
+      !response.errors &&
+        Array.isArray(connection?.nodes) &&
+        typeof connection.pageInfo?.hasNextPage === 'boolean',
+      'Retained head timeline is unavailable.',
+    );
+    for (const event of connection.nodes) {
+      requireValue(
+        typeof event?.id === 'string' && event.id && !ids.has(event.id),
+        'Retained head event identity is missing or duplicated.',
+      );
+      ids.add(event.id);
+      const before = sha(event.beforeCommit?.oid);
+      const next = sha(event.afterCommit?.oid);
+      events.push({
+        id: event.id,
+        created: revisionTimestamp(event.createdAt),
+        before,
+        after: next,
+      });
+      heads.add(before);
+      heads.add(next);
+      requireValue(heads.size <= 100, 'Too many retained source heads.');
+    }
+    if (!connection.pageInfo.hasNextPage) break;
+    after = connection.pageInfo.endCursor;
+    requireValue(
+      typeof after === 'string' && after && !cursors.has(after),
+      'Retained head timeline cursor is incomplete.',
+    );
+    cursors.add(after);
+  }
+  const commits = new Set();
+  const historyQuery = `query RetainedHeadCommits($owner:String!,$name:String!,$head:String!,$after:String) {
+    repository(owner:$owner,name:$name) { object(expression:$head) { ... on Commit {
+      oid history(first:100,after:$after) {
+        totalCount nodes { oid } pageInfo { hasNextPage endCursor }
+      }
+    } } }
+  }`;
+  for (const head of heads) {
+    const seen = new Set();
+    const historyCursors = new Set();
+    let cursor = null;
+    let count;
+    for (let page = 0; ; page++) {
+      requireValue(page < 10, 'Retained commit ancestry exceeds the supported limit.');
+      const response = await api('/graphql', {
+        query: historyQuery,
+        variables: { owner, name, head, after: cursor },
+      });
+      const object = response.data?.repository?.object;
+      const history = object?.history;
+      requireValue(
+        !response.errors &&
+          object?.oid === head &&
+          Array.isArray(history?.nodes) &&
+          Number.isSafeInteger(history.totalCount) &&
+          history.totalCount > 0 &&
+          (count === undefined || count === history.totalCount) &&
+          typeof history.pageInfo?.hasNextPage === 'boolean',
+        'Retained commit ancestry is unavailable or changed.',
+      );
+      count = history.totalCount;
+      for (const node of history.nodes) {
+        const oid = sha(node?.oid);
+        requireValue(!seen.has(oid), 'Retained commit ancestry has duplicate pages.');
+        seen.add(oid);
+        commits.add(oid);
+        requireValue(commits.size <= 10_000, 'Too many retained source commits.');
+      }
+      if (!history.pageInfo.hasNextPage) break;
+      cursor = history.pageInfo.endCursor;
+      requireValue(
+        typeof cursor === 'string' && cursor && !historyCursors.has(cursor),
+        'Retained commit ancestry cursor is incomplete.',
+      );
+      historyCursors.add(cursor);
+    }
+    requireValue(seen.size === count && seen.has(head), 'Retained commit ancestry is incomplete.');
+  }
+  return { events, heads: [...heads].sort(), commits: [...commits].sort() };
 }

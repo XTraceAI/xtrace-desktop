@@ -146,6 +146,24 @@ async function main() {
         git('rev-parse', sourceRef) === member.head,
         'Source PR changed while its history was fetched; rerun checks.',
       );
+      for (const retained of review.content.headRevisions.heads) {
+        if (retained === member.head) continue;
+        const retainedRef = 'refs/publication-local/' + randomUUID();
+        sourceRefs.push(retainedRef);
+        git(
+          'fetch',
+          '--no-tags',
+          '--no-recurse-submodules',
+          '--no-write-fetch-head',
+          `https://github.com/${repository}.git`,
+          `+${sha(retained)}:${retainedRef}`,
+        );
+        requireValue(
+          git('rev-parse', retainedRef) === retained,
+          'Retained source head could not be verified.',
+        );
+        git('cat-file', '-e', `${retained}^{commit}`);
+      }
       // Source heads may not be ancestors of squash/rebase queue commits.
       git('cat-file', '-e', `${pr.base.sha}^{commit}`);
       scanArgs.push('--diff', `${pr.base.sha}..${member.head}`);

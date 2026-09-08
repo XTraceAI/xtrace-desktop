@@ -374,3 +374,35 @@ exit 0
     message: 'scanner-execution-failed',
   });
 });
+
+test('Git LFS pointers fail closed in current, historical and direct-ref blobs', async (t) => {
+  for (const kind of ['current', 'historical', 'direct-ref', 'worktree']) {
+    await t.test(kind, async (t) => {
+      const repo = await fixture(t);
+      const pointer =
+        'version https://git-lfs.github.com/spec/v1\n' +
+        'oid sha256:' +
+        'a'.repeat(64) +
+        '\nsize 100\n';
+      if (kind === 'worktree') {
+        await writeFile(join(repo, 'README.md'), pointer);
+      } else {
+        await tracked(repo, 'asset.dat', pointer);
+        git(repo, 'commit', '-qm', 'Synthetic LFS pointer');
+        if (kind === 'historical') {
+          git(repo, 'rm', 'asset.dat');
+          git(repo, 'commit', '-qm', 'Remove current pointer');
+        }
+        if (kind === 'direct-ref') {
+          const oid = git(repo, 'rev-parse', 'HEAD:asset.dat');
+          git(repo, 'reset', '--hard', 'HEAD~1');
+          git(repo, 'update-ref', 'refs/tags/synthetic-lfs', oid);
+        }
+      }
+      const result = scan(repo);
+      assert.equal(result.status, 2);
+      assert.match(result.output, /git-lfs-object-unsupported/);
+      assert.doesNotMatch(result.output, /Secret scan passed/);
+    });
+  }
+});
