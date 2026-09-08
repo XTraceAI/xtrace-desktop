@@ -95,6 +95,25 @@ test('removed historical credentials remain blocking', async (t) => {
   expectDetected(scan(repo), secret);
 });
 
+test('credentials only in Git paths block staged, current and removed historical empty files', async (t) => {
+  for (const kind of ['staged', 'current', 'historical'])
+    await t.test(kind, async (t) => {
+      const repo = await fixture(t);
+      const secret = marker();
+      const path = `tests/fixtures/${secret}/empty.txt`;
+      await tracked(repo, path, '');
+      if (kind !== 'staged') git(repo, 'commit', '-qm', 'Synthetic named file');
+      if (kind === 'historical') {
+        git(repo, 'rm', path);
+        git(repo, 'commit', '-qm', 'Remove synthetic named file');
+      }
+      const result = scan(repo);
+      expectDetected(result, secret);
+      assert.match(result.output, /git-path\[/);
+      assert.ok(!result.output.includes(path));
+    });
+});
+
 test('annotated tag messages, nested tags and tagger metadata are scanned without leaking values', async (t) => {
   for (const kind of ['message', 'nested', 'tagger']) {
     await t.test(kind, async (t) => {

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { scanRepository } from '../security/scan-secrets.mjs';
 import { githubApi, pages } from './api.mjs';
 import { readPublicContent, requireDisclosure } from './content.mjs';
+import { withCandidateSource } from './source.mjs';
 import {
   prNumber,
   PublicationError,
@@ -20,13 +21,12 @@ const events = new Set([
   'pull_request_target',
   'issues',
   'issue_comment',
-  'commit_comment',
   'schedule',
   'workflow_run',
   'workflow_dispatch',
 ]);
 
-export async function scanText(repo, texts) {
+export async function scanText(repo, texts, source, sourceOptions) {
   const temporary = await mkdtemp(join(tmpdir(), 'publication-content-'));
   try {
     const content = [];
@@ -35,9 +35,16 @@ export async function scanText(repo, texts) {
       await writeFile(path, text, { mode: 0o600 });
       content.push(path);
     }
-    requireValue(
-      (await scanRepository({ repo, diffs: [], content })).length === 0,
-      'Detected secret in publication content; remove it and repeat disclosure review.',
+    await withCandidateSource(
+      repo,
+      source,
+      async ({ base, head }) => {
+        requireValue(
+          (await scanRepository({ repo, diffs: [`${base}..${head}`], content })).length === 0,
+          'Detected secret in candidate source or publication content; remove it and repeat disclosure review.',
+        );
+      },
+      sourceOptions,
     );
   } finally {
     await rm(temporary, { recursive: true, force: true });
@@ -102,7 +109,12 @@ export async function recheckPublication({
       const before = await readPublicContent(api, repository, member.number);
       requireValue(before.pr.head.sha === member.head, 'Source PR changed; rerun content checks.');
       requireDisclosure(before);
-      await scan(repo, before.texts);
+      await scan(repo, before.texts, {
+        repository,
+        number: member.number,
+        head: member.head,
+        base: before.pr.base.sha,
+      });
       const after = await readPublicContent(api, repository, member.number);
       requireDisclosure(after);
       requireValue(
@@ -120,7 +132,7 @@ export async function recheckPublication({
       conclusion = 'success';
       verifiedDigest = before.digest;
       summary =
-        'Current content matches the checked disclosure snapshot and has no detected secret. Semantic review remains the reviewer’s responsibility.';
+        'Trusted scanning found no detected secret in candidate source or current disclosure content. The snapshot is current; semantic review remains the reviewer’s responsibility.';
     } catch (error) {
       failures++;
       if (error instanceof PublicationError) summary = error.message;

@@ -7,9 +7,7 @@ on:
     types: [edited, deleted, closed, reopened, transferred]
   issue_comment:
     types: [created, edited, deleted]
-  commit_comment:
-    types: [created]
-  # GitHub has no commit-comment edit/delete or relationship-edit trigger.
+  # GitHub Actions has no commit-comment or relationship-edit trigger.
   # Reconcile those changes periodically as well as on delivered events.
   schedule:
     - cron: '7,22,37,52 * * * *'
@@ -49,7 +47,7 @@ jobs:
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - name: Install trusted pinned dependencies without lifecycle scripts
         run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Recheck current public content using default-branch code
+      - name: Scan candidate objects and current content using default-branch code
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/publication/recheck.mjs
