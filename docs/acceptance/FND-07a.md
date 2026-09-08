@@ -26,7 +26,7 @@ pnpm check
 pnpm build
 ```
 
-Two focused WebKit scenarios pass, one per emulated theme. Their fixture uses port 5179, 1120×720, local bundled fonts, and native Popover behavior. The inherited overlay suite uses port 5175. No machine appearance settings are changed.
+Two focused WebKit scenarios pass on pinned Playwright 1.58.2, one per emulated theme. The four screenshots were regenerated on that version. Their fixture uses port 5179, 1120×720, local bundled fonts, and native Popover behavior. The inherited overlay suite uses port 5175. No machine appearance settings are changed.
 
 ## Visual evidence
 
