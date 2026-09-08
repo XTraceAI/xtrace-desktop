@@ -49,6 +49,21 @@ The debug bundle can be opened with:
 open "target/debug/bundle/macos/XTrace Desktop.app"
 ```
 
+## Brand assets
+
+The UI uses `apps/desktop/ui/public/mark.png`; its official source and checksum
+are recorded in [TRADEMARKS.md](TRADEMARKS.md#brand-asset-provenance). After a
+frozen pnpm install, regenerate the native icons from the repository root:
+
+```sh
+node scripts/generate-icons.mjs
+```
+
+The script invokes the pinned Tauri CLI and updates `icon.png` and `icon.icns`
+under `apps/desktop/ui/public/icons/` from the committed source mark. Rebuild the
+debug bundle and inspect the UI mark and Finder/Dock icon before committing an
+asset change.
+
 ## Native verification
 
 At the default 1440×900 size and minimum 1120×720 size, confirm that the three native window controls sit above the sidebar brand and the main area reaches the top edge without a separate title strip. Drag the empty sidebar/header areas; Refresh must still work as a button. Verify minimize/restore, fullscreen/return and close/reopen. Launch the executable again and confirm it focuses the same process and window.

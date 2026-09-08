@@ -69,9 +69,6 @@ button:focus-visible {
   font-weight: 700;
   letter-spacing: -1px;
 }
-.brand img {
-  border-radius: 9px;
-}
 .brand small {
   display: block;
   margin-top: -4px;
@@ -175,7 +172,6 @@ main {
 }
 .welcome-mark {
   margin-bottom: 30px;
-  border-radius: 18px;
 }
 .eyebrow {
   margin: 0 0 14px;

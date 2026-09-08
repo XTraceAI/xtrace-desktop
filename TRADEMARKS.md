@@ -12,3 +12,18 @@ You may make truthful, reasonable references to XTrace when describing the
 origin of your fork. Preserve the attribution notices required by the license.
 This policy does not limit the source-code permissions granted by Apache 2.0
 or rights to use marks provided by applicable law.
+
+## Brand asset provenance
+
+The application's [source mark](apps/desktop/ui/public/mark.png) is an unmodified
+copy of the [XTrace artwork](https://framerusercontent.com/images/CCL9SlxEtiy6l2ZE3DOuoGVmnQ.png)
+published on the [official XTrace website](https://xtrace.ai/). It is a 436×436
+transparent PNG with SHA-256:
+
+```text
+2c87ab67e1736cbca24688d9c6ffb3d9d7fc521b38d56ac1bb81d7614765fdbb
+```
+
+The native app icons are generated from this mark as described in
+[DEVELOPING.md](DEVELOPING.md#brand-assets). The trademark terms above apply to
+the source artwork and generated icons.
