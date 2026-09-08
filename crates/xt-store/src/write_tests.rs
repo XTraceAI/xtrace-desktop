@@ -1,4 +1,7 @@
-use crate::{CanonicalRecord, SessionMeta, SessionSource, Store, WriteStats};
+use crate::{
+    CanonicalRecord, SessionMeta, SessionSource, Store, WriteStats,
+    batch::{IngestBatch, SourceCursor},
+};
 use rusqlite::{
     limits::Limit,
     trace::{TraceEvent, TraceEventCodes},
@@ -50,13 +53,14 @@ fn large_replay_prefetches_only_requested_records_in_bounded_queries() {
     for input in &mut enrich {
         input.message.model = Some("synthetic-model".into());
     }
-    for (input, expected) in [
+    for (input, expected, composed) in [
         (
             &enrich,
             WriteStats {
                 enriched: 10_000,
                 ..WriteStats::default()
             },
+            false,
         ),
         (
             &records,
@@ -64,6 +68,15 @@ fn large_replay_prefetches_only_requested_records_in_bounded_queries() {
                 ignored: 10_000,
                 ..WriteStats::default()
             },
+            false,
+        ),
+        (
+            &records,
+            WriteStats {
+                ignored: 10_000,
+                ..WriteStats::default()
+            },
+            true,
         ),
     ] {
         SELECTS.set(0);
@@ -81,16 +94,32 @@ fn large_replay_prefetches_only_requested_records_in_bounded_queries() {
                 }
             }),
         );
-        let outcome = store.upsert_records("replay", input, true).unwrap();
+        let outcome = if composed {
+            let metadata = SessionMeta::new("replay", "claude", SessionSource::Fixture);
+            let cursor = SourceCursor {
+                source: SessionSource::Fixture,
+                cursor_key: "large-replay".into(),
+                position: 10_000,
+                updated_at: 100,
+            };
+            let mut batch = IngestBatch::new(&metadata, input, true);
+            batch.cursor = Some(&cursor);
+            store.apply_ingest_batch(&batch).unwrap().stats
+        } else {
+            store.upsert_records("replay", input, true).unwrap()
+        };
         store.connection.trace_v2(TraceEventCodes::empty(), None);
         assert_eq!(outcome, expected);
         // 10k records + 10k usage rows + 10k tools + the target session.
         // Unrequested records/children must never be materialized by a full-table read.
-        assert_eq!(ROWS_READ.get(), 30_001);
+        // The composed boundary additionally reads session metadata once before
+        // the shared record writer. Advancing the cursor adds no SELECT.
+        assert_eq!(ROWS_READ.get(), 30_001 + usize::from(composed));
         let queries = SELECTS.get();
+        let maximum = 62 + usize::from(composed);
         assert!(
-            (1..=62).contains(&queries),
-            "10k replay must need at most 62 SELECTs, observed {queries}"
+            (1..=maximum).contains(&queries),
+            "10k replay must need at most {maximum} SELECTs, observed {queries}"
         );
     }
     let loaded = store.records("replay").unwrap();
