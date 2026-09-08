@@ -136,8 +136,9 @@ The relay contains no checkout, actions, script dependencies or token permission
 GitHub runs review workflows from the PR merge commit, as described in its
 [event trust model](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target). Runs reconcile current API state, rather than
 trusting an old event's PR content, and reject changes observed during scanning.
-Current queue heads receive blocking pending checks before sequential PR scans;
-a later read or scan failure cannot preserve an earlier successful queue result.
+Current queue heads and enumerated PRs receive completed failure checks before
+scan jobs are scheduled. A scan can replace its own failure with success only
+after current source, content and trusted-code identities pass validation.
 They execute only the default branch, use `checks:write` solely to update the
 named content check, and never run PR scripts or consume workflow artifacts.
 The trusted scanner fetches each exact source PR head into a temporary Git ref,
@@ -148,9 +149,12 @@ regular-file mode. This rejects deletion, renaming, trigger changes and conditio
 job changes; checking trigger names alone would not protect event delivery.
 Both base and head must remain unchanged through the final success check. Fetch authentication is transient and
 restricted to the validated repository's GitHub URL; it is not passed to scanner
-processes. Every outcome removes the temporary ref. Pre-existing reachable refs
+processes. Normal completion and handled errors remove the temporary ref. A hard timeout
+discards the isolated job checkout rather than sharing its temporary refs. Pre-existing reachable refs
 remain in the whole-history scan, so an existing repository leak still blocks.
-Queue results require the current identities of those scanned source PRs.
+Queue certification remains disabled: queue heads retain failure until trusted
+combined-tree scanning and live queue acceptance are implemented. Scanning
+individual PRs does not certify their combined result.
 
 Disposable Git regressions verify that replacing the candidate scanner with a
 success stub cannot hide a source secret, that the candidate code is not executed,
@@ -164,21 +168,45 @@ and removed historical Git names, without printing the name.
 Pending events can coalesce because each run rechecks every open PR and queue
 head. A manual workflow dispatch retries an incomplete run.
 
-The current rechecker scans PRs sequentially within one 15-minute workflow budget.
-With enough slow scans, that deadline can leave later checks pending, and fixed
-retry order can starve those PRs. This remains an open readiness blocker. Before
-activation, bound per-PR work, guarantee fair progress, and ensure every created
-check receives a terminal result. A regression must exhaust the shared budget
-with multiple slow PRs and prove that later PRs eventually receive an attempt;
-increasing the outer timeout alone is insufficient.
+The preparation job enumerates up to 256 open PRs and emits one matrix job per
+PR. Every created `publication-content` check starts as a completed failure,
+labelled as an unfinished scan. Successful validation replaces only that run's
+matching head/check identity with success. Setup failure, cancellation, timeout
+or a failed result update leaves a terminal blocking result. The check can
+therefore appear red while a scan is running; this is deliberate.
+
+Each matrix job gets an isolated checkout of the preparation job's trusted
+source SHA, with at most four jobs active and `fail-fast: false`. A separate
+supervisor terminates the entire scanner process group after four minutes,
+including synchronous Git/scanner descendants. The job has a ten-minute limit
+including setup. A slow or failed early PR cannot cancel later jobs or consume
+their scan budgets. No shared per-run scan deadline or retry cursor selects only
+a prefix of PRs. Default-branch advances invalidate old-policy workers; source,
+base and disclosure content are reread before success. Jobs never consume
+candidate artifacts or share fetched candidate refs.
+
+Above 256 open PRs, preparation fails after creating blocking results for the
+enumerated PRs; it never silently truncates the matrix. The existing bounded
+API pagination limit still applies. GitHub event delivery, runner availability
+and successful API writes remain prerequisites: an API outage cannot guarantee
+invalidation of checks whose creation was never reached. Rerun reconciliation
+and verify current results immediately before a merge or publication decision.
+
+Regression tests run multiple real blocking child processes beyond one scan
+budget and prove later jobs still receive an attempt. They also verify descendant
+termination, no delayed write, terminal failure without a worker, failed result
+updates, run/head/context ownership, matrix overflow and trusted-code advances.
+These local tests do not claim live GitHub matrix scheduling evidence; activation
+must exercise that behavior on the installed default-branch workflow.
 
 Install the dedicated relay first in a small, maintainer-reviewed prerequisite
 change on the default branch. Then update the publication-gate branch so its
 actual base and head both include that relay, and review/install the remaining
 trusted workflow. The initial gate cannot certify a base lacking the relay;
 stacking the gate on the prerequisite makes this dependency reviewable but does
-not activate trusted default-branch execution. Keep activation and queue evidence
-pending until those reviewed changes actually land.
+not activate trusted default-branch execution. Follow [the activation sequence](PUBLICATION_ACTIVATION.md); keep activation
+evidence pending until reviewed changes land. Queue activation remains separately
+deferred until a public launch and its required combined-tree checks.
 
 The relay is immutable while it is pinned. To change it later, first add a
 separately named replacement while preserving the current relay. A subsequent

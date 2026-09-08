@@ -8,7 +8,7 @@ import { scanRepository } from '../security/scan-secrets.mjs';
 import test from 'node:test';
 import { closingIssues, readPublicContent, requireDisclosure } from './content.mjs';
 import { ATTESTATION } from './metadata.mjs';
-import { recheckPublication } from './recheck.mjs';
+import { preparePublication, checkPublication } from './recheck.mjs';
 
 export const repository = 'example/project';
 export const base = 'a'.repeat(40);
@@ -76,6 +76,10 @@ export function fixture() {
           },
         },
       };
+    }
+    if (path.includes('/check-runs/') && !body) {
+      const id = Number(path.split('/').at(-1));
+      return structuredClone(state.writes[id - 1].body);
     }
     if (path.includes('/check-runs')) {
       state.writes.push({ path, body: structuredClone(body), method });
@@ -245,15 +249,28 @@ test('linked API errors, incomplete pagination and unsupported external issue re
 });
 
 const event = { repository: { full_name: repository } };
-const reconcile = (state, scan = async () => {}, eventName = 'issue_comment', payload = event) =>
-  recheckPublication({
+const reconcile = async (
+  state,
+  scan = async () => {},
+  eventName = 'issue_comment',
+  payload = event,
+) => {
+  const options = {
     api: state.api,
     repository,
     repo: 'unused-synthetic-repo',
-    eventName,
-    event: payload,
-    scan,
-  });
+    runId: 1,
+    trustedHead: base,
+  };
+  const plan = await preparePublication({ ...options, eventName, event: payload });
+  const results = await Promise.all(
+    plan.pending.map((member) => checkPublication({ ...options, member, scan })),
+  );
+  return {
+    checked: results.length + plan.queue.length,
+    failures: results.reduce((sum, result) => sum + result.failures, plan.queue.length),
+  };
+};
 
 test('source commit comments and attachments invalidate snapshots on creation, edit and deletion', async () => {
   for (const change of ['create', 'edit', 'delete']) {
@@ -323,7 +340,7 @@ test('issue edits invalidate the check and refreshed disclosure passes without w
     1,
   );
   assert.equal(scans, 0);
-  assert.equal(state.writes[0].body.status, 'in_progress');
+  assert.equal(state.writes[0].body.status, 'completed');
   assert.equal(state.writes[1].body.conclusion, 'failure');
   await seal(state);
   assert.equal(
@@ -454,37 +471,23 @@ test('trusted workflow signals require an allowed workflow, event and repository
   await assert.rejects(reconcile(fixture(), undefined, 'pull_request_review'), /Unsupported/);
 });
 
-test('queue checks certify the original source digest and reject later content changes', async () => {
-  for (const change of [false, 'comment', 'base']) {
-    const state = fixture();
-    const queueHead = 'c'.repeat(40);
-    state.queue = [
-      {
-        baseCommit: { oid: base },
-        headCommit: { oid: queueHead },
-        pullRequest: { number: 3, headRefOid: head },
-      },
-    ];
-    await seal(state);
-    if (change) {
-      const api = state.api;
-      let queueReads = 0;
-      state.api = async (...args) => {
-        if (args[0] === '/graphql' && args[1].variables.branch && ++queueReads === 2) {
-          if (change === 'base') state.pr.base.sha = 'd'.repeat(40);
-          else state.comments.push({ id: 20, body: 'Added after the source scan.' });
-        }
-        return api(...args);
-      };
-    }
-    const result = await reconcile(state);
-    assert.equal(result.failures, change ? 1 : 0);
-    assert.equal(state.writes[0].body.head_sha, queueHead);
-    assert.equal(state.writes.at(-1).body.conclusion, change ? 'failure' : 'success');
-  }
+test('queue certification remains failed until trusted combined-tree scanning is activated', async () => {
+  const state = fixture();
+  state.queue = [
+    {
+      baseCommit: { oid: base },
+      headCommit: { oid: 'c'.repeat(40) },
+      pullRequest: { number: 3, headRefOid: head },
+    },
+  ];
+  await seal(state);
+  const result = await reconcile(state);
+  assert.equal(result.failures, 1);
+  assert.equal(state.writes[0].body.conclusion, 'failure');
+  assert.equal(state.writes.filter((write) => write.path.endsWith('/check-runs/1')).length, 0);
 });
 
-test('queue heads are pending before scans and remain blocked when later reads fail', async () => {
+test('queue heads have terminal failures before scans and remain blocked when later reads fail', async () => {
   for (const failAt of ['scan', 'pull-list']) {
     const state = fixture();
     const queueHead = 'c'.repeat(40);
@@ -498,7 +501,7 @@ test('queue heads are pending before scans and remain blocked when later reads f
     await seal(state);
     const assertQueuePending = () => {
       assert.equal(state.writes[0].body.head_sha, queueHead);
-      assert.equal(state.writes[0].body.status, 'in_progress');
+      assert.equal(state.writes[0].body.status, 'completed');
       assert.ok(!state.writes.some(({ body }) => body.conclusion === 'success'));
     };
     if (failAt === 'pull-list') {
@@ -518,7 +521,7 @@ test('queue heads are pending before scans and remain blocked when later reads f
         throw new Error('Synthetic scan failure');
       });
       assert.equal(result.failures, 2);
-      assert.equal(state.writes.at(-1).path, '/repos/' + repository + '/check-runs/1');
+      assert.equal(state.writes[0].body.conclusion, 'failure');
       assert.equal(state.writes.at(-1).body.conclusion, 'failure');
     }
   }
@@ -671,4 +674,123 @@ test('discussion revision timestamps are required and detect reverted text when 
     comment.submitted_at = undefined;
     await assert.rejects(readPublicContent(state.api, repository, 3), /revision timestamp/);
   }
+});
+
+test('every scheduled check is already terminal when work is cancelled or metadata fails', async () => {
+  const state = fixture();
+  await seal(state);
+  const plan = await preparePublication({
+    api: state.api,
+    repository,
+    runId: 1,
+    trustedHead: base,
+    eventName: 'issue_comment',
+    event,
+  });
+  assert.equal(plan.pending.length, 1);
+  assert.equal(state.writes[0].body.status, 'completed');
+  assert.equal(state.writes[0].body.conclusion, 'failure');
+  // Never starting the worker is already a terminal failure. A failing final
+  // write must preserve that result rather than leaving an in-progress check.
+  const api = async (...args) => {
+    if (args[2] === 'PATCH') throw new Error('Synthetic API outage');
+    return state.api(...args);
+  };
+  await assert.rejects(
+    checkPublication({
+      api,
+      repository,
+      repo: 'unused',
+      runId: 1,
+      trustedHead: base,
+      member: plan.pending[0],
+      scan: async () => {},
+    }),
+    /API outage/,
+  );
+  assert.equal(state.writes.length, 1);
+});
+
+test('a scan cannot update a check from another run, head or context', async () => {
+  for (const change of [
+    (check) => {
+      check.external_id = 'publication-content:2';
+    },
+    (check) => {
+      check.head_sha = 'd'.repeat(40);
+    },
+    (check) => {
+      check.name = 'another-context';
+    },
+    (check) => {
+      check.conclusion = 'success';
+    },
+  ]) {
+    const state = fixture();
+    await seal(state);
+    const plan = await preparePublication({
+      api: state.api,
+      repository,
+      runId: 1,
+      trustedHead: base,
+      eventName: 'issue_comment',
+      event,
+    });
+    change(state.writes[0].body);
+    await assert.rejects(
+      checkPublication({
+        api: state.api,
+        repository,
+        repo: 'unused',
+        runId: 1,
+        trustedHead: base,
+        member: plan.pending[0],
+        scan: async () => assert.fail('must not scan'),
+      }),
+      /does not belong/,
+    );
+    assert.equal(state.writes.length, 1);
+  }
+});
+
+test('matrix overflow leaves every enumerated PR failed instead of truncating work', async () => {
+  const state = fixture();
+  const api = async (...args) => {
+    if (args[0].includes('/pulls?state=open')) {
+      const page = Number(new URL('https://example.invalid' + args[0]).searchParams.get('page'));
+      return Array.from({ length: Math.min(100, 257 - (page - 1) * 100) }, (_, index) => ({
+        ...state.pr,
+        number: (page - 1) * 100 + index + 1,
+      }));
+    }
+    return state.api(...args);
+  };
+  await assert.rejects(
+    preparePublication({ api, repository, runId: 1, eventName: 'issue_comment', event }),
+    /256/,
+  );
+  assert.equal(state.writes.length, 257);
+  assert.ok(
+    state.writes.every(
+      (write) => write.body.status === 'completed' && write.body.conclusion === 'failure',
+    ),
+  );
+});
+
+test('a trusted default-branch advance during scanning cannot certify old policy', async () => {
+  const state = fixture();
+  await seal(state);
+  const api = state.api;
+  let advanced = false;
+  state.api = async (...args) => {
+    if (advanced && args[0] === '/repos/' + repository + '/commits/main')
+      return { sha: 'd'.repeat(40) };
+    return api(...args);
+  };
+  const result = await reconcile(state, async () => {
+    advanced = true;
+  });
+  assert.equal(result.failures, 1);
+  assert.equal(state.writes.at(-1).body.conclusion, 'failure');
+  assert.match(state.writes.at(-1).body.output.summary, /Trusted default-branch code changed/);
 });
