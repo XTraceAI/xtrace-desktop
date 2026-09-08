@@ -46,12 +46,18 @@ function Fixture() {
         <button
           className="refresh-button"
           ref={anchor}
+          tabIndex={0}
           popoverTarget="details"
           aria-expanded={popoverOpen}
         >
           Open popover
         </button>
-        <button className="refresh-button" ref={modalTrigger} onClick={() => setModalOpen(true)}>
+        <button
+          className="refresh-button"
+          tabIndex={0}
+          ref={modalTrigger}
+          onClick={() => setModalOpen(true)}
+        >
           Open modal
         </button>
         {mounted && (
@@ -89,7 +95,7 @@ function Fixture() {
                 Name{' '}
                 <input className="border border-border bg-canvas rounded-panel p-2" name="name" />
               </label>
-              <button className="refresh-button" onClick={() => setModalOpen(false)}>
+              <button className="refresh-button" tabIndex={0} onClick={() => setModalOpen(false)}>
                 Close modal
               </button>
             </Modal>
