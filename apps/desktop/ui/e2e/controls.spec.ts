@@ -5,6 +5,7 @@ test('keyboard reaches native controls, skips disabled states and preserves visi
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/e2e/controls.html');
   expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(
     true,

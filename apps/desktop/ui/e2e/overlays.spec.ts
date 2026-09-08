@@ -48,12 +48,13 @@ test('appearance follows emulated system, persists overrides, and renders both t
 test('local fonts load with external network denied and remain usable offline', async ({
   page,
   context,
+  baseURL,
 }, info) => {
   const fontRequests: string[] = [];
   const external: string[] = [];
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url());
-    if (url.origin !== 'http://127.0.0.1:5175') {
+    if (url.origin !== new URL(baseURL!).origin) {
       external.push(url.origin);
       await route.abort();
     } else {

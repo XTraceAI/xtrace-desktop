@@ -12,13 +12,18 @@ test('app shell boots with local branding and an honest browser state', async ({
     if (!['127.0.0.1', 'localhost'].includes(url.hostname)) externalRequests.push(url.origin);
   });
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Welcome to XTrace.' })).toBeVisible();
-  const brand = page.getByRole('img', { name: 'XTrace brand mark' });
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
+  const brand = page
+    .getByRole('complementary', { name: 'Workspace' })
+    .locator('.xt-brand-mark img');
   await expect(brand).toBeVisible();
+  await expect(brand).toHaveAttribute('src', '/mark.png');
   await expect(brand).toHaveJSProperty('naturalWidth', 436);
-  await expect(page.getByRole('status')).toHaveText(
-    'Browser preview · Native app information is available in the desktop app.',
-  );
+  await expect(
+    page.getByText('Browser preview · Open the desktop app to read local data.', { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('.xt-fixture-badge')).toHaveCount(0);
   await page.evaluate(() => document.fonts.ready);
   expect(externalRequests).toEqual([]);
   expect(errors).toEqual([]);

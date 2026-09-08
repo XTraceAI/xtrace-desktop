@@ -13,16 +13,16 @@ Plan slot: FND-09. This evidence covers the typed frontend seam and routed shell
 
 ## Commands and results
 
-| Check                                                                  | Result                                                            |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `pnpm typecheck`                                                       | Pass                                                              |
-| `pnpm lint`                                                            | Pass, including semantic-token hex lint                           |
-| `pnpm test`                                                            | 73 Vitest cases and 3 Node cases pass; 16 focused FND-09 cases    |
-| `pnpm --dir apps/desktop/ui test:e2e:shell`                            | 6 pass: 3 scenarios × WebKit and Chromium                         |
-| `pnpm --dir apps/desktop/ui exec playwright test e2e/overlays.spec.ts` | 5 inherited WebKit theme/overlay cases pass                       |
-| `pnpm --dir apps/desktop/ui test:e2e:production`                       | 2 pass: production exclusion and browser behavior in both engines |
+| Check                                            | Result                                                            |
+| ------------------------------------------------ | ----------------------------------------------------------------- |
+| `pnpm typecheck`                                 | Pass                                                              |
+| `pnpm lint`                                      | Pass, including semantic-token hex lint                           |
+| `pnpm test`                                      | 73 Vitest cases and 3 Node cases pass; 16 focused FND-09 cases    |
+| `pnpm --dir apps/desktop/ui test:e2e:shell`      | 6 pass: 3 scenarios × WebKit and Chromium                         |
+| `pnpm e2e`                                       | 26 combined boot and component cases pass in WebKit and Chromium  |
+| `pnpm --dir apps/desktop/ui test:e2e:production` | 2 pass: production exclusion and browser behavior in both engines |
 
-The browser commands each start and stop port 5181 and must run sequentially. The production command includes the UI production build. Both engines use Playwright 1.58.2 at 1120×720; system appearance is emulated per browser context. Screenshots below are synthetic test output using only the portable F1 export.
+The dedicated shell and production commands each start and stop port 5181 and must run sequentially. The default suite uses port 5174 (or E2E_PORT) and each component declares its required viewport. The production command includes the UI production build. The dedicated shell suites use Playwright 1.58.2 at 1120×720 in both engines; system appearance is emulated per browser context. Screenshots below are synthetic test output using only the portable F1 export.
 
 | Engine   | Dark Dashboard                            | Light Settings                             |
 | -------- | ----------------------------------------- | ------------------------------------------ |

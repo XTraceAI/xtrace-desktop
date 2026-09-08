@@ -64,6 +64,7 @@ Run the two browser suites sequentially; each owns port 5181 and starts/stops it
 
 ```sh
 pnpm check
+pnpm e2e
 pnpm --dir apps/desktop/ui test:e2e:shell
 pnpm --dir apps/desktop/ui test:e2e:production
 ```

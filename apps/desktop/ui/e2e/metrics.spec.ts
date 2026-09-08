@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test';
+
 import { rules } from '../src/kit/rules';
+
+test.use({ viewport: { width: 1120, height: 720 } });
 
 for (const theme of ['dark', 'light'] as const) {
   test(`metric geometry, unknown values, and native rule tooltips in ${theme}`, async ({
