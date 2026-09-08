@@ -11,3 +11,11 @@ The first foundation PR creates a reproducible shell and workspace. It closes no
 | Inspect source layout, toolchain pins and legal files                                                                           | Binding subsystem ownership is documented. Apache LICENSE, NOTICE, DCO, trademarks and contribution/conduct/security guidance exist. Every PR commit is signed off. | Reviewed file list, provenance and git log.                 |
 
 Rust placeholder crates are validated by compilation, not tests that assert their own name. Existing integration-demo tests are not evidence for this scaffold PR. FND-02 supplies repository CI; publishing this PR does not complete that card or approve CP1.
+
+## Recorded evidence
+
+Source commit `70f233da74d6f1fe5244096ef56c9efaf8ec1396` passed a fresh-clone frozen install, `pnpm check` (four UI tests), `pnpm test -- --run`, workspace fmt/Clippy/tests and a debug macOS app build, with unchanged lockfiles. Rust placeholder crates have no behavior tests; compilation validates their initial boundaries. The built executable declares macOS 14.0 as its minimum version.
+
+Native observations on macOS 26.5.2 confirmed real application metadata, refresh, default/minimum window layouts, sidebar/header dragging, fullscreen/return, minimize/restore and close/reopen. A second launch exited successfully while one application process remained. These observations apply to the packaged native app.
+
+The [browser preview screenshot](FND-01-browser.png) records the renderer layout only. Its smoke check reported no browser errors and only same-origin requests, including locally bundled fonts. It is not evidence for native window controls. Later evidence-only commits do not change the tested source.
