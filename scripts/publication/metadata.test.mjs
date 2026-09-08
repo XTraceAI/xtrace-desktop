@@ -40,6 +40,11 @@ test('only a single visible checked attestation passes', () => {
     `<pre>\n${checked}\n</pre>`,
     `<div>\n${checked}`,
     `<table>\n${checked}`,
+    `<details>\n\n${checked}`,
+    `<details><summary>Review</summary>\n\n${checked}\n\n</details>`,
+    `<?hide\n${checked}\n?>`,
+    `<![CDATA[\n${checked}\n]]>`,
+    `<!DOCTYPE\n${checked}\n>`,
     `- [<!-- spacer -->x] ${ATTESTATION}`,
     `<!--\n${checked}\n-->`,
     `> ${checked}`,
@@ -49,6 +54,24 @@ test('only a single visible checked attestation passes', () => {
     'No disclosure review.',
   ])
     assert.throws(() => requireAttestation(body), /attestation/);
+  requireAttestation(`<details>\n\nA collapsed example.\n\n</details>\n\n${checked}`);
+});
+
+test('code and HTML comments cannot invent issue references', () => {
+  assert.deepEqual(
+    linkedIssues(
+      'Actual #7. `#123456`\n\n```css\ncolor: #987654\n```\n\n<!-- #654321 -->\n\n    #111111\n\n`other/project#123` and <!-- https://github.com/other/project/issues/4 -->',
+      repository,
+    ),
+    [{ repository, number: 7 }],
+  );
+  assert.deepEqual(
+    linkedIssues(
+      'Actual [issue](https://github.com/XTraceAI/xtrace-desktop/issues/7).',
+      repository,
+    ),
+    [{ repository, number: 7 }],
+  );
 });
 
 test('queue resolution includes every constituent original head and excludes later entries', () => {

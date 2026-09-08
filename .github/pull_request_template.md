@@ -13,3 +13,5 @@ Follow `docs/PUBLICATION.md` for the exact proposed text, linked issues, comment
 and attachments. Repeat the review after changes to those materials.
 
 - [ ] I reviewed the final PR text, linked issues, comments, and attachments for public disclosure.
+
+Disclosure snapshot: pending

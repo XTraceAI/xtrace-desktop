@@ -4,24 +4,29 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  linkedIssues,
   prNumber,
   PublicationError,
   repositoryName,
   requireValue,
   resolveEvent,
   sha,
-  validatePullRequest,
 } from './metadata.mjs';
+import { githubApi } from './api.mjs';
+import { readPublicContent, requireDisclosure } from './content.mjs';
+import { disclosureControls } from './markdown.mjs';
 
 function options(args) {
   const result = { repo: process.cwd(), repository: process.env.GITHUB_REPOSITORY };
   if (args[0] === '--') args.shift();
   while (args.length) {
     const flag = args.shift();
+    if (flag === '--snapshot') {
+      result.snapshot = true;
+      continue;
+    }
     requireValue(
-      ['--repo', '--repository', '--pr'].includes(flag) && args[0],
-      'Usage: publication:check [--repo PATH] [--repository OWNER/REPO --pr NUMBER]',
+      ['--repo', '--repository', '--pr', '--body'].includes(flag) && args[0],
+      'Usage: publication:check [--repo PATH] [--repository OWNER/REPO --pr NUMBER] [--snapshot --body FILE]',
     );
     result[flag.slice(2)] = args.shift();
   }
@@ -34,49 +39,55 @@ async function main() {
   const repository = repositoryName(config.repository);
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   requireValue(token, 'A read-only GITHUB_TOKEN or GH_TOKEN is required.');
-  const api = async (path, body) => {
-    let response;
-    try {
-      response = await fetch(`https://api.github.com${path}`, {
-        method: body ? 'POST' : 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          'Content-Type': 'application/json',
-        },
-        body: body ? JSON.stringify(body) : undefined,
-        redirect: 'error',
-        signal: AbortSignal.timeout(30_000),
-      });
-    } catch {
-      throw new PublicationError('GitHub metadata request failed.');
-    }
-    requireValue(response.ok, `GitHub metadata request failed (HTTP ${response.status}).`);
-    try {
-      return await response.json();
-    } catch {
-      throw new PublicationError('GitHub metadata response was invalid.');
-    }
-  };
+  const api = githubApi(token);
+  if (config.snapshot) {
+    requireValue(
+      !process.env.GITHUB_ACTIONS && config.pr,
+      'Snapshot preparation requires a local PR selection.',
+    );
+    const body = config.body ? await readFile(config.body, 'utf8') : undefined;
+    const review = await readPublicContent(api, repository, prNumber(Number(config.pr)), body);
+    requireValue(
+      disclosureControls(review.pr.body).filter((item) => item.snapshot).length === 1,
+      'Include one visible Disclosure snapshot: pending line before preparing a snapshot.',
+    );
+    console.log('Disclosure snapshot: ' + review.digest);
+    return;
+  }
+  requireValue(!config.body, 'A candidate body is only accepted when preparing a snapshot.');
   const git = (...args) => {
     try {
-      return execFileSync('git', ['-c', 'credential.helper=', '-c', 'core.askPass=', ...args], {
-        cwd: repo,
-        encoding: 'utf8',
-        timeout: 120_000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          GIT_TERMINAL_PROMPT: '0',
-          GIT_TRACE: '0',
-          GIT_TRACE_CURL: '0',
-          GIT_CURL_VERBOSE: '0',
-          GIT_CONFIG_COUNT: '1',
-          GIT_CONFIG_KEY_0: `http.https://github.com/${repository}.git.extraheader`,
-          GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`,
+      return execFileSync(
+        'git',
+        [
+          '--no-replace-objects',
+          '-c',
+          'core.fsmonitor=false',
+          '-c',
+          'core.hooksPath=/dev/null',
+          '-c',
+          'credential.helper=',
+          '-c',
+          'core.askPass=',
+          ...args,
+        ],
+        {
+          cwd: repo,
+          encoding: 'utf8',
+          timeout: 120_000,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: {
+            ...process.env,
+            GIT_TERMINAL_PROMPT: '0',
+            GIT_TRACE: '0',
+            GIT_TRACE_CURL: '0',
+            GIT_CURL_VERBOSE: '0',
+            GIT_CONFIG_COUNT: '1',
+            GIT_CONFIG_KEY_0: `http.https://github.com/${repository}.git.extraheader`,
+            GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`,
+          },
         },
-      }).trim();
+      ).trim();
     } catch {
       throw new PublicationError('Required source history could not be fetched or verified.');
     }
@@ -112,24 +123,13 @@ async function main() {
   const temporary = await mkdtemp(join(tmpdir(), 'xtrace-publication-'));
   try {
     const scanArgs = ['--repo', repo, '--diff', `${selection.base}..${selection.head}`];
-    const allowedRepositories = new Set([repository.toLowerCase()]);
     const snapshots = new Map();
-    const snapshot = (item) =>
-      JSON.stringify([
-        item.title,
-        item.body,
-        item.head?.sha,
-        item.head?.ref,
-        item.base?.sha,
-        item.base?.ref,
-      ]);
     let contentCount = 0;
     for (const member of selection.members) {
-      const pr = validatePullRequest(
-        await api(`/repos/${repository}/pulls/${member.number}`),
-        repository,
-        member.head,
-      );
+      const review = await readPublicContent(api, repository, member.number);
+      const pr = review.pr;
+      requireValue(pr.head.sha === member.head, 'Source PR changed during this run.');
+      requireDisclosure(review);
       git(
         'fetch',
         '--no-tags',
@@ -144,28 +144,8 @@ async function main() {
       // Source heads may not be ancestors of squash/rebase queue commits.
       git('cat-file', '-e', `${pr.base.sha}^{commit}`);
       scanArgs.push('--diff', `${pr.base.sha}..${member.head}`);
-      snapshots.set(`/repos/${repository}/pulls/${member.number}`, snapshot(pr));
-      const texts = [
-        `${pr.title}\n\nBase branch: ${pr.base.ref}\nSource branch: ${pr.head.ref}\n\n${pr.body}`,
-      ];
-      for (const issue of linkedIssues(pr.body, repository)) {
-        if (!allowedRepositories.has(issue.repository.toLowerCase())) {
-          const linkedRepository = await api(`/repos/${issue.repository}`);
-          requireValue(
-            linkedRepository.private === false,
-            'Linked issue must be publicly accessible for publication review.',
-          );
-          allowedRepositories.add(issue.repository.toLowerCase());
-        }
-        const linked = await api(`/repos/${issue.repository}/issues/${issue.number}`);
-        requireValue(
-          typeof linked.title === 'string' &&
-            (linked.body === null || typeof linked.body === 'string'),
-          'Linked issue text is unavailable.',
-        );
-        texts.push(`${linked.title}\n\n${linked.body ?? ''}`);
-        snapshots.set(`/repos/${issue.repository}/issues/${issue.number}`, snapshot(linked));
-      }
+      snapshots.set(member.number, review.digest);
+      const texts = review.texts;
       for (const text of texts) {
         const path = join(temporary, `public-text-${++contentCount}.md`);
         await writeFile(path, text, { mode: 0o600 });
@@ -182,10 +162,12 @@ async function main() {
       !result.error && result.status === 0,
       'Secret scan did not pass; publication remains blocked.',
     );
-    for (const [path, before] of snapshots) {
+    for (const [number, before] of snapshots) {
+      const current = await readPublicContent(api, repository, number);
+      requireDisclosure(current);
       requireValue(
-        snapshot(await api(path)) === before,
-        'PR or linked-issue text changed during the scan; review the current content and rerun checks.',
+        current.digest === before,
+        'Public content changed during the scan; review current content and rerun checks.',
       );
     }
     if (eventName === 'merge_group') {
@@ -196,7 +178,7 @@ async function main() {
       );
     }
     console.log(
-      `Publication check passed for ${selection.members.length} source PR(s) and ${contentCount} public text item(s). Human disclosure attestation verified; attachments and semantics require human review.`,
+      `Publication check passed for ${selection.members.length} source PR(s) and ${contentCount} public text item(s). Explicit disclosure review attestation verified; attachments and semantics remain the reviewer’s responsibility.`,
     );
   } finally {
     await rm(temporary, { recursive: true, force: true });

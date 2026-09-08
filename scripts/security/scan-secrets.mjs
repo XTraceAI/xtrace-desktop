@@ -145,6 +145,31 @@ export async function scanRepository(options) {
       await add(git(repo, ['cat-file', 'blob', oid]), path, path);
     }
     const head = commit(repo, 'HEAD');
+    // rev-list follows tag targets but omits the annotated tag objects. Scan
+    // every tag object in reachable chains, including its message and tagger.
+    const tags = git(repo, ['for-each-ref', '--format=%(objecttype) %(objectname)'])
+      .toString()
+      .trim()
+      .split('\n')
+      .filter((line) => line.startsWith('tag '))
+      .map((line) => line.slice(4));
+    const seenTags = new Set();
+    while (tags.length) {
+      const oid = tags.pop();
+      if (seenTags.has(oid)) continue;
+      if (!/^[a-f0-9]{40,64}$/.test(oid)) throw new ScanFailure('invalid-tag-object');
+      seenTags.add(oid);
+      const data = git(repo, ['cat-file', 'tag', oid]);
+      await add(data, 'tag[' + oid.slice(0, 12) + ']');
+      const target = /^object ([a-f0-9]{40,64})\ntype (tag|commit|blob|tree)\n/.exec(
+        data.toString(),
+      );
+      if (!target) throw new ScanFailure('invalid-tag-object');
+      if (target[2] === 'tag') tags.push(target[1]);
+      else if (target[2] === 'blob')
+        await add(git(repo, ['cat-file', 'blob', target[1]]), 'tag-target');
+      else if (target[2] !== 'commit') throw new ScanFailure('tag-target-unsupported');
+    }
     const commits = new Set(git(repo, ['rev-list', '--all', head]).toString().trim().split('\n'));
     for (const [index, range] of options.diffs.entries()) {
       const parts = range.split('..');

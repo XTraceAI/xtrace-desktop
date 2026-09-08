@@ -95,6 +95,34 @@ test('removed historical credentials remain blocking', async (t) => {
   expectDetected(scan(repo), secret);
 });
 
+test('annotated tag messages, nested tags and tagger metadata are scanned without leaking values', async (t) => {
+  for (const kind of ['message', 'nested', 'tagger']) {
+    await t.test(kind, async (t) => {
+      const repo = await fixture(t);
+      const secret = marker();
+      if (kind === 'tagger')
+        git(
+          repo,
+          '-c',
+          'user.name=' + secret,
+          'tag',
+          '-a',
+          'synthetic',
+          '-m',
+          'Clean synthetic tag',
+        );
+      else {
+        git(repo, 'tag', '-a', 'synthetic', '-m', 'sensitive source text ' + secret);
+        if (kind === 'nested') {
+          git(repo, 'tag', '-a', 'outer', 'synthetic', '-m', 'Clean outer tag');
+          git(repo, 'tag', '-d', 'synthetic');
+        }
+      }
+      expectDetected(scan(repo), secret);
+    });
+  }
+});
+
 test('fixture paths, inline suppression and repository/environment configurations cannot bypass scanning', async (t) => {
   const repo = await fixture(t);
   const secret = marker();

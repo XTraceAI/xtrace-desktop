@@ -3,6 +3,10 @@ name: Publication
 on:
   pull_request:
     types: [opened, reopened, synchronize, edited, ready_for_review]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
   merge_group:
     types: [checks_requested]
 
@@ -25,6 +29,9 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - name: Install pinned dependencies without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Exercise publication failure cases
         run: node --test scripts/publication/*.test.mjs scripts/security/*.test.mjs
 
@@ -43,6 +50,9 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - name: Install pinned dependencies without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Check source history and public content
         env:
           GITHUB_TOKEN: ${{ github.token }}

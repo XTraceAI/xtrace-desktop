@@ -1,5 +1,5 @@
-export const ATTESTATION =
-  'I reviewed the final PR text, linked issues, comments, and attachments for public disclosure.';
+import { ATTESTATION, disclosureControls, referenceProse } from './markdown.mjs';
+export { ATTESTATION } from './markdown.mjs';
 
 export class PublicationError extends Error {}
 
@@ -32,56 +32,16 @@ export function prNumber(value) {
 
 export function requireAttestation(body) {
   requireValue(typeof body === 'string', 'Pull request body is unavailable.');
-  // Preserve spacing when removing comments so hidden fragments cannot create
-  // a checked box. Attestations belong outside raw HTML and fenced examples.
-  const blank = (text) => text.replace(/[^\r\n]/g, ' ');
-  const lines = body
-    .replace(/<!--[\s\S]*?(?:-->|$)/g, blank)
-    .replace(/<(pre|code|script|style|textarea)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, blank)
-    .replace(/<([a-z][a-z0-9-]*)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, blank)
-    .split(/\r?\n/);
-  let fence = null;
-  let htmlBlock = false;
-  const declarations = [];
-  for (const line of lines) {
-    if (htmlBlock) {
-      if (line.trim() === '') htmlBlock = false;
-      continue;
-    }
-    // CommonMark raw block HTML lasts to the next blank line, including an
-    // unclosed div/table. Void tags followed by a blank line remain harmless.
-    if (
-      !fence &&
-      (/^ {0,3}<\/?(?:address|article|aside|blockquote|body|caption|center|col|colgroup|dd|details|dialog|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hr|html|iframe|li|main|menu|nav|ol|p|section|summary|table|tbody|td|tfoot|th|thead|title|tr|ul)(?:\s|\/?>|$)/i.test(
-        line,
-      ) ||
-        /^ {0,3}<\/?[a-z][a-z0-9-]*(?:\s[^<>]*)?\/?>\s*$/i.test(line))
-    ) {
-      htmlBlock = true;
-      continue;
-    }
-    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/);
-    if (marker) {
-      if (!fence) fence = marker[1];
-      else if (
-        marker[1][0] === fence[0] &&
-        marker[1].length >= fence.length &&
-        line.slice(marker[0].length).trim() === ''
-      )
-        fence = null;
-      continue;
-    }
-    if (fence) continue;
-    const declaration = line.match(/^ {0,3}- \[([ xX])\] (.+?)\s*$/);
-    if (declaration?.[2] === ATTESTATION) declarations.push(declaration[1]);
-  }
+  const declarations = disclosureControls(body)
+    .filter((item) => item.declaration?.[2] === ATTESTATION)
+    .map((item) => item.declaration[1]);
   requireValue(
     declarations.length === 1 && declarations[0].toLowerCase() === 'x',
     'Public-disclosure review attestation must be checked exactly once in the PR body.',
   );
 }
 
-export function validatePullRequest(pr, repository, expectedHead) {
+export function validatePullRequest(pr, repository, expectedHead, { attestation = true } = {}) {
   prNumber(pr?.number);
   requireValue(pr?.base?.repo?.full_name === repository, 'Source PR must target this repository.');
   requireValue(
@@ -98,7 +58,7 @@ export function validatePullRequest(pr, repository, expectedHead) {
     pr.head.sha === expectedHead,
     'Source PR changed during this run; run checks for its current commit.',
   );
-  requireAttestation(pr.body);
+  if (attestation) requireAttestation(pr.body);
   return pr;
 }
 
@@ -140,7 +100,7 @@ export function linkedIssues(body, repository) {
     const value = prNumber(Number(number));
     references.set(`${repo.toLowerCase()}#${value}`, { repository: repo, number: value });
   };
-  let remaining = body.replace(
+  let remaining = referenceProse(body).replace(
     /(?:https?:\/\/github\.com|(?<![\w/]))\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:issues|pull)\/(\d+)\b/gi,
     (_, repo, number) => {
       add(repo, number);
@@ -159,7 +119,7 @@ export function linkedIssues(body, repository) {
   return [...references.values()];
 }
 
-export async function readQueue(api, repository, branch) {
+export async function readQueue(api, repository, branch, { allowMissing = false } = {}) {
   const [owner, name] = repositoryName(repository).split('/');
   const query = `query($owner:String!,$name:String!,$branch:String!,$after:String) {
     repository(owner:$owner,name:$name) { mergeQueue(branch:$branch) {
@@ -175,6 +135,7 @@ export async function readQueue(api, repository, branch) {
   for (let page = 0; page < 10; page++) {
     const response = await api('/graphql', { query, variables: { owner, name, branch, after } });
     requireValue(!response.errors, 'GitHub could not resolve the merge queue.');
+    if (allowMissing && response.data?.repository?.mergeQueue === null) return [];
     const connection = response.data?.repository?.mergeQueue?.entries;
     requireValue(
       Array.isArray(connection?.nodes) &&
@@ -206,7 +167,7 @@ export async function resolveEvent(eventName, event, repository, api) {
     event.repository?.full_name === repository,
     'Event repository does not match the checkout.',
   );
-  if (eventName === 'pull_request') {
+  if (['pull_request', 'pull_request_review', 'pull_request_review_comment'].includes(eventName)) {
     const number = prNumber(event.pull_request?.number);
     const head = sha(event.pull_request?.head?.sha);
     return { base: sha(event.pull_request?.base?.sha), head, members: [{ number, head }] };
