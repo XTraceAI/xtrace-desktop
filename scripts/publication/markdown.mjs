@@ -73,6 +73,9 @@ export function referenceProse(body) {
           // An invalid destination cannot identify a GitHub issue.
         }
       }
+      // Link labels are not separate GitHub issue autolinks. Only an explicit
+      // GitHub destination above may contribute a reference from this anchor.
+      return;
     }
     const block = /^(?:p|div|li|br|tr|td|th|h[1-6]|blockquote)$/.test(node.nodeName);
     if (block) parts.push('\n');
@@ -82,7 +85,9 @@ export function referenceProse(body) {
   // HTML comments have no text children; code/raw-text containers are skipped.
   // Rendering first preserves the context of inline HTML tags across AST nodes.
   visit(document);
-  return parts.join('');
+  // Keep separate text nodes apart; omitted code/links must not manufacture
+  // an issue token from the prose on either side.
+  return parts.join(' ');
 }
 
 export function normalizedBody(body) {

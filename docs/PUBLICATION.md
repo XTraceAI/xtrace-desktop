@@ -76,8 +76,10 @@ and it does not replace inspection of earlier GitHub edits.
 Review-comment diff hunks are hashed and scanned as raw text, including retained
 context from commits no longer reachable from the current PR. Missing diff context
 fails the metadata check; current source alone cannot certify an outdated comment.
-Markdown links and HTML anchor links are included. Issue-shaped tokens in code
-examples and HTML comments are excluded. Fetched
+Markdown links and HTML anchor links are included. GitHub issue shorthand accepts
+`#123` and case-insensitive `GH-123`, including punctuation around a reference.
+Issue-shaped tokens in code examples, HTML comments, ordinary URL paths and
+external link labels are excluded. Fetched
 issue references must belong to this repository: another repository's edits
 cannot trigger local invalidation events. Ordinary external URLs remain prose.
 

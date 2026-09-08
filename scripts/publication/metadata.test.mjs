@@ -245,3 +245,43 @@ test('explicit GitHub issue references are deduplicated without fetching arbitra
     [{ repository, number: 3 }],
   );
 });
+
+test('GitHub GH-number and hash autolinks include case variants and punctuation without URL/code lookalikes', () => {
+  for (const body of [
+    'GH-7',
+    'gh-7',
+    'Gh-7',
+    '[GH-7]',
+    '{GH-7}',
+    'x-GH-7',
+    '/GH-7',
+    ':GH-7',
+    'GH-07',
+    '[#7]',
+    '{#7}',
+    'x-#7',
+  ]) {
+    assert.deepEqual(linkedIssues(body, repository), [{ repository, number: 7 }]);
+  }
+  assert.deepEqual(linkedIssues('GH-7 #7 gh-07', repository), [{ repository, number: 7 }]);
+  for (const body of [
+    'G`ignored`H-7',
+    'G[ignored](https://example.invalid)H-7',
+    'GH-`ignored`7',
+    'xGH-7',
+    'x_GH-7',
+    'GH-7word',
+    'GH-7_suffix',
+    'x#7',
+    'https://example.invalid/GH-7',
+    'https://example.invalid/#7',
+    'www.example.invalid/GH-7',
+    '[GH-7](https://example.invalid)',
+    '<a href="https://example.invalid">GH-7</a>',
+    '`GH-7`',
+    '```text\nGH-7\n```',
+    '<!-- GH-7 -->',
+    '<pre>GH-7</pre>',
+  ])
+    assert.deepEqual(linkedIssues(body, repository), []);
+});

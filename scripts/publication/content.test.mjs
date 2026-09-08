@@ -860,3 +860,20 @@ test('source title edit-and-revert stales the attestation and includes retained 
   assert.throws(() => requireDisclosure(changed), /stale/);
   assert.ok(changed.texts.includes('Temporary title'));
 });
+
+test('GH-number references without closing relationships include issue text and invalidate on edits', async () => {
+  const state = fixture();
+  state.pr.body = 'Related GH-9.\n\n' + state.pr.body;
+  await seal(state);
+  const review = await readPublicContent(state.api, repository, 3);
+  assert.deepEqual(state.references, []);
+  assert.equal(review.content.linked[0].key, repository + '#9');
+  assert.ok(review.texts.includes(state.issue.body));
+  state.issue.body = 'Changed linked issue text.';
+  state.issue.updated_at = '2026-01-01T00:00:01Z';
+  assert.equal(
+    (await reconcile(state, async () => assert.fail('Stale content must not scan'), 'issues'))
+      .failures,
+    1,
+  );
+});
