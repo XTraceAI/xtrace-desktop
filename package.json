@@ -23,16 +23,22 @@
     "sbom": "node scripts/supply-chain/sbom.mjs",
     "notices": "sh scripts/notices.sh",
     "notices:check": "sh scripts/notices.sh --check",
-    "test:supply-chain": "node --test scripts/supply-chain/*.test.mjs"
+    "test:supply-chain": "node --test scripts/supply-chain/*.test.mjs",
+    "security:scan": "node scripts/security/scan-secrets.mjs",
+    "secrets:check": "node scripts/security/scan-secrets.mjs",
+    "publication:check": "node scripts/publication/check.mjs",
+    "publication:test": "node --test scripts/publication/*.test.mjs scripts/security/*.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "ajv-formats-draft2019": "1.6.1",
+    "commonmark": "0.31.2",
     "eslint": "10.10.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "17.12.0",
+    "parse5": "8.0.1",
     "prettier": "3.9.6",
     "spdx-expression-parse": "5.0.0",
     "typescript": "5.9.3",
