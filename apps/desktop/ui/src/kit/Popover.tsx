@@ -5,6 +5,8 @@ export interface PopoverProps extends Omit<HTMLAttributes<HTMLDivElement>, 'onTo
   open: boolean;
   onOpenChange: (open: boolean) => void;
   anchorRef: RefObject<HTMLElement | null>;
+  /** Noninteractive hover tooltips must not move keyboard focus on dismissal. */
+  restoreFocus?: boolean;
   side?: 'bottom' | 'right';
   align?: 'start' | 'end';
   offset?: number;
@@ -15,6 +17,7 @@ export function Popover({
   open,
   onOpenChange,
   anchorRef,
+  restoreFocus = true,
   side = 'bottom',
   align = 'start',
   offset = 8,
@@ -35,6 +38,7 @@ export function Popover({
       const visible = (event as ToggleEvent).newState === 'open';
       notify.current(visible);
       if (
+        restoreFocus &&
         !visible &&
         (document.activeElement === document.body || element?.contains(document.activeElement))
       ) {
@@ -43,7 +47,7 @@ export function Popover({
     }
     element.addEventListener('toggle', toggled);
     return () => element.removeEventListener('toggle', toggled);
-  }, [anchorRef]);
+  }, [anchorRef, restoreFocus]);
 
   useLayoutEffect(() => {
     const element = ref.current;

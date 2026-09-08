@@ -103,3 +103,29 @@ it('dismisses when the anchor detaches, including a simultaneous controlled clos
     view.unmount();
   }
 });
+
+it('restores menu focus by default but leaves hover-tooltip dismissal passive', () => {
+  for (const restoreFocus of [undefined, false]) {
+    const anchor = document.createElement('button');
+    document.body.append(anchor);
+    const anchorRef = createRef<HTMLElement>();
+    anchorRef.current = anchor;
+    const view = render(
+      <Popover
+        id="focus-policy"
+        anchorRef={anchorRef}
+        open
+        onOpenChange={vi.fn()}
+        restoreFocus={restoreFocus}
+      >
+        Focus policy
+      </Popover>,
+    );
+    const closed = new Event('toggle');
+    Object.defineProperty(closed, 'newState', { value: 'closed' });
+    view.getByText('Focus policy').dispatchEvent(closed);
+    expect(document.activeElement).toBe(restoreFocus === false ? document.body : anchor);
+    view.unmount();
+    anchor.remove();
+  }
+});
