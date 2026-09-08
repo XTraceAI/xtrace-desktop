@@ -36,6 +36,26 @@ test('offline official schema validates both ecosystems and rejects incomplete a
   await assert.rejects(validateSbom(privatePath), /filesystem/);
 });
 
+test('only cataloged lockfile locations can enter the uploaded artifact', async () => {
+  for (const path of ['/Cargo.lock', '/pnpm-lock.yaml']) {
+    const document = fixture();
+    document.components[0].properties = [{ name: 'syft:location:0:path', value: path }];
+    await validateSbom(document);
+  }
+  for (const path of [
+    '/var/folders/synthetic-private/work/Cargo.lock',
+    '/tmp/synthetic/Cargo.lock',
+    '/private/tmp/work/pnpm-lock.yaml',
+    '/workspace/private/Cargo.lock',
+    '../outside/Cargo.lock',
+    'C:\\private\\Cargo.lock',
+  ]) {
+    const document = fixture();
+    document.components[0].properties = [{ name: 'syft:location:0:path', value: path }];
+    await assert.rejects(validateSbom(document), /filesystem/);
+  }
+});
+
 test('IRI references allow package schemes and Unicode but reject malformed values', async () => {
   for (const url of [
     'registry+https://github.com/rust-lang/crates.io-index',

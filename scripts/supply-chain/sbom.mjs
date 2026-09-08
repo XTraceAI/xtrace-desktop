@@ -52,9 +52,22 @@ export async function validateSbom(document) {
     throw new Error('SBOM must contain both Rust and npm dependencies.');
   if (new Set(purls).size !== purls.length)
     throw new Error('SBOM contains duplicate package URLs.');
-  // Syft package locations are project-relative (/Cargo.lock), never host paths.
-  if (/(?:\/Users\/|\/home\/|"[A-Za-z]:[\\/]|file:\/\/)/.test(JSON.stringify(document)))
-    throw new Error('SBOM contains a host filesystem path.');
+  // These are the only files read by the explicitly selected lockfile catalogers.
+  const locations = new Set(['/Cargo.lock', '/pnpm-lock.yaml']);
+  const inspect = (value) => {
+    if (typeof value === 'string') {
+      if (
+        (value.startsWith('/') && !locations.has(value)) ||
+        /(?:\/(?:Users|home|var|private|tmp)\/|^[A-Za-z]:[\\/]|^\\\\|file:\/\/)/i.test(value)
+      )
+        throw new Error('SBOM contains a host filesystem path.');
+    } else if (value && typeof value === 'object') {
+      if (/^syft:location:\d+:path$/.test(value.name) && !locations.has(value.value))
+        throw new Error('SBOM contains an unexpected filesystem location.');
+      for (const child of Object.values(value)) inspect(child);
+    }
+  };
+  inspect(document);
   return { components: document.components.length, packages: purls.length };
 }
 
