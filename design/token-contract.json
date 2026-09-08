@@ -67,6 +67,7 @@
     "host-claude": "#d97757",
     "host-codex": "#6b6b80",
     "host-cursor": "#0d9488",
-    "brand-gradient": "linear-gradient(135deg,#7b90fc,#a852ff)"
+    "brand-gradient": "linear-gradient(135deg,#7b90fc,#a852ff)",
+    "rule-shadow": "0 12px 32px -12px rgba(0,0,0,0.5)"
   }
 }
