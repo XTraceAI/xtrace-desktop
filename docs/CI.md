@@ -105,8 +105,8 @@ pnpm test:supply-chain
 pnpm --dir apps/desktop/ui exec playwright install webkit chromium
 pnpm e2e
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
 pnpm publication:test
 pnpm secrets:check
 node scripts/supply-chain/install-tools.mjs syft
@@ -147,3 +147,5 @@ Actions use pinned commits. Rust, pnpm, Playwright and pinned supply-chain tools
 have caches. Dependabot groups weekly Cargo, npm and Actions updates. Cache timing,
 live queue behavior and default-branch content invalidation need recorded run
 evidence before this foundation is accepted.
+
+Rust test and Clippy jobs enable all debug features so fixture-mode tests cannot silently disappear behind an optional feature. Production packaging uses its normal feature set and must still exclude debug fixture assets.
