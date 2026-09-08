@@ -11,7 +11,7 @@ native application does not ingest data or open this store yet.
   single-connection tests and uses SQLite's MEMORY journal.
 - `upsert_session(&SessionMeta, keep_content)` creates the canonical conversation
   ID unchanged or fills missing session metadata. `SessionMeta::new(id,
-  raw_platform, source)` maps `claude`, `codex` and `cursor` to known hosts;
+raw_platform, source)` maps `claude`, `codex` and `cursor` to known hosts;
   every other platform maps to `other` and retains its original value.
 - `upsert_records(session_id, &[CanonicalRecord], keep_content)` commits one
   atomic batch. Its result partitions input rows into `inserted`, `enriched`,
