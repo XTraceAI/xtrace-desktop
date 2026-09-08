@@ -52,6 +52,11 @@ Comments from people and bots are included. The gate writes check results only,
 so its own operation does not change the discussion or create an attestation
 loop. Wait for review comments to settle before preparing the final snapshot.
 Manual Development-sidebar issue links are included through GitHub's API.
+Linked issue/PR update timestamps and available discussion revision timestamps
+are required and hashed, so an edit followed by restored text invalidates the old
+snapshot when GitHub advances that timestamp. API timestamp precision and fields
+limit this signal; it does not detect every same-timestamp revision or review edit,
+and it does not replace inspection of earlier GitHub edits.
 Review-comment diff hunks are hashed and scanned as raw text, including retained
 context from commits no longer reachable from the current PR. Missing diff context
 fails the metadata check; current source alone cannot certify an outdated comment.
@@ -77,8 +82,10 @@ offline. Download, checksum or execution errors fail the check.
 
 `publication:test` uses synthetic cases to verify rejection and error handling.
 `security:scan` (also available as `secrets:check`) checks reachable Git history,
-annotated tag messages/tagger metadata, Git ref names, filenames and tracked working files. Supply
-the actual PR base/head range with `--diff`; both refs must be present locally.
+annotated tag messages/tagger metadata, Git ref names, filenames and tracked working files.
+Direct blob ref targets are scanned too; direct tree refs and unsupported target
+types fail closed without traversing their names.
+Supply the actual PR base/head range with `--diff`; both refs must be present locally.
 Add `--content /path/to/outbound.md` to scan a prepared outbound text file.
 `--diff` and `--content` can be repeated for multiple inputs. These scans do not
 inspect image contents, image metadata or GitHub edit history.
@@ -118,6 +125,8 @@ pnpm publication:check --repository OWNER/REPO --pr NUMBER
 
 This reads current GitHub metadata and fetches source refs locally. CI always
 uses its actual event payload; the manual PR override is unavailable there.
+Fetched refs are invocation-specific and removed after success, rejection or fetch
+failure. Existing refs created by other work remain in the whole-history scan.
 
 The trusted `publication-content` workflow rechecks open PRs and current default-
 branch merge-queue heads after PR/issue edits and conversation comments. Review
@@ -154,6 +163,14 @@ and removed historical Git names, without printing the name.
 
 Pending events can coalesce because each run rechecks every open PR and queue
 head. A manual workflow dispatch retries an incomplete run.
+
+The current rechecker scans PRs sequentially within one 15-minute workflow budget.
+With enough slow scans, that deadline can leave later checks pending, and fixed
+retry order can starve those PRs. This remains an open readiness blocker. Before
+activation, bound per-PR work, guarantee fair progress, and ensure every created
+check receives a terminal result. A regression must exhaust the shared budget
+with multiple slow PRs and prove that later PRs eventually receive an attempt;
+increasing the outer timeout alone is insufficient.
 
 Install the dedicated relay first in a small, maintainer-reviewed prerequisite
 change on the default branch. Then update the publication-gate branch so its

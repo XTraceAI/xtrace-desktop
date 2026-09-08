@@ -179,6 +179,46 @@ test('credentials only in branch and lightweight-tag names are scanned opaquely'
   }
 });
 
+function object(repo, type, input) {
+  const result = spawnSync('git', ['hash-object', '-w', '-t', type, '--stdin'], {
+    cwd: repo,
+    input,
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, 'Synthetic Git object creation must succeed.');
+  return result.stdout.trim();
+}
+
+test('direct blob targets of lightweight tags and other refs are scanned opaquely', async (t) => {
+  for (const ref of ['refs/tags/synthetic-blob', 'refs/synthetic/blob']) {
+    const repo = await fixture(t);
+    git(repo, 'update-ref', ref, object(repo, 'blob', 'Clean standalone blob.\n'));
+    assert.equal(scan(repo).status, 0, 'A clean standalone blob ref must pass.');
+    const secret = marker();
+    git(repo, 'update-ref', ref, object(repo, 'blob', secret + '\n'));
+    const result = scan(repo);
+    expectDetected(result, secret);
+    assert.match(result.output, /ref-target\[\d+\]/);
+    assert.ok(!result.output.includes(ref), 'Diagnostics must omit the original ref.');
+  }
+});
+
+test('direct tree refs fail closed without exposing or traversing their names', async (t) => {
+  const repo = await fixture(t);
+  const secret = marker();
+  const blob = object(repo, 'blob', secret + '\n');
+  const tree = object(
+    repo,
+    'tree',
+    Buffer.concat([Buffer.from('100644 ' + secret + '\0'), Buffer.from(blob, 'hex')]),
+  );
+  git(repo, 'update-ref', 'refs/tags/synthetic-tree', tree);
+  const result = scan(repo);
+  assert.equal(result.status, 2, 'Unsupported tree refs must block a clean result.');
+  assert.match(result.output, /ref-target-unsupported/);
+  assert.ok(!result.output.includes(secret), 'Diagnostics must omit tree names and contents.');
+});
+
 test('annotated tag messages, nested tags and tagger metadata are scanned without leaking values', async (t) => {
   for (const kind of ['message', 'nested', 'tagger']) {
     await t.test(kind, async (t) => {
