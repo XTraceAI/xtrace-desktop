@@ -114,12 +114,8 @@
             "durationMs": 5
           }
         ],
-        "hookErrors": [
-          "synthetic-private-error"
-        ],
-        "hookAdditionalContext": [
-          "synthetic-private-context"
-        ],
+        "hookErrors": ["synthetic-private-error"],
+        "hookAdditionalContext": ["synthetic-private-context"],
         "preventedContinuation": false,
         "stopReason": "synthetic-private-reason",
         "hasOutput": true,
