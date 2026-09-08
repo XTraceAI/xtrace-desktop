@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -121,6 +122,7 @@ async function main() {
   if (eventName === 'merge_group')
     requireValue(expectedCheckout === selection.head, 'Checkout does not match the merge group.');
   const temporary = await mkdtemp(join(tmpdir(), 'xtrace-publication-'));
+  const sourceRefs = [];
   try {
     const scanArgs = ['--repo', repo, '--diff', `${selection.base}..${selection.head}`];
     const snapshots = new Map();
@@ -130,15 +132,18 @@ async function main() {
       const pr = review.pr;
       requireValue(pr.head.sha === member.head, 'Source PR changed during this run.');
       requireDisclosure(review);
+      const sourceRef = 'refs/publication-local/' + randomUUID();
+      sourceRefs.push(sourceRef);
       git(
         'fetch',
         '--no-tags',
-        '--force',
+        '--no-recurse-submodules',
+        '--no-write-fetch-head',
         `https://github.com/${repository}.git`,
-        `+refs/pull/${member.number}/head:refs/publication/pr-${member.number}`,
+        `+refs/pull/${member.number}/head:${sourceRef}`,
       );
       requireValue(
-        git('rev-parse', `refs/publication/pr-${member.number}`) === member.head,
+        git('rev-parse', sourceRef) === member.head,
         'Source PR changed while its history was fetched; rerun checks.',
       );
       // Source heads may not be ancestors of squash/rebase queue commits.
@@ -181,7 +186,16 @@ async function main() {
       `Publication check passed for ${selection.members.length} source PR(s) and ${contentCount} public text item(s). Explicit disclosure review attestation verified; attachments and semantics remain the reviewer’s responsibility.`,
     );
   } finally {
+    let cleanupFailed = false;
+    for (const ref of sourceRefs) {
+      try {
+        git('update-ref', '-d', ref);
+      } catch {
+        cleanupFailed = true;
+      }
+    }
     await rm(temporary, { recursive: true, force: true });
+    requireValue(!cleanupFailed, 'Temporary source refs could not be removed.');
   }
 }
 

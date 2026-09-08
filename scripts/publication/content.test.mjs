@@ -13,6 +13,9 @@ import { recheckPublication } from './recheck.mjs';
 export const repository = 'example/project';
 export const base = 'a'.repeat(40);
 export const head = 'b'.repeat(40);
+const timestamp = '2026-01-01T00:00:00Z';
+const comments = (items) =>
+  structuredClone(items.map((item) => ({ updated_at: timestamp, ...item })));
 export function fixture() {
   const state = {
     pr: {
@@ -31,7 +34,12 @@ export function fixture() {
     commitComments: [],
     commits: [{ sha: head }],
     queue: [],
-    issue: { number: 9, title: 'Synthetic issue', body: 'Public technical acceptance.' },
+    issue: {
+      number: 9,
+      title: 'Synthetic issue',
+      body: 'Public technical acceptance.',
+      updated_at: timestamp,
+    },
     issueComments: [],
     calls: [],
     writes: [],
@@ -79,13 +87,14 @@ export function fixture() {
     if (route === root + '/commits/main') return { sha: base };
     if (route === root + '/pulls') return [structuredClone(state.pr)];
     if (route === root + '/pulls/3') return structuredClone(state.pr);
-    if (route === root + '/issues/3/comments') return structuredClone(state.comments);
-    if (route === root + '/pulls/3/reviews') return structuredClone(state.reviews);
-    if (route === root + '/pulls/3/comments') return structuredClone(state.reviewComments);
+    if (route === root + '/issues/3/comments') return comments(state.comments);
+    if (route === root + '/pulls/3/reviews')
+      return structuredClone(state.reviews.map((item) => ({ submitted_at: timestamp, ...item })));
+    if (route === root + '/pulls/3/comments') return comments(state.reviewComments);
     if (route === root + '/pulls/3/commits') return structuredClone(state.commits);
-    if (route === root + '/comments') return structuredClone(state.commitComments);
+    if (route === root + '/comments') return comments(state.commitComments);
     if (route === root + '/issues/9') return structuredClone(state.issue);
-    if (route === root + '/issues/9/comments') return structuredClone(state.issueComments);
+    if (route === root + '/issues/9/comments') return comments(state.issueComments);
     throw new Error('Unexpected synthetic API route');
   };
   return state;
@@ -533,7 +542,7 @@ test('source and linked PR review diff context is required, scanned and included
         if (route === pull) return { commits: 1 };
         if (route === pull + '/commits') return [{ sha: base }];
         if (route === pull + '/reviews') return [];
-        if (route === pull + '/comments') return [structuredClone(comment)];
+        if (route === pull + '/comments') return comments([comment]);
         return api(...args);
       };
     } else state.reviewComments = [comment];
@@ -596,4 +605,70 @@ test('a secret only in an outdated review hunk is detected from collected public
     (await scanRepository({ repo, diffs: [], content: [content] })).length > 0,
     'Collected outdated diff context must detect a credential absent from current Git source.',
   );
+});
+
+test('linked issue and PR edit-and-revert revisions invalidate the old disclosure', async () => {
+  for (const linkedPr of [false, true]) {
+    const state = fixture();
+    state.references = [{ number: 9, repository: { nameWithOwner: repository } }];
+    if (linkedPr) {
+      state.issue.pull_request = {};
+      const api = state.api;
+      state.api = async (...args) => {
+        const route = args[0].split('?')[0];
+        const pull = '/repos/' + repository + '/pulls/9';
+        if (route === pull) return { commits: 1 };
+        if (route === pull + '/commits') return [{ sha: base }];
+        if ([pull + '/reviews', pull + '/comments'].includes(route)) return [];
+        return api(...args);
+      };
+    }
+    await seal(state);
+    const original = state.issue.body;
+    state.issue.body = 'Unreviewed intermediate text.';
+    state.issue.updated_at = '2026-01-01T00:00:01Z';
+    state.issue.body = original;
+    state.issue.updated_at = '2026-01-01T00:00:02Z';
+    // Read the final reverted state, not the intermediate edit.
+    await assert.rejects(
+      async () => requireDisclosure(await readPublicContent(state.api, repository, 3)),
+      /stale/,
+    );
+    await seal(state);
+    requireDisclosure(await readPublicContent(state.api, repository, 3));
+    for (const invalid of [undefined, null, '', 0, 'yesterday', '2026-02-30T00:00:00Z']) {
+      state.issue.updated_at = invalid;
+      await assert.rejects(readPublicContent(state.api, repository, 3), /revision timestamp/);
+    }
+  }
+});
+
+test('discussion revision timestamps are required and detect reverted text when the API advances them', async () => {
+  for (const kind of ['comments', 'reviewComments', 'commitComments', 'reviews']) {
+    const state = fixture();
+    const comment = {
+      id: 90,
+      body: 'Reviewed text.',
+      commit_id: head,
+      diff_hunk: '',
+      ...(kind === 'reviews' ? { submitted_at: timestamp } : { updated_at: timestamp }),
+    };
+    state[kind] = [comment];
+    await seal(state);
+    comment.body = 'Unreviewed intermediate text.';
+    comment.updated_at = '2026-01-01T00:00:01Z';
+    comment.body = 'Reviewed text.';
+    comment.updated_at = '2026-01-01T00:00:02Z';
+    await assert.rejects(
+      async () => requireDisclosure(await readPublicContent(state.api, repository, 3)),
+      /stale/,
+    );
+    await seal(state);
+    requireDisclosure(await readPublicContent(state.api, repository, 3));
+    comment.updated_at = 'invalid';
+    await assert.rejects(readPublicContent(state.api, repository, 3), /revision timestamp/);
+    comment.updated_at = undefined;
+    comment.submitted_at = undefined;
+    await assert.rejects(readPublicContent(state.api, repository, 3), /revision timestamp/);
+  }
 });
