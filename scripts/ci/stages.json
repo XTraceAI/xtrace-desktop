@@ -59,7 +59,7 @@
     },
     "FND-08": {
       "stage": 2,
-      "dependencies": ["FND-05", "FND-07a", "FND-07b"]
+      "dependencies": ["FND-05", "FND-06b", "FND-07a", "FND-07b"]
     },
     "FND-09": {
       "stage": 2,

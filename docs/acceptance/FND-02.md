@@ -16,7 +16,7 @@ mark FND-02 complete or approve a checkpoint.
 | Disclosure and secrets  | Run publication/scanner tests and scan the exact source history, constituent diffs and proposed outbound content.                                                              | Synthetic known-secret history and fixture-path cases fail with redacted diagnostics; changed public content invalidates its reviewed snapshot.        | Producer tests cover the negative cases; integrated source/history and generated-SBOM scans pass; default-branch event evidence pending. Semantic and attachment review remain separate.                                                                                   |
 | CI operation            | Run an actual PR and merge group, download and validate SBOM, exercise negative gates and measure a warm-cache run.                                                            | `ci-ok` plus `publication-content` match required checks; failures block; warm-cache wall time is under 12 minutes.                                    | First live PR run completed and its downloaded SBOM validated. Full green, queue and warm-cache evidence remain pending. No repository settings are changed.                                                                                                               |
 
-Local CI policy validation: 15 tests passed in the integrated branch. All 44 publication/scanner tests and 4 UI cases pass; WebKit and Chromium each pass the boot smoke. The tests include real disposable Git commits and actual shell hook failures; GitHub queue and checkpoint API responses are synthetic. Owned JavaScript lint/format checks and actionlint 1.7.12 passed. No local app was launched.
+Local CI policy validation: 15 tests passed in the integrated branch. All 48 publication/scanner tests and 4 UI cases pass; WebKit and Chromium each pass the boot smoke. The tests include real disposable Git commits and actual shell hook failures; GitHub queue and checkpoint API responses are synthetic. Owned JavaScript lint/format checks and actionlint 1.7.12 passed. No local app was launched.
 
 ## First live CI run
 
@@ -34,9 +34,20 @@ The run remains failed: notice policy and trusted-policy bootstrap are unresolve
 and the publication snapshot needed refreshing. Chromium passed; WebKit exposed
 a runner mismatch. [Playwright 1.59 removed macOS 14 WebKit support](https://playwright.dev/docs/release-notes#version-159),
 so the browser runner is now pinned to 1.58.2 while retaining the macOS 14 floor.
-A subsequent CI run must verify this correction; local browser success alone is
-not floor evidence.
+[Run 34218827020](https://github.com/XTraceAI/xtrace-desktop/actions/runs/34218827020)
+verifies the correction on macOS 14: both WebKit and Chromium, Rust, UI, hooks
+and native debug build/launch pass. It tested source
+`4e69d1abf3aaa3d62021e3cdf5b96c9ef885247a` through merge commit
+`4f3eeffdd180bc81bacbc7be2e0ca012a0aaabfb`. The overall run remains failed on
+license policy, trusted-policy bootstrap and a stale disclosure snapshot.
 
-Next: verify the compatible browser runner in CI, resolve the explicit policy
-and configuration blockers, then collect required-check, queue and warm-cache
+Its downloaded SBOM has 813 components / 803 package URLs and passes the same
+four validation steps.
+
+Artifact SHA-256:
+`2c2cad7d568304881f531067ff214371889736e254faae17187391694843ae44`.
+The extra package follows the compatible browser runner's frozen dependency graph.
+
+Next: resolve the explicit policy and configuration blockers, refresh the
+linked disclosure snapshots, then collect required-check, queue and warm-cache
 evidence. Keep outbound evidence synthetic and follow [publication review](../PUBLICATION.md).
