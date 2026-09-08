@@ -45,13 +45,21 @@
       "stage": 2,
       "dependencies": ["ING-01"]
     },
-    "ING-03": {
+    "ING-03a": {
       "stage": 2,
       "dependencies": ["ING-01", "ING-02"]
     },
+    "ING-03b": {
+      "stage": 2,
+      "dependencies": ["ING-03a"]
+    },
+    "ING-03c": {
+      "stage": 2,
+      "dependencies": ["ING-03b"]
+    },
     "ING-07": {
       "stage": 2,
-      "dependencies": ["ING-03", "ING-06"]
+      "dependencies": ["ING-03c", "ING-06"]
     },
     "FND-07b": {
       "stage": 2,
@@ -79,11 +87,11 @@
     },
     "ING-04": {
       "stage": 3,
-      "dependencies": ["ING-03"]
+      "dependencies": ["ING-03c"]
     },
     "ING-05": {
       "stage": 3,
-      "dependencies": ["ING-03"]
+      "dependencies": ["ING-03c"]
     },
     "SCA-02": {
       "stage": 3,
@@ -115,11 +123,11 @@
     },
     "REL-01": {
       "stage": 3,
-      "dependencies": ["FND-01", "ING-03", "FND-07b"]
+      "dependencies": ["FND-01", "ING-03c", "FND-07b"]
     },
     "ING-11": {
       "stage": 4,
-      "dependencies": ["ING-03", "ING-04", "ING-05"]
+      "dependencies": ["ING-03c", "ING-04", "ING-05"]
     },
     "ING-12": {
       "stage": 4,
@@ -127,7 +135,7 @@
     },
     "ING-13": {
       "stage": 4,
-      "dependencies": ["ING-03", "PLG-07", "SCA-02", "SCA-03"]
+      "dependencies": ["ING-03c", "PLG-07", "SCA-02", "SCA-03"]
     },
     "MET-02": {
       "stage": 4,
@@ -167,7 +175,7 @@
     },
     "SCB-10": {
       "stage": 4,
-      "dependencies": ["FND-09", "FND-06a", "ING-03"]
+      "dependencies": ["FND-09", "FND-06a", "ING-03c"]
     },
     "FND-11": {
       "stage": 4,
@@ -203,7 +211,7 @@
     },
     "SCA-13": {
       "stage": 5,
-      "dependencies": ["SCA-01", "MET-11", "ING-03", "FND-01", "FND-09"]
+      "dependencies": ["SCA-01", "MET-11", "ING-03c", "FND-01", "FND-09"]
     },
     "SCA-09": {
       "stage": 5,
@@ -223,7 +231,7 @@
     },
     "SCB-11": {
       "stage": 5,
-      "dependencies": ["SCB-10", "ING-06", "ING-14", "ING-03", "FND-06a"]
+      "dependencies": ["SCB-10", "ING-06", "ING-14", "ING-03c", "FND-06a"]
     },
     "SCA-06": {
       "stage": 6,
@@ -369,7 +377,7 @@
     },
     "RBK-02": {
       "stage": 9,
-      "dependencies": ["FND-01", "ING-01", "ING-03", "SCA-03"]
+      "dependencies": ["FND-01", "ING-01", "ING-03c", "SCA-03"]
     },
     "ING-09": {
       "stage": 9,
@@ -377,7 +385,7 @@
     },
     "ING-10": {
       "stage": 9,
-      "dependencies": ["ING-09", "ING-03", "RBK-04"]
+      "dependencies": ["ING-09", "ING-03c", "RBK-04"]
     },
     "RBK-09": {
       "stage": 9,

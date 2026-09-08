@@ -1,4 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { scanRepository } from '../security/scan-secrets.mjs';
 import test from 'node:test';
 import { closingIssues, readPublicContent, requireDisclosure } from './content.mjs';
 import { ATTESTATION } from './metadata.mjs';
@@ -156,6 +162,7 @@ test('comment additions, edits, deletions, attachments and review changes stale 
       s.reviewComments.push({
         id: 2,
         body: '![Synthetic image](https://example.invalid/image.png)',
+        diff_hunk: '@@ -1 +1 @@\n+Synthetic context.',
       }),
     (s) => s.reviews.push({ id: 3, body: 'Review text.', state: 'COMMENTED' }),
     (s) => {
@@ -506,4 +513,87 @@ test('queue heads are pending before scans and remain blocked when later reads f
       assert.equal(state.writes.at(-1).body.conclusion, 'failure');
     }
   }
+});
+
+test('source and linked PR review diff context is required, scanned and included in snapshots', async () => {
+  for (const linked of [false, true]) {
+    const state = fixture();
+    const comment = {
+      id: 90,
+      body: 'Reviewed context.',
+      diff_hunk: '@@ -1 +1 @@\n+Original context.',
+    };
+    if (linked) {
+      state.references = [{ number: 9, repository: { nameWithOwner: repository } }];
+      state.issue.pull_request = {};
+      const api = state.api;
+      state.api = async (...args) => {
+        const route = args[0].split('?')[0];
+        const pull = '/repos/' + repository + '/pulls/9';
+        if (route === pull) return { commits: 1 };
+        if (route === pull + '/commits') return [{ sha: base }];
+        if (route === pull + '/reviews') return [];
+        if (route === pull + '/comments') return [structuredClone(comment)];
+        return api(...args);
+      };
+    } else state.reviewComments = [comment];
+    await seal(state);
+    let review = await readPublicContent(state.api, repository, 3);
+    assert.ok(review.texts.includes(comment.diff_hunk));
+    comment.diff_hunk += '\n+Changed context only.';
+    review = await readPublicContent(state.api, repository, 3);
+    assert.throws(() => requireDisclosure(review), /stale/);
+    comment.diff_hunk = '';
+    await seal(state);
+    requireDisclosure(await readPublicContent(state.api, repository, 3));
+    for (const invalid of [null, 0, {}, []]) {
+      comment.diff_hunk = invalid;
+      await assert.rejects(
+        readPublicContent(state.api, repository, 3),
+        /diff context is unavailable/,
+      );
+    }
+    delete comment.diff_hunk;
+    await assert.rejects(
+      readPublicContent(state.api, repository, 3),
+      /diff context is unavailable/,
+    );
+  }
+});
+
+test('a secret only in an outdated review hunk is detected from collected public text', async (t) => {
+  const state = fixture();
+  const secret = ['gh', 'p_'].join('') + randomBytes(18).toString('hex');
+  state.reviewComments = [
+    {
+      id: 90,
+      body: 'Reviewed context.',
+      commit_id: 'c'.repeat(40),
+      diff_hunk: '@@ -1 +1 @@\n+token = "' + secret + '"',
+    },
+  ];
+  const review = await readPublicContent(state.api, repository, 3);
+  assert.ok(!state.commits.some(({ sha }) => sha === state.reviewComments[0].commit_id));
+  const temporary = await mkdtemp(join(tmpdir(), 'publication-hunk-'));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  const repo = join(temporary, 'repo');
+  await mkdir(repo);
+  const git = (...args) =>
+    execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args], {
+      cwd: repo,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.name', 'Synthetic Contributor');
+  git('config', 'user.email', 'contributor@example.invalid');
+  await writeFile(join(repo, 'README.md'), 'Clean current source.\n');
+  git('add', '.');
+  git('commit', '-qm', 'Synthetic clean source');
+  assert.deepEqual(await scanRepository({ repo, diffs: [], content: [] }), []);
+  const content = join(temporary, 'public-text.md');
+  await writeFile(content, review.texts.join('\n\n'), { mode: 0o600 });
+  assert.ok(
+    (await scanRepository({ repo, diffs: [], content: [content] })).length > 0,
+    'Collected outdated diff context must detect a credential absent from current Git source.',
+  );
 });
