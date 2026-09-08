@@ -1,0 +1,66 @@
+{
+  "scope": "schema-storage-only",
+  "records": [
+    {
+      "uuid": "18000000-0000-4000-8000-000000000001",
+      "type": "assistant",
+      "timestamp": "2026-09-07T12:00:01Z",
+      "message": {
+        "role": "assistant",
+        "model": "fixture-model",
+        "content": [
+          {
+            "type": "text",
+            "text": "Synthetic retained content."
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "path": "fixture.txt"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 8
+        }
+      }
+    },
+    {
+      "uuid": "18000000-0000-4000-8000-000000000002",
+      "type": "user",
+      "timestamp": "2026-09-07T12:00:02Z",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Synthetic second record."
+          }
+        ]
+      }
+    }
+  ],
+  "receipt": {
+    "receipt_id": "fixture-18-receipt",
+    "session_id": "00000000-0000-4000-8000-000000000018",
+    "surface": "desktop.next",
+    "received_at": 1788782410000
+  },
+  "coverage": [
+    {
+      "record_uuid": "18000000-0000-4000-8000-000000000001",
+      "metric_field_mask": 1,
+      "measurement_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "digest_schema_version": 1
+    }
+  ],
+  "expected": {
+    "sessions": 1,
+    "records": 2,
+    "receipts": 1,
+    "covered_records": 1,
+    "metric_field_mask": 1
+  }
+}

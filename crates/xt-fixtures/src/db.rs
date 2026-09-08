@@ -15,6 +15,12 @@ pub struct TempDb {
 }
 
 impl TempDb {
+    /// Empty file-backed owner for schema and discovery tests that do not yet
+    /// claim a populated fixture's product-rule acceptance.
+    pub fn empty() -> Result<Self> {
+        Self::build(&[], false)
+    }
+
     pub(crate) fn build(sessions: &[LoadedSession], keep_content: bool) -> Result<Self> {
         let directory = TempDir::new()?;
         let path = directory.path().join("fixture.sqlite");

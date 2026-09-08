@@ -31,6 +31,8 @@ macro_rules! text_enum {
     };
 }
 
+pub(crate) use text_enum;
+
 text_enum!(Host { Claude => "claude", Codex => "codex", Cursor => "cursor", Other => "other" });
 text_enum!(SessionSource { Plugin => "plugin", Transcript => "transcript", ReadersCli => "readers_cli", Fixture => "fixture" });
 text_enum!(RecordType { User => "user", Assistant => "assistant" });

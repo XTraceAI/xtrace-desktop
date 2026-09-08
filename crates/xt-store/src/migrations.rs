@@ -6,7 +6,10 @@
 use crate::{Error, Result, Store};
 use rusqlite::TransactionBehavior;
 
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../migrations/0001_FND-03_canonical.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("../migrations/0001_FND-03_canonical.sql")),
+    (2, include_str!("../migrations/0002_ING-01_ingest.sql")),
+];
 
 impl Store {
     pub fn migrate(&mut self) -> Result<()> {

@@ -60,6 +60,50 @@ ASCII letters/digits or `._-`; additional fields and path/content values are
 rejected. Raw platform and surface values are separate fields and preserve
 unknown labels. Native `started_at_ms` is independent of the first imported event.
 
+## Structural ingestion storage
+
+Migration `0002_ING-01_ingest.sql` extends the actual 0001 schema. Sessions gain
+repository/namespace/branch-set metadata, a user/judge kind and a record count
+maintained by canonical batch writes. Records gain nullable hygiene, parent,
+agent, subtype and first-seen fields. Hosts, settings, source cursors and PR-link
+tables reserve storage for their owning adapters; those product workflows are
+not wired here. The normalized usage table and existing source/surface/API-ID
+columns remain in place.
+
+`xt_store::ingest` exposes typed structural facts through `Store`:
+
+- `observe_session_source` accumulates a first/last observation interval;
+  `observe_record_source` accumulates explicitly supplied presence/conflict bits.
+  The matching readers keep source observations independent from receipts.
+- `insert_capture_receipt(&receipt, &[coverage])` atomically inserts and seals a
+  nonempty submitted set. Every covered UUID must exist in the same canonical
+  session as the receipt. Duplicate IDs/UUIDs and invalid fields roll back the
+  entire operation. `capture_receipts` and `capture_coverage` expose sealed sets.
+  Stored sets cannot be edited, appended to or replaced by later observations.
+- Coverage stores a nonnegative SQLite integer mask, the exact supplied
+  `measurement_revision` (64 lowercase SHA-256 hexadecimal characters) and a
+  positive `digest_schema_version`. It never derives missing fields from a richer
+  canonical row. Digest generation, delivery retries and capture verification
+  belong to ingestion and metric consumers; storage alone makes no verified
+  capture claim.
+- `observe_discovered_session` preserves native identity and raw surface even
+  before a canonical import. Missing values stay unknown; conflicting known
+  identity fails, and an older observation cannot replace current completeness.
+  `discovered_sessions(host)` does not imply a plugin receipt.
+- `insert_tool_event` stores a classified structural hook/event without a
+  fabricated canonical record. Its shape contains names and source identity but
+  no input, output, command or transcript payload. `tool_events` reads these
+  events independently from canonical record tool calls. Optional `timestamp`
+  is validated as RFC3339 and stored verbatim in `event_ts`, including its native
+  offset and full fractional precision. Missing event time stays unknown even
+  when session or receipt times exist. Canonical tool calls use their existing
+  record timestamp through the record FK instead.
+
+The tool table is rebuilt transactionally only to allow a missing record FK for
+structural events. Existing IDs, block indexes, names and inputs are preserved.
+Other tables use additive changes. The store connection remains private; adapters
+use these typed methods instead of issuing independent SQL writes.
+
 ## Verification
 
 Run `cargo test -p xt-store` and
@@ -67,3 +111,9 @@ Run `cargo test -p xt-store` and
 Tests use disposable file databases for WAL/readers/migrations/concurrent writes
 and isolated memory databases for wire, replay and nullable-field cases. They
 inspect each content-bearing column during metadata-only inserts and enrichment.
+
+`cargo test -p xt-store ingest_schema` exercises an actual 0001 file upgrade,
+two reopens, row/column/FK preservation and rollback on invalid legacy relations.
+F18/F20 named schema snapshots exercise receipt immutability, submitted masks,
+discovery without capture and metadata-only writes through the shared fixture
+harness. These table-level checks do not mark either product fixture populated.

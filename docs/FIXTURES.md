@@ -157,6 +157,16 @@ reader/replay test setup without bypassing the canonical write API. Build with
 and is not a purge operation. WAL tests keep a reader snapshot open during a
 writer commit, then verify a new read sees the committed row.
 
+`TempDb::empty()` provides the same file owner for schema/discovery tests before
+their product fixture is populated. F18 and F20 have named `schema` snapshots
+loaded through `Fixture::snapshots()` for `cargo test -p xt-store ingest_schema`.
+F18 checks canonical/native identity, exact immutable submitted coverage and
+metadata-only structural writes. F20 checks discovery rows without canonical
+imports or receipts, including new and unknown surfaces. Their synthetic digest
+values test storage constraints, not digest generation or capture verification.
+Both entries remain skeletons with empty product expectations; the owning
+ingestion and metric PRs must still provide their executable product assertions.
+
 The harness owns catalog structure. The first subsystem PR populating a fixture
 owns its inputs; later PRs coordinate additions to that fixture's expected keys
 or named variants rather than replacing earlier evidence. Start with synthetic

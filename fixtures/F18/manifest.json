@@ -15,7 +15,14 @@
     {
       "file": "input/sessions/session.jsonl",
       "session_id": "00000000-0000-4000-8000-000000000018",
-      "host": "claude"
+      "host": "cursor",
+      "source_platform": "cursor",
+      "source_surface": "desktop.next",
+      "native_session_id": "native-fixture-18",
+      "started_at": "2026-09-07T12:00:00Z"
     }
-  ]
+  ],
+  "snapshots": {
+    "schema": "input/schema.json"
+  }
 }

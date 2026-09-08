@@ -30,7 +30,7 @@ fn file_wal_migrations_and_readers() {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .unwrap();
-    assert_eq!(history, (1, 1, "migration-once".into()));
+    assert_eq!(history, (2, 2, "migration-once".into()));
     store.upsert_session(&session(SESSION), true).unwrap();
     let batch: Vec<_> = (0..100)
         .map(|n| record(&format!("synthetic-{n}")))
@@ -165,8 +165,8 @@ fn file_database_constraints_protect_canonical_relations() {
     assert!(
         connection
             .execute(
-                "INSERT INTO tool_uses(uuid,block_index,name) VALUES (?1,0,'Read')",
-                ["missing-record"]
+                "INSERT INTO tool_uses(uuid,session_id,block_index,name) VALUES (?1,?2,0,'Read')",
+                params!["missing-record", SESSION]
             )
             .is_err()
     );
