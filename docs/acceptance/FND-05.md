@@ -14,7 +14,7 @@ selector and retains the existing app-information preview.
 - `pnpm build`: Safari 17-targeted production build passes; external asset paths
   remain compatible with the native `font-src 'self'` CSP.
 - `pnpm --dir apps/desktop/ui exec playwright test e2e/overlays.spec.ts
---project=webkit`: all 5 tests pass with Playwright 1.63.0 / WebKit 26.6.
+--project=webkit`: all 5 tests pass with Playwright 1.58.2 / WebKit 26.0.
 - Font regeneration using pinned FontTools 4.64.0, Brotli 1.2.0, and Zopfli 0.4.3
   reproduces all 16 WOFF2/TTF binaries byte-for-byte. All eight TTFs have the
   requested static OS/2 weight, no variable axis, and source glyph coverage.
@@ -33,6 +33,8 @@ invoker focus return. Listener registration/cleanup is balanced under
 StrictMode; the wrappers add no global Escape/outside-click handlers.
 
 ## Evidence
+
+The retained captures below were taken with Playwright 1.63.0 / WebKit 26.6. The five behavioral checks also pass after the runner pin to 1.58.2 / WebKit 26.0.
 
 - [Dark appearance](FND-05/dark.png)
 - [Light appearance](FND-05/light.png)
@@ -55,9 +57,11 @@ allowlist, ordinary test-file exemption, and rejection of a misleading
 
 ## Limits
 
+Playwright is pinned to 1.58.2 because [version 1.59 removed macOS 14 WebKit support](https://playwright.dev/docs/release-notes#version-159). The pin keeps the browser runner compatible with the supported OS floor; it does not replace native Safari 17 acceptance.
+
 These are synthetic browser captures, not native desktop screenshots. Native
 Tauri theme callbacks are covered through adapter tests; no real system
-appearance switch was made. The run uses current Playwright WebKit 26.6, not an
+appearance switch was made. The run uses Playwright WebKit 26.0, not an
 installed Safari 17.0 build. [Native popover support starts in Safari 17.0](https://webkit.org/blog/14445/webkit-features-in-safari-17-0/#popover), and
 the implementation avoids later CSS-anchor, `closedby`, and popover-source
 APIs. Release qualification on the macOS 14 floor remains a native release gate.
