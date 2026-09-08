@@ -150,7 +150,7 @@ export async function readPublicContent(api, repository, number, candidateBody) 
     linked.push({
       key,
       title: issue.title,
-      body: normalizedBody(issue.body ?? ''),
+      body: issue.body ?? '',
       ...(await conversations(
         api,
         reference.repository,

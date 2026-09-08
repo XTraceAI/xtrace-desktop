@@ -110,6 +110,39 @@ test('manual Development relationships are included without a body reference', a
   );
 });
 
+test('linked issue and PR disclosure controls are hashed verbatim', async () => {
+  for (const kind of ['issue', 'pull-request']) {
+    for (const change of ['checkbox', 'snapshot']) {
+      const state = fixture();
+      state.references = [{ number: 9, repository: { nameWithOwner: repository } }];
+      state.issue.body = '- [ ] ' + ATTESTATION + '\n\nDisclosure snapshot: pending\n';
+      if (kind === 'pull-request') {
+        state.issue.pull_request = {};
+        const api = state.api;
+        state.api = async (...args) => {
+          const route = args[0].split('?')[0];
+          const pull = '/repos/' + repository + '/pulls/9';
+          if (route === pull) return { commits: 1 };
+          if (route === pull + '/commits') return [{ sha: base }];
+          if ([pull + '/reviews', pull + '/comments'].includes(route)) return [];
+          return api(...args);
+        };
+      }
+      await seal(state);
+      state.issue.body =
+        change === 'checkbox'
+          ? state.issue.body.replace('- [ ]', '- [x]')
+          : state.issue.body.replace('pending', 'c'.repeat(64));
+      const current = await readPublicContent(state.api, repository, 3);
+      assert.equal(current.content.linked[0].body, state.issue.body);
+      assert.throws(() => requireDisclosure(current), /stale/);
+      assert.equal((await reconcile(state, async () => {}, 'issues')).failures, 1);
+      await seal(state);
+      assert.equal((await reconcile(state, async () => {}, 'issues')).failures, 0);
+    }
+  }
+});
+
 test('comment additions, edits, deletions, attachments and review changes stale the unchanged checkbox', async () => {
   for (const mutate of [
     (s) => s.comments.push({ id: 1, body: 'New comment.' }),
@@ -373,15 +406,56 @@ test('queue checks certify the original source digest and reject later content c
     await seal(state);
     if (change) {
       const api = state.api;
+      let queueReads = 0;
       state.api = async (...args) => {
-        if (args[0] === '/repos/' + repository)
+        if (args[0] === '/graphql' && args[1].variables.branch && ++queueReads === 2)
           state.comments.push({ id: 20, body: 'Added after the source scan.' });
         return api(...args);
       };
     }
     const result = await reconcile(state);
     assert.equal(result.failures, change ? 1 : 0);
-    assert.equal(state.writes[2].body.head_sha, queueHead);
+    assert.equal(state.writes[0].body.head_sha, queueHead);
     assert.equal(state.writes.at(-1).body.conclusion, change ? 'failure' : 'success');
+  }
+});
+
+test('queue heads are pending before scans and remain blocked when later reads fail', async () => {
+  for (const failAt of ['scan', 'pull-list']) {
+    const state = fixture();
+    const queueHead = 'c'.repeat(40);
+    state.queue = [
+      {
+        baseCommit: { oid: base },
+        headCommit: { oid: queueHead },
+        pullRequest: { number: 3, headRefOid: head },
+      },
+    ];
+    await seal(state);
+    const assertQueuePending = () => {
+      assert.equal(state.writes[0].body.head_sha, queueHead);
+      assert.equal(state.writes[0].body.status, 'in_progress');
+      assert.ok(!state.writes.some(({ body }) => body.conclusion === 'success'));
+    };
+    if (failAt === 'pull-list') {
+      const api = state.api;
+      state.api = async (...args) => {
+        if (args[0].includes('/pulls?state=open')) {
+          assertQueuePending();
+          throw new Error('Synthetic unavailable PR metadata');
+        }
+        return api(...args);
+      };
+      await assert.rejects(reconcile(state), /unavailable PR metadata/);
+      assert.equal(state.writes.length, 1, 'The queue must retain its blocking pending check.');
+    } else {
+      const result = await reconcile(state, async () => {
+        assertQueuePending();
+        throw new Error('Synthetic scan failure');
+      });
+      assert.equal(result.failures, 2);
+      assert.equal(state.writes.at(-1).path, '/repos/' + repository + '/check-runs/1');
+      assert.equal(state.writes.at(-1).body.conclusion, 'failure');
+    }
   }
 });

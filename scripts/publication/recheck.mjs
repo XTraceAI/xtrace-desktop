@@ -79,6 +79,29 @@ export async function recheckPublication({
       'Publication signal does not belong to the expected repository workflow.',
     );
   }
+  // Invalidate existing queue results before any fallible sequential source scan.
+  // Later metadata/read failures then leave a blocking pending check in place.
+  const metadata = await api(path);
+  requireValue(typeof metadata.default_branch === 'string', 'Default branch is unavailable.');
+  const base = sha(
+    (await api(path + '/commits/' + encodeURIComponent(metadata.default_branch))).sha,
+  );
+  const queue = await readQueue(api, repository, metadata.default_branch, { allowMissing: true });
+  const queuePending = [];
+  for (const entry of queue) {
+    const head = sha(entry.headCommit?.oid);
+    const check = await api(path + '/check-runs', {
+      name: 'publication-content',
+      head_sha: head,
+      status: 'in_progress',
+      output: {
+        title: 'Queue disclosure review pending',
+        summary: 'Checking current source PR disclosure snapshots.',
+      },
+    });
+    requireValue(Number.isSafeInteger(check.id), 'GitHub did not create the queue content check.');
+    queuePending.push({ head, check: check.id });
+  }
   const pulls = await pages(api, path + '/pulls?state=open');
   const pending = [];
   const seen = new Set();
@@ -152,24 +175,7 @@ export async function recheckPublication({
     );
     outcomes.set(member.number, { head: member.head, conclusion, digest: verifiedDigest });
   }
-  const metadata = await api(path);
-  requireValue(typeof metadata.default_branch === 'string', 'Default branch is unavailable.');
-  const base = sha(
-    (await api(path + '/commits/' + encodeURIComponent(metadata.default_branch))).sha,
-  );
-  const queue = await readQueue(api, repository, metadata.default_branch, { allowMissing: true });
-  for (const entry of queue) {
-    const head = sha(entry.headCommit?.oid);
-    const check = await api(path + '/check-runs', {
-      name: 'publication-content',
-      head_sha: head,
-      status: 'in_progress',
-      output: {
-        title: 'Queue disclosure review pending',
-        summary: 'Checking current source PR disclosure snapshots.',
-      },
-    });
-    requireValue(Number.isSafeInteger(check.id), 'GitHub did not create the queue content check.');
+  for (const { head, check } of queuePending) {
     let conclusion = 'failure';
     try {
       const members = queueMembers({ base_sha: base, head_sha: head }, queue);
@@ -203,7 +209,7 @@ export async function recheckPublication({
       failures++;
     }
     await api(
-      path + '/check-runs/' + check.id,
+      path + '/check-runs/' + check,
       {
         status: 'completed',
         conclusion,
