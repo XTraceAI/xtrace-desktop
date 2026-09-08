@@ -52,6 +52,9 @@ Comments from people and bots are included. The gate writes check results only,
 so its own operation does not change the discussion or create an attestation
 loop. Wait for review comments to settle before preparing the final snapshot.
 Manual Development-sidebar issue links are included through GitHub's API.
+Review-comment diff hunks are hashed and scanned as raw text, including retained
+context from commits no longer reachable from the current PR. Missing diff context
+fails the metadata check; current source alone cannot certify an outdated comment.
 Markdown links and HTML anchor links are included. Issue-shaped tokens in code
 examples and HTML comments are excluded. Fetched
 issue references must belong to this repository: another repository's edits
