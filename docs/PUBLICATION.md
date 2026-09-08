@@ -124,16 +124,23 @@ scanning, and a value deleted from the current tree can still be detected in his
 Two checks form the publication gate: `publication-checks` covers source/tests
 and `publication-content` runs trusted candidate scanning plus current disclosure review. Require both
 through repository rules after the workflows land. The former combines tests
-with actual PR diffs, reachable history and current reviewed public content.
+with the candidate merge diff and reachable Git history. Candidate scripts and
+runtime dependencies receive no repository API token, and their jobs have no
+issue or pull-request metadata permissions. The pinned checkout action uses
+read-only contents access without persisting credentials. API reads and disclosure
+attestation belong exclusively to the default-branch `publication-content` jobs.
+A passing candidate scan cannot replace that independently required trusted check.
 A failed, cancelled or skipped dependency cannot produce a successful aggregate.
-The event-aware `pnpm publication:check` entrypoint runs in the GitHub Actions
-context. Its tests cover metadata/queue-resolution helpers and real CLI error
-paths without live credentials. They do not demonstrate a successful live PR
-or merge-queue run.
+
+Tests cover the credential boundary, metadata/queue-resolution helpers and real
+CLI error paths without live credentials. They do not demonstrate a successful
+live trusted workflow or merge-queue run.
 
 To check an existing PR locally, use a checkout at that PR's source head and an
-already configured read-only `GH_TOKEN` or `GITHUB_TOKEN`. Replace the repository
-and number placeholders:
+already configured read-only `GH_TOKEN` or `GITHUB_TOKEN`. Only run this metadata
+CLI from a checkout whose scripts and dependencies you have reviewed and trust:
+read-only tokens can still disclose private repository content. Never supply a
+token to unreviewed candidate code. Replace the repository and number placeholders:
 
 ```sh
 pnpm publication:check --repository OWNER/REPO --pr NUMBER

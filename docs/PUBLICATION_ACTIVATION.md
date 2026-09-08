@@ -8,7 +8,11 @@ This runbook prepares activation; it does not change settings or authorize merge
 2. Retarget the publication checks PR to that updated default branch, validate
    the exact combined result and complete its review. The base and source must
    both contain the unchanged relay. Merge the trusted content workflow only
-   after these checks pass. Queue certification remains disabled.
+   after these checks pass. Until the trusted producer is installed, the
+   candidate `publication-checks` result covers Git source and tests only; run the
+   reviewed local disclosure check and inspect its evidence before this bootstrap
+   merge. Do not treat candidate CI as metadata attestation. Queue certification
+   remains disabled.
 3. Dispatch `Publication content` on the default branch. Record its source SHA,
    matrix jobs and custom check IDs. Exercise an early scan timeout with later
    PRs present: later jobs must run, the failed scan must remain terminally
