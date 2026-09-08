@@ -167,6 +167,10 @@ values test storage constraints, not digest generation or capture verification.
 Both entries remain skeletons with empty product expectations; the owning
 ingestion and metric PRs must still provide their executable product assertions.
 
+F17/F18/F20 also expose named `parser` snapshots for the pure canonical parser.
+They share the same loader and preserve existing schema evidence; parser
+classification does not mark their product expectations populated.
+
 The harness owns catalog structure. The first subsystem PR populating a fixture
 owns its inputs; later PRs coordinate additions to that fixture's expected keys
 or named variants rather than replacing earlier evidence. Start with synthetic

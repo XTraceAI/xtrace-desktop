@@ -1,0 +1,164 @@
+{
+  "scope": "parser-only",
+  "cases": [
+    {
+      "name": "claude-cache-sidechain",
+      "line": {
+        "uuid": "02000000-0000-4000-8000-000000000001",
+        "type": "assistant",
+        "timestamp": "2026-09-07T12:00:00.000000000123Z",
+        "sessionId": "native-claude",
+        "agentId": "agent-sidechain",
+        "parentUuid": "02000000-0000-4000-8000-000000000000",
+        "isSidechain": true,
+        "isMeta": false,
+        "requestId": "request-1",
+        "message": {
+          "id": "response-1",
+          "role": "assistant",
+          "model": "fixture-model",
+          "content": [
+            {
+              "type": "text",
+              "text": "Synthetic reply."
+            }
+          ],
+          "usage": {
+            "input_tokens": 100,
+            "output_tokens": 5,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 20,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 8,
+              "ephemeral_1h_input_tokens": 12
+            },
+            "service_tier": "standard"
+          }
+        }
+      },
+      "expected_variant": "record"
+    },
+    {
+      "name": "same-response-tool",
+      "line": {
+        "uuid": "02000000-0000-4000-8000-000000000002",
+        "type": "assistant",
+        "timestamp": "2026-09-07T12:00:01Z",
+        "requestId": "request-1",
+        "message": {
+          "id": "response-1",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "tool-1",
+              "name": "Read",
+              "input": {
+                "path": "synthetic.txt"
+              }
+            }
+          ],
+          "usage": {
+            "input_tokens": 100,
+            "output_tokens": 10,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 20
+          }
+        }
+      },
+      "expected_variant": "record"
+    },
+    {
+      "name": "tool-result-carrier",
+      "line": {
+        "uuid": "02000000-0000-4000-8000-000000000003",
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "tool-1",
+              "content": "Synthetic result."
+            }
+          ]
+        }
+      },
+      "expected_variant": "record"
+    },
+    {
+      "name": "native-pr-link-no-uuid",
+      "line": {
+        "type": "pr-link",
+        "sessionId": "native-claude",
+        "prNumber": 42,
+        "prUrl": "https://github.com/example/fixture/pull/42",
+        "prRepository": "example/fixture",
+        "timestamp": "2026-09-07T12:00:02Z"
+      },
+      "expected_variant": "pr_link"
+    },
+    {
+      "name": "native-stop-hook-summary",
+      "line": {
+        "type": "system",
+        "subtype": "stop_hook_summary",
+        "uuid": "02000000-0000-4000-8000-000000000004",
+        "parentUuid": "02000000-0000-4000-8000-000000000002",
+        "sessionId": "native-claude",
+        "timestamp": "2026-09-07T12:00:03Z",
+        "hookCount": 3,
+        "hookInfos": [
+          {
+            "command": "synthetic-private-command",
+            "durationMs": 5
+          }
+        ],
+        "hookErrors": [
+          "synthetic-private-error"
+        ],
+        "hookAdditionalContext": [
+          "synthetic-private-context"
+        ],
+        "preventedContinuation": false,
+        "stopReason": "synthetic-private-reason",
+        "hasOutput": true,
+        "level": "suggestion",
+        "toolUseID": "tool-1",
+        "hookLabel": "Stop",
+        "totalDurationMs": 15
+      },
+      "expected_variant": "structural"
+    },
+    {
+      "name": "unrelated-system",
+      "line": {
+        "type": "system",
+        "subtype": "turn_duration",
+        "durationMs": 50
+      },
+      "expected_variant": "inert"
+    },
+    {
+      "name": "unknown-progress",
+      "line": {
+        "type": "progress",
+        "message": false,
+        "timestamp": "ignored-unknown-shape"
+      },
+      "expected_variant": "inert"
+    },
+    {
+      "name": "missing-response-ids",
+      "line": {
+        "uuid": "02000000-0000-4000-8000-000000000005",
+        "type": "assistant",
+        "message": {
+          "role": "assistant",
+          "content": []
+        }
+      },
+      "expected_variant": "record"
+    }
+  ]
+}

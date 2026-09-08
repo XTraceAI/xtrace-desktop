@@ -1,4 +1,6 @@
 //! Transcript parsing, discovery, backfill, watching, and capture receipts.
 //!
-//! Foundation scaffold: no product API is implemented yet.
-//! Ingestion contracts are introduced by the ING workstream.
+//! The canonical parser performs no I/O. Writers, watching and capture delivery
+//! are introduced by their owning ingestion stages.
+
+pub mod canonical;

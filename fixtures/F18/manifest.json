@@ -23,6 +23,7 @@
     }
   ],
   "snapshots": {
-    "schema": "input/schema.json"
+    "schema": "input/schema.json",
+    "parser": "input/parser.json"
   }
 }

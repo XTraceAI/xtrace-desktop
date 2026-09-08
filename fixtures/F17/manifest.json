@@ -14,5 +14,8 @@
       "session_id": "00000000-0000-4000-8000-000000000017",
       "host": "claude"
     }
-  ]
+  ],
+  "snapshots": {
+    "parser": "input/parser.json"
+  }
 }
