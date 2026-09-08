@@ -18,8 +18,9 @@ native application does not ingest data or open this store yet.
   `ignored` and `dropped_no_uuid`. Empty/absent UUIDs are omitted. Other malformed
   input fails the whole transaction. The session must already exist.
 - `session(id)`, `records(session_id)` and `counts()` return typed stored data.
-  Records, their usage and their tool rows are read from one snapshot, ordered
-  by native timestamp with unknown timestamps last and UUID as a tie breaker.
+  Records, their usage and their tool rows use set-based reads from one snapshot,
+  ordered by native timestamp with unknown timestamps last and UUID as a tie
+  breaker. Query count remains bounded as the number of session records grows.
 
 Native timestamp ordering, imported first/last bounds and replay conflict checks
 preserve every RFC3339 fractional digit, including digits beyond nanoseconds.

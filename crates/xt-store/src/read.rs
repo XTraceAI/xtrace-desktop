@@ -4,6 +4,7 @@ use crate::{
 use rusqlite::{Connection, OptionalExtension, Row, types::Type};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredSession {
@@ -61,17 +62,55 @@ impl Store {
     /// Related usage/tool rows are read from the same SQLite snapshot.
     pub fn records(&self, session_id: &str) -> Result<Vec<StoredRecord>> {
         let transaction = self.connection.unchecked_transaction()?;
-        let timestamps = ordered_timestamps(
-            &transaction,
-            session_id,
-            "SELECT uuid, ts FROM records WHERE session_id=?1",
-        )?;
-        let records = timestamps
-            .iter()
-            .map(|(uuid, _)| record(&transaction, uuid)?.ok_or(crate::Error::IncompatibleSchema))
-            .collect::<Result<_>>()?;
+        let mut records = transaction
+            .prepare(&format!(
+                "SELECT {RECORD_FIELDS} FROM records r WHERE r.session_id=?1"
+            ))?
+            .query_map([session_id], record_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(|record| (record.uuid.clone(), record))
+            .collect::<BTreeMap<_, _>>();
+        for entry in transaction.prepare(&format!(
+            "SELECT u.uuid,{USAGE_FIELDS} FROM usage u JOIN records r ON r.uuid=u.uuid WHERE r.session_id=?1"
+        ))?.query_map([session_id], |row| Ok((row.get::<_, String>(0)?, usage_from_row(row, 1)?)))? {
+            let (uuid, usage) = entry?;
+            records.get_mut(&uuid).ok_or(crate::Error::IncompatibleSchema)?.usage = Some(usage);
+        }
+        for entry in transaction
+            .prepare(&format!(
+                "SELECT t.uuid,{TOOL_FIELDS} FROM tool_uses t JOIN records r ON r.uuid=t.uuid
+             WHERE r.session_id=?1 ORDER BY t.uuid,t.block_index"
+            ))?
+            .query_map([session_id], |row| {
+                Ok((row.get::<_, String>(0)?, tool_from_row(row, 1)?))
+            })?
+        {
+            let (uuid, tool) = entry?;
+            records
+                .get_mut(&uuid)
+                .ok_or(crate::Error::IncompatibleSchema)?
+                .tool_uses
+                .push(tool);
+        }
         transaction.commit()?;
-        Ok(records)
+        // Sort owned rows after releasing the snapshot. No child-row read occurs
+        // after commit, and UUID only breaks ties between equal native instants.
+        let mut keyed = records
+            .into_values()
+            .map(|record| {
+                let key = record
+                    .ts
+                    .as_deref()
+                    .map(|value| timestamp::parse(value).map(|(key, _)| key))
+                    .transpose()?;
+                Ok((key, record))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        keyed.sort_unstable_by(|a, b| {
+            (a.0.is_none(), &a.0, &a.1.uuid).cmp(&(b.0.is_none(), &b.0, &b.1.uuid))
+        });
+        Ok(keyed.into_iter().map(|(_, record)| record).collect())
     }
 
     pub fn counts(&self) -> Result<StoreCounts> {
@@ -168,35 +207,19 @@ pub(crate) fn session(connection: &Connection, id: &str) -> Result<Option<Stored
         .optional()?)
 }
 
+const RECORD_FIELDS: &str = "r.uuid,r.session_id,r.type,r.ts,r.ts_ms,r.api_message_id,r.request_id,
+    r.is_meta,r.is_sidechain,r.role,r.model,r.is_tool_result_carrier,r.text_len,r.tool_use_count,r.content_json,r.has_conflict";
+const USAGE_FIELDS: &str =
+    "u.input_tokens,u.output_tokens,u.cache_read_tokens,u.cache_creation_tokens,
+    u.cache_creation_5m,u.cache_creation_1h,u.service_tier";
+const TOOL_FIELDS: &str = "t.id,t.block_index,t.name,t.input_json";
+
 pub(crate) fn record(connection: &Connection, uuid: &str) -> Result<Option<StoredRecord>> {
     let Some(mut record) = connection
         .query_row(
-            "SELECT uuid, session_id, type, ts, ts_ms, api_message_id, request_id,
-                is_meta, is_sidechain, role, model, is_tool_result_carrier,
-                text_len, tool_use_count, content_json, has_conflict FROM records WHERE uuid=?1",
+            &format!("SELECT {RECORD_FIELDS} FROM records r WHERE r.uuid=?1"),
             [uuid],
-            |row| {
-                Ok(StoredRecord {
-                    uuid: row.get(0)?,
-                    session_id: row.get(1)?,
-                    record_type: row.get(2)?,
-                    ts: row.get(3)?,
-                    ts_ms: row.get(4)?,
-                    api_message_id: row.get(5)?,
-                    request_id: row.get(6)?,
-                    is_meta: row.get(7)?,
-                    is_sidechain: row.get(8)?,
-                    role: row.get(9)?,
-                    model: row.get(10)?,
-                    is_tool_result_carrier: row.get(11)?,
-                    text_len: row.get(12)?,
-                    tool_use_count: row.get(13)?,
-                    content_json: json_column(row, 14)?,
-                    usage: None,
-                    tool_uses: Vec::new(),
-                    has_conflict: row.get(15)?,
-                })
-            },
+            record_from_row,
         )
         .optional()?
     else {
@@ -204,36 +227,70 @@ pub(crate) fn record(connection: &Connection, uuid: &str) -> Result<Option<Store
     };
     record.usage = connection
         .query_row(
-            "SELECT input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                cache_creation_5m, cache_creation_1h, service_tier FROM usage WHERE uuid=?1",
+            &format!("SELECT {USAGE_FIELDS} FROM usage u WHERE u.uuid=?1"),
             [uuid],
-            |row| {
-                let five: Option<i64> = row.get(4)?;
-                let hour: Option<i64> = row.get(5)?;
-                Ok(Usage {
-                    input_tokens: row.get(0)?,
-                    output_tokens: row.get(1)?,
-                    cache_read_input_tokens: row.get(2)?,
-                    cache_creation_input_tokens: row.get(3)?,
-                    cache_creation: if five.is_some() || hour.is_some() {
-                        Some(CacheCreation {
-                            ephemeral_5m_input_tokens: five,
-                            ephemeral_1h_input_tokens: hour,
-                        })
-                    } else {
-                        None
-                    },
-                    service_tier: row.get(6)?,
-                })
-            },
+            |row| usage_from_row(row, 0),
         )
         .optional()?;
-    record.tool_uses = connection.prepare(
-        "SELECT id, block_index, name, input_json FROM tool_uses WHERE uuid=?1 ORDER BY block_index",
-    )?.query_map([uuid], |row| Ok(StoredToolUse {
-        id: row.get(0)?, block_index: row.get(1)?, name: row.get(2)?, input_json: json_column(row, 3)?,
-    }))?.collect::<rusqlite::Result<_>>()?;
+    record.tool_uses = connection
+        .prepare(&format!(
+            "SELECT {TOOL_FIELDS} FROM tool_uses t WHERE t.uuid=?1 ORDER BY t.block_index"
+        ))?
+        .query_map([uuid], |row| tool_from_row(row, 0))?
+        .collect::<rusqlite::Result<_>>()?;
     Ok(Some(record))
+}
+
+fn record_from_row(row: &Row<'_>) -> rusqlite::Result<StoredRecord> {
+    Ok(StoredRecord {
+        uuid: row.get(0)?,
+        session_id: row.get(1)?,
+        record_type: row.get(2)?,
+        ts: row.get(3)?,
+        ts_ms: row.get(4)?,
+        api_message_id: row.get(5)?,
+        request_id: row.get(6)?,
+        is_meta: row.get(7)?,
+        is_sidechain: row.get(8)?,
+        role: row.get(9)?,
+        model: row.get(10)?,
+        is_tool_result_carrier: row.get(11)?,
+        text_len: row.get(12)?,
+        tool_use_count: row.get(13)?,
+        content_json: json_column(row, 14)?,
+        has_conflict: row.get(15)?,
+        usage: None,
+        tool_uses: Vec::new(),
+    })
+}
+
+fn usage_from_row(row: &Row<'_>, start: usize) -> rusqlite::Result<Usage> {
+    let five: Option<i64> = row.get(start + 4)?;
+    let hour: Option<i64> = row.get(start + 5)?;
+    Ok(Usage {
+        input_tokens: row.get(start)?,
+        output_tokens: row.get(start + 1)?,
+        cache_read_input_tokens: row.get(start + 2)?,
+        cache_creation_input_tokens: row.get(start + 3)?,
+        cache_creation: if five.is_some() || hour.is_some() {
+            Some(CacheCreation {
+                ephemeral_5m_input_tokens: five,
+                ephemeral_1h_input_tokens: hour,
+            })
+        } else {
+            None
+        },
+        service_tier: row.get(start + 6)?,
+    })
+}
+
+fn tool_from_row(row: &Row<'_>, start: usize) -> rusqlite::Result<StoredToolUse> {
+    Ok(StoredToolUse {
+        id: row.get(start)?,
+        block_index: row.get(start + 1)?,
+        name: row.get(start + 2)?,
+        input_json: json_column(row, start + 3)?,
+    })
 }
 
 fn json_column<T: DeserializeOwned>(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<T>> {
@@ -244,4 +301,82 @@ fn json_column<T: DeserializeOwned>(row: &Row<'_>, index: usize) -> rusqlite::Re
             })
         })
         .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{CanonicalRecord, SessionSource};
+    use rusqlite::trace::{TraceEvent, TraceEventCodes};
+    use serde_json::json;
+    use std::cell::Cell;
+
+    thread_local! { static SELECTS: Cell<usize> = const { Cell::new(0) }; }
+
+    #[test]
+    fn large_session_reads_use_bounded_queries_and_keep_children_with_their_record() {
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .upsert_session(
+                &SessionMeta::new("large", "claude", SessionSource::Fixture),
+                true,
+            )
+            .unwrap();
+        let records = (0..1000).map(|n| {
+            let mut record = json!({"uuid":format!("record-{:04}", 999-n),"type":"assistant",
+                "timestamp":format!("2026-09-01T12:00:00.{n:010}Z"),
+                "message":{"role":"assistant","content":[
+                    {"type":"tool_use","name":"Read","input":{"sequence":n}},
+                    {"type":"tool_use","name":"Write","input":{"sequence":n}}
+                ]}});
+            if n % 3 == 0 {
+                record["message"]["usage"] = json!({"input_tokens":n,"output_tokens":null,"cache_read_input_tokens":0,"cache_creation_input_tokens":null});
+            }
+            serde_json::from_value::<CanonicalRecord>(record).unwrap()
+        }).collect::<Vec<_>>();
+        store.upsert_records("large", &records, true).unwrap();
+        store
+            .upsert_session(
+                &SessionMeta::new("other", "claude", SessionSource::Fixture),
+                true,
+            )
+            .unwrap();
+        let mut other = records[0].clone();
+        other.uuid = Some("other-record".into());
+        store.upsert_records("other", &[other], true).unwrap();
+        SELECTS.set(0);
+        store.connection.trace_v2(
+            TraceEventCodes::SQLITE_TRACE_STMT,
+            Some(|event| {
+                if let TraceEvent::Stmt(statement, _) = event
+                    && statement.sql().trim_start().starts_with("SELECT")
+                {
+                    SELECTS.set(SELECTS.get() + 1);
+                }
+            }),
+        );
+        let loaded = store.records("large").unwrap();
+        store.connection.trace_v2(TraceEventCodes::empty(), None);
+        let statements = SELECTS.get();
+        assert!(
+            (1..=3).contains(&statements),
+            "record reads must use at most three SELECTs, observed {statements}"
+        );
+        assert_eq!(loaded.len(), records.len());
+        for (n, row) in loaded.iter().enumerate() {
+            assert_eq!(row.uuid, format!("record-{:04}", 999 - n));
+            assert_eq!(row.tool_uses.len(), 2);
+            assert_eq!(row.tool_uses[0].name, "Read");
+            assert_eq!(row.tool_uses[1].name, "Write");
+            assert_eq!(row.tool_uses[0].input_json, Some(json!({"sequence":n})));
+            if n % 3 == 0 {
+                let usage = row.usage.as_ref().unwrap();
+                assert_eq!(usage.input_tokens, Some(n as i64));
+                assert_eq!(usage.output_tokens, None);
+                assert_eq!(usage.cache_read_input_tokens, Some(0));
+            } else {
+                assert!(row.usage.is_none());
+            }
+        }
+    }
 }
