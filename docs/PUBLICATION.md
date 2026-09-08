@@ -247,6 +247,14 @@ paths. GitHub must deliver an event and start the run to invalidate an earlier
 result. Repeat the review and update the snapshot when manually changing linked
 relationships. No repository rule is changed by these files.
 
+Before writing success, the worker rereads the complete disclosure digest after
+checking trusted-code identity, including titles, discussions, linked records
+and retained revisions. It compares that digest with the scanned snapshot and
+performs no intervening API work before the check update. GitHub content reads
+and check writes are separate requests: edits during or after that final read
+still depend on subsequent reconciliation, including workflow scheduling delay.
+Success records the observed snapshot; it cannot lock public content against edits.
+
 Comments on the source PR's commits are included, with complete source-commit
 pagination required. GitHub Actions does not support a commit-comment trigger;
 the [documented workflow triggers](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)

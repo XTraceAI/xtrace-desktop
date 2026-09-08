@@ -192,14 +192,16 @@ export async function checkPublication({
       trusted.sha === trustedHead,
       'Trusted default-branch code changed during scanning; rerun checks.',
     );
-    // Read the exact current base and head immediately before writing success.
-    const current = await api(path + '/pulls/' + member.number);
+    // Refresh the complete disclosure after the trusted-code requests, with no
+    // intervening API work before writing the result. GitHub offers no atomic
+    // content-read/check-write operation; later edits still need reconciliation.
+    const current = await readPublicContent(api, repository, member.number);
+    requireDisclosure(current);
     requireValue(
-      current.state === 'open' &&
-        current.head?.sha === member.head &&
-        current.base?.sha === before.pr.base.sha &&
-        current.body === after.pr.body,
-      'Source PR changed before the result was written; rerun content checks.',
+      current.pr.head.sha === member.head &&
+        current.pr.base.sha === before.pr.base.sha &&
+        current.digest === before.digest,
+      'Public content changed before the result was written; repeat disclosure review.',
     );
     conclusion = 'success';
     summary =

@@ -426,8 +426,57 @@ test('a base advance immediately before certification remains blocking', async (
     return api(...args);
   };
   assert.equal((await reconcile(state)).failures, 1);
-  assert.equal(reads, 5);
+  assert.equal(reads, 6);
   assert.equal(state.writes.at(-1).body.conclusion, 'failure');
+});
+
+test('final certification refreshes all disclosure fields after trusted-code lookup', async (t) => {
+  const mutations = {
+    title: (s) => (s.pr.title += ' Updated.'),
+    body: (s) => (s.pr.body += '\nUpdated prose.'),
+    comment: (s) => s.comments.push({ id: 20, body: 'Late conversation.' }),
+    review: (s) => s.reviews.push({ id: 21, body: 'Late review.', state: 'COMMENTED' }),
+    'inline comment': (s) =>
+      s.reviewComments.push({ id: 22, body: 'Late inline.', diff_hunk: '@@ Synthetic context' }),
+    'commit comment': (s) =>
+      s.commitComments.push({ id: 23, body: 'Late commit comment.', commit_id: head }),
+    'linked title': (s) => (s.issue.title += ' Updated.'),
+    'linked body': (s) => (s.issue.body += ' Updated.'),
+    'linked comment': (s) => s.issueComments.push({ id: 24, body: 'Late linked comment.' }),
+    relationship: (s) => (s.references = []),
+    'title revision': (s) =>
+      s.titleEdits.push({
+        id: 'late-title',
+        createdAt: timestamp,
+        previousTitle: 'Retained earlier title',
+        currentTitle: s.pr.title,
+      }),
+    'source head': (s) => (s.pr.head.sha = 'c'.repeat(40)),
+    'source base': (s) => (s.pr.base.sha = 'c'.repeat(40)),
+    closed: (s) => (s.pr.state = 'closed'),
+  };
+  for (const [name, mutate] of Object.entries(mutations)) {
+    await t.test(name, async () => {
+      const state = fixture();
+      state.references = [{ number: 9, repository: { nameWithOwner: repository } }];
+      await seal(state);
+      const api = state.api;
+      let mutated = false;
+      state.api = async (...args) => {
+        const response = await api(...args);
+        if (args[0] === '/repos/' + repository + '/commits/main') {
+          mutate(state);
+          // Even a newly matching attestation cannot certify unscanned content.
+          if (name === 'comment') await seal(state);
+          mutated = true;
+        }
+        return response;
+      };
+      assert.equal((await reconcile(state)).failures, 1);
+      assert.equal(mutated, true);
+      assert.equal(state.writes.at(-1).body.conclusion, 'failure');
+    });
+  }
 });
 
 test('raw API or scanner errors cannot become public diagnostics or successful checks', async () => {
