@@ -36,7 +36,9 @@ export function outsideRepository(repo, path) {
 
 export function cleanEnvironment() {
   return Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !/^(?:GIT|GITLEAKS)_/.test(key)),
+    Object.entries(process.env).filter(
+      ([key]) => !/^(?:(?:GIT|GITLEAKS)_|GITHUB_TOKEN$|GH_TOKEN$)/.test(key),
+    ),
   );
 }
 

@@ -116,6 +116,7 @@ export async function scanRepository(options) {
     await mkdir(targets, { mode: 0o700 });
     const labels = new Map();
     const versions = new Set();
+    const paths = new Set();
     let bytes = 0;
     let count = 0;
     async function add(data, label, path) {
@@ -139,6 +140,12 @@ export async function scanRepository(options) {
       }
     }
     async function blob(oid, path) {
+      // A Git filename is published data even when its blob is empty. Scan it
+      // as opaque text; Gitleaks otherwise uses paths only for filtering/reporting.
+      if (!paths.has(path)) {
+        paths.add(path);
+        await add(Buffer.from(path + '\n'), `git-path[${paths.size}]`);
+      }
       const key = `${oid}:${path}`;
       if (versions.has(key)) return;
       versions.add(key);
