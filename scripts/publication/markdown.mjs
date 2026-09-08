@@ -84,3 +84,13 @@ export function referenceProse(body) {
   visit(document);
   return parts.join('');
 }
+
+export function normalizedBody(body) {
+  const lines = body.split(/\r?\n/);
+  for (const control of disclosureControls(body)) {
+    if (control.snapshot) lines[control.lineNumber] = 'Disclosure snapshot: pending';
+    if (control.declaration?.[2] === ATTESTATION)
+      lines[control.lineNumber] = '- [ ] ' + ATTESTATION;
+  }
+  return lines.join('\n');
+}

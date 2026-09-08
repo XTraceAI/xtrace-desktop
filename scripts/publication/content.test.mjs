@@ -28,6 +28,8 @@ export function fixture() {
       head: { sha: head, ref: 'feat/synthetic' },
     },
     references: [],
+    bodyEdits: [],
+    titleEdits: [],
     comments: [],
     reviews: [],
     reviewComments: [],
@@ -47,6 +49,28 @@ export function fixture() {
   state.api = async (path, body, method) => {
     state.calls.push(path);
     if (path === '/graphql') {
+      if (body.query.includes('query SourceRevisions')) {
+        const field = body.query.includes('userContentEdits(')
+          ? 'userContentEdits'
+          : 'timelineItems';
+        const nodes = field === 'userContentEdits' ? state.bodyEdits : state.titleEdits;
+        return {
+          data: {
+            repository: {
+              pullRequest: {
+                body: state.pr.body,
+                title: state.pr.title,
+                lastEditedAt: state.bodyEdits[0]?.editedAt ?? null,
+                [field]: {
+                  totalCount: nodes.length,
+                  nodes: structuredClone(nodes),
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        };
+      }
       if (body.variables.branch)
         return {
           data: {
@@ -203,13 +227,14 @@ test('preparing a candidate does not change public content and snapshot controls
   state.pr.body = state.pr.body.replace('- [ ]', '- [x]');
   assert.equal((await readPublicContent(state.api, repository, 3)).digest, digest);
   const original = state.pr.body;
-  const draft = await readPublicContent(
-    state.api,
-    repository,
-    3,
-    original.replace('description', 'candidate'),
+  await assert.rejects(
+    readPublicContent(state.api, repository, 3, original.replace('description', 'candidate')),
+    /Publish the reviewed PR prose/,
   );
-  assert.notEqual(draft.digest, digest);
+  assert.equal(
+    (await readPublicContent(state.api, repository, 3, original.replace('- [x]', '- [ ]'))).digest,
+    digest,
+  );
   assert.equal(state.pr.body, original);
   assert.equal(state.writes.length, 0);
 });
@@ -793,4 +818,45 @@ test('a trusted default-branch advance during scanning cannot certify old policy
   assert.equal(result.failures, 1);
   assert.equal(state.writes.at(-1).body.conclusion, 'failure');
   assert.match(state.writes.at(-1).body.output.summary, /Trusted default-branch code changed/);
+});
+
+test('source body edit-and-revert stales the attestation but control-only edits do not', async () => {
+  const state = fixture();
+  const original = state.pr.body;
+  const publish = (body) => {
+    state.pr.body = body;
+    state.bodyEdits.unshift({
+      id: 'body-' + state.bodyEdits.length,
+      editedAt: timestamp,
+      deletedAt: null,
+      diff: body,
+    });
+  };
+  const digest = await seal(state);
+  // GitHub materializes the original revision on the first body edit.
+  const sealed = state.pr.body;
+  publish(original);
+  publish(sealed);
+  requireDisclosure(await readPublicContent(state.api, repository, 3));
+  publish(sealed.replace('Reviewed description.', 'Intervening description.'));
+  publish(sealed);
+  const changed = await readPublicContent(state.api, repository, 3);
+  assert.notEqual(changed.digest, digest);
+  assert.throws(() => requireDisclosure(changed), /stale/);
+  assert.ok(changed.texts.some((text) => text.includes('Intervening description.')));
+  publish(sealed.replace(digest, changed.digest));
+  requireDisclosure(await readPublicContent(state.api, repository, 3));
+});
+
+test('source title edit-and-revert stales the attestation and includes retained titles', async () => {
+  const state = fixture();
+  await seal(state);
+  const title = state.pr.title;
+  state.titleEdits = [
+    { id: 'title-1', createdAt: timestamp, previousTitle: title, currentTitle: 'Temporary title' },
+    { id: 'title-2', createdAt: timestamp, previousTitle: 'Temporary title', currentTitle: title },
+  ];
+  const changed = await readPublicContent(state.api, repository, 3);
+  assert.throws(() => requireDisclosure(changed), /stale/);
+  assert.ok(changed.texts.includes('Temporary title'));
 });

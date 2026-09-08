@@ -102,6 +102,11 @@ test('real local CLI removes fetched refs after success, fetch failure, mismatch
           data: {
             repository: {
               pullRequest: {
+                body: pr.body,
+                title: pr.title,
+                lastEditedAt: null,
+                userContentEdits: { totalCount: 0, nodes: [], pageInfo: { hasNextPage: false } },
+                timelineItems: { nodes: [], pageInfo: { hasNextPage: false } },
                 closingIssuesReferences: {
                   nodes: [],
                   totalCount: 0,
@@ -124,6 +129,7 @@ test('real local CLI removes fetched refs after success, fetch failure, mismatch
         3,
       );
       pr.body = pr.body.replace('pending', review.digest);
+      responses['/graphql'].data.repository.pullRequest.body = pr.body;
       const data = join(temporary, 'responses.json');
       await writeFile(data, JSON.stringify(responses), { mode: 0o600 });
       const preload = join(temporary, 'transport.mjs');

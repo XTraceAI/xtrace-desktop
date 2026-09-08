@@ -188,3 +188,14 @@ export async function resolveEvent(eventName, event, repository, api) {
     members: queueMembers(group, entries),
   };
 }
+
+export function revisionTimestamp(value) {
+  requireValue(
+    typeof value === 'string' &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) &&
+      Number.isFinite(Date.parse(value)) &&
+      new Date(value).toISOString() === (value.includes('.') ? value : value.replace('Z', '.000Z')),
+    'Public content revision timestamp is unavailable.',
+  );
+  return value;
+}

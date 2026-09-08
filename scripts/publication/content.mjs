@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 import { pages } from './api.mjs';
-import { disclosureControls } from './markdown.mjs';
+import { disclosureControls, normalizedBody } from './markdown.mjs';
+import { readSourceRevisions } from './revisions.mjs';
 import {
-  ATTESTATION,
   linkedIssues,
   prNumber,
   PublicationError,
   repositoryName,
   requireAttestation,
+  revisionTimestamp,
   requireValue,
   sha,
   validatePullRequest,
@@ -54,27 +55,6 @@ export async function closingIssues(api, repository, number) {
     cursors.add(after);
   }
   throw new PublicationError('Too many linked issue relationships.');
-}
-
-function normalizedBody(body) {
-  const lines = body.split(/\r?\n/);
-  for (const control of disclosureControls(body)) {
-    if (control.snapshot) lines[control.lineNumber] = 'Disclosure snapshot: pending';
-    if (control.declaration?.[2] === ATTESTATION)
-      lines[control.lineNumber] = '- [ ] ' + ATTESTATION;
-  }
-  return lines.join('\n');
-}
-
-function revisionTimestamp(value) {
-  requireValue(
-    typeof value === 'string' &&
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) &&
-      Number.isFinite(Date.parse(value)) &&
-      new Date(value).toISOString() === (value.includes('.') ? value : value.replace('Z', '.000Z')),
-    'Public content revision timestamp is unavailable.',
-  );
-  return value;
 }
 
 function discussion(items, includeDiff = false) {
@@ -140,8 +120,17 @@ export async function readPublicContent(api, repository, number, candidateBody) 
   repositoryName(repository);
   prNumber(number);
   const pr = await api('/repos/' + repository + '/pulls/' + number);
-  if (candidateBody !== undefined) pr.body = candidateBody;
   validatePullRequest(pr, repository, pr.head?.sha, { attestation: false });
+  if (candidateBody !== undefined) {
+    requireValue(
+      typeof candidateBody === 'string' &&
+        typeof pr.body === 'string' &&
+        normalizedBody(candidateBody) === normalizedBody(pr.body),
+      'Publish the reviewed PR prose with a pending snapshot before preparing its revision-bound attestation.',
+    );
+  }
+  const revisions = await readSourceRevisions(api, repository, number, pr);
+  if (candidateBody !== undefined) pr.body = candidateBody;
   const repositoryComments = await pages(api, '/repos/' + repository + '/comments');
   // Detect duplicate pages even for comments outside this PR's commit set.
   discussion(repositoryComments);
@@ -155,7 +144,7 @@ export async function readPublicContent(api, repository, number, candidateBody) 
   }
   requireValue(references.size <= 100, 'Too many linked issues to review in one PR.');
   const linked = [];
-  const texts = [pr.title, pr.body, pr.base.ref, pr.head.ref];
+  const texts = [pr.title, pr.body, pr.base.ref, pr.head.ref, ...revisions.texts];
   for (const [key, reference] of [...references].sort(([a], [b]) => a.localeCompare(b))) {
     requireValue(
       reference.repository.toLowerCase() === repository.toLowerCase(),
@@ -182,7 +171,8 @@ export async function readPublicContent(api, repository, number, candidateBody) 
     });
   }
   const content = {
-    version: 1,
+    version: 2,
+    revisions: revisions.identity,
     repository: repository.toLowerCase(),
     number,
     head: pr.head.sha,

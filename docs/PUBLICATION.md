@@ -32,8 +32,9 @@ appropriate. An attestation records that review; it is not automated proof of it
 ## Keep the disclosure review current
 
 Keep the checkbox and `Disclosure snapshot: pending` line in ordinary Markdown,
-outside examples or HTML containers. Prepare the final PR description locally,
-including that placeholder, then run:
+outside examples or HTML containers. Prepare and review the final PR description
+locally, then publish that exact description with the snapshot set to `pending`.
+Wait for discussion to settle, then run:
 
 ```sh
 pnpm publication:check --repository OWNER/REPO --pr NUMBER --snapshot --body /path/to/pr-body.md
@@ -41,17 +42,32 @@ pnpm publication:check --repository OWNER/REPO --pr NUMBER --snapshot --body /pa
 
 This read-only command prints a SHA-256 snapshot line. Replace the placeholder
 with that line and check the disclosure checkbox after reviewing the content.
+Update only those two controls in the published body. A local `--body` file must
+match the already-published prose; changing prose requires publishing it first
+and preparing another snapshot. This two-step process binds GitHub-assigned
+revision identities without making the snapshot hash itself.
+
 The digest covers the current source head, exact PR prose, linked issue
 relationships and text, and discussion/review content, including attachment
 links. Only the source PR’s review checkbox and snapshot values are normalized to avoid
 hashing their own values. Linked issue and PR bodies are hashed verbatim, including
 their disclosure controls. The digest establishes which content was attested;
-it does not establish semantic approval or inspect attachment bytes.
+it does not establish semantic approval or inspect attachment bytes. Version 2
+snapshots also bind retained source PR body-edit identities and title-change
+events. Existing version 1 snapshots must be refreshed once after upgrading.
 
 Comments from people and bots are included. The gate writes check results only,
 so its own operation does not change the discussion or create an attestation
 loop. Wait for review comments to settle before preparing the final snapshot.
 Manual Development-sidebar issue links are included through GitHub's API.
+Source PR body history is read through `userContentEdits`, and title changes
+through `RenamedTitleEvent` timeline records. Adjacent body revisions that differ
+only in the source disclosure controls share one content identity; an intervening
+prose edit followed by a revert remains a distinct revision. Retained body and
+title text is also scanned. Deleted body revisions retain an opaque deletion
+marker. Missing, inconsistent, or truncated API history fails validation. GitHub
+may omit or coalesce history; this is not proof of a complete audit trail.
+
 Linked issue/PR update timestamps and available discussion revision timestamps
 are required and hashed, so an edit followed by restored text invalidates the old
 snapshot when GitHub advances that timestamp. API timestamp precision and fields
