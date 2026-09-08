@@ -1,0 +1,194 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  ATTESTATION,
+  linkedIssues,
+  queueMembers,
+  readQueue,
+  requireAttestation,
+  resolveEvent,
+  validatePullRequest,
+} from './metadata.mjs';
+
+const commit = (character) => character.repeat(40);
+const base = commit('a');
+const first = commit('b');
+const head = commit('c');
+const sourceOne = commit('d');
+const sourceTwo = commit('e');
+const repository = 'XTraceAI/xtrace-desktop';
+const checked = `- [x] ${ATTESTATION}`;
+const entry = (number, before, after, source) => ({
+  baseCommit: { oid: before },
+  headCommit: { oid: after },
+  pullRequest: { number, headRefOid: source },
+});
+
+test('only a single visible checked attestation passes', () => {
+  requireAttestation(`A reviewed description.\n\n${checked}`);
+  for (const prefix of [
+    '<img src="app.png" alt="App">',
+    '<br>',
+    '<https://github.com/XTraceAI/xtrace-desktop/issues/1>',
+  ])
+    requireAttestation(`${prefix}\n\n${checked}`);
+  for (const body of [
+    `- [ ] ${ATTESTATION}`,
+    `\`\`\`markdown\n${checked}\n\`\`\``,
+    `~~~\n${checked}\n~~~`,
+    `\`\`\`\n\`\`\`still code\n${checked}\n\`\`\``,
+    `<pre>\n${checked}\n</pre>`,
+    `<div>\n${checked}`,
+    `<table>\n${checked}`,
+    `- [<!-- spacer -->x] ${ATTESTATION}`,
+    `<!--\n${checked}\n-->`,
+    `> ${checked}`,
+    `    ${checked}`,
+    `${checked}\n- [ ] ${ATTESTATION}`,
+    `${checked}\n${checked}`,
+    'No disclosure review.',
+  ])
+    assert.throws(() => requireAttestation(body), /attestation/);
+});
+
+test('queue resolution includes every constituent original head and excludes later entries', () => {
+  const entries = [
+    entry(3, head, commit('f'), commit('1')),
+    entry(2, first, head, sourceTwo),
+    entry(1, base, first, sourceOne),
+  ];
+  assert.deepEqual(queueMembers({ base_sha: base, head_sha: head }, entries), [
+    { number: 1, head: sourceOne },
+    { number: 2, head: sourceTwo },
+  ]);
+});
+
+test('missing, ambiguous, cyclic, or stale queue metadata cannot become a green empty scan', () => {
+  const group = { base_sha: base, head_sha: head };
+  for (const entries of [
+    [],
+    [entry(2, first, head, sourceTwo)],
+    [entry(1, base, head, sourceOne), entry(2, base, head, sourceTwo)],
+    [entry(1, first, head, sourceOne), entry(2, head, first, sourceTwo)],
+    [entry(1, base, head, null)],
+    [entry(1, base, first, sourceOne), entry(1, first, head, sourceTwo)],
+  ])
+    assert.throws(() => queueMembers(group, entries));
+});
+
+test('queue pages must be complete and API errors must propagate', async () => {
+  await assert.rejects(
+    readQueue(async () => ({ errors: [{ message: 'private detail' }] }), repository, 'main'),
+    /could not resolve/,
+  );
+  await assert.rejects(
+    readQueue(
+      async () => ({
+        data: {
+          repository: {
+            mergeQueue: { entries: { totalCount: 2, nodes: [], pageInfo: { hasNextPage: false } } },
+          },
+        },
+      }),
+      repository,
+      'main',
+    ),
+    /changed during pagination/,
+  );
+  const pages = [
+    {
+      totalCount: 2,
+      nodes: [entry(1, base, first, sourceOne)],
+      pageInfo: { hasNextPage: true, endCursor: 'cursor-1' },
+    },
+    {
+      totalCount: 2,
+      nodes: [entry(2, first, head, sourceTwo)],
+      pageInfo: { hasNextPage: false, endCursor: null },
+    },
+  ];
+  const result = await readQueue(
+    async (_path, request) => {
+      assert.equal(request.variables.after, pages.length === 2 ? null : 'cursor-1');
+      return { data: { repository: { mergeQueue: { entries: pages.shift() } } } };
+    },
+    repository,
+    'main',
+  );
+  assert.equal(result.length, 2);
+});
+
+test('PR checks use the actual current source head and attestation', () => {
+  const pr = {
+    number: 1,
+    state: 'open',
+    title: 'Scaffold',
+    body: checked,
+    base: { sha: base, ref: 'main', repo: { full_name: repository, private: false } },
+    head: { sha: sourceOne, ref: 'feat/scaffold' },
+  };
+  assert.equal(validatePullRequest(pr, repository, sourceOne), pr);
+  assert.throws(() => validatePullRequest(pr, repository, sourceTwo), /changed during this run/);
+  assert.throws(
+    () => validatePullRequest({ ...pr, body: '- [ ] ' + ATTESTATION }, repository, sourceOne),
+    /attestation/,
+  );
+  assert.equal(
+    validatePullRequest(
+      { ...pr, base: { ...pr.base, repo: { full_name: repository, private: true } } },
+      repository,
+      sourceOne,
+    ).number,
+    1,
+  );
+  assert.throws(
+    () =>
+      validatePullRequest(
+        { ...pr, base: { ...pr.base, repo: { full_name: 'other/repo' } } },
+        repository,
+        sourceOne,
+      ),
+    /this repository/,
+  );
+});
+
+test('unsupported or mismatched event shapes fail before scanning', async () => {
+  const event = {
+    repository: { full_name: repository },
+    pull_request: { number: 2, head: { sha: sourceOne }, base: { sha: base } },
+  };
+  assert.deepEqual(
+    await resolveEvent('pull_request', event, repository, () => {
+      throw new Error('Not needed');
+    }),
+    { base, head: sourceOne, members: [{ number: 2, head: sourceOne }] },
+  );
+  await assert.rejects(resolveEvent('push', event, repository), /Unsupported/);
+  await assert.rejects(resolveEvent('pull_request', event, 'other/repo'), /does not match/);
+  await assert.rejects(
+    resolveEvent('pull_request', { ...event, pull_request: {} }, repository),
+    /Missing/,
+  );
+});
+
+test('explicit GitHub issue references are deduplicated without fetching arbitrary URLs', () => {
+  const result = linkedIssues(
+    'Closes #3, also (other/project#4). Details https://github.com/XTraceAI/xtrace-desktop/issues/3 and https://github.com/other/project/pull/4. External https://example.com/private.',
+    repository,
+  );
+  assert.deepEqual(
+    result.sort((left, right) => left.number - right.number),
+    [
+      { repository, number: 3 },
+      { repository: 'other/project', number: 4 },
+    ],
+  );
+  assert.throws(() => linkedIssues('#0', repository), /invalid pull request/);
+  assert.deepEqual(
+    linkedIssues(
+      '/XTraceAI/xtrace-desktop/issues/3 http://github.com/XTraceAI/xtrace-desktop/issues/3 https://GitHub.com/XTraceAI/xtrace-desktop/issues/3',
+      repository,
+    ),
+    [{ repository, number: 3 }],
+  );
+});

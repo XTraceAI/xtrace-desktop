@@ -17,7 +17,11 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
-    "tauri": "pnpm --dir apps/desktop/ui tauri"
+    "tauri": "pnpm --dir apps/desktop/ui tauri",
+    "security:scan": "node scripts/security/scan-secrets.mjs",
+    "secrets:check": "node scripts/security/scan-secrets.mjs",
+    "publication:check": "node scripts/publication/check.mjs",
+    "publication:test": "node --test scripts/publication/*.test.mjs scripts/security/*.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
