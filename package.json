@@ -17,14 +17,24 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
-    "tauri": "pnpm --dir apps/desktop/ui tauri"
+    "tauri": "pnpm --dir apps/desktop/ui tauri",
+    "e2e": "pnpm --dir apps/desktop/ui exec playwright test",
+    "test:ci": "node --test scripts/ci/*.test.mjs",
+    "sbom": "node scripts/supply-chain/sbom.mjs",
+    "notices": "sh scripts/notices.sh",
+    "notices:check": "sh scripts/notices.sh --check",
+    "test:supply-chain": "node --test scripts/supply-chain/*.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "ajv-formats-draft2019": "1.6.1",
     "eslint": "10.10.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "17.12.0",
     "prettier": "3.9.6",
+    "spdx-expression-parse": "5.0.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.70.0"
   }

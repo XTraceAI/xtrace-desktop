@@ -5,3 +5,8 @@ apps/desktop/src-tauri/gen/
 Cargo.lock
 pnpm-lock.yaml
 artifacts/
+
+**/playwright-report/
+**/test-results/
+scripts/supply-chain/schema/*.json
+scripts/supply-chain/upstream-licenses/*.txt
