@@ -66,7 +66,7 @@ function normalizedBody(body) {
   return lines.join('\n');
 }
 
-function discussion(items) {
+function discussion(items, includeDiff = false) {
   const seen = new Set();
   return items
     .map((item) => {
@@ -76,10 +76,16 @@ function discussion(items) {
       );
       seen.add(item.id);
       requireValue(typeof item.body === 'string', 'Discussion text is unavailable.');
+      if (includeDiff)
+        requireValue(
+          typeof item.diff_hunk === 'string',
+          'Review comment diff context is unavailable.',
+        );
       return {
         id: item.id,
         author: item.user?.login ?? null,
         body: item.body,
+        ...(includeDiff ? { diff_hunk: item.diff_hunk } : {}),
         state: item.state ?? null,
         path: item.path ?? null,
         line: item.line ?? null,
@@ -97,7 +103,10 @@ async function conversations(api, repository, number, isPullRequest, repositoryC
   };
   if (isPullRequest) {
     result.reviews = discussion(await pages(api, path + '/pulls/' + number + '/reviews'));
-    result.reviewComments = discussion(await pages(api, path + '/pulls/' + number + '/comments'));
+    result.reviewComments = discussion(
+      await pages(api, path + '/pulls/' + number + '/comments'),
+      true,
+    );
     const pr = await api(path + '/pulls/' + number);
     const commits = await pages(api, path + '/pulls/' + number + '/commits');
     const ids = new Set(commits.map((commit) => sha(commit.sha)));
@@ -179,7 +188,10 @@ export async function readPublicContent(api, repository, number, candidateBody) 
       item.reviewComments ?? [],
       item.commitComments ?? [],
     ])
-      for (const comment of group) texts.push(comment.body);
+      for (const comment of group) {
+        texts.push(comment.body);
+        if (typeof comment.diff_hunk === 'string') texts.push(comment.diff_hunk);
+      }
   texts.push(JSON.stringify(content));
   const digest = createHash('sha256').update(JSON.stringify(content)).digest('hex');
   return { pr, digest, texts, content };
