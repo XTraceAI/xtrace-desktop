@@ -44,7 +44,7 @@ export function App() {
           <div className="window-chrome" data-tauri-drag-region="deep" aria-hidden="true" />
         )}
         <div className="brand" data-tauri-drag-region="deep">
-          <img src="/mark.svg" alt="" width="36" height="36" />
+          <img src="/mark.png" alt="" width="36" height="36" />
           <span>
             xtrace <small>desktop</small>
           </span>
@@ -82,7 +82,7 @@ export function App() {
           <div className="welcome">
             <img
               className="welcome-mark"
-              src="/mark.svg"
+              src="/mark.png"
               alt="XTrace brand mark"
               width="76"
               height="76"
