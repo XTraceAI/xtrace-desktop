@@ -7,6 +7,8 @@ export interface PopoverProps extends Omit<HTMLAttributes<HTMLDivElement>, 'onTo
   anchorRef: RefObject<HTMLElement | null>;
   /** Noninteractive hover tooltips must not move keyboard focus on dismissal. */
   restoreFocus?: boolean;
+  /** Optional geometry target; the invoker remains the focus-return target. */
+  positionRef?: RefObject<HTMLElement | null>;
   side?: 'bottom' | 'right';
   align?: 'start' | 'end';
   offset?: number;
@@ -18,6 +20,7 @@ export function Popover({
   onOpenChange,
   anchorRef,
   restoreFocus = true,
+  positionRef,
   side = 'bottom',
   align = 'start',
   offset = 8,
@@ -53,7 +56,11 @@ export function Popover({
     const element = ref.current;
     if (!element) return;
     // Refs can detach without changing their identity or the controlled open prop.
-    if (!open || !anchorRef.current?.isConnected) {
+    if (
+      !open ||
+      !anchorRef.current?.isConnected ||
+      (positionRef && !positionRef.current?.isConnected)
+    ) {
       if (element.matches(':popover-open')) element.hidePopover();
       if (open) notify.current(false);
     }
@@ -61,11 +68,12 @@ export function Popover({
 
   useLayoutEffect(() => {
     const element = ref.current;
-    const anchor = anchorRef.current;
-    if (!open || !element || !anchor?.isConnected) return;
+    const invoker = anchorRef.current;
+    const anchor = positionRef ? positionRef.current : invoker;
+    if (!open || !element || !invoker?.isConnected || !anchor?.isConnected) return;
     function position() {
       if (!element || !anchor) return;
-      if (!anchor.isConnected) {
+      if (!anchor.isConnected || !invoker?.isConnected) {
         if (element.matches(':popover-open')) element.hidePopover();
         return;
       }
@@ -89,6 +97,7 @@ export function Popover({
     position();
     const observer = new ResizeObserver(position);
     observer.observe(anchor);
+    if (invoker !== anchor) observer.observe(invoker);
     observer.observe(element);
     window.addEventListener('resize', position);
     window.addEventListener('scroll', position, true);
@@ -97,7 +106,7 @@ export function Popover({
       window.removeEventListener('resize', position);
       window.removeEventListener('scroll', position, true);
     };
-  }, [open, anchorRef, side, align, offset]);
+  }, [open, anchorRef, positionRef, side, align, offset]);
 
   return (
     <div {...props} ref={ref} popover="auto" className={`xt-popover ${className}`}>
