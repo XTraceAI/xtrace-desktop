@@ -5,7 +5,12 @@ const viewport = { width: 1440, height: 900 };
 
 export default defineConfig({
   testDir: './e2e',
-  testIgnore: ['shell.spec.ts', 'shell-production.spec.ts'],
+  testIgnore: [
+    'shell.spec.ts',
+    'shell-production.spec.ts',
+    'gallery.spec.ts',
+    'gallery-production.spec.ts',
+  ],
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],
@@ -22,5 +27,6 @@ export default defineConfig({
     command: `pnpm dev --port ${port}`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: false,
+    env: { VITE_GALLERY: '', VITE_XTRACE_FIXTURE: '' },
   },
 });

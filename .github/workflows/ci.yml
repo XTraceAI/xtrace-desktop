@@ -108,6 +108,8 @@ jobs:
           E2E_PORT: '5174'
       - run: pnpm --dir apps/desktop/ui test:e2e:shell
       - run: pnpm --dir apps/desktop/ui test:e2e:production
+      - run: pnpm --dir apps/desktop/ui test:e2e:gallery
+      - run: pnpm --dir apps/desktop/ui test:e2e:gallery-production
 
   supply-chain:
     runs-on: macos-14

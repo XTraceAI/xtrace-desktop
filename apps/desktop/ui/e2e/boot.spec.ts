@@ -28,3 +28,9 @@ test('app shell boots with local branding and an honest browser state', async ({
   expect(externalRequests).toEqual([]);
   expect(errors).toEqual([]);
 });
+
+test('gallery route is unavailable without its development flag', async ({ page }) => {
+  await page.goto('/gallery');
+  await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
+  await expect(page.locator('iframe')).toHaveCount(0);
+});

@@ -1,10 +1,26 @@
+import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router';
 import { Shell } from './Shell';
 import { PlaceholderPage } from './PlaceholderPage';
 import { pages } from './routes';
+const Gallery =
+  import.meta.env.DEV && import.meta.env.VITE_GALLERY === '1'
+    ? lazy(() => import('../gallery/Gallery'))
+    : null;
+
 export function AppRoutes() {
   return (
     <Routes>
+      {Gallery && (
+        <Route
+          path="/gallery"
+          element={
+            <Suspense fallback={<p>Opening gallery…</p>}>
+              <Gallery />
+            </Suspense>
+          }
+        />
+      )}
       <Route element={<Shell />}>
         <Route index element={<Navigate to="/dashboard" replace />} />
         {pages.map((page) => (

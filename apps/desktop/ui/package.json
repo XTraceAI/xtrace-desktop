@@ -13,7 +13,9 @@
     "lint:hex": "node scripts/lint-hex.mjs",
     "test:e2e": "playwright test",
     "test:e2e:shell": "playwright test --config playwright.shell.config.ts",
-    "test:e2e:production": "playwright test --config playwright.production.config.ts"
+    "test:e2e:production": "playwright test --config playwright.production.config.ts",
+    "test:e2e:gallery": "playwright test --config playwright.gallery.config.ts",
+    "test:e2e:gallery-production": "playwright test --config playwright.gallery-production.config.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "5.102.8",
