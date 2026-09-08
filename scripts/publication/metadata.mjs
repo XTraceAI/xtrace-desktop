@@ -107,6 +107,8 @@ export function linkedIssues(body, repository) {
       return '';
     },
   );
+  // GitHub does not create issue autolinks inside an existing bare URL.
+  remaining = remaining.replace(/\b(?:https?:\/\/|www\.)[^\s<>]+/gi, '');
   remaining = remaining.replace(
     /\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)\b/g,
     (_, repo, number) => {
@@ -114,7 +116,7 @@ export function linkedIssues(body, repository) {
       return '';
     },
   );
-  for (const match of remaining.matchAll(/(?:^|[\s(])#(\d+)\b/g)) add(repository, match[1]);
+  for (const match of remaining.matchAll(/(?<!\w)(?:#|GH-)(\d+)\b/gi)) add(repository, match[1]);
   requireValue(references.size <= 100, 'Too many linked issues to review in one PR.');
   return [...references.values()];
 }
@@ -187,4 +189,15 @@ export async function resolveEvent(eventName, event, repository, api) {
     head: sha(group.head_sha),
     members: queueMembers(group, entries),
   };
+}
+
+export function revisionTimestamp(value) {
+  requireValue(
+    typeof value === 'string' &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) &&
+      Number.isFinite(Date.parse(value)) &&
+      new Date(value).toISOString() === (value.includes('.') ? value : value.replace('Z', '.000Z')),
+    'Public content revision timestamp is unavailable.',
+  );
+  return value;
 }

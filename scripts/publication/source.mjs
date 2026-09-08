@@ -15,11 +15,14 @@ export async function withCandidateSource(
   const number = prNumber(source?.number);
   const head = sha(source?.head);
   const base = sha(source?.base);
+  const retainedHeads = (source.retainedHeads ?? []).map(sha);
+  requireValue(retainedHeads.length <= 100, 'Too many retained source heads.');
   requireValue(
     typeof token === 'string' && token.length > 0,
     'Candidate source fetch requires a scoped read token.',
   );
   const ref = 'refs/publication-content/' + randomUUID();
+  const refs = [ref];
   const relayPath = '.github/workflows/publication-review.yml';
   const git = (args, authenticate = false) => {
     const env = {
@@ -79,6 +82,27 @@ export async function withCandidateSource(
       git(['rev-parse', '--verify', ref]) === head,
       'Candidate source changed while its objects were fetched.',
     );
+    for (const retained of new Set(retainedHeads)) {
+      if (retained === head) continue;
+      const retainedRef = 'refs/publication-content/' + randomUUID();
+      refs.push(retainedRef);
+      git(
+        [
+          'fetch',
+          '--no-tags',
+          '--no-recurse-submodules',
+          '--no-write-fetch-head',
+          `https://github.com/${repository}.git`,
+          `+${retained}:${retainedRef}`,
+        ],
+        true,
+      );
+      requireValue(
+        git(['rev-parse', '--verify', retainedRef]) === retained,
+        'Retained source head could not be verified.',
+      );
+      git(['cat-file', '-e', `${retained}^{commit}`]);
+    }
     git(['cat-file', '-e', `${base}^{commit}`]);
     const relay = (revision) => {
       const entry = /^100644 blob ([a-f0-9]{40})\t(.+)$/.exec(
@@ -99,6 +123,14 @@ export async function withCandidateSource(
     );
     return await scan({ base, head });
   } finally {
-    git(['update-ref', '-d', ref]);
+    let failed = false;
+    for (const owned of refs) {
+      try {
+        git(['update-ref', '-d', owned]);
+      } catch {
+        failed = true;
+      }
+    }
+    requireValue(!failed, 'Temporary source refs could not be removed.');
   }
 }

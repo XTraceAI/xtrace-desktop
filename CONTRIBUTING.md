@@ -72,5 +72,6 @@ the current native smoke-test procedure.
 Add focused regression tests for behavior changes and run the affected PR's
 acceptance cases. Fixture loading, DTO parity, browser coverage, and release
 checks join this process as their owning foundation cards land. Publication
-checks provide a focused disclosure gate; broader build/test CI, automated DCO
-checks and dependency-license inventory remain future work.
+checks provide advisory disclosure evidence; maintainer review remains required.
+Broader build/test CI, automated DCO checks and dependency-license inventory remain
+future work.

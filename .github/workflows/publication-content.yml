@@ -1,4 +1,4 @@
-name: Publication content
+name: Publication content advisory
 
 on:
   pull_request_target:
@@ -16,6 +16,8 @@ on:
     types: [completed]
   workflow_dispatch:
 
+# Diagnostic results only. GitHub Actions check names are candidate-spoofable;
+# manual disclosure review remains authoritative. Do not require this context.
 permissions:
   contents: read
 
@@ -26,9 +28,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  reconcile-content:
+  prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+      count: ${{ steps.prepare.outputs.count }}
+      trusted: ${{ steps.prepare.outputs.trusted }}
     permissions:
       contents: read
       pull-requests: read
@@ -47,7 +53,40 @@ jobs:
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - name: Install trusted pinned dependencies without lifecycle scripts
         run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Scan candidate objects and current content using default-branch code
+      - name: Invalidate checks and schedule every open PR
+        id: prepare
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/publication/recheck.mjs
+        run: node scripts/publication/recheck.mjs prepare
+
+  scan:
+    needs: prepare
+    if: ${{ needs.prepare.outputs.count != '0' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.trusted }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - name: Install trusted pinned dependencies without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Scan one PR with an independent four-minute budget
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PUBLICATION_MEMBER: ${{ toJSON(matrix) }}
+        run: node scripts/publication/recheck-worker.mjs

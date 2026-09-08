@@ -210,3 +210,60 @@ test('candidate and base relay changes cannot disable trusted review reconciliat
     }
   }
 });
+
+test('retained force-pushed heads are scanned and every temporary ref is removed', async (t) => {
+  const { repo, base } = await fixture(t);
+  git(repo, 'checkout', '--detach', '-q');
+  await writeFile(join(repo, 'removed.txt'), marker());
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-qm', 'Synthetic former PR head');
+  const former = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'checkout', '-q', 'main');
+  assert.deepEqual(await scanRepository({ repo, diffs: [], content: [] }), []);
+  const run = (command, args, options) => {
+    if (args.includes('fetch')) {
+      const [source, ref] = args.at(-1).slice(1).split(':');
+      git(repo, 'update-ref', ref, source.startsWith('refs/pull/') ? base : source);
+      return { status: 0, stdout: '' };
+    }
+    return spawnSync(command, args, options);
+  };
+  await assert.rejects(
+    scanText(
+      repo,
+      ['Synthetic public text.'],
+      {
+        repository: 'example/project',
+        number: 3,
+        base,
+        head: base,
+        retainedHeads: [former],
+      },
+      { token: 'synthetic-token', run },
+    ),
+    /Detected secret/,
+  );
+  assert.equal(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/publication-content/'), '');
+  assert.deepEqual(await scanRepository({ repo, diffs: [], content: [] }), []);
+  await assert.rejects(
+    withCandidateSource(
+      repo,
+      {
+        repository: 'example/project',
+        number: 3,
+        base,
+        head: base,
+        retainedHeads: [former],
+      },
+      async () => assert.fail('Missing retained objects cannot reach scanning'),
+      {
+        token: 'synthetic-token',
+        run: (command, args, options) =>
+          args.includes('fetch') && args.at(-1).includes(former)
+            ? { status: 1, stdout: '' }
+            : run(command, args, options),
+      },
+    ),
+  );
+  assert.equal(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/publication-content/'), '');
+});

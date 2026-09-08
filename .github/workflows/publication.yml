@@ -34,10 +34,6 @@ jobs:
   publication-scan:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    permissions:
-      contents: read
-      pull-requests: read
-      issues: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -49,10 +45,13 @@ jobs:
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - name: Install pinned dependencies without lifecycle scripts
         run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Check source history and public content
+      # Candidate scripts and dependencies receive no repository API token.
+      # Metadata review belongs to the trusted publication-content workflow.
+      - name: Check source history and the candidate merge diff
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/publication/check.mjs
+          PUBLICATION_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PUBLICATION_HEAD: ${{ github.sha }}
+        run: node scripts/security/scan-secrets.mjs --diff "$PUBLICATION_BASE..$PUBLICATION_HEAD"
 
   publication-checks:
     name: publication-checks

@@ -32,8 +32,9 @@ appropriate. An attestation records that review; it is not automated proof of it
 ## Keep the disclosure review current
 
 Keep the checkbox and `Disclosure snapshot: pending` line in ordinary Markdown,
-outside examples or HTML containers. Prepare the final PR description locally,
-including that placeholder, then run:
+outside examples or HTML containers. Prepare and review the final PR description
+locally, then publish that exact description with the snapshot set to `pending`.
+Wait for discussion to settle, then run:
 
 ```sh
 pnpm publication:check --repository OWNER/REPO --pr NUMBER --snapshot --body /path/to/pr-body.md
@@ -41,17 +42,52 @@ pnpm publication:check --repository OWNER/REPO --pr NUMBER --snapshot --body /pa
 
 This read-only command prints a SHA-256 snapshot line. Replace the placeholder
 with that line and check the disclosure checkbox after reviewing the content.
+Update only those two controls in the published body. A local `--body` file must
+match the already-published prose; changing prose requires publishing it first
+and preparing another snapshot. This two-step process binds GitHub-assigned
+revision identities without making the snapshot hash itself.
+
 The digest covers the current source head, exact PR prose, linked issue
 relationships and text, and discussion/review content, including attachment
 links. Only the source PR’s review checkbox and snapshot values are normalized to avoid
 hashing their own values. Linked issue and PR bodies are hashed verbatim, including
 their disclosure controls. The digest establishes which content was attested;
-it does not establish semantic approval or inspect attachment bytes.
+it does not establish semantic approval or inspect attachment bytes. Version 2
+snapshots also bind retained source PR body-edit identities and title-change
+events. Existing version 1 snapshots must be refreshed once after upgrading.
+
+Force-push timeline events bind both former and replacement head identities.
+The local checker and advisory workflow fetch retained source heads into owned
+temporary refs and scan their reachable history without checking out their code.
+The refs are removed after success or failure. Current Git refs alone cannot
+establish this retained-history coverage; use the metadata-aware checker.
+
+Commit comments and attachment links on retained head ancestry remain included
+for source and linked PRs even after those commits leave the current PR list.
+This conservatively includes ancestor comments. Inaccessible history fails closed.
+The reader supports up to 100 distinct retained heads, 1,000 ancestors per head
+and 10,000 distinct retained commits, with bounded timeline pagination. Provider
+omissions cannot establish that inaccessible history is clean.
+
+Submitted reviews bind GraphQL `updatedAt`, `lastEditedAt` and retained edit IDs/text,
+including edit-and-revert pairs with unchanged submission timestamps. Source and
+linked-PR reviews use the same reader. Missing or inconsistent history fails
+closed; more than 100 retained edits on one review also fails closed. Deleted
+versions contribute opaque deletion identities. API omissions still limit history
+coverage.
 
 Comments from people and bots are included. The gate writes check results only,
 so its own operation does not change the discussion or create an attestation
 loop. Wait for review comments to settle before preparing the final snapshot.
 Manual Development-sidebar issue links are included through GitHub's API.
+Source PR body history is read through `userContentEdits`, and title changes
+through `RenamedTitleEvent` timeline records. Adjacent body revisions that differ
+only in the source disclosure controls share one content identity; an intervening
+prose edit followed by a revert remains a distinct revision. Retained body and
+title text is also scanned. Deleted body revisions retain an opaque deletion
+marker. Missing, inconsistent, or truncated API history fails validation. GitHub
+may omit or coalesce history; this is not proof of a complete audit trail.
+
 Linked issue/PR update timestamps and available discussion revision timestamps
 are required and hashed, so an edit followed by restored text invalidates the old
 snapshot when GitHub advances that timestamp. API timestamp precision and fields
@@ -60,8 +96,10 @@ and it does not replace inspection of earlier GitHub edits.
 Review-comment diff hunks are hashed and scanned as raw text, including retained
 context from commits no longer reachable from the current PR. Missing diff context
 fails the metadata check; current source alone cannot certify an outdated comment.
-Markdown links and HTML anchor links are included. Issue-shaped tokens in code
-examples and HTML comments are excluded. Fetched
+Markdown links and HTML anchor links are included. GitHub issue shorthand accepts
+`#123` and case-insensitive `GH-123`, including punctuation around a reference.
+Issue-shaped tokens in code examples, HTML comments, ordinary URL paths and
+external link labels are excluded. Fetched
 issue references must belong to this repository: another repository's edits
 cannot trigger local invalidation events. Ordinary external URLs remain prose.
 
@@ -95,6 +133,14 @@ input or 256 MiB in total. Inputs include commit metadata, ref names, unique Git
 and supplied outbound text. Reaching a limit is an incomplete scan, not a clean
 result; unsupported repository entries, including submodules, also fail.
 
+Git LFS pointer blobs are rejected with an unsupported-object error, including
+historical versions and direct blob refs. Detection includes leading whitespace,
+blank records, extension records before the version, and legacy version aliases
+accepted by the [Git LFS parser](https://github.com/git-lfs/git-lfs/blob/v3.4.1/lfs/pointer.go).
+Their external bytes are not available
+through ordinary Git blob scanning. Verified LFS object retrieval and scanning
+must be implemented before LFS-backed content can pass this checker.
+
 The scanner exits 0 for no detected findings, 1 for findings and 2 for a tooling,
 configuration or Git error. Either nonzero result prevents a successful gate.
 Diagnostics identify only the detector rule, line number and an opaque source
@@ -105,19 +151,37 @@ scanning, and a value deleted from the current tree can still be detected in his
 
 ## CI boundary
 
-Two checks form the publication gate: `publication-checks` covers source/tests
-and `publication-content` runs trusted candidate scanning plus current disclosure review. Require both
-through repository rules after the workflows land. The former combines tests
-with actual PR diffs, reachable history and current reviewed public content.
-A failed, cancelled or skipped dependency cannot produce a successful aggregate.
-The event-aware `pnpm publication:check` entrypoint runs in the GitHub Actions
-context. Its tests cover metadata/queue-resolution helpers and real CLI error
-paths without live credentials. They do not demonstrate a successful live PR
-or merge-queue run.
+Manual disclosure review is the publication gate. `publication-checks` supplies
+candidate source/test diagnostics, and `publication-content-advisory` supplies
+current-content diagnostics from reviewed default-branch code. Neither a check
+name nor the GitHub Actions app identity proves the producer: a candidate workflow
+can emit an automatic job check with the same name and app. The custom
+`external_id` protects worker ownership internally but repository rules do not
+validate it. Do not require these contexts as a disclosure security boundary or
+use their green status to authorize a merge.
+
+Before each serialized manual merge, review the exact source/base and workflow
+provenance, run the local disclosure check from reviewed code against current
+public content, and inspect the result and attestation. Automated enforcement is
+deferred until a separately trusted publisher (such as a dedicated GitHub App)
+and live same-name spoofing acceptance demonstrate an unforgeable required
+identity. No App credential or repository setting is installed by this change.
+
+Candidate scripts and runtime dependencies receive no repository API token,
+and their jobs have no issue or pull-request metadata permissions. The pinned
+checkout uses read-only contents access without persisting credentials. Metadata
+reads remain confined to reviewed default-branch diagnostic jobs. Failed,
+cancelled or skipped dependencies cannot produce a successful aggregate.
+
+Tests cover the credential boundary, metadata/queue-resolution helpers and real
+CLI error paths without live credentials. They do not demonstrate a successful
+live trusted workflow or merge-queue run.
 
 To check an existing PR locally, use a checkout at that PR's source head and an
-already configured read-only `GH_TOKEN` or `GITHUB_TOKEN`. Replace the repository
-and number placeholders:
+already configured read-only `GH_TOKEN` or `GITHUB_TOKEN`. Only run this metadata
+CLI from a checkout whose scripts and dependencies you have reviewed and trust:
+read-only tokens can still disclose private repository content. Never supply a
+token to unreviewed candidate code. Replace the repository and number placeholders:
 
 ```sh
 pnpm publication:check --repository OWNER/REPO --pr NUMBER
@@ -128,7 +192,7 @@ uses its actual event payload; the manual PR override is unavailable there.
 Fetched refs are invocation-specific and removed after success, rejection or fetch
 failure. Existing refs created by other work remain in the whole-history scan.
 
-The trusted `publication-content` workflow rechecks open PRs and current default-
+The `Publication content advisory` workflow rechecks open PRs and current default-
 branch merge-queue heads after PR/issue edits and conversation comments. Review
 and review-comment events run a dedicated `Publication review signal` workflow;
 its completion signals the trusted workflow independently of candidate tests.
@@ -136,8 +200,9 @@ The relay contains no checkout, actions, script dependencies or token permission
 GitHub runs review workflows from the PR merge commit, as described in its
 [event trust model](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target). Runs reconcile current API state, rather than
 trusting an old event's PR content, and reject changes observed during scanning.
-Current queue heads receive blocking pending checks before sequential PR scans;
-a later read or scan failure cannot preserve an earlier successful queue result.
+Current queue heads and enumerated PRs receive completed failure checks before
+scan jobs are scheduled. A scan can replace its own failure with success only
+after current source, content and trusted-code identities pass validation.
 They execute only the default branch, use `checks:write` solely to update the
 named content check, and never run PR scripts or consume workflow artifacts.
 The trusted scanner fetches each exact source PR head into a temporary Git ref,
@@ -148,9 +213,12 @@ regular-file mode. This rejects deletion, renaming, trigger changes and conditio
 job changes; checking trigger names alone would not protect event delivery.
 Both base and head must remain unchanged through the final success check. Fetch authentication is transient and
 restricted to the validated repository's GitHub URL; it is not passed to scanner
-processes. Every outcome removes the temporary ref. Pre-existing reachable refs
+processes. Normal completion and handled errors remove the temporary ref. A hard timeout
+discards the isolated job checkout rather than sharing its temporary refs. Pre-existing reachable refs
 remain in the whole-history scan, so an existing repository leak still blocks.
-Queue results require the current identities of those scanned source PRs.
+Queue certification remains disabled: queue heads retain failure until trusted
+combined-tree scanning and live queue acceptance are implemented. Scanning
+individual PRs does not certify their combined result.
 
 Disposable Git regressions verify that replacing the candidate scanner with a
 success stub cannot hide a source secret, that the candidate code is not executed,
@@ -164,21 +232,45 @@ and removed historical Git names, without printing the name.
 Pending events can coalesce because each run rechecks every open PR and queue
 head. A manual workflow dispatch retries an incomplete run.
 
-The current rechecker scans PRs sequentially within one 15-minute workflow budget.
-With enough slow scans, that deadline can leave later checks pending, and fixed
-retry order can starve those PRs. This remains an open readiness blocker. Before
-activation, bound per-PR work, guarantee fair progress, and ensure every created
-check receives a terminal result. A regression must exhaust the shared budget
-with multiple slow PRs and prove that later PRs eventually receive an attempt;
-increasing the outer timeout alone is insufficient.
+The preparation job enumerates up to 256 open PRs and emits one matrix job per
+PR. Every created `publication-content-advisory` check starts as a completed failure,
+labelled as an unfinished scan. Successful validation replaces only that run's
+matching head/check identity with success. Setup failure, cancellation, timeout
+or a failed result update leaves a terminal failure result. The check can
+therefore appear red while a scan is running; this is deliberate.
+
+Each matrix job gets an isolated checkout of the preparation job's trusted
+source SHA, with at most four jobs active and `fail-fast: false`. A separate
+supervisor terminates the entire scanner process group after four minutes,
+including synchronous Git/scanner descendants. The job has a ten-minute limit
+including setup. A slow or failed early PR cannot cancel later jobs or consume
+their scan budgets. No shared per-run scan deadline or retry cursor selects only
+a prefix of PRs. Default-branch advances invalidate old-policy workers; source,
+base and disclosure content are reread before success. Jobs never consume
+candidate artifacts or share fetched candidate refs.
+
+Above 256 open PRs, preparation fails after creating failure results for the
+enumerated PRs; it never silently truncates the matrix. The existing bounded
+API pagination limit still applies. GitHub event delivery, runner availability
+and successful API writes remain prerequisites: an API outage cannot guarantee
+invalidation of checks whose creation was never reached. Rerun reconciliation
+and verify current results immediately before a merge or publication decision.
+
+Regression tests run multiple real blocking child processes beyond one scan
+budget and prove later jobs still receive an attempt. They also verify descendant
+termination, no delayed write, terminal failure without a worker, failed result
+updates, run/head/context ownership, matrix overflow and trusted-code advances.
+These local tests do not claim live GitHub matrix scheduling evidence; activation
+must exercise that behavior on the installed default-branch workflow.
 
 Install the dedicated relay first in a small, maintainer-reviewed prerequisite
 change on the default branch. Then update the publication-gate branch so its
 actual base and head both include that relay, and review/install the remaining
 trusted workflow. The initial gate cannot certify a base lacking the relay;
 stacking the gate on the prerequisite makes this dependency reviewable but does
-not activate trusted default-branch execution. Keep activation and queue evidence
-pending until those reviewed changes actually land.
+not activate trusted default-branch execution. Follow [the activation sequence](PUBLICATION_ACTIVATION.md); keep activation
+evidence pending until reviewed changes land. Queue activation remains separately
+deferred until a public launch and its required combined-tree checks.
 
 The relay is immutable while it is pinned. To change it later, first add a
 separately named replacement while preserving the current relay. A subsequent
@@ -194,6 +286,14 @@ paths. GitHub must deliver an event and start the run to invalidate an earlier
 result. Repeat the review and update the snapshot when manually changing linked
 relationships. No repository rule is changed by these files.
 
+Before writing success, the worker rereads the complete disclosure digest after
+checking trusted-code identity, including titles, discussions, linked records
+and retained revisions. It compares that digest with the scanned snapshot and
+performs no intervening API work before the check update. GitHub content reads
+and check writes are separate requests: edits during or after that final read
+still depend on subsequent reconciliation, including workflow scheduling delay.
+Success records the observed snapshot; it cannot lock public content against edits.
+
 Comments on the source PR's commits are included, with complete source-commit
 pagination required. GitHub Actions does not support a commit-comment trigger;
 the [documented workflow triggers](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)
@@ -206,8 +306,8 @@ bounded API reader and fail closed until a paginated incremental design is added
 
 Attachment bytes, embedded metadata and earlier GitHub edits require the separate
 review above. Review changes to the scanner and workflows themselves. Future
-FND-02 CI may fold the immutable tests/scanning into `ci-ok`; the separate current-
-content check must remain required so metadata edits cannot reuse stale CI.
+FND-02 CI may fold source tests/scanning into `ci-ok`; manual current-content
+review remains required because metadata edits cannot be authorized by old CI.
 
 These checks do not publish content, change repository visibility or merge a PR.
 They cover disclosure prevention; the broader build/test CI, dependency-license
