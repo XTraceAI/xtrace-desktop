@@ -125,6 +125,8 @@ pnpm publication:check --repository OWNER/REPO --pr NUMBER
 
 This reads current GitHub metadata and fetches source refs locally. CI always
 uses its actual event payload; the manual PR override is unavailable there.
+Fetched refs are invocation-specific and removed after success, rejection or fetch
+failure. Existing refs created by other work remain in the whole-history scan.
 
 The trusted `publication-content` workflow rechecks open PRs and current default-
 branch merge-queue heads after PR/issue edits and conversation comments. Review
@@ -161,6 +163,14 @@ and removed historical Git names, without printing the name.
 
 Pending events can coalesce because each run rechecks every open PR and queue
 head. A manual workflow dispatch retries an incomplete run.
+
+The current rechecker scans PRs sequentially within one 15-minute workflow budget.
+With enough slow scans, that deadline can leave later checks pending, and fixed
+retry order can starve those PRs. This remains an open readiness blocker. Before
+activation, bound per-PR work, guarantee fair progress, and ensure every created
+check receives a terminal result. A regression must exhaust the shared budget
+with multiple slow PRs and prove that later PRs eventually receive an attempt;
+increasing the outer timeout alone is insufficient.
 
 Install the dedicated relay first in a small, maintainer-reviewed prerequisite
 change on the default branch. Then update the publication-gate branch so its
