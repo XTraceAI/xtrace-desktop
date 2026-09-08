@@ -13,6 +13,8 @@ The first foundation PR creates a reproducible shell and workspace. It closes no
 
 Rust placeholder crates are validated by compilation. The evidence below applies to this scaffold's source and native bundle. FND-02 supplies repository CI; its acceptance remains separate.
 
+Packaged-font acceptance: after `pnpm build`, inspect every font URL in `apps/desktop/ui/dist/assets/*.css`. Each must point to an existing bundled asset, with no `data:font` URLs. Open the rebuilt native bundle and check Web Inspector for font-loading/CSP errors. Expected: Manrope and Geist Mono load from the app origin under `font-src 'self'`; no font requests are blocked. Record build inspection and native console results separately from browser-preview checks.
+
 ## Recorded evidence
 
 Source commit `70f233da74d6f1fe5244096ef56c9efaf8ec1396` passed a fresh-clone frozen install, `pnpm check` (four UI tests), `pnpm test -- --run`, workspace fmt/Clippy/tests and a debug macOS app build, with unchanged lockfiles. Rust placeholder crates have no behavior tests; compilation validates their initial boundaries. The built executable declares macOS 14.0 as its minimum version.
@@ -39,8 +41,12 @@ The current configuration `{ x: 16, y: 26 }` places the close-button frame 15 po
 
 The earlier native scaffold (`aed47c5`) measured the close button at 19 points from the left and 20 points from the top, with all three 16×16 controls retaining their native 23-point spacing. Read-only accessibility measurements confirmed the same margins after native menu Zoom/maximize, maximize → fullscreen → exit, and minimize → restore. Fullscreen-exit geometry was read before any focus, capture or manual resize. The 1120×720 minimum layout and Refresh were also exercised. UI checks (four tests), workspace fmt/strict Clippy/compilation tests and debug native builds pass; the lockfile adds only a direct edge to the already pinned AppKit crate.
 
-On this host, activating macOS window capture adds the system sharing indicator and temporarily moves the controls to the system 8-point margins. The geometry checks above deliberately exclude capture. Refresh succeeded, but the latest automated drag attempts did not establish window movement; earlier drag evidence remains historical and manual drag verification should be repeated before merge.
+On this host, activating macOS window capture adds the system sharing indicator and temporarily moves the controls to the system 8-point margins. The geometry checks above deliberately exclude capture. Refresh succeeded. Automated drag attempts did not establish window movement, but a manual check on `faeaf21` confirmed that both the empty top header and the space beside the native window buttons drag normally. This is manual native evidence, separate from the earlier event-dispatch probes.
 
 ## Deployment-target override
 
 With an inherited `MACOSX_DEPLOYMENT_TARGET=15.0`, `cargo build --workspace --locked` succeeds and Mach-O inspection reports `minos 14.0`. An isolated Cargo build-script probe using this repository’s exact configuration also receives `14.0`; without `force = true`, the same probe receives the inherited `15.0`. UI checks (four tests) pass.
+
+## Packaged fonts
+
+The debug native bundle previously reported CSP refusals for small fonts embedded as data URLs. Disabling Vite asset inlining keeps those fonts on the app origin under the existing CSP. `pnpm check` (four UI tests) and the debug native build pass. All 60 generated CSS font references resolve to existing bundled files, with no inline font URLs. A fresh process launched from the rebuilt bundle shows no font/CSP errors in Web Inspector.
