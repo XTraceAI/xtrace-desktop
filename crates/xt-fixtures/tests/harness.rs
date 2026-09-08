@@ -622,3 +622,32 @@ fn absent_raw_platform_stays_unknown_independently_of_declared_host() {
         assert_eq!(stored.meta.source_platform.as_deref(), raw);
     }
 }
+
+#[test]
+fn skeleton_rejects_records_in_any_declared_session() {
+    let canonical = fs::read_to_string(catalog().join("F1/input/sessions/session.jsonl")).unwrap();
+    for second_session in [false, true] {
+        let directory = editable("F2");
+        let relative = if second_session {
+            edit_json(&directory.path().join("manifest.json"), |manifest| {
+                let mut second = manifest["sessions"][0].clone();
+                second["session_id"] = json!("00000000-0000-4000-8000-000000000099");
+                second["file"] = json!("input/sessions/second.jsonl");
+                manifest["sessions"].as_array_mut().unwrap().push(second);
+            });
+            "input/sessions/second.jsonl"
+        } else {
+            "input/sessions/session.jsonl"
+        };
+        let path = directory.path().join(relative);
+        fs::write(&path, " \n\n").unwrap();
+        assert_eq!(
+            Fixture::load(directory.path()).unwrap().manifest().status,
+            FixtureStatus::Skeleton
+        );
+        fs::write(&path, canonical.lines().next().unwrap()).unwrap();
+        let error = load_error(directory.path());
+        assert!(error.contains("manifest.json"));
+        assert!(error.contains("skeleton canonical inputs must be empty"));
+    }
+}
