@@ -334,3 +334,125 @@ fn equivalent_timestamp_offsets_do_not_conflict_but_distinct_instants_do() {
     );
     assert!(store.records(SESSION).unwrap()[0].has_conflict);
 }
+
+#[test]
+fn submillisecond_records_and_ranges_follow_native_instants_before_uuid() {
+    let mut store = memory_store();
+    let timed = |uuid: &str, timestamp: &str| {
+        let mut input = record(uuid);
+        input.timestamp = Some(timestamp.into());
+        input
+    };
+    store
+        .upsert_records(
+            SESSION,
+            &[
+                timed("a-later", "2026-09-01T12:00:00.0009Z"),
+                record("unknown-z"),
+            ],
+            true,
+        )
+        .unwrap();
+    store
+        .upsert_records(
+            SESSION,
+            &[
+                timed("z-earlier", "2026-09-01T12:00:00.0001Z"),
+                timed("b-equivalent", "2026-09-01T14:00:00.00010+02:00"),
+                record("unknown-a"),
+            ],
+            true,
+        )
+        .unwrap();
+    let rows = store.records(SESSION).unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.uuid.as_str()).collect::<Vec<_>>(),
+        [
+            "b-equivalent",
+            "z-earlier",
+            "a-later",
+            "unknown-a",
+            "unknown-z"
+        ]
+    );
+    assert!(rows[..3].iter().all(|r| r.ts_ms == rows[0].ts_ms));
+    let session = store.session(SESSION).unwrap().unwrap();
+    assert_eq!(
+        session.first_ts.as_deref(),
+        Some("2026-09-01T14:00:00.00010+02:00")
+    );
+    assert_eq!(
+        session.last_ts.as_deref(),
+        Some("2026-09-01T12:00:00.0009Z")
+    );
+}
+
+#[test]
+fn fractional_tails_before_epoch_preserve_order_and_conflict_identity() {
+    let mut store = memory_store();
+    let mut earlier = record("z-earlier");
+    earlier.timestamp = Some("1969-12-31T23:59:59.1234567891Z".into());
+    let mut later = record("a-later");
+    later.timestamp = Some("1969-12-31T23:59:59.1234567899Z".into());
+    store
+        .upsert_records(SESSION, &[later, earlier.clone(), record("unknown")], true)
+        .unwrap();
+    earlier.timestamp = Some("1970-01-01T01:59:59.12345678910+02:00".into());
+    assert_eq!(
+        store
+            .upsert_records(SESSION, &[earlier.clone()], true)
+            .unwrap()
+            .ignored,
+        1
+    );
+    let rows = store.records(SESSION).unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.uuid.as_str()).collect::<Vec<_>>(),
+        ["z-earlier", "a-later", "unknown"]
+    );
+    assert_eq!(rows[0].ts_ms, Some(-877));
+    assert_eq!(rows[1].ts_ms, Some(-877));
+    assert!(!rows[0].has_conflict);
+    let session = store.session(SESSION).unwrap().unwrap();
+    assert_eq!(
+        session.first_ts.as_deref(),
+        Some("1969-12-31T23:59:59.1234567891Z")
+    );
+    assert_eq!(
+        session.last_ts.as_deref(),
+        Some("1969-12-31T23:59:59.1234567899Z")
+    );
+    earlier.timestamp = Some("1969-12-31T23:59:59.1234567892Z".into());
+    store.upsert_records(SESSION, &[earlier], true).unwrap();
+    let stored = store.records(SESSION).unwrap().remove(0);
+    assert!(stored.has_conflict);
+    assert_eq!(
+        stored.ts.as_deref(),
+        Some("1969-12-31T23:59:59.1234567891Z")
+    );
+}
+
+#[test]
+fn leap_second_ranges_are_not_reversed_by_overlapping_millisecond_projections() {
+    let mut store = memory_store();
+    let mut leap = record("z-leap");
+    leap.timestamp = Some("2016-12-31T23:59:60.9999999999Z".into());
+    let mut next = record("a-next-second");
+    next.timestamp = Some("2017-01-01T00:00:00Z".into());
+    store.upsert_records(SESSION, &[next, leap], true).unwrap();
+    let rows = store.records(SESSION).unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.uuid.as_str()).collect::<Vec<_>>(),
+        ["z-leap", "a-next-second"]
+    );
+    assert!(
+        rows[0].ts_ms > rows[1].ts_ms,
+        "coarse POSIX projections overlap during a leap second"
+    );
+    let session = store.session(SESSION).unwrap().unwrap();
+    assert_eq!(
+        session.first_ts.as_deref(),
+        Some("2016-12-31T23:59:60.9999999999Z")
+    );
+    assert_eq!(session.last_ts.as_deref(), Some("2017-01-01T00:00:00Z"));
+}

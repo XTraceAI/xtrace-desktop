@@ -1,6 +1,6 @@
 use crate::{
     CanonicalRecord, Error, Host, Result, SessionMeta, Store, StoredRecord, StoredSession,
-    StoredToolUse, SurfaceEvidence, Usage, WriteStats, model::CacheCreation, read,
+    StoredToolUse, SurfaceEvidence, Usage, WriteStats, model::CacheCreation, read, timestamp,
 };
 use rusqlite::{Connection, TransactionBehavior, params};
 use serde_json::Value;
@@ -129,21 +129,12 @@ impl Store {
         }
         // Compare native instants, not lexically different RFC3339 offsets.
         // A native started_at_ms is never inferred from this imported range.
-        session.first_ts = transaction.query_row(
-            "SELECT ts FROM records WHERE session_id=?1 AND ts_ms IS NOT NULL ORDER BY ts_ms, uuid LIMIT 1",
-            [session_id], |row| row.get(0),
-        ).optional()?;
-        session.last_ts = transaction.query_row(
-            "SELECT ts FROM records WHERE session_id=?1 AND ts_ms IS NOT NULL ORDER BY ts_ms DESC, uuid DESC LIMIT 1",
-            [session_id], |row| row.get(0),
-        ).optional()?;
+        (session.first_ts, session.last_ts) = read::timestamp_range(&transaction, session_id)?;
         save_session(&transaction, &session)?;
         transaction.commit()?;
         Ok(stats)
     }
 }
-
-use rusqlite::OptionalExtension;
 
 fn validate_session(meta: &SessionMeta) -> Result<()> {
     if meta.session_id.trim().is_empty() {
@@ -213,11 +204,7 @@ fn prepare(
     let ts_ms = input
         .timestamp
         .as_ref()
-        .map(|text| {
-            chrono::DateTime::parse_from_rfc3339(text)
-                .map(|ts| ts.timestamp_millis())
-                .map_err(|_| Error::InvalidInput("timestamp must be RFC3339"))
-        })
+        .map(|text| timestamp::parse(text).map(|(_, milliseconds)| milliseconds))
         .transpose()?;
     if let Some(usage) = &input.message.usage {
         let cache = usage.cache_creation.as_ref();
@@ -328,8 +315,8 @@ fn merge_record(old: &mut StoredRecord, incoming: &StoredRecord) -> bool {
             change.enriched = true;
         }
         (Some(saved), Some(new)) if saved != new => {
-            change.conflict |= chrono::DateTime::parse_from_rfc3339(saved).ok()
-                != chrono::DateTime::parse_from_rfc3339(new).ok();
+            change.conflict |= timestamp::parse(saved).ok().map(|(key, _)| key)
+                != timestamp::parse(new).ok().map(|(key, _)| key);
         }
         _ => {}
     }

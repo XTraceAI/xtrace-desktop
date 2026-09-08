@@ -21,6 +21,13 @@ native application does not ingest data or open this store yet.
   Records, their usage and their tool rows are read from one snapshot, ordered
   by native timestamp with unknown timestamps last and UUID as a tie breaker.
 
+Native timestamp ordering, imported first/last bounds and replay conflict checks
+preserve every RFC3339 fractional digit, including digits beyond nanoseconds.
+Equivalent offsets and trailing fractional zeroes describe the same instant.
+`ts_ms` remains a coarse POSIX millisecond projection for indexing; callers must
+not use it to break chronological ties. Range writes compare precise native
+instants within indexed endpoint buckets, including the leap-second overlap.
+
 Usage counters, model, API/request IDs and timestamps remain nullable. A missing
 content array is unknown; an explicit empty array measures zero text and tools.
 Text length counts Unicode scalar values in text blocks, excluding tool output.
