@@ -52,7 +52,8 @@ Comments from people and bots are included. The gate writes check results only,
 so its own operation does not change the discussion or create an attestation
 loop. Wait for review comments to settle before preparing the final snapshot.
 Manual Development-sidebar issue links are included through GitHub's API.
-Issue-shaped tokens in code examples and HTML comments are excluded. Fetched
+Markdown links and HTML anchor links are included. Issue-shaped tokens in code
+examples and HTML comments are excluded. Fetched
 issue references must belong to this repository: another repository's edits
 cannot trigger local invalidation events. Ordinary external URLs remain prose.
 
@@ -73,14 +74,14 @@ offline. Download, checksum or execution errors fail the check.
 
 `publication:test` uses synthetic cases to verify rejection and error handling.
 `security:scan` (also available as `secrets:check`) checks reachable Git history,
-annotated tag messages/tagger metadata, Git filenames and tracked working files. Supply
+annotated tag messages/tagger metadata, Git ref names, filenames and tracked working files. Supply
 the actual PR base/head range with `--diff`; both refs must be present locally.
 Add `--content /path/to/outbound.md` to scan a prepared outbound text file.
 `--diff` and `--content` can be repeated for multiple inputs. These scans do not
 inspect image contents, image metadata or GitHub edit history.
 
 The scan fails if it exceeds 20,000 commits, 50,000 prepared inputs, 32 MiB per
-input or 256 MiB in total. Inputs include commit metadata, unique Git paths, file versions, diffs
+input or 256 MiB in total. Inputs include commit metadata, ref names, unique Git paths, file versions, diffs
 and supplied outbound text. Reaching a limit is an incomplete scan, not a clean
 result; unsupported repository entries, including submodules, also fail.
 

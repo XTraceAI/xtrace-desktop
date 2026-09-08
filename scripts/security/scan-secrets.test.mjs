@@ -167,6 +167,18 @@ test('credentials only in Git paths block staged, current and removed historical
     });
 });
 
+test('credentials only in branch and lightweight-tag names are scanned opaquely', async (t) => {
+  for (const kind of ['branch', 'tag']) {
+    const repo = await fixture(t);
+    const secret = marker();
+    git(repo, kind, secret);
+    const result = scan(repo);
+    expectDetected(result, secret);
+    assert.ok(result.output.includes('git-ref['), 'Ref names must be scanned as opaque inputs.');
+    assert.ok(!result.output.includes('refs/'), 'Diagnostics must not expose original ref names.');
+  }
+});
+
 test('annotated tag messages, nested tags and tagger metadata are scanned without leaking values', async (t) => {
   for (const kind of ['message', 'nested', 'tagger']) {
     await t.test(kind, async (t) => {
