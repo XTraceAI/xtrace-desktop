@@ -73,7 +73,7 @@ test('a clean full-history repository passes without a PATH scanner', async (t) 
   assert.match(result.output, /Secret scan passed/);
 });
 
-test('current tracked edits are scanned and diagnostic paths/source are redacted', async (t) => {
+test('current tracked edits are scanned with opaque diagnostics and no source text', async (t) => {
   const repo = await fixture(t);
   const secret = marker();
   const path = `${secret}.txt`;
@@ -82,7 +82,60 @@ test('current tracked edits are scanned and diagnostic paths/source are redacted
   await writeFile(join(repo, path), `sensitive source text ${secret}\n`);
   const result = scan(repo);
   expectDetected(result, secret);
-  assert.match(result.output, /redacted/);
+  assert.match(result.output, /worktree\[\d+\]/);
+});
+
+test('GitLab-shaped filenames and blobs use opaque labels without credential fragments', async (t) => {
+  const repo = await fixture(t);
+  const base = git(repo, 'rev-parse', 'HEAD');
+  const suffix = randomBytes(5).toString('hex').slice(0, 9);
+  // Routable tokens have a short dot-separated suffix that must also stay private.
+  const secret = ['gl', 'pat-'].join('') + randomBytes(21).toString('base64url') + '.' + suffix;
+  const path = `${secret}.txt`;
+  await tracked(repo, path, `${secret}\n`);
+  git(repo, 'commit', '-qm', 'Synthetic filename and blob marker');
+  const result = scan(repo, ['--diff', `${base}..HEAD`]);
+  assert.equal(result.status, 1, 'A synthetic GitLab marker must block publication.');
+  assert.ok(result.output.includes('gitlab-pat'), 'The pinned GitLab detector must match.');
+  for (const privateValue of [secret, suffix, path, repo])
+    assert.ok(
+      !result.output.includes(privateValue),
+      'Diagnostics must omit credential/path fragments.',
+    );
+  const findings = result.output
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .map(JSON.parse);
+  for (const kind of ['git-path', 'git-blob', 'worktree', 'diff'])
+    assert.ok(
+      findings.some(({ path }) => path.startsWith(`${kind}[`)),
+      'Each Git input kind must be tested.',
+    );
+  assert.ok(
+    findings.every(({ path }) => /^(?:git-path|git-blob|worktree|diff)\[\d+\]$/.test(path)),
+    'All diagnostic paths must use fixed kinds and opaque sequence numbers.',
+  );
+});
+
+test('opaque diagnostics preserve path-sensitive detection internally', async (t) => {
+  const repo = await fixture(t);
+  const secret = randomBytes(12).toString('hex');
+  await tracked(
+    repo,
+    'private-settings/nuget.config',
+    `<add key="Password" value="${secret}" />\n`,
+  );
+  const result = scan(repo);
+  assert.equal(result.status, 1);
+  assert.ok(
+    result.output.includes('nuget-config-password'),
+    'The filename-dependent rule must match.',
+  );
+  assert.ok(!result.output.includes(secret), 'Diagnostics must omit the synthetic password.');
+  assert.ok(
+    !result.output.includes('private-settings'),
+    'Diagnostics must omit the original path.',
+  );
 });
 
 test('removed historical credentials remain blocking', async (t) => {
@@ -155,7 +208,8 @@ test('fixture paths, inline suppression and repository/environment configuration
     GITLEAKS_CONFIG_TOML: '[allowlist]\nregexes = [".*"]\n',
   });
   expectDetected(result, secret);
-  assert.match(result.output, /tests\/fixtures\/secret.txt/);
+  assert.match(result.output, /git-blob\[\d+\]/);
+  assert.ok(!result.output.includes('tests/fixtures/secret.txt'));
 });
 
 test('default filename exclusions cannot hide lockfile credentials', async (t) => {
@@ -185,7 +239,7 @@ test('outbound PR/release text is scanned without disclosing its local path', as
   await writeFile(outbound, `${secret}\n`, { mode: 0o600 });
   const result = scan(repo, ['--content', outbound]);
   expectDetected(result, secret);
-  assert.match(result.output, /outbound\[1\]/);
+  assert.match(result.output, /outbound\[\d+\]/);
   assert.ok(!result.output.includes(outbound));
 });
 

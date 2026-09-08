@@ -85,9 +85,11 @@ result; unsupported repository entries, including submodules, also fail.
 
 The scanner exits 0 for no detected findings, 1 for findings and 2 for a tooling,
 configuration or Git error. Either nonzero result prevents a successful gate.
-Diagnostics must omit matched values and source lines. Fixture directories are
-not exempt from scanning, and a value deleted from the current tree can still
-be detected in history.
+Diagnostics identify only the detector rule, line number and an opaque source
+label (for example, `git-blob[12]`). They omit original paths, matched values and
+source lines. Original paths remain inside private temporary scanner inputs so
+filename-dependent rules still apply. Fixture directories are not exempt from
+scanning, and a value deleted from the current tree can still be detected in history.
 
 ## CI boundary
 

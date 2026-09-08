@@ -86,20 +86,6 @@ export function parseArguments(args) {
   return options;
 }
 
-function displayPath(path) {
-  if (
-    isAbsolute(path) ||
-    path.split('/').includes('..') ||
-    [...path].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 || char === '@')
-  )
-    return '[redacted-path]';
-  return path
-    .replace(/(?:gh[pousr]_|github_pat_|sk-|xox[baprs]-)[A-Za-z0-9_-]+/g, '[redacted]')
-    .replace(/(?:AKIA|ASIA|AIza)[A-Za-z0-9_-]+/g, '[redacted]')
-    .replace(/[A-Za-z0-9_=-]{24,}/g, '[redacted]')
-    .slice(0, 220);
-}
-
 export async function scanRepository(options) {
   const repo = await realpath(options.repo);
   if (git(repo, ['rev-parse', '--is-shallow-repository']).toString().trim() !== 'false') {
@@ -119,7 +105,9 @@ export async function scanRepository(options) {
     const paths = new Set();
     let bytes = 0;
     let count = 0;
-    async function add(data, label, path) {
+    async function add(data, kind, path) {
+      if (!/^(?:git-path|git-blob|worktree|tag|tag-target|commit|diff|outbound)$/.test(kind))
+        throw new ScanFailure('invalid-source-kind');
       bytes += data.length;
       count++;
       if (data.length > MAX_FILE_BYTES || bytes > MAX_BYTES || count > MAX_VERSIONS)
@@ -136,7 +124,8 @@ export async function scanRepository(options) {
       for (const destination of destinations) {
         await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
         await writeFile(destination, data, { mode: 0o600, flag: 'wx' });
-        labels.set(destination, displayPath(label));
+        // Paths may contain credentials of any shape; never derive public labels from them.
+        labels.set(destination, `${kind}[${count}]`);
       }
     }
     async function blob(oid, path) {
@@ -144,12 +133,12 @@ export async function scanRepository(options) {
       // as opaque text; Gitleaks otherwise uses paths only for filtering/reporting.
       if (!paths.has(path)) {
         paths.add(path);
-        await add(Buffer.from(path + '\n'), `git-path[${paths.size}]`);
+        await add(Buffer.from(path + '\n'), 'git-path');
       }
       const key = `${oid}:${path}`;
       if (versions.has(key)) return;
       versions.add(key);
-      await add(git(repo, ['cat-file', 'blob', oid]), path, path);
+      await add(git(repo, ['cat-file', 'blob', oid]), 'git-blob', path);
     }
     const head = commit(repo, 'HEAD');
     // rev-list follows tag targets but omits the annotated tag objects. Scan
@@ -167,7 +156,7 @@ export async function scanRepository(options) {
       if (!/^[a-f0-9]{40,64}$/.test(oid)) throw new ScanFailure('invalid-tag-object');
       seenTags.add(oid);
       const data = git(repo, ['cat-file', 'tag', oid]);
-      await add(data, 'tag[' + oid.slice(0, 12) + ']');
+      await add(data, 'tag');
       const target = /^object ([a-f0-9]{40,64})\ntype (tag|commit|blob|tree)\n/.exec(
         data.toString(),
       );
@@ -178,7 +167,7 @@ export async function scanRepository(options) {
       else if (target[2] !== 'commit') throw new ScanFailure('tag-target-unsupported');
     }
     const commits = new Set(git(repo, ['rev-list', '--all', head]).toString().trim().split('\n'));
-    for (const [index, range] of options.diffs.entries()) {
+    for (const range of options.diffs) {
       const parts = range.split('..');
       if (
         parts.length !== 2 ||
@@ -208,12 +197,12 @@ export async function scanRepository(options) {
           tip,
           '--',
         ]),
-        `diff[${index + 1}]`,
+        'diff',
       );
     }
     if (commits.size > MAX_COMMITS) throw new ScanFailure('scan-history-limit');
     for (const oid of commits) {
-      await add(git(repo, ['cat-file', 'commit', oid]), `commit[${oid.slice(0, 12)}]`);
+      await add(git(repo, ['cat-file', 'commit', oid]), 'commit');
       const entries = decode(git(repo, ['ls-tree', '-rz', '--full-tree', oid]))
         .split('\0')
         .filter(Boolean);
@@ -244,18 +233,18 @@ export async function scanRepository(options) {
         if (error.code === 'ENOENT') continue;
         throw error;
       }
-      if (info.isSymbolicLink()) await add(Buffer.from(await readlink(file)), path, path);
+      if (info.isSymbolicLink()) await add(Buffer.from(await readlink(file)), 'worktree', path);
       else if (info.isFile() && info.size <= MAX_FILE_BYTES) {
         if (outsideRepository(repo, await realpath(file)))
           throw new ScanFailure('tracked-file-outside-repository');
-        await add(await readFile(file), path, path);
+        await add(await readFile(file), 'worktree', path);
       } else throw new ScanFailure('tracked-file-unsupported');
     }
-    for (const [index, path] of options.content.entries()) {
+    for (const path of options.content) {
       const info = await lstat(path);
       if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_FILE_BYTES)
         throw new ScanFailure('outbound-content-unsupported');
-      await add(await readFile(path), `outbound[${index + 1}]`);
+      await add(await readFile(path), 'outbound');
     }
     const binary = await verifiedScanner(repo, scratch);
     const findings = await scanFiles(binary, targets, scratch);
