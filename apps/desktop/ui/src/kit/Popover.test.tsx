@@ -77,29 +77,55 @@ it('positions from the anchor, closes through the native API, and balances liste
   anchor.remove();
 });
 
-it('dismisses when the anchor detaches, including a simultaneous controlled close', () => {
-  for (const nextOpen of [false, true]) {
-    const anchor = document.createElement('button');
-    document.body.append(anchor);
-    const anchorRef = createRef<HTMLElement>();
-    anchorRef.current = anchor;
-    const changed = vi.fn();
-    const view = render(
-      <Popover id="detached" anchorRef={anchorRef} open onOpenChange={changed}>
-        Detached content
-      </Popover>,
-    );
-    const content = view.getByText('Detached content');
-    expect(content.dataset.open).toBe('true');
-    anchor.remove();
-    anchorRef.current = null;
-    view.rerender(
-      <Popover id="detached" anchorRef={anchorRef} open={nextOpen} onOpenChange={changed}>
-        Detached content
-      </Popover>,
-    );
-    expect(content.dataset.open).toBe('false');
-    if (nextOpen) expect(changed).toHaveBeenCalledWith(false);
-    view.unmount();
-  }
-});
+it.each(['invoker', 'position'])(
+  'dismisses when the %s detaches, including a simultaneous controlled close',
+  (target) => {
+    for (const nextOpen of [false, true]) {
+      const anchor = document.createElement('button');
+      document.body.append(anchor);
+      const anchorRef = createRef<HTMLElement>();
+      anchorRef.current = anchor;
+      const geometry = document.createElement('span');
+      document.body.append(geometry);
+      const positionRef = createRef<HTMLElement>();
+      positionRef.current = geometry;
+      const changed = vi.fn();
+      const view = render(
+        <Popover
+          id="detached"
+          anchorRef={anchorRef}
+          positionRef={positionRef}
+          open
+          onOpenChange={changed}
+        >
+          Detached content
+        </Popover>,
+      );
+      const content = view.getByText('Detached content');
+      expect(content.dataset.open).toBe('true');
+      if (target === 'invoker') {
+        anchor.remove();
+        anchorRef.current = null;
+      } else {
+        geometry.remove();
+        positionRef.current = null;
+      }
+      view.rerender(
+        <Popover
+          id="detached"
+          anchorRef={anchorRef}
+          positionRef={positionRef}
+          open={nextOpen}
+          onOpenChange={changed}
+        >
+          Detached content
+        </Popover>,
+      );
+      expect(content.dataset.open).toBe('false');
+      if (nextOpen) expect(changed).toHaveBeenCalledWith(false);
+      view.unmount();
+      anchor.remove();
+      geometry.remove();
+    }
+  },
+);
