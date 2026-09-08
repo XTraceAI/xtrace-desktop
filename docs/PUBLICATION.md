@@ -72,14 +72,14 @@ offline. Download, checksum or execution errors fail the check.
 
 `publication:test` uses synthetic cases to verify rejection and error handling.
 `security:scan` (also available as `secrets:check`) checks reachable Git history,
-annotated tag messages/tagger metadata and tracked working files. Supply
+annotated tag messages/tagger metadata, Git filenames and tracked working files. Supply
 the actual PR base/head range with `--diff`; both refs must be present locally.
 Add `--content /path/to/outbound.md` to scan a prepared outbound text file.
 `--diff` and `--content` can be repeated for multiple inputs. These scans do not
 inspect image contents, image metadata or GitHub edit history.
 
 The scan fails if it exceeds 20,000 commits, 50,000 prepared inputs, 32 MiB per
-input or 256 MiB in total. Inputs include commit metadata, file versions, diffs
+input or 256 MiB in total. Inputs include commit metadata, unique Git paths, file versions, diffs
 and supplied outbound text. Reaching a limit is an incomplete scan, not a clean
 result; unsupported repository entries, including submodules, also fail.
 
@@ -92,7 +92,7 @@ be detected in history.
 ## CI boundary
 
 Two checks form the publication gate: `publication-checks` covers source/tests
-and `publication-content` covers the current disclosure snapshot. Require both
+and `publication-content` runs trusted candidate scanning plus current disclosure review. Require both
 through repository rules after the workflows land. The former combines tests
 with actual PR diffs, reachable history and current reviewed public content.
 A failed, cancelled or skipped dependency cannot produce a successful aggregate.
@@ -119,6 +119,21 @@ signals the trusted workflow. Runs reconcile current API state, rather than
 trusting an old event's PR content, and reject changes observed during scanning.
 They execute only the default branch, use `checks:write` solely to update the
 named content check, and never run PR scripts or consume workflow artifacts.
+The trusted scanner fetches each exact source PR head into a temporary Git ref,
+verifies its SHA and scans its base/head range without checking out candidate
+files or importing candidate scanner code. Fetch authentication is transient and
+restricted to the validated repository's GitHub URL; it is not passed to scanner
+processes. Every outcome removes the temporary ref. Pre-existing reachable refs
+remain in the whole-history scan, so an existing repository leak still blocks.
+Queue results require the current identities of those scanned source PRs.
+
+Disposable Git regressions verify that replacing the candidate scanner with a
+success stub cannot hide a source secret, that the candidate code is not executed,
+and that failure/head mismatch removes temporary refs. Synthetic transport tests
+inspect credential handling; they do not establish live default-branch workflow
+delivery. Separate empty-file tests detect secrets found only in staged, current
+and removed historical Git names, without printing the name.
+
 Pending events can coalesce because each run rechecks every open PR and queue
 head. A manual workflow dispatch retries an incomplete run.
 
@@ -130,9 +145,10 @@ result. Repeat the review and update the snapshot when manually changing linked
 relationships. No repository rule is changed by these files.
 
 Comments on the source PR's commits are included, with complete source-commit
-pagination required. New commit comments trigger reconciliation. GitHub exposes
-only the `created` activity for `commit_comment`, so edits/deletions and manual
-relationship changes also use a 15-minute scheduled reconciliation. Scheduled
+pagination required. GitHub Actions does not support a commit-comment trigger;
+the [documented workflow triggers](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)
+are a subset of webhook events. Commit-comment creation, edits/deletions and manual
+relationship changes use a 15-minute scheduled reconciliation. Scheduled
 runs can be delayed by GitHub; this is eventual detection, not an instantaneous
 publication barrier. Run the local current-content check immediately before a
 publication decision. Repositories with 1,000 or more commit comments exceed the

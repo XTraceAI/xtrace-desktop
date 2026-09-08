@@ -221,11 +221,7 @@ test('source commit comments and attachments invalidate snapshots on creation, e
     if (change === 'delete') state.commitComments = [];
     const review = await readPublicContent(state.api, repository, 3);
     assert.throws(() => requireDisclosure(review), /stale/);
-    assert.equal(
-      (await reconcile(state, async () => {}, change === 'create' ? 'commit_comment' : 'schedule'))
-        .failures,
-      1,
-    );
+    assert.equal((await reconcile(state, async () => {}, 'schedule')).failures, 1);
     await seal(state);
     assert.equal(
       (
