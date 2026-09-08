@@ -20,6 +20,24 @@ testing; changing the deployment target is a separate decision.
 See [runner specifications](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
 and the [macOS 14 image](https://github.com/actions/runner-images/blob/main/images/macos/macos-14-arm64-Readme.md).
 
+## Reviewed merges while private
+
+While the repository is private, maintainers review and merge one PR at a time
+using squash merges. Before each merge, verify DCO, current checkpoint evidence,
+`ci-ok`, `publication-content` and review findings against the exact source head
+and current base. Test the combined result against that base. If either source
+or base advances, rerun the affected validation before merging. Missing trusted
+policy, failed required checks or unresolved blocking findings prevent a merge.
+This procedure grants no merge or publication approval by itself.
+
+Merge-queue activation is deferred until a separately approved public launch.
+Keep `merge_group` workflow support and synthetic negative tests. Before enabling
+the queue, demonstrate live group execution, trusted combined-tree scanning,
+current disclosure/checkpoint invalidation and fail-closed aggregation. Start
+with one PR per group and a 60-minute timeout, without redundant strict
+up-to-date rebases. Queue-specific open findings remain activation blockers;
+deferral does not mark them fixed.
+
 ## PR classification and acceptance
 
 Every scheduled PR includes a standalone paragraph such as `Plan slot: FND-03`
@@ -121,7 +139,9 @@ Outside Actions, add the installed tool cache directories to `PATH`, or set `SYF
 and `CARGO_ABOUT` to their executables. The pinned installer adds them to
 `GITHUB_PATH` in Actions. Syft 1.51.1 produces the schema-validated CycloneDX 1.5
 artifact; cargo-about 0.9.2 and actual npm license texts produce notices. The active
-license allowlist is enforced, including when it rejects an existing dependency.
+license allowlist includes MPL-2.0, Zlib and Unicode-3.0. See
+[dependency obligations](DEPENDENCY_LICENSES.md) for retained notices and
+corresponding-source access; unsupported obligations still fail.
 SBOM generation succeeds independently of notice approval. CI scans the generated artifact for secrets and uploads only the
 validated SBOM, without browser traces or native logs.
 
@@ -145,7 +165,8 @@ fails CI.
 
 Actions use pinned commits. Rust, pnpm, Playwright and pinned supply-chain tools
 have caches. Dependabot groups weekly Cargo, npm and Actions updates. Cache timing,
-live queue behavior and default-branch content invalidation need recorded run
-evidence before this foundation is accepted.
+manual combined-result validation and default-branch content invalidation need
+recorded run evidence before this foundation is accepted. Live queue evidence
+is required before queue activation, rather than during private manual merging.
 
 Rust test and Clippy jobs enable all debug features so fixture-mode tests cannot silently disappear behind an optional feature. Production packaging uses its normal feature set and must still exclude debug fixture assets.
