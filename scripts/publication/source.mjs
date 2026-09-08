@@ -20,6 +20,7 @@ export async function withCandidateSource(
     'Candidate source fetch requires a scoped read token.',
   );
   const ref = 'refs/publication-content/' + randomUUID();
+  const relayPath = '.github/workflows/publication-review.yml';
   const git = (args, authenticate = false) => {
     const env = {
       ...cleanEnvironment(),
@@ -79,6 +80,23 @@ export async function withCandidateSource(
       'Candidate source changed while its objects were fetched.',
     );
     git(['cat-file', '-e', `${base}^{commit}`]);
+    const relay = (revision) => {
+      const entry = /^100644 blob ([a-f0-9]{40})\t(.+)$/.exec(
+        git(['ls-tree', revision, '--', relayPath]),
+      );
+      requireValue(
+        entry?.[2] === relayPath,
+        'The trusted review relay must exist as a regular file in the base and source commits.',
+      );
+      return entry[1];
+    };
+    const trustedRelay = relay('HEAD');
+    // Review events execute the merge-tree workflow: both inputs must preserve
+    // the trusted relay, including its jobs and conditions, byte for byte.
+    requireValue(
+      relay(base) === trustedRelay && relay(head) === trustedRelay,
+      'Source or base changed the trusted review relay; install an approved replacement before updating this gate.',
+    );
     return await scan({ base, head });
   } finally {
     git(['update-ref', '-d', ref]);
