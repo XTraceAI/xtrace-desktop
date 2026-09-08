@@ -134,7 +134,10 @@ and supplied outbound text. Reaching a limit is an incomplete scan, not a clean
 result; unsupported repository entries, including submodules, also fail.
 
 Git LFS pointer blobs are rejected with an unsupported-object error, including
-historical versions and direct blob refs. Their external bytes are not available
+historical versions and direct blob refs. Detection includes leading whitespace,
+blank records, extension records before the version, and legacy version aliases
+accepted by the [Git LFS parser](https://github.com/git-lfs/git-lfs/blob/v3.4.1/lfs/pointer.go).
+Their external bytes are not available
 through ordinary Git blob scanning. Verified LFS object retrieval and scanning
 must be implemented before LFS-backed content can pass this checker.
 

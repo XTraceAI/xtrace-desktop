@@ -406,3 +406,34 @@ test('Git LFS pointers fail closed in current, historical and direct-ref blobs',
     });
   }
 });
+
+test('noncanonical LFS headers accepted by the upstream parser remain unsupported', async (t) => {
+  const versions = [
+    'https://git-lfs.github.com/spec/v1',
+    'https://hawser.github.com/spec/v1',
+    'http://git-media.io/v/2',
+  ];
+  const prefixes = [
+    '\n',
+    '\r\n\r\n',
+    '\t \n',
+    '\u0085\u2003\n',
+    'ext-0-synthetic sha256:' + 'b'.repeat(64) + '\n\n',
+    'ext-0-synthetic.name-extra sha256:' + 'b'.repeat(64) + '\n',
+  ];
+  for (const [versionIndex, version] of versions.entries()) {
+    for (const [prefixIndex, prefix] of prefixes.entries()) {
+      await t.test('version ' + versionIndex + ', prefix ' + prefixIndex, async (t) => {
+        const repo = await fixture(t);
+        await tracked(
+          repo,
+          'asset.dat',
+          prefix + 'version ' + version + '\noid sha256:' + 'a'.repeat(64) + '\nsize 100\n',
+        );
+        const result = scan(repo);
+        assert.equal(result.status, 2);
+        assert.match(result.output, /git-lfs-object-unsupported/);
+      });
+    }
+  }
+});

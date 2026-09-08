@@ -25,6 +25,27 @@ const MAX_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_COMMITS = 20_000;
 const MAX_VERSIONS = 50_000;
 
+function lfsPointerHeader(data) {
+  // Git LFS trims outer Unicode whitespace (including Go's NEL), skips empty
+  // records and permits extension records before the version. Recognize its
+  // accepted headers conservatively; external object contents remain unsupported.
+  const text = data
+    .subarray(0, 1024)
+    .toString('utf8')
+    .replace(/^[\s\u0085]+/u, '');
+  for (const line of text.split(/\r?\n/)) {
+    if (!line) continue;
+    if (
+      /^version (?:https:\/\/(?:git-lfs|hawser)\.github\.com\/spec\/v1|http:\/\/git-media\.io\/v\/2)$/.test(
+        line,
+      )
+    )
+      return true;
+    if (!/^ext-\d-\w+[^ ]* /.test(line)) break;
+  }
+  return false;
+}
+
 function git(repo, args) {
   const result = spawnSync(
     'git',
@@ -115,9 +136,7 @@ export async function scanRepository(options) {
       // LFS pointers publish external bytes that this Git-object scanner cannot verify.
       if (
         ['git-blob', 'worktree', 'ref-target', 'tag-target'].includes(kind) &&
-        /^version https:\/\/(?:git-lfs\.github\.com\/spec\/v1|hawser\.github\.com\/spec\/v1|git-media\.io\/v2)\r?\n/.test(
-          data.subarray(0, 1024).toString('utf8'),
-        )
+        lfsPointerHeader(data)
       )
         throw new ScanFailure('git-lfs-object-unsupported');
       bytes += data.length;
