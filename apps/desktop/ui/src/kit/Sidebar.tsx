@@ -21,7 +21,7 @@ export interface SurfaceStatus {
   reason?: string;
 }
 export interface SidebarProps {
-  activeKey: SidebarKey;
+  activeKey?: SidebarKey;
   onNavigate: (key: SidebarKey) => void;
   rulebookCount?: number;
   leaderboardEnabled?: boolean;
@@ -40,6 +40,7 @@ export interface SidebarProps {
   onSettings?: () => void;
   /** Total top padding. Native shells can reserve their traffic-light region. */
   topInset?: number;
+  nativeChrome?: boolean;
   icons?: Partial<Record<SidebarIcon, ReactNode>>;
 }
 
@@ -84,6 +85,7 @@ export function Sidebar({
   onToggleTheme,
   onSettings,
   topInset = 16,
+  nativeChrome = false,
   icons = {},
 }: SidebarProps) {
   const hubId = useId();
@@ -99,6 +101,8 @@ export function Sidebar({
   const navItem = (key: SidebarKey, label: string, disabled = false) => (
     <button
       type="button"
+      tabIndex={0}
+      data-tauri-drag-region="false"
       className="xt-nav-item"
       key={key}
       disabled={disabled}
@@ -122,7 +126,10 @@ export function Sidebar({
       aria-label="Workspace"
       style={{ paddingTop: Number.isFinite(topInset) ? Math.max(16, topInset) : 16 }}
     >
-      <div className="xt-sidebar-brand">
+      {nativeChrome && (
+        <div className="xt-window-chrome" data-tauri-drag-region="deep" aria-hidden="true" />
+      )}
+      <div className="xt-sidebar-brand" data-tauri-drag-region={nativeChrome ? 'deep' : undefined}>
         <BrandMark />
       </div>
       <nav aria-label="Main navigation">
@@ -196,6 +203,8 @@ export function Sidebar({
           <button
             ref={hubTrigger}
             type="button"
+            tabIndex={0}
+            data-tauri-drag-region="false"
             className="xt-icon-button"
             aria-label="XTrace Hub"
             aria-expanded={hubOpen}
@@ -218,6 +227,8 @@ export function Sidebar({
           <span>{hubConnected ? (teamLabel ?? 'Hub connected') : 'Local workspace'}</span>
           <button
             type="button"
+            tabIndex={0}
+            data-tauri-drag-region="false"
             className="xt-icon-button"
             aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} appearance`}
             onClick={onToggleTheme}
@@ -226,6 +237,8 @@ export function Sidebar({
           </button>
           <button
             type="button"
+            tabIndex={0}
+            data-tauri-drag-region="false"
             className="xt-icon-button"
             aria-label="Settings"
             disabled={!onSettings}

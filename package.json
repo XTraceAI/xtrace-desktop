@@ -11,13 +11,14 @@
   "scripts": {
     "dev": "pnpm --dir apps/desktop/ui dev",
     "build": "pnpm --dir apps/desktop/ui build",
-    "test": "node --test apps/desktop/ui/scripts/*.test.mjs && pnpm --dir apps/desktop/ui test",
+    "test": "node --test apps/desktop/ui/scripts/*.test.mjs scripts/ci/dto.test.mjs && pnpm --dir apps/desktop/ui test",
     "typecheck": "pnpm --dir apps/desktop/ui typecheck",
     "lint": "eslint . --max-warnings 0 && pnpm --dir apps/desktop/ui lint:hex",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
-    "tauri": "pnpm --dir apps/desktop/ui tauri"
+    "tauri": "pnpm --dir apps/desktop/ui tauri",
+    "fixtures:export": "bash scripts/fixtures/export.sh"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -11,12 +11,16 @@
     "lint": "eslint . --max-warnings 0 && pnpm lint:hex",
     "tauri": "cd ../src-tauri && tauri",
     "lint:hex": "node scripts/lint-hex.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:shell": "playwright test --config playwright.shell.config.ts",
+    "test:e2e:production": "playwright test --config playwright.production.config.ts"
   },
   "dependencies": {
+    "@tanstack/react-query": "5.102.8",
     "@tauri-apps/api": "2.11.1",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "react-router": "7.18.3"
   },
   "devDependencies": {
     "@playwright/test": "1.58.2",

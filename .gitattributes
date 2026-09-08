@@ -1,0 +1,2 @@
+apps/desktop/ui/src/data/generated/*.ts linguist-generated=true
+apps/desktop/ui/fixtures/*.json linguist-generated=true

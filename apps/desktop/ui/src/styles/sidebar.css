@@ -13,6 +13,7 @@
   flex-shrink: 0;
 }
 .xt-sidebar {
+  position: relative;
   width: 228px;
   height: 100%;
   min-height: 0;
@@ -23,6 +24,11 @@
   color: var(--body);
   background: transparent;
   overflow-y: auto;
+}
+.xt-window-chrome {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 62px;
 }
 .xt-sidebar-brand {
   display: flex;

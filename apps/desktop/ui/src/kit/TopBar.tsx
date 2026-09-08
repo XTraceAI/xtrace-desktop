@@ -1,4 +1,5 @@
 import { Icon } from './icons';
+import type { ReactNode } from 'react';
 import '../styles/topbar.css';
 
 export type TimeRange = '7d' | '14d' | '30d';
@@ -12,6 +13,8 @@ export type TopBarProps = RangeProps & {
   actionLabel?: string;
   actionIcon?: TopBarAction;
   onAction?: () => void;
+  right?: ReactNode;
+  nativeDrag?: boolean;
 };
 
 const ranges: TimeRange[] = ['7d', '14d', '30d'];
@@ -25,9 +28,11 @@ export function TopBar({
   actionLabel,
   actionIcon = 'share',
   onAction,
+  right,
+  nativeDrag = false,
 }: TopBarProps) {
   return (
-    <header className="xt-topbar">
+    <header className="xt-topbar" data-tauri-drag-region={nativeDrag ? 'deep' : undefined}>
       <nav className="xt-topbar-breadcrumb" aria-label="Breadcrumb">
         <span className="xt-topbar-home">~</span>
         <span aria-hidden="true">/</span>
@@ -47,8 +52,8 @@ export function TopBar({
           </>
         )}
       </nav>
-      {(showRange || actionLabel?.trim()) && (
-        <div className="xt-topbar-tools">
+      {(showRange || actionLabel?.trim() || right) && (
+        <div className="xt-topbar-tools" data-tauri-drag-region="false">
           {showRange && (
             <div className="xt-range" role="group" aria-label="Date range">
               {ranges.map((value) => (
@@ -78,6 +83,7 @@ export function TopBar({
               <span>{actionLabel}</span>
             </button>
           )}
+          {right}
         </div>
       )}
     </header>

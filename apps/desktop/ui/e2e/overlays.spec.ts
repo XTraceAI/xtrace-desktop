@@ -33,15 +33,15 @@ test('appearance follows emulated system, persists overrides, and renders both t
   await page.screenshot({ path: info.outputPath('dark.png') });
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-  await page.getByLabel('Appearance').selectOption('dark');
+  await page.getByLabel('Appearance', { exact: true }).selectOption('dark');
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await page.getByLabel('Appearance').selectOption('light');
+  await page.getByLabel('Appearance', { exact: true }).selectOption('light');
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(241, 241, 245)');
   expect(await tokenValues()).toEqual(normalized(contract.light));
   await page.screenshot({ path: info.outputPath('light.png') });
-  await page.getByLabel('Appearance').selectOption('system');
+  await page.getByLabel('Appearance', { exact: true }).selectOption('system');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
@@ -79,7 +79,7 @@ test('local fonts load with external network denied and remain usable offline', 
   expect(new Set(fontRequests).size).toBe(8);
   expect(external).toEqual([]);
   await context.setOffline(true);
-  await page.getByLabel('Appearance').selectOption('light');
+  await page.getByLabel('Appearance', { exact: true }).selectOption('light');
   expect(
     await page.evaluate(
       () =>
@@ -106,7 +106,7 @@ test('denied storage does not break an appearance change', async ({ page }) => {
       });
   });
   await page.goto('/');
-  await page.getByLabel('Appearance').selectOption('light');
+  await page.getByLabel('Appearance', { exact: true }).selectOption('light');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
 });
 

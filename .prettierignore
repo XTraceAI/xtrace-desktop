@@ -5,3 +5,4 @@ apps/desktop/src-tauri/gen/
 Cargo.lock
 pnpm-lock.yaml
 artifacts/
+apps/desktop/ui/src/data/generated/

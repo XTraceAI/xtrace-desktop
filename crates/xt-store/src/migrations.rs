@@ -9,6 +9,15 @@ use rusqlite::TransactionBehavior;
 const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../migrations/0001_FND-03_canonical.sql"))];
 
 impl Store {
+    /// Highest applied migration after opening this store.
+    pub fn schema_version(&self) -> Result<u32> {
+        Ok(self.connection.query_row(
+            "SELECT coalesce(max(version), 0) FROM schema_version",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+
     pub fn migrate(&mut self) -> Result<()> {
         self.connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_version (
