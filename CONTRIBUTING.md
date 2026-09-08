@@ -46,6 +46,11 @@ notes or account-specific operating instructions. Inspect screenshots and logs
 before attaching them. Removing text from the latest version does not remove
 earlier Git commits or GitHub edit history; review both before publication.
 
+Apply the [publication review procedure](docs/PUBLICATION.md) even in a private
+repository. Run `pnpm publication:test` and `pnpm security:scan`, and check the PR
+template's disclosure attestation after reviewing the final text, linked issues,
+comments and attachments. Scanner success does not replace this semantic review.
+
 ## Checks
 
 Run from the repository root after installing the pinned toolchains and dependencies:
@@ -66,6 +71,7 @@ the current native smoke-test procedure.
 
 Add focused regression tests for behavior changes and run the affected PR's
 acceptance cases. Fixture loading, DTO parity, browser coverage, and release
-checks join this process as their owning foundation cards land. FND-02 will
-introduce CI, automated DCO checks, and dependency-license inventory; this
-scaffold does not yet claim those services are configured or required remotely.
+checks join this process as their owning foundation cards land. Publication
+checks provide advisory disclosure evidence; maintainer review remains required.
+Broader build/test CI, automated DCO checks and dependency-license inventory remain
+future work.
