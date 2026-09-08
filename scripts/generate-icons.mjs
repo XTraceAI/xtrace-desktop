@@ -10,10 +10,10 @@ const temporary = await mkdtemp(join(tmpdir(), 'xtrace-icons-'));
 try {
   const mark = await readFile(join(assets, 'mark.png'));
   const input = join(temporary, 'app-icon.svg');
-  // Keep the published artwork intact and inset it 16% from each icon edge.
+  // Keep the published artwork intact, on white with a 10% inset at each edge.
   await writeFile(
     input,
-    `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100"><image x="16" y="16" width="68" height="68" href="data:image/png;base64,${mark.toString('base64')}"/></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100"><rect width="100" height="100" fill="#fff"/><image x="10" y="10" width="80" height="80" href="data:image/png;base64,${mark.toString('base64')}"/></svg>`,
   );
   const result = spawnSync('pnpm', ['tauri', 'icon', input, '--output', temporary], {
     cwd: root,
@@ -40,12 +40,14 @@ try {
     entries.set(tag, icns.subarray(offset, offset + size));
     offset += size;
   }
+  // Keep PNG-backed representations, including the 16pt/32pt Retina sources.
+  // AppKit can misdecode the pinned CLI's legacy RGB records on white backgrounds.
+  for (const tag of ['is32', 's8mk', 'il32', 'l8mk']) entries.delete(tag);
   const ordered = [...entries.keys()].sort().map((tag) => entries.get(tag));
+  const output = Buffer.concat([icns.subarray(0, 8), ...ordered]);
+  output.writeUInt32BE(output.length, 4);
   // The desktop targets macOS; retain only its configured bundle assets.
-  await writeFile(
-    join(assets, 'icons/icon.icns'),
-    Buffer.concat([icns.subarray(0, 8), ...ordered]),
-  );
+  await writeFile(join(assets, 'icons/icon.icns'), output);
   await copyFile(join(temporary, 'icon.png'), join(assets, 'icons/icon.png'));
 } finally {
   await rm(temporary, { recursive: true, force: true });
