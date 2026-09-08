@@ -28,7 +28,7 @@ pnpm tauri build --debug --bundles app
 git diff --exit-code -- Cargo.lock pnpm-lock.yaml
 ```
 
-`pnpm check` runs TypeScript, ESLint with zero warnings, formatting and Vitest. `pnpm test -- --run` also works. Workspace compilation validates the empty subsystem crates; they do not contain artificial passing tests or working subsystem APIs. UI tests exercise the shell's application-info contract. CI, browser E2E and shared fixtures arrive in FND-02/FND-04; these commands do not claim those later gates have run.
+`pnpm check` runs TypeScript, ESLint with zero warnings, formatting and Vitest. `pnpm test -- --run` also works. Workspace compilation validates the empty subsystem crates; their APIs and behavior tests arrive with their implementations. UI tests exercise the shell's application-info contract. CI, browser E2E and shared fixtures arrive in FND-02/FND-04; these commands do not claim those later gates have run.
 
 `cargo xtask --help` describes the currently available helper. Future fixture commands must report unavailable until their owning implementation exists.
 

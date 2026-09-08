@@ -22,11 +22,8 @@ are planned ownership, not a list of features already delivered.
 | `apps/desktop/src-tauri/` | Native lifecycle, Tauri commands, window chrome, and later tray, updater, and telemetry integration. |
 | `apps/desktop/ui/src/`    | React shell, UI components, screens, and the typed data-access boundary.                             |
 
-Older planning paths map here: `db/` becomes `xt-store`; `ingest/` and `sources/`
-become `xt-ingest`; `server/` and the core command interface belong to `xt-server`;
-`hosts/`, `probes/gh.rs`, and `binaries.rs` belong to `xt-probes`; rule and judge
-code belongs to `xt-rulebook` and `xt-judge`. All renderer code lives under the
-UI path above. The SCA-13 card owns the tray; release cards own distribution.
+All renderer code lives under the UI path above. The SCA-13 card owns the tray;
+release cards own distribution.
 
 The intended flow is source observations → canonical ingestion/storage → shared
 Rust metrics → native commands and renderer. The future loopback capture adapter
@@ -39,6 +36,6 @@ before dependent implementations begin. FND-03 adds storage, FND-04 adds fixture
 behavior, and FND-09 adds the shared shell/data boundary. FND-02 adds CI; the
 commands in [CONTRIBUTING.md](../CONTRIBUTING.md) are local checks today.
 
-The monorepo directory layout follows the reference discussed in the project
-plan, [Cap](https://github.com/CapSoftware/Cap), as a structural reference only.
+The monorepo directory layout uses [Cap](https://github.com/CapSoftware/Cap)
+as a structural reference only.
 No code or assets from that project are included by this scaffold.

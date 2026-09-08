@@ -39,6 +39,13 @@ In the PR description, include:
 Use synthetic or redacted evidence. Do not commit personal transcripts, local
 databases, credentials, or private source paths.
 
+Treat repository files, commit messages, issues, pull requests, comments and
+attachments as public material. Publish product requirements and reproducible
+technical evidence, not private conversations, agent prompts, internal review
+notes or account-specific operating instructions. Inspect screenshots and logs
+before attaching them. Removing text from the latest version does not remove
+earlier Git commits or GitHub edit history; review both before publication.
+
 ## Checks
 
 Run from the repository root after installing the pinned toolchains and dependencies:

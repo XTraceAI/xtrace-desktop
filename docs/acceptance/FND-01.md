@@ -10,7 +10,7 @@ The first foundation PR creates a reproducible shell and workspace. It closes no
 | Launch a second copy while the first is running                                                                                 | The existing process/window is focused; no second application owner remains.                                                                                        | Process/window observation.                                 |
 | Inspect source layout, toolchain pins and legal files                                                                           | Binding subsystem ownership is documented. Apache LICENSE, NOTICE, DCO, trademarks and contribution/conduct/security guidance exist. Every PR commit is signed off. | Reviewed file list, provenance and git log.                 |
 
-Rust placeholder crates are validated by compilation, not tests that assert their own name. Existing integration-demo tests are not evidence for this scaffold PR. FND-02 supplies repository CI; publishing this PR does not complete that card or approve CP1.
+Rust placeholder crates are validated by compilation. The evidence below applies to this scaffold's source and native bundle. FND-02 supplies repository CI; its acceptance remains separate.
 
 ## Recorded evidence
 
