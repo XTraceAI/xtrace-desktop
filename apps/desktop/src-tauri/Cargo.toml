@@ -1,0 +1,19 @@
+[package]
+name = "xtrace-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+name = "xtrace_desktop"
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+serde.workspace = true
+tauri = { version = "=2.11.5", features = [] }
+tauri-plugin-single-instance = "=2.4.4"
