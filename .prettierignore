@@ -11,3 +11,6 @@ apps/desktop/ui/src/data/generated/
 **/test-results/
 scripts/supply-chain/schema/*.json
 scripts/supply-chain/upstream-licenses/*.txt
+
+# Preserve generated upstream license texts verbatim.
+THIRD_PARTY_NOTICES.md
