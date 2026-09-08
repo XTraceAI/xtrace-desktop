@@ -1,5 +1,7 @@
 /* Normative values: design/token-contract.json (FND-05 technical contract). */
 :root {
+  --toggle-knob: #ffffff;
+  --segment-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
   --host-claude: #d97757;
   --host-codex: #6b6b80;
   --host-cursor: #0d9488;
