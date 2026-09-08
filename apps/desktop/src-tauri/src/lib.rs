@@ -1,6 +1,8 @@
 use serde::Serialize;
 use tauri::Manager;
 
+mod window_controls;
+
 #[derive(Debug, Serialize)]
 struct AppInfo {
     name: &'static str,
@@ -24,6 +26,7 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        .on_window_event(window_controls::on_window_event)
         .invoke_handler(tauri::generate_handler![app_info])
         .run(tauri::generate_context!())
         .expect("Could not start XTrace Desktop");
