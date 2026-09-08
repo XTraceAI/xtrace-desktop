@@ -1,20 +1,26 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
+
+const port = Number(process.env.E2E_PORT ?? 5174);
+const viewport = { width: 1440, height: 900 };
 
 export default defineConfig({
   testDir: './e2e',
   testIgnore: ['shell.spec.ts', 'shell-production.spec.ts'],
-  fullyParallel: true,
-  forbidOnly: !!process.env.CI,
-  retries: 0,
+  forbidOnly: Boolean(process.env.CI),
+  retries: process.env.CI ? 1 : 0,
+  reporter: [['list'], ['html', { open: 'never' }]],
   use: {
-    baseURL: 'http://127.0.0.1:5175',
-    viewport: { width: 1440, height: 900 },
-    trace: 'retain-on-failure',
+    baseURL: `http://127.0.0.1:${port}`,
+    viewport,
+    trace: 'on-first-retry',
   },
-  projects: [{ name: 'webkit', use: { browserName: 'webkit' } }],
+  projects: [
+    { name: 'webkit', use: { ...devices['Desktop Safari'], viewport } },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'], viewport } },
+  ],
   webServer: {
-    command: 'pnpm dev --port 5175',
-    url: 'http://127.0.0.1:5175',
+    command: `pnpm dev --port ${port}`,
+    url: `http://127.0.0.1:${port}`,
     reuseExistingServer: false,
   },
 });

@@ -54,14 +54,16 @@ input. No input glob is used. For example, a session may point to
   "proves": ["M-02", "M-03", "M-04", "M-05", "M-10"],
   "now": "2026-09-08T00:00:00Z",
   "window_days": 7,
-  "sessions": [{
-    "file": "input/sessions/session.jsonl",
-    "session_id": "00000000-0000-4000-8000-000000000001",
-    "host": "claude",
-    "source_surface": "cli",
-    "native_session_id": "00000000-0000-4000-8000-000000000001",
-    "started_at": "2026-09-07T12:00:00Z"
-  }]
+  "sessions": [
+    {
+      "file": "input/sessions/session.jsonl",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "host": "claude",
+      "source_surface": "cli",
+      "native_session_id": "00000000-0000-4000-8000-000000000001",
+      "started_at": "2026-09-07T12:00:00Z"
+    }
+  ]
 }
 ```
 
@@ -106,11 +108,11 @@ rows and all fifteen usage observations remain stored.
 
 Per human request, the first API response has two cumulative observations:
 
-| Observation | Input | Output | Cache read | Cache creation | Total |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Initial text | 100 | 5 | 20 | 10 | 135 |
-| Later tool call, same response/request IDs | 100 | 10 | 20 | 10 | 140 |
-| Second API response | 50 | 20 | 10 | 0 | 80 |
+| Observation                                | Input | Output | Cache read | Cache creation | Total |
+| ------------------------------------------ | ----: | -----: | ---------: | -------------: | ----: |
+| Initial text                               |   100 |      5 |         20 |             10 |   135 |
+| Later tool call, same response/request IDs |   100 |     10 |         20 |             10 |   140 |
+| Second API response                        |    50 |     20 |         10 |              0 |    80 |
 
 Select the later observation of the first response, then add the second:
 `5 × (140 + 80) = 1,100` tokens. Counter totals are 750 input, 150 output,
@@ -166,29 +168,29 @@ catalog validation. Add executable reference dispatch before marking another
 entry populated for `fixture-validate`; fail honestly while that dispatch is
 missing. Never copy live-machine transcripts or totals into a fixture.
 
-| ID | Current status | Planned input responsibility |
-| --- | --- | --- |
-| F1 | Populated, reference asserted | Baseline human/assistant turns, response usage, activity, model |
-| F2 | Skeleton | Overlapping activity and concurrency |
-| F3 | Skeleton | Event window boundaries |
-| F4 | Skeleton | Exact pull-request links and merged-PR statistics |
-| F5 | Skeleton | Codex cumulative usage reader |
-| F6 | Skeleton | Cursor IDE hook usage attachment |
-| F7 | Skeleton | Cursor Agent CLI unmeasured usage |
-| F8 | Skeleton | Human-message exclusions |
-| F9 | Skeleton | Batched timestamp latency |
-| F10 | Skeleton | Aborted turn without counters |
-| F11 | Skeleton | Weekly model comparisons |
-| F12 | Skeleton | Inferred branch links |
-| F13 | Skeleton | Directive coverage |
-| F14 | Skeleton | Rule-fire deduplication |
-| F15 | Skeleton | Enforcement downgrade |
-| F16 | Skeleton | Named filesystem/environment probe snapshots |
-| F17 | Skeleton | Claude response revisions, copies and missing IDs |
-| F18 | Skeleton | Source replay, enrichment, retention and purge variants |
-| F19 | Skeleton | Overlapping pull-request attribution |
-| F20 | Skeleton | Surface identity and capture coverage |
-| F21 | Skeleton | Initial scan/tail handoff race |
+| ID  | Current status                | Planned input responsibility                                    |
+| --- | ----------------------------- | --------------------------------------------------------------- |
+| F1  | Populated, reference asserted | Baseline human/assistant turns, response usage, activity, model |
+| F2  | Skeleton                      | Overlapping activity and concurrency                            |
+| F3  | Skeleton                      | Event window boundaries                                         |
+| F4  | Skeleton                      | Exact pull-request links and merged-PR statistics               |
+| F5  | Skeleton                      | Codex cumulative usage reader                                   |
+| F6  | Skeleton                      | Cursor IDE hook usage attachment                                |
+| F7  | Skeleton                      | Cursor Agent CLI unmeasured usage                               |
+| F8  | Skeleton                      | Human-message exclusions                                        |
+| F9  | Skeleton                      | Batched timestamp latency                                       |
+| F10 | Skeleton                      | Aborted turn without counters                                   |
+| F11 | Skeleton                      | Weekly model comparisons                                        |
+| F12 | Skeleton                      | Inferred branch links                                           |
+| F13 | Skeleton                      | Directive coverage                                              |
+| F14 | Skeleton                      | Rule-fire deduplication                                         |
+| F15 | Skeleton                      | Enforcement downgrade                                           |
+| F16 | Skeleton                      | Named filesystem/environment probe snapshots                    |
+| F17 | Skeleton                      | Claude response revisions, copies and missing IDs               |
+| F18 | Skeleton                      | Source replay, enrichment, retention and purge variants         |
+| F19 | Skeleton                      | Overlapping pull-request attribution                            |
+| F20 | Skeleton                      | Surface identity and capture coverage                           |
+| F21 | Skeleton                      | Initial scan/tail handoff race                                  |
 
 Purge variants must eventually cover previously stored transcript/tool/fire/judge
 content, confirmed removal, unchanged metadata/counts and source files, and a

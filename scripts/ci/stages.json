@@ -1,0 +1,527 @@
+{
+  "version": 1,
+  "slots": {
+    "FND-01": {
+      "stage": 1,
+      "dependencies": []
+    },
+    "FND-02": {
+      "stage": 1,
+      "dependencies": ["FND-01"]
+    },
+    "FND-03": {
+      "stage": 1,
+      "dependencies": ["FND-01"]
+    },
+    "FND-05": {
+      "stage": 1,
+      "dependencies": ["FND-01"]
+    },
+    "FND-04": {
+      "stage": 1,
+      "dependencies": ["FND-03"]
+    },
+    "FND-06a": {
+      "stage": 1,
+      "dependencies": ["FND-05"]
+    },
+    "FND-06b": {
+      "stage": 1,
+      "dependencies": ["FND-05"]
+    },
+    "FND-07a": {
+      "stage": 1,
+      "dependencies": ["FND-05"]
+    },
+    "ING-01": {
+      "stage": 1,
+      "dependencies": ["FND-03", "FND-04"]
+    },
+    "ING-02": {
+      "stage": 2,
+      "dependencies": ["ING-01"]
+    },
+    "ING-06": {
+      "stage": 2,
+      "dependencies": ["ING-01"]
+    },
+    "ING-03": {
+      "stage": 2,
+      "dependencies": ["ING-01", "ING-02"]
+    },
+    "ING-07": {
+      "stage": 2,
+      "dependencies": ["ING-03", "ING-06"]
+    },
+    "FND-07b": {
+      "stage": 2,
+      "dependencies": ["FND-05"]
+    },
+    "FND-08": {
+      "stage": 2,
+      "dependencies": ["FND-05", "FND-06b", "FND-07a", "FND-07b"]
+    },
+    "FND-09": {
+      "stage": 2,
+      "dependencies": ["FND-03", "FND-04", "FND-06a", "FND-06b"]
+    },
+    "FND-10": {
+      "stage": 2,
+      "dependencies": ["FND-06a", "FND-06b", "FND-07a", "FND-07b", "FND-08"]
+    },
+    "FND-12": {
+      "stage": 3,
+      "dependencies": ["FND-01", "FND-04", "FND-09"]
+    },
+    "FND-13": {
+      "stage": 3,
+      "dependencies": ["FND-02", "ING-07"]
+    },
+    "ING-04": {
+      "stage": 3,
+      "dependencies": ["ING-03"]
+    },
+    "ING-05": {
+      "stage": 3,
+      "dependencies": ["ING-03"]
+    },
+    "SCA-02": {
+      "stage": 3,
+      "dependencies": ["FND-01", "FND-03", "FND-04"]
+    },
+    "SCA-03": {
+      "stage": 3,
+      "dependencies": ["FND-01"]
+    },
+    "ING-14": {
+      "stage": 3,
+      "dependencies": ["ING-07", "PLG-03", "PLG-07", "SCA-02", "PLG-04"]
+    },
+    "MET-01": {
+      "stage": 3,
+      "dependencies": ["FND-03", "FND-04", "ING-01", "ING-02"]
+    },
+    "MET-03": {
+      "stage": 3,
+      "dependencies": ["MET-01"]
+    },
+    "MET-06": {
+      "stage": 3,
+      "dependencies": ["MET-01"]
+    },
+    "SCA-01": {
+      "stage": 3,
+      "dependencies": ["FND-01", "FND-05", "FND-07a", "FND-07b", "FND-08"]
+    },
+    "REL-01": {
+      "stage": 3,
+      "dependencies": ["FND-01", "ING-03", "FND-07b"]
+    },
+    "ING-11": {
+      "stage": 4,
+      "dependencies": ["ING-03", "ING-04", "ING-05"]
+    },
+    "ING-12": {
+      "stage": 4,
+      "dependencies": ["ING-11"]
+    },
+    "ING-13": {
+      "stage": 4,
+      "dependencies": ["ING-03", "PLG-07", "SCA-02", "SCA-03"]
+    },
+    "MET-02": {
+      "stage": 4,
+      "dependencies": ["MET-01", "ING-04"]
+    },
+    "MET-04": {
+      "stage": 4,
+      "dependencies": ["MET-03", "ING-14"]
+    },
+    "MET-07": {
+      "stage": 4,
+      "dependencies": ["MET-06"]
+    },
+    "MET-09": {
+      "stage": 4,
+      "dependencies": ["MET-02"]
+    },
+    "MET-10": {
+      "stage": 4,
+      "dependencies": ["MET-02", "MET-03"]
+    },
+    "MET-05": {
+      "stage": 4,
+      "dependencies": ["MET-03", "MET-04"]
+    },
+    "MET-13": {
+      "stage": 4,
+      "dependencies": ["MET-01", "ING-02"]
+    },
+    "SCA-04": {
+      "stage": 4,
+      "dependencies": ["SCA-03", "ING-14", "FND-09"]
+    },
+    "SCA-05": {
+      "stage": 4,
+      "dependencies": ["SCA-01", "SCA-02", "SCA-03", "SCA-04", "ING-14", "FND-09"]
+    },
+    "SCB-10": {
+      "stage": 4,
+      "dependencies": ["FND-09", "FND-06a", "ING-03"]
+    },
+    "FND-11": {
+      "stage": 4,
+      "dependencies": ["FND-10", "FND-02"]
+    },
+    "MET-08": {
+      "stage": 5,
+      "dependencies": ["MET-02", "MET-06"]
+    },
+    "MET-11": {
+      "stage": 5,
+      "dependencies": ["MET-04", "MET-05", "MET-07", "MET-08", "MET-09", "MET-10"]
+    },
+    "MET-15": {
+      "stage": 5,
+      "dependencies": ["MET-02", "MET-04", "MET-06", "MET-09", "FND-09"]
+    },
+    "MET-14": {
+      "stage": 5,
+      "dependencies": ["MET-09", "MET-10", "MET-11"]
+    },
+    "MET-05b": {
+      "stage": 5,
+      "dependencies": ["MET-03", "MET-04", "MET-05", "SCB-10"]
+    },
+    "SCA-07": {
+      "stage": 5,
+      "dependencies": ["SCA-01", "MET-11", "MET-05", "FND-06a", "FND-06b", "FND-09"]
+    },
+    "SCA-07b": {
+      "stage": 5,
+      "dependencies": ["SCA-01", "MET-11", "MET-05", "FND-06a", "FND-06b", "FND-09", "SCA-07"]
+    },
+    "SCA-13": {
+      "stage": 5,
+      "dependencies": ["SCA-01", "MET-11", "ING-03", "FND-01", "FND-09"]
+    },
+    "SCA-09": {
+      "stage": 5,
+      "dependencies": ["SCA-01", "SCA-02", "MET-13", "FND-09"]
+    },
+    "SCA-11a": {
+      "stage": 5,
+      "dependencies": ["SCA-01", "MET-15", "FND-06a", "FND-06b", "FND-08", "FND-09"]
+    },
+    "SCA-10": {
+      "stage": 5,
+      "dependencies": ["SCA-01", "SCA-07", "MET-15", "FND-08", "FND-09"]
+    },
+    "REL-02": {
+      "stage": 5,
+      "dependencies": ["REL-01"]
+    },
+    "SCB-11": {
+      "stage": 5,
+      "dependencies": ["SCB-10", "ING-06", "ING-14", "ING-03", "FND-06a"]
+    },
+    "SCA-06": {
+      "stage": 6,
+      "dependencies": [
+        "SCA-01",
+        "SCA-05",
+        "ING-11",
+        "ING-12",
+        "ING-13",
+        "MET-11",
+        "REL-01",
+        "FND-09"
+      ]
+    },
+    "SCA-08": {
+      "stage": 6,
+      "dependencies": ["SCA-07", "MET-03", "FND-09"]
+    },
+    "SCA-11b": {
+      "stage": 6,
+      "dependencies": ["SCA-01", "MET-15", "FND-06a", "FND-06b", "FND-08", "FND-09", "SCA-11a"]
+    },
+    "REL-03": {
+      "stage": 6,
+      "dependencies": ["REL-02", "SCB-10"]
+    },
+    "REL-16": {
+      "stage": 6,
+      "dependencies": [
+        "FND-02",
+        "PLG-08",
+        "FND-09",
+        "FND-13",
+        "ING-07",
+        "ING-11",
+        "ING-14",
+        "MET-11",
+        "SCA-05",
+        "SCA-06",
+        "SCA-07",
+        "SCA-13"
+      ]
+    },
+    "SCB-01": {
+      "stage": 6,
+      "dependencies": ["FND-03", "ING-01", "ING-02"]
+    },
+    "SCB-03": {
+      "stage": 6,
+      "dependencies": ["SCA-03", "SCB-01"]
+    },
+    "SCB-04": {
+      "stage": 6,
+      "dependencies": ["SCB-01", "SCB-03", "PLG-07"]
+    },
+    "ING-08": {
+      "stage": 7,
+      "dependencies": ["ING-07", "SCB-01"]
+    },
+    "MET-12": {
+      "stage": 7,
+      "dependencies": [
+        "MET-04",
+        "MET-06",
+        "MET-09",
+        "MET-10",
+        "SCB-01",
+        "SCB-03",
+        "SCB-04",
+        "ING-08"
+      ]
+    },
+    "MET-12b": {
+      "stage": 7,
+      "dependencies": [
+        "MET-04",
+        "MET-06",
+        "MET-09",
+        "MET-10",
+        "SCB-01",
+        "SCB-03",
+        "SCB-04",
+        "ING-08",
+        "MET-12"
+      ]
+    },
+    "MET-16": {
+      "stage": 7,
+      "dependencies": ["MET-03", "MET-12"]
+    },
+    "SCB-06": {
+      "stage": 7,
+      "dependencies": ["MET-12", "FND-06a", "FND-06b", "FND-07a", "FND-07b", "FND-08", "FND-09"]
+    },
+    "SCB-06b": {
+      "stage": 7,
+      "dependencies": [
+        "MET-12",
+        "FND-06a",
+        "FND-06b",
+        "FND-07a",
+        "FND-07b",
+        "FND-08",
+        "FND-09",
+        "SCB-06"
+      ]
+    },
+    "REL-04": {
+      "stage": 7,
+      "dependencies": ["FND-01", "FND-02"]
+    },
+    "SCB-07": {
+      "stage": 8,
+      "dependencies": ["SCB-06", "MET-05", "MET-12", "SCB-06b"]
+    },
+    "SCB-12": {
+      "stage": 8,
+      "dependencies": ["SCB-10", "MET-05"]
+    },
+    "SCA-12": {
+      "stage": 8,
+      "dependencies": ["SCA-11a", "SCA-11b", "MET-12", "SCB-06", "SCB-06b"]
+    },
+    "SCA-08b": {
+      "stage": 8,
+      "dependencies": ["SCA-07", "MET-03", "FND-09", "SCA-08", "MET-16"]
+    },
+    "REL-06": {
+      "stage": 8,
+      "dependencies": ["REL-04", "FND-01", "FND-06a"]
+    },
+    "RBK-03": {
+      "stage": 9,
+      "dependencies": ["FND-01"]
+    },
+    "RBK-04": {
+      "stage": 9,
+      "dependencies": ["RBK-03"]
+    },
+    "RBK-01": {
+      "stage": 9,
+      "dependencies": ["FND-01", "FND-04", "SCA-03"]
+    },
+    "RBK-02": {
+      "stage": 9,
+      "dependencies": ["FND-01", "ING-01", "ING-03", "SCA-03"]
+    },
+    "ING-09": {
+      "stage": 9,
+      "dependencies": ["ING-06", "ING-01"]
+    },
+    "ING-10": {
+      "stage": 9,
+      "dependencies": ["ING-09", "ING-03", "RBK-04"]
+    },
+    "RBK-09": {
+      "stage": 9,
+      "dependencies": ["RBK-04", "RBK-02", "ING-01"]
+    },
+    "RBK-05a": {
+      "stage": 10,
+      "dependencies": ["RBK-01", "RBK-02", "RBK-03", "ING-01"]
+    },
+    "RBK-05b": {
+      "stage": 10,
+      "dependencies": ["RBK-01", "RBK-02", "RBK-03", "ING-01", "RBK-05a"]
+    },
+    "RBK-06": {
+      "stage": 10,
+      "dependencies": ["RBK-03", "RBK-05a", "RBK-05b"]
+    },
+    "RBK-07": {
+      "stage": 10,
+      "dependencies": ["RBK-03", "RBK-06", "SCA-02"]
+    },
+    "RBK-08": {
+      "stage": 10,
+      "dependencies": ["RBK-03", "RBK-06", "RBK-07", "ING-09"]
+    },
+    "RBK-10a": {
+      "stage": 10,
+      "dependencies": [
+        "RBK-05a",
+        "RBK-05b",
+        "RBK-07",
+        "RBK-08",
+        "RBK-09",
+        "ING-09",
+        "ING-10",
+        "FND-06a",
+        "FND-06b",
+        "FND-07a",
+        "FND-07b",
+        "FND-08"
+      ]
+    },
+    "RBK-10b": {
+      "stage": 11,
+      "dependencies": [
+        "RBK-05a",
+        "RBK-05b",
+        "RBK-07",
+        "RBK-08",
+        "RBK-09",
+        "ING-09",
+        "ING-10",
+        "FND-06a",
+        "FND-06b",
+        "FND-07a",
+        "FND-07b",
+        "FND-08",
+        "RBK-10a"
+      ]
+    },
+    "RBK-11": {
+      "stage": 11,
+      "dependencies": ["RBK-03", "RBK-09", "RBK-10a", "RBK-10b"]
+    },
+    "RBK-14": {
+      "stage": 11,
+      "dependencies": ["RBK-09", "RBK-10a", "RBK-10b"]
+    },
+    "REL-11": {
+      "stage": 11,
+      "dependencies": [
+        "PLG-03",
+        "PLG-04",
+        "PLG-12",
+        "REL-02",
+        "ING-14",
+        "SCA-02",
+        "SCA-03",
+        "FND-06a",
+        "FND-06b",
+        "FND-09"
+      ]
+    },
+    "RBK-12": {
+      "stage": 12,
+      "dependencies": ["RBK-02", "RBK-06", "RBK-09", "ING-01"]
+    },
+    "RBK-13": {
+      "stage": 12,
+      "dependencies": ["PLG-13", "RBK-06", "RBK-07", "RBK-08", "RBK-09", "SCA-02"]
+    },
+    "REL-05": {
+      "stage": 13,
+      "dependencies": ["REL-04"]
+    },
+    "REL-09": {
+      "stage": 13,
+      "dependencies": ["REL-04", "REL-08", "FND-02"]
+    },
+    "REL-10": {
+      "stage": 14,
+      "dependencies": [
+        "REL-05",
+        "REL-09",
+        "REL-16",
+        "PLG-08",
+        "ING-07",
+        "ING-09",
+        "ING-10",
+        "RBK-10b",
+        "SCA-07",
+        "SCA-13"
+      ]
+    },
+    "REL-12": {
+      "stage": 14,
+      "dependencies": ["MET-11", "MET-12", "SCB-03", "REL-02"]
+    },
+    "SCB-09a": {
+      "stage": 15,
+      "dependencies": ["REL-12", "REL-13", "FND-05", "FND-06a", "FND-06b", "FND-09", "SCA-07"]
+    },
+    "SCB-09b": {
+      "stage": 15,
+      "dependencies": [
+        "REL-12",
+        "REL-13",
+        "FND-05",
+        "FND-06a",
+        "FND-06b",
+        "FND-09",
+        "SCA-07",
+        "SCB-09a"
+      ]
+    },
+    "REL-15": {
+      "stage": 15,
+      "dependencies": ["REL-12", "REL-13", "REL-14", "SCB-09a", "SCB-09b", "FND-06a", "FND-09"]
+    }
+  },
+  "maintenance": {
+    "publication-checks": {
+      "branch": "feat/publication-checks",
+      "stage": 1
+    }
+  }
+}
