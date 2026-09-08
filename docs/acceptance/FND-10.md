@@ -61,6 +61,8 @@ traces and unrelated desktop captures are not committed.
 
 These local checks do not claim an actual macOS 14/Safari 17 floor run for the
 new gallery. CI includes both gallery commands on its macOS 14 runner. No native
-app launch is required by this change. Independent approved design exports are
-unavailable, so these captures are review evidence rather than pixel-parity
-baselines; the optional source-design iframe/diff view remains absent.
+app launch is required by this change. The current components and gallery serve as the working design reference.
+These captures remain review evidence; FND-11 must establish explicitly reviewed,
+versioned regression baselines before claiming automated visual coverage. This
+does not approve every current pixel or claim parity with independent exports;
+the optional source-design iframe/diff view remains absent.

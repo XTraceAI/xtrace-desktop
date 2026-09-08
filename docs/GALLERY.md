@@ -95,7 +95,15 @@ negative test writes a real temporary product source file and runs the actual
 lint configuration. This code-review and build boundary is not a sandbox for
 hostile source changes.
 
-Approved independent design exports are not available. These screenshots are
-synthetic component review evidence, not pixel-parity baselines. A design iframe
-or diff view can be added only after a suitable source design is available and
-reviewed for publication.
+The current components and this gallery are the working design reference.
+Review state coverage, layout and interactions here in both themes. FND-11 will
+capture versioned visual regression baselines from explicitly reviewed stories;
+record the source SHA, story inventory, theme, viewport, DPR, local fonts and
+pinned browser/runner with each baseline set. Review before/after/diff images
+when changing baselines; a failing comparison must not automatically rewrite
+its expected image. Baseline creation and visual regression testing remain
+FND-11 work, not completed gallery coverage.
+
+This reference choice does not approve every current pixel or a checkpoint.
+These captures do not prove parity with an independent design export. Any later
+external design source needs its own publication review before inclusion.
