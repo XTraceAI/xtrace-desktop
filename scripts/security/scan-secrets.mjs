@@ -107,7 +107,9 @@ export async function scanRepository(options) {
     let count = 0;
     async function add(data, kind, path) {
       if (
-        !/^(?:git-ref|git-path|git-blob|worktree|tag|tag-target|commit|diff|outbound)$/.test(kind)
+        !/^(?:git-ref|ref-target|git-path|git-blob|worktree|tag|tag-target|commit|diff|outbound)$/.test(
+          kind,
+        )
       )
         throw new ScanFailure('invalid-source-kind');
       bytes += data.length;
@@ -150,12 +152,19 @@ export async function scanRepository(options) {
       await add(Buffer.from(ref + '\n'), 'git-ref');
     // rev-list follows tag targets but omits the annotated tag objects. Scan
     // every tag object in reachable chains, including its message and tagger.
-    const tags = git(repo, ['for-each-ref', '--format=%(objecttype) %(objectname)'])
+    const targetsByType = git(repo, ['for-each-ref', '--format=%(objecttype) %(objectname)'])
       .toString()
       .trim()
       .split('\n')
-      .filter((line) => line.startsWith('tag '))
-      .map((line) => line.slice(4));
+      .filter(Boolean);
+    const tags = [];
+    for (const target of new Set(targetsByType)) {
+      const match = /^(tag|commit|blob) ([a-f0-9]{40,64})$/.exec(target);
+      if (!match) throw new ScanFailure('ref-target-unsupported');
+      if (match[1] === 'tag') tags.push(match[2]);
+      else if (match[1] === 'blob')
+        await add(git(repo, ['cat-file', 'blob', match[2]]), 'ref-target');
+    }
     const seenTags = new Set();
     while (tags.length) {
       const oid = tags.pop();

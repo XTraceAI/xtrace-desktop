@@ -66,6 +66,17 @@ function normalizedBody(body) {
   return lines.join('\n');
 }
 
+function revisionTimestamp(value) {
+  requireValue(
+    typeof value === 'string' &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) &&
+      Number.isFinite(Date.parse(value)) &&
+      new Date(value).toISOString() === (value.includes('.') ? value : value.replace('Z', '.000Z')),
+    'Public content revision timestamp is unavailable.',
+  );
+  return value;
+}
+
 function discussion(items, includeDiff = false) {
   const seen = new Set();
   return items
@@ -89,7 +100,7 @@ function discussion(items, includeDiff = false) {
         state: item.state ?? null,
         path: item.path ?? null,
         line: item.line ?? null,
-        updated: item.updated_at ?? item.submitted_at ?? null,
+        updated: revisionTimestamp(item.updated_at ?? item.submitted_at),
         commit: item.commit_id ?? null,
       };
     })
@@ -160,6 +171,7 @@ export async function readPublicContent(api, repository, number, candidateBody) 
       key,
       title: issue.title,
       body: issue.body ?? '',
+      updated: revisionTimestamp(issue.updated_at),
       ...(await conversations(
         api,
         reference.repository,
