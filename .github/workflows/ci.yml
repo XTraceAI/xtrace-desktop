@@ -20,6 +20,23 @@ env:
   MACOSX_DEPLOYMENT_TARGET: '14.0'
 
 jobs:
+  policy-tests:
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm test:ci
+      - run: pnpm test:supply-chain
+
   policy:
     runs-on: macos-14
     timeout-minutes: 10
@@ -28,22 +45,32 @@ jobs:
       pull-requests: read
       issues: read
     steps:
+      # This job never checks out or imports candidate code. The bootstrap
+      # variable must name a separately reviewed commit, never a candidate ref.
+      - name: Validate optional bootstrap identity
+        env:
+          BOOTSTRAP_SHA: ${{ vars.CI_POLICY_SHA }}
+        run: |
+          if [[ -n "$BOOTSTRAP_SHA" && ! "$BOOTSTRAP_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'CI_POLICY_SHA must be a reviewed full commit SHA.'
+            exit 1
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 0
+          ref: ${{ vars.CI_POLICY_SHA || github.event.repository.default_branch }}
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - name: Require installed policy and bind its stage map to this checkout
+        run: |
+          test -f scripts/ci/check-pr.mjs || { echo 'Reviewed policy bootstrap is required; see docs/CI.md.'; exit 1; }
+          echo "CI_POLICY_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
-          cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm test:ci
-      - run: pnpm test:supply-chain
       - run: node scripts/ci/check-pr.mjs
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          CI_POLICY_SHA: ${{ vars.CI_POLICY_SHA }}
           CHECKPOINT_CONFIG: ${{ vars.CHECKPOINT_CONFIG }}
 
   rust:
@@ -54,7 +81,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
@@ -76,7 +103,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
@@ -92,7 +119,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
@@ -115,7 +142,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
@@ -144,28 +171,23 @@ jobs:
   publication:
     runs-on: macos-14
     timeout-minutes: 20
-    permissions:
-      contents: read
-      pull-requests: read
-      issues: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm publication:test
-      - if: github.event_name != 'push'
-        run: pnpm publication:check
+      - name: Scan source history and the combined candidate diff
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-      - if: github.event_name == 'push'
-        run: pnpm secrets:check
+          PUBLICATION_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          PUBLICATION_HEAD: ${{ github.sha }}
+        run: node scripts/security/scan-secrets.mjs --diff "$PUBLICATION_BASE..$PUBLICATION_HEAD"
 
   debug-bundle:
     runs-on: macos-14
@@ -175,7 +197,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
@@ -197,7 +219,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
@@ -222,7 +244,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: ${{ always() }}
-    needs: [policy, rust, ui, e2e, supply-chain, publication, debug-bundle, hooks]
+    needs: [policy-tests, policy, rust, ui, e2e, supply-chain, publication, debug-bundle, hooks]
     runs-on: macos-14
     timeout-minutes: 5
     steps:

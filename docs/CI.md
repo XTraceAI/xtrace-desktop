@@ -1,9 +1,12 @@
 # Continuous integration
 
-The required checks are `ci-ok` for source validation and `publication-content`
-for current disclosure review. The temporary `publication-checks` workflow remains
-available during integration; its immutable checks are also included in `ci-ok`.
-These files do not configure repository rules or merge changes.
+`ci-ok` aggregates source validation and policy diagnostics. Maintainers inspect
+its run provenance and results before merging. Disclosure review remains manual;
+`publication-content` is advisory and must not be configured as an enforcement
+boundary. Candidate Actions workflows can imitate check names under the same
+GitHub Actions app. The separate `publication-checks` workflow remains available;
+its source tests and scans are also included in `ci-ok`. These files do not
+configure repository rules or merge changes.
 
 `CI` runs on pull requests, merge groups and pushes to `main`. It checks Rust
 formatting, Clippy and tests; UI types, lint, formatting and tests; WebKit and
@@ -24,10 +27,11 @@ and the [macOS 14 image](https://github.com/actions/runner-images/blob/main/imag
 
 While the repository is private, maintainers review and merge one PR at a time
 using squash merges. Before each merge, verify DCO, current checkpoint evidence,
-`ci-ok`, `publication-content` and review findings against the exact source head
-and current base. Test the combined result against that base. If either source
-or base advances, rerun the affected validation before merging. Missing trusted
-policy, failed required checks or unresolved blocking findings prevent a merge.
+`ci-ok`, advisory publication results and review findings against the exact
+source head and current base. Complete the manual disclosure review in
+[PUBLICATION.md](PUBLICATION.md), including retained content and attachments. Test the combined result against that base. If either source
+or base advances, rerun the affected validation before merging. Missing reviewed
+policy, failed source checks or unresolved blocking findings prevent a merge.
 This procedure grants no merge or publication approval by itself.
 
 Merge-queue activation is deferred until a separately approved public launch.
@@ -49,12 +53,22 @@ actually run and remaining checks. Complete the separate disclosure review in
 [PUBLICATION.md](PUBLICATION.md).
 
 `scripts/ci/stages.json` contains only technical stage/dependency data and named
-maintenance exceptions. It does not schedule work or record completion. CI reads
-that file through GitHub at the current default-branch SHA, or the exact reviewed
-SHA configured in repository variable `CI_POLICY_SHA`. A candidate cannot redefine
-its own stage through its body or its edited map. Initial installation requires
-an explicit reviewed policy SHA until the map exists on the default branch;
-missing trusted policy fails closed.
+maintenance exceptions. It does not schedule work or record completion. The
+`policy-tests` job tests candidate code without API credentials. A separate
+`policy` job checks out the default branch, or the full commit SHA in repository
+variable `CI_POLICY_SHA`, before installing its pinned dependencies. Only that
+reviewed source receives the metadata token. Its stage map is read at the exact
+same checkout SHA, so a candidate body or edited map cannot redefine its stage.
+The workflow itself remains subject to manual provenance review.
+
+For initial installation, a maintainer reviews the complete policy entrypoint,
+its imports and dependency graph, and sets `CI_POLICY_SHA` to that exact 40-digit
+commit SHA. Rerun CI on the same candidate after configuration. Missing policy
+fails closed with a bootstrap diagnostic; a green source-only run is not live
+policy validation. After this PR is merged and the default branch contains the
+reviewed validator, remove the bootstrap variable and verify a subsequent run
+uses the default branch. Do not advance the variable automatically with PR pushes.
+No checkpoint configuration is needed for FND-02, which is a producer stage.
 
 The gate resolves actual source PRs from merge-queue entries and reads each PR's
 contributed commit list. Every author must have a matching final `Signed-off-by`
@@ -81,7 +95,7 @@ numbers and authorized human approver logins:
 These are illustrative values, not configured accounts or approvals. Missing
 configuration blocks dependent stages. Each required checkpoint issue must be
 linked in the PR body, for example `Checkpoint evidence: #17`, so current
-publication-content review includes changes to its evidence and discussion.
+manual disclosure review and the advisory snapshot include changes to its evidence and discussion.
 
 The open checkpoint issue body is a JSON evidence identity:
 
@@ -106,7 +120,7 @@ Update the issue identity after a substantive change to demonstrated behavior,
 artifacts or accepted decisions; an older approval then fails. CI compares the
 declared identities and rereads current evidence, but cannot determine semantic
 equivalence or decide what a person approved. Checkpoint review remains the
-approver's responsibility. Publication-content event delivery and reconciliation
+approver's responsibility. Advisory event delivery and reconciliation
 limitations also apply; run current checks again before a publication decision.
 
 A configured person may approve a repair-only exception by posting a JSON PR
@@ -165,7 +179,7 @@ fails CI.
 
 Actions use pinned commits. Rust, pnpm, Playwright and pinned supply-chain tools
 have caches. Dependabot groups weekly Cargo, npm and Actions updates. Cache timing,
-manual combined-result validation and default-branch content invalidation need
+manual combined-result validation and default-branch advisory invalidation need
 recorded run evidence before this foundation is accepted. Live queue evidence
 is required before queue activation, rather than during private manual merging.
 
