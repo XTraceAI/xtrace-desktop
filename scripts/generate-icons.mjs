@@ -8,11 +8,17 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const assets = join(root, 'apps/desktop/ui/public');
 const temporary = await mkdtemp(join(tmpdir(), 'xtrace-icons-'));
 try {
-  const result = spawnSync(
-    'pnpm',
-    ['tauri', 'icon', join(assets, 'mark.png'), '--output', temporary],
-    { cwd: root, stdio: 'inherit' },
+  const mark = await readFile(join(assets, 'mark.png'));
+  const input = join(temporary, 'app-icon.svg');
+  // Keep the published artwork intact and inset it 16% from each icon edge.
+  await writeFile(
+    input,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100"><image x="16" y="16" width="68" height="68" href="data:image/png;base64,${mark.toString('base64')}"/></svg>`,
   );
+  const result = spawnSync('pnpm', ['tauri', 'icon', input, '--output', temporary], {
+    cwd: root,
+    stdio: 'inherit',
+  });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error('Tauri icon generation failed.');
   // Tauri emits ICNS entries in varying order. Keep the image payloads intact

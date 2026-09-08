@@ -60,9 +60,10 @@ node scripts/generate-icons.mjs
 ```
 
 The script invokes the pinned Tauri CLI and updates `icon.png` and `icon.icns`
-under `apps/desktop/ui/public/icons/` from the committed source mark. Rebuild the
-debug bundle and inspect the UI mark and Finder/Dock icon before committing an
-asset change.
+under `apps/desktop/ui/public/icons/` from the committed source mark. It centers
+the artwork with 16% transparent padding on each edge. The browser favicon uses
+the padded PNG; in-app branding uses the original mark. Rebuild the debug bundle
+and inspect the favicon and Finder/Dock icon before committing an asset change.
 
 ## Native verification
 
