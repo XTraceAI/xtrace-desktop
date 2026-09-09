@@ -50,8 +50,8 @@ Optional reasons remain visible under their own row. Listener status reports
 the listener only and does not certify capture on any surface.
 
 Token-host glyph slots are 16px and decorative; host names remain explicit.
-FND-06b owns the shared icons and `HostGlyph`, so this slice uses small text
-symbols and colored dots as defaults. Callers can supply those later primitives
+Shared icons and host glyphs are supplied by callers; these components use small
+text symbols and colored dots as defaults. Callers can supply those later primitives
 without changing status or navigation behavior. The sidebar reserves native
 chrome space; it draws no replacement traffic lights or drag regions.
 
@@ -59,7 +59,7 @@ chrome space; it draws no replacement traffic lights or drag regions.
 
 | Prop                                      | Contract / default                                                                                                      |
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `id`, `open`, `onOpenChange`, `anchorRef` | Required FND-05 Popover contract. Use a trigger with the same `popoverTarget`, its ref, and controlled `aria-expanded`. |
+| `id`, `open`, `onOpenChange`, `anchorRef` | Required shared Popover contract. Use a trigger with the same `popoverTarget`, its ref, and controlled `aria-expanded`. |
 | `positionRef`                             | Optional positioning-only target forwarded to Popover; `anchorRef` remains the native invoker and focus-return target.  |
 | `connected`                               | Defaults to false. Shows the connection invitation and CTA. True shows the connected title and removes the CTA.         |
 | `teamLabel`                               | Optional connected title label, falling back to “XTrace Hub”.                                                           |
@@ -71,8 +71,7 @@ existing native Popover; Escape, outside dismissal, and focus restoration stay
 with that primitive. Its visible “esc” button also closes it. Content can scroll
 in a constrained viewport. The shared popover supplies viewport clamping.
 
-Hub explanatory copy is new public component copy. No unavailable design export
-is claimed as its source. The CTA only invokes the supplied callback; it does
+The CTA only invokes the supplied callback; it does
 not connect, navigate, or mark the desktop connected on its own. The CTA uses
 `--btn-ink-text` over `--accent`: a light foreground in light mode and a dark
 foreground on the lighter dark-mode accent, preserving stronger contrast than
@@ -85,21 +84,20 @@ forcing the legacy white foreground in both themes.
 | `size`      | 20, 26, or 34px; default 26.                                                                       |
 | `showLabel` | Defaults to true, showing the XTrace wordmark. False gives the image the accessible name “XTrace”. |
 
-The image is the approved `/mark.png` asset with its geometry intact. This
-supersedes the parent card's old gradient-square placeholder. No clipping,
+The image is the approved `/mark.png` asset with its geometry intact. No clipping,
 recoloring, or replacement brand art is applied.
 
 ## Verification
 
-Run the focused tests and synthetic WebKit preview from the repository root:
+Run the focused tests and synthetic Chromium/WebKit preview from the repository root:
 
 ```sh
 pnpm --dir apps/desktop/ui exec vitest run src/kit/Sidebar.test.tsx src/kit/HubPopover.test.tsx src/kit/BrandMark.test.tsx
 pnpm lint
-pnpm --dir apps/desktop/ui exec playwright test --config playwright.sidebar.config.ts
+pnpm e2e --grep sidebar
 ```
 
-The browser fixture uses port 5176 and emulated appearance. It exercises the
+The browser fixture uses the shared runner and emulated appearance. It exercises the
 real native popover API; unit tests isolate rendering and callbacks without
 claiming browser behavior. The fixture is outside the production entry point.
-See [FND-06a acceptance](acceptance/FND-06a.md) for results, screenshots, and limits.
+See [Sidebar acceptance](acceptance/sidebar.md) for results, screenshots, and limits.

@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+test.use({ viewport: { width: 1440, height: 900 } });
+
 test('sidebar geometry, controlled state, theme and native Hub dismissal', async ({
   page,
 }, info) => {
