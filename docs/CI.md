@@ -96,7 +96,13 @@ contributed commit list. Every author must have a matching final `Signed-off-by`
 trailer. Bootstrap history and GitHub's synthetic queue commit are not substitutes
 for those source commits. Incomplete API pagination, unknown queue shapes and
 metadata changes during validation fail. The supported source PR limit is 250
-commits. Main pushes check the actual push comparison, with the same limit.
+commits. DCO and checkpoint decisions are pre-merge PR checks. Main pushes validate
+the resulting source, with policy limited to checking the push repository, default
+branch and commit identities. They do not re-certify GitHub's synthesized squash
+commit or reread mutable merged PR metadata. The repository must require reviewed
+PR merges for this procedure; a green post-merge build does not authorize a direct
+push. Remove the initial policy bootstrap after merge and rerun main CI so it
+uses the installed default-branch policy.
 
 ## Checkpoint evidence
 
@@ -199,7 +205,9 @@ parity. Any installed hook failure or removal of a default-branch declaration
 fails CI.
 
 Actions use pinned commits. Rust, pnpm, Playwright and pinned supply-chain tools
-have caches. Dependabot groups weekly Cargo, npm and Actions updates. Cache timing,
+have caches. Automated dependency-update PRs are deferred until policy supports
+their generated branches and metadata; no Dependabot schedule is installed by
+this change. Dependency updates use the normal reviewed PR process. Cache timing,
 manual combined-result validation and default-branch advisory invalidation need
 recorded run evidence before this foundation is accepted. Live queue evidence
 is required before queue activation, rather than during private manual merging.

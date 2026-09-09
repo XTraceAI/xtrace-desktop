@@ -159,6 +159,28 @@ test('real Git source commits drive DCO on PR and queue; unsigned bootstrap/synt
       assert.equal(await execute(fixture([signed]), event), 1);
       await assert.rejects(execute(fixture([signed, unsigned]), event), /DCO sign-off/);
     }
+    git(
+      'commit',
+      '--allow-empty',
+      '--author=Test Maintainer <maintainer@example.com>',
+      '-m',
+      'Squashed contribution\n\nSigned-off-by: Test Contributor <contributor@example.com>',
+    );
+    const squash = object();
+    // The same author/trailer mismatch must fail as a contributed PR commit,
+    // while the post-merge build must not treat it as a new contribution.
+    await assert.rejects(execute(fixture([squash])), /DCO sign-off/);
+    assert.equal(
+      await execute(fixture([squash]), 'push', {
+        event: {
+          repository: { full_name: repository, default_branch: 'main' },
+          ref: 'refs/heads/main',
+          before: signed.sha,
+          after: squash.sha,
+        },
+      }),
+      null,
+    );
     const state = fixture([signed]);
     state.pr.commits = 251;
     await assert.rejects(sourceCommits(state.api, repository, state.pr), /pagination/);
@@ -168,6 +190,26 @@ test('real Git source commits drive DCO on PR and queue; unsigned bootstrap/synt
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('post-merge policy only accepts the expected default-branch push and valid source identities', async () => {
+  const event = {
+    repository: { full_name: repository, default_branch: 'main' },
+    ref: 'refs/heads/main',
+    before: base,
+    after: synthetic,
+  };
+  const api = async () => assert.fail('Post-merge policy must not resolve mutable source PRs.');
+  const run = (value) => checkSourcePolicy({ api, repository, eventName: 'push', event: value });
+  assert.equal(await run(event), null);
+  for (const value of [
+    { ...event, repository: { ...event.repository, full_name: 'other/project' } },
+    { ...event, ref: 'refs/heads/feature' },
+    { ...event, repository: { full_name: repository }, ref: 'refs/heads/undefined' },
+    { ...event, before: 'invalid' },
+    { ...event, after: 'invalid' },
+  ])
+    await assert.rejects(run(value));
 });
 
 test('dependent stage fails without approval while producer foundations pass without configured checkpoints', async () => {

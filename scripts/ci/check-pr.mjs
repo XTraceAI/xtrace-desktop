@@ -112,21 +112,17 @@ export async function checkSourcePolicy({
   if (eventName === 'push') {
     if (
       event.repository?.full_name !== repository ||
+      typeof event.repository?.default_branch !== 'string' ||
+      !event.repository.default_branch ||
       event.ref !== 'refs/heads/' + event.repository.default_branch
     )
       throw new CheckError('Unsupported push event.');
-    const comparison = await api(
-      `/repos/${repository}/compare/${sha(event.before)}...${sha(event.after)}`,
-    );
-    if (
-      !Array.isArray(comparison.commits) ||
-      comparison.total_commits < 1 ||
-      comparison.total_commits > 250 ||
-      comparison.commits.length !== comparison.total_commits
-    )
-      throw new CheckError('Push commit comparison is incomplete.');
-    for (const commit of comparison.commits) validateDco({ ...commit.commit, sha: commit.sha });
-    return comparison.commits.length;
+    sha(event.before);
+    sha(event.after);
+    // DCO certifies contributed PR commits before merge. A provider-created
+    // squash commit has a different author/message and is not a contribution.
+    // Main CI validates the resulting source; repository rules require PR merges.
+    return null;
   }
   const selection = await resolveEvent(eventName, event, repository, api);
   const { policy } = await trustedPolicy(api, repository, policySha);
@@ -222,7 +218,11 @@ async function main() {
     policySha: process.env.CI_POLICY_SHA,
     checkpoints: JSON.parse(process.env.CHECKPOINT_CONFIG || '{}'),
   });
-  console.log(`Source policy passed for ${count} actual contributed commit(s).`);
+  console.log(
+    count === null
+      ? 'Post-merge validation: contribution policy belongs to the source PR, not its squash commit.'
+      : `Source policy passed for ${count} actual contributed commit(s).`,
+  );
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
