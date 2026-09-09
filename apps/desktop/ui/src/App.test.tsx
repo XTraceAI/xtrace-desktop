@@ -1,8 +1,22 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { StrictMode } from 'react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as testingRender,
+  screen,
+  waitFor,
+} from '@testing-library/react';
+import { StrictMode, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
+import { ThemeProvider } from './theme/ThemeProvider';
+function render(ui: ReactNode) {
+  return testingRender(<ThemeProvider>{ui}</ThemeProvider>);
+}
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({ theme: async () => 'dark', onThemeChanged: async () => () => {} }),
+}));
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 
@@ -63,9 +77,11 @@ describe('desktop foundation', () => {
           }),
       )
       .mockResolvedValueOnce({ name: 'XTrace Desktop', version: '0.1.0' });
-    const { unmount } = render(
+    const { unmount } = testingRender(
       <StrictMode>
-        <App />
+        <ThemeProvider>
+          <App />
+        </ThemeProvider>
       </StrictMode>,
     );
     expect(await screen.findByText('v0.1.0')).toBeTruthy();

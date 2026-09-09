@@ -1,5 +1,6 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
+import { useTheme, type ThemePreference } from './theme/ThemeProvider';
 
 interface AppInfo {
   name: string;
@@ -9,6 +10,7 @@ interface AppInfo {
 type InfoState = { status: 'preview' | 'loading' | 'error' } | { status: 'ready'; info: AppInfo };
 
 export function App() {
+  const { preference, setPreference } = useTheme();
   const [native] = useState(isTauri);
   const nativeMac = native && navigator.platform.startsWith('Mac');
   const [revision, setRevision] = useState(0);
@@ -66,17 +68,29 @@ export function App() {
           <span>
             Workspace <span className="breadcrumb-separator">/</span> <strong>Home</strong>
           </span>
-          {native && (
-            <button
-              type="button"
-              className="refresh-button"
-              data-tauri-drag-region="false"
-              onClick={refresh}
-              disabled={state.status === 'loading'}
+          <div className="appearance" data-tauri-drag-region="false">
+            <label htmlFor="appearance">Appearance</label>
+            <select
+              id="appearance"
+              value={preference}
+              onChange={(event) => setPreference(event.target.value as ThemePreference)}
             >
-              Refresh app info
-            </button>
-          )}
+              <option value="system">System</option>
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+            {native && (
+              <button
+                type="button"
+                className="refresh-button"
+                data-tauri-drag-region="false"
+                onClick={refresh}
+                disabled={state.status === 'loading'}
+              >
+                Refresh app info
+              </button>
+            )}
+          </div>
         </header>
         <main>
           <div className="welcome">

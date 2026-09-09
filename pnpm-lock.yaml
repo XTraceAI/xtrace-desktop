@@ -50,12 +50,6 @@ importers:
 
   apps/desktop/ui:
     dependencies:
-      '@fontsource/geist-mono':
-        specifier: 5.3.0
-        version: 5.3.0
-      '@fontsource/manrope':
-        specifier: 5.3.0
-        version: 5.3.0
       '@tauri-apps/api':
         specifier: 2.11.1
         version: 2.11.1
@@ -277,12 +271,6 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
-
-  '@fontsource/geist-mono@5.3.0':
-    resolution: {integrity: sha512-UtJ1BBBCVpMYdIcW7nEB45UAoAw5M53ZXs2t0ciPW+IokuAAIc56M8+kW5tXbRJCTpDw4XTtU7proT6NdQAHTg==}
-
-  '@fontsource/manrope@5.3.0':
-    resolution: {integrity: sha512-obJ1Dv3+uCA6HlHgW8u4BGYxJR9In2HW7gjJhlflEvkrj1X1iSEwu0fToL+JYGC/FEKFfIz1sBuPduvcL2gIAA==}
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -1858,10 +1846,6 @@ snapshots:
       levn: 0.4.1
 
   '@exodus/bytes@1.15.1': {}
-
-  '@fontsource/geist-mono@5.3.0': {}
-
-  '@fontsource/manrope@5.3.0': {}
 
   '@humanfs/core@0.19.2':
     dependencies:
