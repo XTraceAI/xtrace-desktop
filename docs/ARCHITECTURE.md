@@ -1,9 +1,12 @@
 # Architecture
 
 The workspace contains a native Tauri 2 shell with a React UI.
-The empty Rust libraries are validated by workspace compilation. The app exposes only the scaffold's
-`app_info` command; no database, ingestion pipeline, capture server, or host
-integration is implemented in the current scaffold.
+`xt-store` implements canonical SQLite storage, migrations, replay-safe writes
+and typed reads. Its [API contract](../crates/xt-store/README.md) and
+[acceptance cases](acceptance/storage.md) describe the available behavior.
+The other subsystem libraries remain scaffolds validated by compilation.
+The app exposes only `app_info`; storage is not connected to the desktop UI,
+ingestion pipeline or host integrations yet.
 
 The following subsystem boundaries describe the scaffold directories. Empty
 libraries reserve these responsibilities; compilation does not establish

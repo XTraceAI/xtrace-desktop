@@ -28,7 +28,7 @@ pnpm tauri build --debug --bundles app
 git diff --exit-code -- Cargo.lock pnpm-lock.yaml
 ```
 
-`pnpm check` runs TypeScript, ESLint with zero warnings, formatting and Vitest. `pnpm test -- --run` also works. Workspace compilation validates the empty subsystem crates; their APIs and behavior tests arrive with their implementations. UI tests exercise the shell's application-info contract. The [CI procedure](docs/CI.md) adds browser E2E, contribution validation, secret scanning and supply-chain checks. Fixture behavior is not implemented.
+`pnpm check` runs TypeScript, ESLint with zero warnings, formatting and Vitest. `pnpm test -- --run` also works. Storage tests exercise file-backed migrations, replay, retention and reads. Workspace compilation also validates the remaining empty subsystem crates. UI tests exercise the shell's application-info contract. The [CI procedure](docs/CI.md) adds browser E2E, contribution validation, secret scanning and supply-chain checks. Fixture behavior is not implemented.
 
 Before sending repository content or a GitHub payload, follow
 [Publication checks](docs/PUBLICATION.md). Run `pnpm publication:test` for the
