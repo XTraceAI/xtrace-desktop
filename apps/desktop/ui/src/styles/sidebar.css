@@ -314,15 +314,9 @@
 .xt-sidebar-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
   padding: 0 4px;
-}
-.xt-sidebar-actions > span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  margin-right: auto;
-  color: var(--meta);
-  font-size: 10px;
 }
 .xt-popover.xt-hub-popover {
   width: 264px;

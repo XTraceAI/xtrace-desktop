@@ -215,7 +215,6 @@ export function Sidebar({
           </div>
         </div>
         <div className="xt-sidebar-actions">
-          <span>{hubConnected ? (teamLabel ?? 'Hub connected') : 'Local workspace'}</span>
           <button
             type="button"
             className="xt-icon-button"

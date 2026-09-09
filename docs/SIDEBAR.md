@@ -20,8 +20,8 @@ supplies the canvas color. Long content scrolls vertically.
 | `rulebookCount`      | Defaults to 0. Only finite positive values show a badge.                                                                                                                                |
 | `leaderboardEnabled` | Defaults to false; the row is disabled and shows “soon”.                                                                                                                                |
 | `showTeam`           | Defaults to false. When true, the Team navigation row appears.                                                                                                                          |
-| `hubConnected`       | Defaults to false. Controls the Hub summary and enables a visible Team row independently of Leaderboard.                                                                                |
-| `teamLabel`          | Optional Team navigation/connection label. Defaults to “Team” in navigation and “Hub connected” in the connected footer.                                                                |
+| `hubConnected`       | Defaults to false. Controls the Hub panel and enables a visible Team row independently of Leaderboard.                                                                                  |
+| `teamLabel`          | Optional Team navigation/connection label. Defaults to “Team” in navigation and “XTrace Hub” in the connected panel.                                                                    |
 | `onConnectHub()`     | Optional callback passed to the Hub CTA. Without it, the disconnected CTA is disabled.                                                                                                  |
 | `hosts`              | Required array of `{ host, tokens, fillPercent, glyph? }`. One row per host; supported token hosts are `claude`, `codex`, and `cursor`. Order comes from the caller.                    |
 | `tokensCaption`      | Optional label beside “Tokens by host”; no reporting period is inferred.                                                                                                                |
