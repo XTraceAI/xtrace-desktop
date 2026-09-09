@@ -46,16 +46,16 @@ export function HubPopover({
         </h2>
         <ul>
           <li>
-            <strong>Shared context</strong>
-            <span>Bring your team's development context together.</span>
+            <strong>Team sharing</strong>
+            <span>Weekly cards, sessions and PR costs visible to your team.</span>
           </li>
           <li>
-            <strong>Shared rules</strong>
-            <span>Keep team guidance close to your work.</span>
+            <strong>Team governance</strong>
+            <span>One rulebook per repo, review roles, manager view.</span>
           </li>
           <li>
-            <strong>Your local workspace</strong>
-            <span>Keep using the desktop while working offline.</span>
+            <strong>Team rule enforcement</strong>
+            <span>Rules fire inside every teammate's agent, with a shared fires ledger.</span>
           </li>
         </ul>
         {!connected && (

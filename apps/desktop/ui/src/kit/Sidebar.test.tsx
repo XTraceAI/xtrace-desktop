@@ -58,7 +58,7 @@ it('distinguishes measured zero, null tokens, listener off and unknown surfaces'
       ]}
     />,
   );
-  expect(screen.getByLabelText('Claude tokens: 0').textContent).toBe('0');
+  expect(screen.getByLabelText('Claude Code tokens: 0').textContent).toBe('0');
   expect(
     (view.container.querySelector('.xt-host-claude .xt-host-track > span') as HTMLElement).style
       .width,
