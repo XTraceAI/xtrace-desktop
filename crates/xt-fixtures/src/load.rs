@@ -1,9 +1,6 @@
-use crate::{Error, FixtureId, Result, RuleId, TempDb, invalid};
+use crate::{Error, FixtureId, Result, RuleId, TempDb, expected::Expected, invalid};
 use chrono::{DateTime, Duration, FixedOffset};
-use serde::{
-    Deserialize, Deserializer, Serialize,
-    de::{self, DeserializeOwned, MapAccess, Visitor},
-};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -345,38 +342,6 @@ impl Fixture {
         } else {
             Ok(())
         }
-    }
-}
-
-// A normal map deserializer silently replaces repeated keys. Goldens must reject
-// even identical duplicates while the input entries are still observable.
-struct Expected(BTreeMap<RuleId, Value>);
-
-impl<'de> Deserialize<'de> for Expected {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
-        struct ExpectedVisitor;
-        impl<'de> Visitor<'de> for ExpectedVisitor {
-            type Value = Expected;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("an object of unique golden rule keys")
-            }
-
-            fn visit_map<M: MapAccess<'de>>(
-                self,
-                mut entries: M,
-            ) -> std::result::Result<Self::Value, M::Error> {
-                let mut values = BTreeMap::new();
-                while let Some(key) = entries.next_key::<RuleId>()? {
-                    if values.contains_key(&key) {
-                        return Err(de::Error::custom(format!("duplicate golden key {key}")));
-                    }
-                    values.insert(key, entries.next_value()?);
-                }
-                Ok(Expected(values))
-            }
-        }
-        deserializer.deserialize_map(ExpectedVisitor)
     }
 }
 

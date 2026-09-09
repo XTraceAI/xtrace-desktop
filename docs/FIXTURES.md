@@ -93,6 +93,8 @@ input. No input glob is used. For example, a session may point to
 `expected.json` maps defined rule IDs to JSON values. The registry includes
 M-01…M-19, M-11a, M-12a, C-01…C-08, O-01…O-13, P-01/P-02, R-01…R-08 and
 U-01…U-08: 60 keys. Unknown keys fail in either `proves` or expectations.
+Duplicate object keys are rejected throughout `expected.json`, including nested
+objects and objects inside arrays. Escaped spellings of the same key also conflict.
 
 For populated inputs, expected keys must exactly match `proves`. A JSON `null`
 means an unmeasured value and differs from `0`. Skeletons have empty canonical

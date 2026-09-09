@@ -417,6 +417,46 @@ fn duplicate_golden_keys_fail_before_identical_or_conflicting_values_are_lost() 
 }
 
 #[test]
+fn nested_duplicate_golden_fields_fail_before_assertions() {
+    for repeated in [
+        r#""total_tokens": 1775, "total_tokens": 1100"#,
+        r#""total_tokens": 1100, "total_tokens": 1100"#,
+        r#""total_\u0074okens": 1775, "total_tokens": 1100"#,
+        r#""total_tokens": {"nested": {"count": 1, "count": 2}}"#,
+        r#""total_tokens": [{"nested": [{"count": 1, "count": 2}]}]"#,
+    ] {
+        let directory = editable("F1");
+        let path = directory.path().join("expected.json");
+        let original = fs::read_to_string(&path).unwrap();
+        assert!(original.contains(r#""total_tokens": 1100"#));
+        fs::write(path, original.replace(r#""total_tokens": 1100"#, repeated)).unwrap();
+        let error = load_error(directory.path());
+        assert!(
+            error.contains("expected.json:") && error.contains("duplicate golden field"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn recursive_goldens_preserve_json_types_and_separate_object_keys() {
+    let directory = editable("F1");
+    let value = json!({
+        "values": [null, true, false, -7, u64::MAX, 1.25, "synthetic", [], {}],
+        "objects": [{"count": 1}, {"count": 2}],
+        "nested": {"count": {"count": 3}}
+    });
+    edit_json(&directory.path().join("expected.json"), |expected| {
+        expected["M-04"] = value.clone();
+    });
+    let fixture = Fixture::load(directory.path()).unwrap();
+    assert_eq!(
+        serde_json::to_value(fixture.export()).unwrap()["expected"]["M-04"],
+        value
+    );
+}
+
+#[test]
 fn missing_inputs_and_invalid_uuid_or_timestamp_identify_source_location() {
     let directory = editable("F1");
     fs::remove_file(directory.path().join("input/sessions/session.jsonl")).unwrap();

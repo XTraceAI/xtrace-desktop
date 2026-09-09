@@ -4,6 +4,7 @@
 //! Production crates must not depend on this development crate by default.
 
 mod db;
+mod expected;
 mod f1;
 mod load;
 mod registry;
