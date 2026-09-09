@@ -32,9 +32,12 @@ The demonstration overlay page is used only by browser tests.
 - Native interaction on macOS 26.5.2 arm64: Dark and Light rendered correctly;
   Dark remained selected after quitting and reopening. Restoring System matched
   the Mac's current Light appearance, and native app information loaded.
+- Live native System-mode check: changing macOS from Auto (currently Light) to
+  Dark changed the running app to Dark. Restoring macOS Auto changed the app back
+  to Light without restarting it. The app remained set to System throughout.
 
-A live macOS appearance switch while System is selected remains pending. The
-browser's live-system-change checks and native subscription adapter tests pass.
+The live macOS check, browser system-change checks and native subscription
+adapter tests pass.
 The exact source/base and full local native command results are recorded in the PR.
 
 ## Screenshots and font requests
