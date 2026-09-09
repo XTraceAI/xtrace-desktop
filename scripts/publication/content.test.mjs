@@ -572,15 +572,21 @@ test('raw API or scanner errors cannot become public diagnostics or successful c
 });
 
 test('trusted workflow signals require an allowed workflow, event and repository identity', async () => {
-  for (const variant of [
-    'publication',
-    'review',
-    'review-comment',
-    'repository',
-    'workflow',
-    'event',
-    'missing-workflow',
-  ]) {
+  const cases = [
+    ['ci-pr', 7, 'pull_request', true],
+    ['ci-queue', 7, 'merge_group', true],
+    ['ci-push', 7, 'push', true],
+    ['metadata', 9, 'pull_request', true],
+    ['review', 8, 'pull_request_review', true],
+    ['review-comment', 8, 'pull_request_review_comment', true],
+    ['repository', 7, 'pull_request', false],
+    ['workflow', 99, 'pull_request', false],
+    ['ci-wrong-event', 7, 'workflow_dispatch', false],
+    ['metadata-wrong-event', 9, 'push', false],
+    ['review-wrong-event', 8, 'pull_request', false],
+    ['missing-workflow', 7, 'pull_request', false],
+  ];
+  for (const [variant, workflowId, eventName, allowed] of cases) {
     const state = fixture();
     await seal(state);
     const api = state.api;
@@ -588,26 +594,19 @@ test('trusted workflow signals require an allowed workflow, event and repository
       if (args[0].endsWith('/actions/runs/1'))
         return {
           repository: { full_name: variant === 'repository' ? 'other/project' : repository },
-          workflow_id: variant === 'workflow' ? 99 : variant === 'publication' ? 7 : 8,
-          event:
-            variant === 'publication'
-              ? 'pull_request'
-              : variant === 'review-comment'
-                ? 'pull_request_review_comment'
-                : variant === 'event'
-                  ? 'workflow_dispatch'
-                  : 'pull_request_review',
+          workflow_id: workflowId,
+          event: eventName,
           status: 'completed',
         };
-      if (args[0].endsWith('/actions/workflows/publication.yml')) return { id: 7 };
+      if (args[0].endsWith('/actions/workflows/ci.yml')) return { id: 7 };
+      if (args[0].endsWith('/actions/workflows/pr-metadata.yml')) return { id: 9 };
       if (args[0].endsWith('/actions/workflows/publication-review.yml'))
         return variant === 'missing-workflow' ? {} : { id: 8 };
       return api(...args);
     };
     const run = () =>
       reconcile(state, undefined, 'workflow_run', { ...event, workflow_run: { id: 1 } });
-    if (['publication', 'review', 'review-comment'].includes(variant))
-      assert.equal((await run()).failures, 0);
+    if (allowed) assert.equal((await run()).failures, 0);
     else {
       await assert.rejects(run(), /expected repository workflow|identities are unavailable/);
       assert.equal(state.writes.length, 0);

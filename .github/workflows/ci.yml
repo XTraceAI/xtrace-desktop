@@ -1,8 +1,9 @@
 name: CI
 
 on:
+  workflow_call:
   pull_request:
-    types: [opened, reopened, synchronize, edited, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review]
   merge_group:
     types: [checks_requested]
   push:
@@ -20,23 +21,6 @@ env:
   MACOSX_DEPLOYMENT_TARGET: '14.0'
 
 jobs:
-  policy-tests:
-    runs-on: macos-14
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm test:ci
-      - run: pnpm test:supply-chain
-
   policy:
     runs-on: macos-14
     timeout-minutes: 10
@@ -95,23 +79,19 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo test --workspace --all-features --locked
 
-  ui:
-    runs-on: macos-14
-    timeout-minutes: 10
-    steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+          path: .ci-trusted
           persist-credentials: false
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm check
+      - run: node scripts/ci/run-hook.mjs plugin-conformance
+        env:
+          CI_TRUSTED_ROOT: ${{ github.workspace }}/.ci-trusted
+      - run: node scripts/ci/run-hook.mjs dto
+        env:
+          CI_TRUSTED_ROOT: ${{ github.workspace }}/.ci-trusted
 
-  e2e:
+  ui:
     runs-on: macos-14
     timeout-minutes: 15
     steps:
@@ -125,6 +105,8 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm check
+
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/Library/Caches/ms-playwright
@@ -168,7 +150,7 @@ jobs:
       - run: node scripts/supply-chain/install-tools.mjs cargo-about
       - run: pnpm notices:check
 
-  publication:
+  security:
     runs-on: macos-14
     timeout-minutes: 20
     steps:
@@ -182,6 +164,8 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm test:ci
+      - run: pnpm test:supply-chain
       - run: pnpm publication:test
       - name: Scan source history and the combined candidate diff
         env:
@@ -211,40 +195,10 @@ jobs:
       - run: pnpm tauri build --debug --bundles app
       - run: node scripts/ci/debug-bundle.mjs 'target/debug/bundle/macos/XTrace Desktop.app'
 
-  hooks:
-    runs-on: macos-14
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          shared-key: macos-14-arm64
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          path: .ci-trusted
-          persist-credentials: false
-      - run: node scripts/ci/run-hook.mjs plugin-conformance
-        env:
-          CI_TRUSTED_ROOT: ${{ github.workspace }}/.ci-trusted
-      - run: node scripts/ci/run-hook.mjs dto
-        env:
-          CI_TRUSTED_ROOT: ${{ github.workspace }}/.ci-trusted
-
   ci-ok:
     name: ci-ok
     if: ${{ always() }}
-    needs: [policy-tests, policy, rust, ui, e2e, supply-chain, publication, debug-bundle, hooks]
+    needs: [policy, rust, ui, supply-chain, security, debug-bundle]
     runs-on: macos-14
     timeout-minutes: 5
     steps:

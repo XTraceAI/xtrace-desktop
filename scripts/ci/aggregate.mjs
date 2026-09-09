@@ -5,15 +5,12 @@ try {
   // Every job runs for each supported event. Hooks report explicit absence in a
   // successful job; no skipped dependency is silently promoted to success.
   requireSuccessfulJobs(results, [
-    'policy-tests',
     'policy',
     'rust',
     'ui',
-    'e2e',
     'supply-chain',
-    'publication',
+    'security',
     'debug-bundle',
-    'hooks',
   ]);
   console.log('Every required CI job succeeded.');
 } catch {

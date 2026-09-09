@@ -4,17 +4,38 @@
 its run provenance and results before merging. Disclosure review remains manual;
 `publication-content` is advisory and must not be configured as an enforcement
 boundary. Candidate Actions workflows can imitate check names under the same
-GitHub Actions app. The separate `publication-checks` workflow remains available;
-its source tests and scans are also included in `ci-ok`. These files do not
-configure repository rules or merge changes.
+GitHub Actions app. Source publication tests and scanning run once in CI; the
+standalone duplicate workflow has been removed. These files do not configure
+repository rules or merge changes.
 
-`CI` runs on pull requests, merge groups and pushes to `main`. It checks Rust
-formatting, Clippy and tests; UI types, lint, formatting and tests; WebKit and
-Chromium boot cases; source-commit DCO and checkpoint policy; publication scanning;
-SBOM/notices; native debug bundle startup; and installed integration hooks.
-`ci-ok` always runs and rejects failed, cancelled, missing and skipped jobs.
-Hook absence before its implementation is an explicit successful result, with no
-conformance or DTO coverage claimed.
+`CI` runs when a PR opens, reopens, receives code or becomes ready for review,
+on merge groups, and on pushes to `main`. It has six substantive jobs and one
+overall result:
+
+| Job            | Coverage                                                                                  |
+| -------------- | ----------------------------------------------------------------------------------------- |
+| `policy`       | Reviewed source-commit DCO, classification and checkpoint validation.                     |
+| `rust`         | Formatting, Clippy, tests and installed DTO/plugin integration hooks.                     |
+| `ui`           | Types, lint, formatting, unit tests, WebKit and Chromium boot checks.                     |
+| `security`     | CI/supply-chain/publication regression tests and source-history/diff scanning.            |
+| `supply-chain` | Validated and scanned SBOM, license policy and reproducible notices.                      |
+| `debug-bundle` | Actual native macOS debug build and launch.                                               |
+| `ci-ok`        | Requires all six jobs to succeed; rejects failure, cancellation, missing or skipped jobs. |
+
+`PR metadata` handles PR edits. Title/body-only edits run the same reviewed policy
+validator without rebuilding the app or replacing the existing `ci-ok` result.
+A changed target branch instead calls the full CI workflow against the new base.
+Its full result appears under `base-ci / ci-ok`; review that run's current
+head/base rather than an older source run. Separate concurrency groups prevent a
+text edit from cancelling that full validation. A new source push runs normal CI
+again. Current metadata policy failures still block the manual merge decision,
+even when the unchanged source has a previous successful build.
+
+Publication's default-branch advisory continues to handle mutable content and
+reviews. Its workflow-completion signals follow `CI`, `PR metadata` and the
+unchanged review-event relay. Hook absence before implementation is explicit
+success with no conformance or DTO coverage claimed; installed failures and
+removal still fail the Rust job and aggregate.
 
 The native jobs use `macos-14` and verify arm64 before the bundle smoke.
 GitHub currently assigns that label to arm64, but the image is scheduled for
@@ -54,7 +75,7 @@ actually run and remaining checks. Complete the separate disclosure review in
 
 `scripts/ci/stages.json` contains only technical stage/dependency data and named
 maintenance exceptions. It does not schedule work or record completion. The
-`policy-tests` job tests candidate code without API credentials. A separate
+`security` job tests candidate code without API credentials. A separate
 `policy` job checks out the default branch, or the full commit SHA in repository
 variable `CI_POLICY_SHA`, before installing its pinned dependencies. Only that
 reviewed source receives the metadata token. Its stage map is read at the exact

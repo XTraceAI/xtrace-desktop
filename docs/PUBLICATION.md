@@ -151,7 +151,7 @@ scanning, and a value deleted from the current tree can still be detected in his
 
 ## CI boundary
 
-Manual disclosure review is the publication gate. `publication-checks` supplies
+Manual disclosure review is the publication gate. CI’s `security` job supplies
 candidate source/test diagnostics, and `publication-content-advisory` supplies
 current-content diagnostics from reviewed default-branch code. Neither a check
 name nor the GitHub Actions app identity proves the producer: a candidate workflow
@@ -170,7 +170,8 @@ identity. No App credential or repository setting is installed by this change.
 Candidate scripts and runtime dependencies receive no repository API token,
 and their jobs have no issue or pull-request metadata permissions. The pinned
 checkout uses read-only contents access without persisting credentials. Metadata
-reads remain confined to reviewed default-branch diagnostic jobs. Failed,
+reads remain confined to reviewed default-branch diagnostic jobs (or the explicitly
+reviewed CI policy bootstrap described in [CI.md](CI.md)). Failed,
 cancelled or skipped dependencies cannot produce a successful aggregate.
 
 Tests cover the credential boundary, metadata/queue-resolution helpers and real

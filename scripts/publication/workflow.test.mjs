@@ -5,29 +5,19 @@ import test from 'node:test';
 const workflow = (name) =>
   readFile(new URL(`../../.github/workflows/${name}.yml`, import.meta.url), 'utf8');
 
-test('candidate publication jobs have no metadata grants or credentials for runtime code', async () => {
-  const source = await workflow('publication');
-  assert.doesNotMatch(source, /\b(?:GITHUB_TOKEN|GH_TOKEN)\b/i);
-  assert.doesNotMatch(source, /\$\{\{[^}]*\b(?:token|secrets)\b/i);
-  assert.doesNotMatch(source, /^\s+(?:issues|pull-requests|checks|actions):/m);
-  assert.match(source, /^permissions:\n {2}contents: read\n/m);
-  assert.deepEqual(source.match(/^ *permissions:.*$/gm), ['permissions:', '    permissions: {}']);
-  const checkouts = source.split(/- uses: actions\/checkout@/).slice(1);
-  assert.equal(checkouts.length, 2);
-  for (const checkout of checkouts) {
-    const settings = checkout.split(/\n\s+- (?:uses|name):/)[0];
-    assert.match(settings, /persist-credentials: false/);
-  }
-  assert.doesNotMatch(source, /run:.*scripts\/publication\/(?:check|recheck)/);
+test('one candidate source workflow owns scanning and all current metadata signals remain wired', async () => {
+  await assert.rejects(workflow('publication'), { code: 'ENOENT' });
+  const source = await workflow('ci');
+  assert.equal(source.match(/run: pnpm publication:test/g).length, 1);
+  assert.equal(source.match(/scan-secrets\.mjs --diff/g).length, 1);
+  const advisory = await workflow('publication-content');
+  assert.match(advisory, /workflows: \[CI, PR metadata, Publication review signal\]/);
   assert.match(
-    source,
-    /PUBLICATION_BASE: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.merge_group\.base_sha \}\}/,
+    advisory,
+    /pull_request_target:\n {4}types: \[opened, reopened, synchronize, edited, ready_for_review\]/,
   );
-  assert.match(source, /PUBLICATION_HEAD: \$\{\{ github\.sha \}\}/);
-  assert.match(
-    source,
-    /run: node scripts\/security\/scan-secrets\.mjs --diff "\$PUBLICATION_BASE\.\.\$PUBLICATION_HEAD"/,
-  );
+  assert.match(advisory, /issue_comment:/);
+  assert.match(advisory, /schedule:/);
 });
 
 test('metadata credentials remain confined to default-branch publication jobs', async () => {
