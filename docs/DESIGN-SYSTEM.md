@@ -1,12 +1,11 @@
 # Design foundation
 
-The application uses the FND-05 token contract in `design/token-contract.json`.
+The application uses the color and style contract in `design/token-contract.json`.
 `styles/tokens.css` supplies equal dark/light key sets; `styles/theme.css` uses
 Tailwind v4 `@theme inline` so utilities resolve the closest theme variables.
 Use `bg-surface`, `text-ink`, `border-border`, `font-mono`, `rounded-card`, or
 `var(--token)` in component CSS. Raw hex is rejected everywhere in `src/` except
-the token file and `*.test.*`. The reference is a technical contract, not a
-recovered design export.
+the token file and `*.test.*`. The contract lists the values shared by components and tests.
 
 ## Appearance
 
@@ -87,4 +86,4 @@ so the native `font-src 'self'` policy stays valid.
 The browser-only overlay fixture lives under `e2e/` and is not included in the
 production bundle. Run `pnpm --dir apps/desktop/ui exec playwright test
 e2e/overlays.spec.ts --project=webkit` for keyboard, themes, and font-network
-evidence. See `docs/acceptance/FND-05.md` for the measured results and limits.
+evidence. See `docs/acceptance/appearance.md` for the measured results and limits.
