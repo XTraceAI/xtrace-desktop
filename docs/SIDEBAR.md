@@ -49,7 +49,7 @@ Optional reasons remain visible under their own row. Listener status reports
 the listener only and does not certify capture on any surface.
 
 Token-host glyph slots are 16px and decorative; host names remain explicit.
-The default navigation SVGs and bundled host logos match the design reference. Callers can override individual slots without changing status or navigation behavior. Host logo licenses and pinned upstream sources ship in `public/hosts/LICENSES.txt`. The sidebar reserves native
+The default navigation SVGs and bundled host logos match the design reference. Cursor’s dark logo has a fixed light backing in both themes to preserve its contrast. Callers can override individual slots without changing status or navigation behavior. Host logo licenses and pinned upstream sources ship in `public/hosts/LICENSES.txt`. The sidebar reserves native
 chrome space; it draws no replacement traffic lights or drag regions.
 
 ## HubPopover props and states

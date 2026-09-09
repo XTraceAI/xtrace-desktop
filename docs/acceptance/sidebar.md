@@ -50,6 +50,8 @@ usage-card layout, full-width 204×30 cloud row and the status/control alignment
 Browser assertions check key dimensions, loaded local assets and footer bounds;
 reference comparison remains a visual review, not a claim of pixel equality.
 
+Cursor’s dark logo uses a fixed light backing in both themes; browser checks verify it remains light after theme changes.
+
 Intentional functional differences: the plugin row opens per-surface capture
 details instead of displaying them permanently; long version text truncates
 instead of pushing controls outside the footer; absent actions remain disabled.

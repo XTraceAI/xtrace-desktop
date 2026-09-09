@@ -23,6 +23,8 @@ test('sidebar geometry, controlled state, theme and native Hub dismissal', async
   await expect(sidebar.locator('.xt-brand-mark img')).toHaveCSS('width', '22px');
   await expect(sidebar.locator('.xt-nav-group h2').first()).toHaveCSS('line-height', '13.775px');
   await expect(sidebar.locator('.xt-host-glyph img')).toHaveCount(3);
+  const cursorLogo = sidebar.locator('.xt-host-cursor .xt-host-glyph img');
+  await expect(cursorLogo).toHaveCSS('background-color', 'rgb(255, 255, 255)');
   await expect(sidebar.getByLabel('Claude Code tokens: 5500000')).toHaveText('5.5M');
   await expect(sidebar.getByLabel('Codex tokens: 400000')).toHaveText('0.4M');
   for (const logo of await sidebar.locator('img').all())
@@ -49,6 +51,7 @@ test('sidebar geometry, controlled state, theme and native Hub dismissal', async
   );
   await page.getByRole('button', { name: 'Switch to light appearance' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await expect(cursorLogo).toHaveCSS('background-color', 'rgb(255, 255, 255)');
   await active.click();
   await page.mouse.move(600, 500);
   await page
