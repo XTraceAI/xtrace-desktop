@@ -63,6 +63,8 @@ export function Popover({
   });
 
   useLayoutEffect(() => {
+    // Stable ref objects can point to new DOM nodes after any commit.
+    // Rebind geometry and observers to the current targets before paint.
     const element = ref.current;
     const invoker = anchorRef.current;
     const anchor = positionRef ? positionRef.current : invoker;
@@ -102,7 +104,7 @@ export function Popover({
       window.removeEventListener('resize', position);
       window.removeEventListener('scroll', position, true);
     };
-  }, [open, anchorRef, positionRef, side, align, offset]);
+  });
 
   return (
     <div {...props} ref={ref} popover="auto" className={`xt-popover ${className}`}>

@@ -1,14 +1,15 @@
 import { cleanup, render } from '@testing-library/react';
-import { createRef, StrictMode } from 'react';
+import { createRef, StrictMode, useRef } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Popover } from './Popover';
 
 const disconnect = vi.fn();
+const observe = vi.fn();
 beforeEach(() => {
   vi.stubGlobal(
     'ResizeObserver',
     class {
-      observe() {}
+      observe = observe;
       disconnect = disconnect;
     },
   );
@@ -36,6 +37,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   disconnect.mockClear();
+  observe.mockClear();
 });
 
 it('positions from the anchor, closes through the native API, and balances listeners under StrictMode', () => {
@@ -76,6 +78,65 @@ it('positions from the anchor, closes through the native API, and balances liste
   expect(disconnect).toHaveBeenCalledTimes(2);
   anchor.remove();
 });
+
+it.each(['invoker', 'position'])(
+  'tracks a replacement %s node through the same ref while open',
+  (target) => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const left = Number(this.dataset.left ?? 0);
+      return { left, right: left + 30, top: 30, bottom: 60 } as DOMRect;
+    });
+    function Fixture({ replaced }: { replaced: boolean }) {
+      const anchorRef = useRef<HTMLButtonElement>(null);
+      const positionRef = useRef<HTMLSpanElement>(null);
+      return (
+        <>
+          <button
+            key={target === 'invoker' ? String(replaced) : 'invoker'}
+            ref={anchorRef}
+            data-testid="invoker"
+            data-left={replaced ? 100 : 20}
+          >
+            Open
+          </button>
+          {target === 'position' && (
+            <span
+              key={String(replaced)}
+              ref={positionRef}
+              data-testid="position"
+              data-left={replaced ? 150 : 50}
+            />
+          )}
+          <Popover
+            id="replacement"
+            anchorRef={anchorRef}
+            positionRef={target === 'position' ? positionRef : undefined}
+            open
+            onOpenChange={() => {}}
+          >
+            Replacement content
+          </Popover>
+        </>
+      );
+    }
+    const view = render(<Fixture replaced={false} />);
+    const oldTarget = view.getByTestId(target);
+    const content = view.getByText('Replacement content');
+    expect(content.style.left).toBe(target === 'position' ? '50px' : '20px');
+    view.rerender(<Fixture replaced />);
+    const replacement = view.getByTestId(target);
+    expect(replacement).not.toBe(oldTarget);
+    expect(oldTarget.isConnected).toBe(false);
+    expect(content.style.left).toBe(target === 'position' ? '150px' : '100px');
+    expect(observe).toHaveBeenCalledWith(replacement);
+    expect(disconnect).toHaveBeenCalledOnce();
+    window.dispatchEvent(new Event('resize'));
+    expect(content.dataset.open).toBe('true');
+    expect(HTMLElement.prototype.hidePopover).not.toHaveBeenCalled();
+  },
+);
 
 it.each(['invoker', 'position'])(
   'dismisses when the %s detaches, including a simultaneous controlled close',
