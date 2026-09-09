@@ -151,7 +151,7 @@ scanning, and a value deleted from the current tree can still be detected in his
 
 ## CI boundary
 
-Manual disclosure review is the publication gate. `publication-checks` supplies
+Manual disclosure review is the publication gate. CI’s `security` job supplies
 candidate source/test diagnostics, and `publication-content-advisory` supplies
 current-content diagnostics from reviewed default-branch code. Neither a check
 name nor the GitHub Actions app identity proves the producer: a candidate workflow
@@ -170,7 +170,8 @@ identity. No App credential or repository setting is installed by this change.
 Candidate scripts and runtime dependencies receive no repository API token,
 and their jobs have no issue or pull-request metadata permissions. The pinned
 checkout uses read-only contents access without persisting credentials. Metadata
-reads remain confined to reviewed default-branch diagnostic jobs. Failed,
+reads remain confined to reviewed default-branch diagnostic jobs (or the explicitly
+reviewed CI policy bootstrap described in [CI.md](CI.md)). Failed,
 cancelled or skipped dependencies cannot produce a successful aggregate.
 
 Tests cover the credential boundary, metadata/queue-resolution helpers and real
@@ -193,9 +194,14 @@ Fetched refs are invocation-specific and removed after success, rejection or fet
 failure. Existing refs created by other work remain in the whole-history scan.
 
 The `Publication content advisory` workflow rechecks open PRs and current default-
-branch merge-queue heads after PR/issue edits and conversation comments. Review
-and review-comment events run a dedicated `Publication review signal` workflow;
-its completion signals the trusted workflow independently of candidate tests.
+branch merge-queue heads after PR/issue edits and conversation comments. PR
+lifecycle and text changes signal it through completion of `CI` and `PR metadata`.
+The scan matrix runs on the default branch, so unrelated PR failures stay in
+that background run. Each PR receives its own `publication-content-advisory`
+check tied to its source head. Manual dispatches must select the default branch.
+Review and review-comment events run a dedicated `Publication review signal`
+workflow; its completion signals the trusted workflow independently of candidate
+tests.
 The relay contains no checkout, actions, script dependencies or token permissions.
 GitHub runs review workflows from the PR merge commit, as described in its
 [event trust model](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target). Runs reconcile current API state, rather than
@@ -305,10 +311,17 @@ publication decision. Repositories with 1,000 or more commit comments exceed the
 bounded API reader and fail closed until a paginated incremental design is added.
 
 Attachment bytes, embedded metadata and earlier GitHub edits require the separate
-review above. Review changes to the scanner and workflows themselves. Future
-FND-02 CI may fold source tests/scanning into `ci-ok`; manual current-content
-review remains required because metadata edits cannot be authorized by old CI.
+review above. Review changes to the scanner and workflows themselves. CI includes source
+tests and scanning in `ci-ok`; manual current-content review remains required
+because metadata edits cannot be authorized by old CI.
+
+Public documentation uses descriptive feature names and observable acceptance
+criteria. Keep private roadmap identifiers, scheduling maps, conversation
+excerpts and internal review logs outside the repository. Review filenames,
+source comments, command help, PR and issue text, branch names and retained
+history as well as document bodies. Renaming or deleting current files does not
+remove previous commits or hosted revisions.
 
 These checks do not publish content, change repository visibility or merge a PR.
-They cover disclosure prevention; the broader build/test CI, dependency-license
-inventory, DCO automation and release checks remain separate work.
+They cover disclosure prevention; build/test CI, dependency-license inventory and DCO validation are described
+in [CI.md](CI.md). Release packaging needs separate acceptance.

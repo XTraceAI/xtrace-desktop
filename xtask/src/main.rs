@@ -8,7 +8,7 @@ fn main() -> ExitCode {
         || matches!(args.as_slice(), [arg] if matches!(arg.as_str(), "help" | "-h" | "--help"))
     {
         println!(
-            "XTrace workspace tasks\n\nUsage: cargo xtask [help]\n\nOnly help is available in the foundation scaffold.\nFixture commands are scheduled for FND-04."
+            "XTrace workspace tasks\n\nUsage: cargo xtask [help]\n\nOnly help is available in the foundation scaffold."
         );
         ExitCode::SUCCESS
     } else {

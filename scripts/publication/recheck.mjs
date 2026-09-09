@@ -17,7 +17,6 @@ import {
 } from './metadata.mjs';
 
 const events = new Set([
-  'pull_request_target',
   'issues',
   'issue_comment',
   'schedule',
@@ -65,7 +64,7 @@ export async function preparePublication({ api, repository, eventName, event, ru
     prNumber(event.workflow_run?.id);
     const run = await api(path + '/actions/runs/' + event.workflow_run.id);
     const workflows = await Promise.all(
-      ['publication.yml', 'publication-review.yml'].map((file) =>
+      ['ci.yml', 'pr-metadata.yml', 'publication-review.yml'].map((file) =>
         api(path + '/actions/workflows/' + file),
       ),
     );
@@ -74,7 +73,8 @@ export async function preparePublication({ api, repository, eventName, event, ru
       'Publication signal workflow identities are unavailable.',
     );
     const allowedEvents = [
-      ['pull_request', 'merge_group'],
+      ['pull_request', 'merge_group', 'push'],
+      ['pull_request'],
       ['pull_request_review', 'pull_request_review_comment'],
     ];
     requireValue(
