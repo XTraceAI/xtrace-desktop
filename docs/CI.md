@@ -33,9 +33,20 @@ even when the unchanged source has a previous successful build.
 
 Publication's default-branch advisory continues to handle mutable content and
 reviews. Its workflow-completion signals follow `CI`, `PR metadata` and the
-unchanged review-event relay. Hook absence before implementation is explicit
-success with no conformance or DTO coverage claimed; installed failures and
-removal still fail the Rust job and aggregate.
+unchanged review-event relay. The repository-wide scan matrix runs on the default
+branch; each PR receives only its own `publication-content-advisory` result.
+PR lifecycle and text edits reach the scanner through workflow completion,
+including failed or cancelled runs. Issue/comment events and periodic rescans
+remain enabled. Dispatch manual rescans against the default branch; dispatches
+against another branch or a tag skip the matrix.
+
+This routing takes effect after merge. Existing workflow runs retain their old
+results; merging does not rewrite them. Verify the next PR event produces a
+default-branch advisory run and only a PR-specific publication result on its head.
+
+Hook absence before implementation is explicit success with no conformance or
+DTO coverage claimed; installed failures and removal still fail the Rust job
+and aggregate.
 
 The native jobs use `macos-14` and verify arm64 before the bundle smoke.
 GitHub currently assigns that label to arm64, but the image is scheduled for

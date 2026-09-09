@@ -194,9 +194,14 @@ Fetched refs are invocation-specific and removed after success, rejection or fet
 failure. Existing refs created by other work remain in the whole-history scan.
 
 The `Publication content advisory` workflow rechecks open PRs and current default-
-branch merge-queue heads after PR/issue edits and conversation comments. Review
-and review-comment events run a dedicated `Publication review signal` workflow;
-its completion signals the trusted workflow independently of candidate tests.
+branch merge-queue heads after PR/issue edits and conversation comments. PR
+lifecycle and text changes signal it through completion of `CI` and `PR metadata`.
+The scan matrix runs on the default branch, so unrelated PR failures stay in
+that background run. Each PR receives its own `publication-content-advisory`
+check tied to its source head. Manual dispatches must select the default branch.
+Review and review-comment events run a dedicated `Publication review signal`
+workflow; its completion signals the trusted workflow independently of candidate
+tests.
 The relay contains no checkout, actions, script dependencies or token permissions.
 GitHub runs review workflows from the PR merge commit, as described in its
 [event trust model](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target). Runs reconcile current API state, rather than

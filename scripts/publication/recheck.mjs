@@ -17,7 +17,6 @@ import {
 } from './metadata.mjs';
 
 const events = new Set([
-  'pull_request_target',
   'issues',
   'issue_comment',
   'schedule',

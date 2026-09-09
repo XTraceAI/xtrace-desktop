@@ -574,6 +574,8 @@ test('raw API or scanner errors cannot become public diagnostics or successful c
 test('trusted workflow signals require an allowed workflow, event and repository identity', async () => {
   const cases = [
     ['ci-pr', 7, 'pull_request', true],
+    ['ci-failure', 7, 'pull_request', true],
+    ['ci-cancelled', 7, 'pull_request', true],
     ['ci-queue', 7, 'merge_group', true],
     ['ci-push', 7, 'push', true],
     ['metadata', 9, 'pull_request', true],
@@ -585,6 +587,7 @@ test('trusted workflow signals require an allowed workflow, event and repository
     ['metadata-wrong-event', 9, 'push', false],
     ['review-wrong-event', 8, 'pull_request', false],
     ['missing-workflow', 7, 'pull_request', false],
+    ['incomplete-workflow', 7, 'pull_request', false],
   ];
   for (const [variant, workflowId, eventName, allowed] of cases) {
     const state = fixture();
@@ -596,7 +599,13 @@ test('trusted workflow signals require an allowed workflow, event and repository
           repository: { full_name: variant === 'repository' ? 'other/project' : repository },
           workflow_id: workflowId,
           event: eventName,
-          status: 'completed',
+          status: variant === 'incomplete-workflow' ? 'in_progress' : 'completed',
+          conclusion:
+            variant === 'ci-failure'
+              ? 'failure'
+              : variant === 'ci-cancelled'
+                ? 'cancelled'
+                : 'success',
         };
       if (args[0].endsWith('/actions/workflows/ci.yml')) return { id: 7 };
       if (args[0].endsWith('/actions/workflows/pr-metadata.yml')) return { id: 9 };
@@ -613,6 +622,9 @@ test('trusted workflow signals require an allowed workflow, event and repository
     }
   }
   await assert.rejects(reconcile(fixture(), undefined, 'pull_request_review'), /Unsupported/);
+  const directPr = fixture();
+  await assert.rejects(reconcile(directPr, undefined, 'pull_request_target'), /Unsupported/);
+  assert.equal(directPr.writes.length, 0);
 });
 
 test('queue certification remains failed until trusted combined-tree scanning is activated', async () => {
