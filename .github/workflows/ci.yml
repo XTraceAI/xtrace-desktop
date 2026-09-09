@@ -74,6 +74,12 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-ubuntu-24.04-x64-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Remove unused Chrome package sources
+        # Playwright downloads its pinned browsers separately. The runner's
+        # preinstalled Chrome repository must not block Ubuntu dependency updates.
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list \
+            /etc/apt/sources.list.d/google-chrome*.sources
       - run: pnpm --dir apps/desktop/ui exec playwright install --with-deps webkit chromium
       - run: pnpm e2e
         env:

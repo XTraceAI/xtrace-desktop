@@ -28,7 +28,7 @@ pnpm tauri build --debug --bundles app
 git diff --exit-code -- Cargo.lock pnpm-lock.yaml
 ```
 
-`pnpm check` runs TypeScript, ESLint with zero warnings, formatting and Vitest. `pnpm test -- --run` also works. Storage tests exercise file-backed migrations, replay, retention and reads. Workspace compilation also validates the remaining empty subsystem crates. UI tests exercise the shell's application-info contract. The [CI procedure](docs/CI.md) adds browser E2E, contribution validation, secret scanning and supply-chain checks. Fixture behavior is not implemented.
+`pnpm check` runs TypeScript, ESLint with zero warnings, formatting and Vitest. `pnpm test -- --run` also works. Storage tests exercise file-backed migrations, replay, retention and reads. Fixture tests and CLI cases exercise synthetic catalog loading, deterministic database construction, exports and reference assertions; see [the fixture contract](docs/FIXTURES.md). Workspace compilation also validates the remaining empty subsystem crates. UI tests exercise the shell's application-info contract. The [CI procedure](docs/CI.md) adds browser E2E, contribution validation, secret scanning and supply-chain checks.
 
 Before sending repository content or a GitHub payload, follow
 [Publication checks](docs/PUBLICATION.md). Run `pnpm publication:test` for the
@@ -37,7 +37,7 @@ working files. Add `--diff <base>..<head>` for the actual PR range and
 `--content <path>` for prepared outbound text. Public-content review also covers
 comments, attachments and prior edits that those local scans cannot evaluate.
 
-`cargo xtask --help` describes the currently available helper. Future fixture commands must report unavailable until implemented.
+`cargo xtask --help` lists fixture validation, database and export commands. `cargo xtask fixture-validate` distinguishes populated assertions from unimplemented skeletons; skeleton database creation fails explicitly.
 
 ## Running
 
