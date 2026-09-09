@@ -20,21 +20,21 @@ right to relicense it.
 
 ## Pull requests
 
-Keep each PR focused on one scheduled card or its named child. Aim for at most
+Keep each PR focused on one concrete problem or capability. Aim for at most
 500 manually written changed lines; explain a larger indivisible change.
 Generated files and dependency lockfiles do not count toward that guide, but
 must still be included and reviewed when relevant.
 
 In the PR description, include:
 
-- The concrete problem, resulting behavior, and scheduled card/specification IDs.
+- The concrete problem, resulting behavior, and relevant public issue.
 - Each acceptance case's setup, action, and expected result, including relevant
   failure cases. A passing command alone does not define the expected behavior.
 - Commands run, actual results, and evidence such as focused output or screenshots.
   Identify any checks not run and why; do not count planned checks as passing.
 - For UI changes, screenshots in every currently supported theme and a native macOS interaction check.
   For window chrome, verify the traffic lights, dragging, and fullscreen transitions.
-  The scaffold supports dark appearance; FND-05 introduces the shared light/dark theme system.
+  The scaffold currently supports dark appearance.
 
 Use synthetic or redacted evidence. Do not commit personal transcripts, local
 databases, credentials, or private source paths.
@@ -46,6 +46,11 @@ notes or account-specific operating instructions. Inspect screenshots and logs
 before attaching them. Removing text from the latest version does not remove
 earlier Git commits or GitHub edit history; review both before publication.
 
+Apply the [publication review procedure](docs/PUBLICATION.md) even in a private
+repository. Run `pnpm publication:test` and `pnpm security:scan`, and check the PR
+template's disclosure attestation after reviewing the final text, linked issues,
+comments and attachments. Scanner success does not replace this semantic review.
+
 ## Checks
 
 Run from the repository root after installing the pinned toolchains and dependencies:
@@ -53,8 +58,8 @@ Run from the repository root after installing the pinned toolchains and dependen
 ```sh
 pnpm check
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
 pnpm tauri build --debug --bundles app
 ```
 
@@ -65,7 +70,8 @@ provides separate runtime evidence. See [DEVELOPING.md](DEVELOPING.md) for
 the current native smoke-test procedure.
 
 Add focused regression tests for behavior changes and run the affected PR's
-acceptance cases. Fixture loading, DTO parity, browser coverage, and release
-checks join this process as their owning foundation cards land. FND-02 will
-introduce CI, automated DCO checks, and dependency-license inventory; this
-scaffold does not yet claim those services are configured or required remotely.
+acceptance cases. [CI.md](docs/CI.md) lists the automated Rust, UI, browser, DCO,
+secret-scanning and dependency-license checks with local commands. Installed
+DTO and plugin-conformance hooks must pass; absent hooks claim no coverage.
+Publication checks provide advisory disclosure evidence; maintainer review
+remains required. Release packaging needs separate acceptance.
