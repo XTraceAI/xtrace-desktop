@@ -3,6 +3,7 @@ node_modules/
 /apps/desktop/ui/dist/
 /apps/desktop/src-tauri/gen/
 /artifacts/private/
+/artifacts/sbom.cdx.json
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
@@ -12,3 +13,7 @@ playwright-report/
 .env
 .env.*
 !.env.example
+
+# Browser acceptance artifacts
+**/playwright-report/
+**/test-results/
