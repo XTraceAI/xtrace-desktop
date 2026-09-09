@@ -1,14 +1,18 @@
-# Architecture and ownership
+# Architecture
 
-FND-01 establishes the workspace and a native Tauri 2 shell with a React UI.
-The empty Rust libraries are validated by workspace compilation. The app exposes only the scaffold's
-`app_info` command; no database, ingestion pipeline, capture server, or host
-integration is implemented by this PR.
+The workspace contains a native Tauri 2 shell with a React UI.
+`xt-store` implements canonical SQLite storage, migrations, replay-safe writes
+and typed reads. Its [API contract](../crates/xt-store/README.md) and
+[acceptance cases](acceptance/storage.md) describe the available behavior.
+The other subsystem libraries remain scaffolds validated by compilation.
+The app exposes only `app_info`; storage is not connected to the desktop UI,
+ingestion pipeline or host integrations yet.
 
-The following map fixes the destination for later cards. Responsibilities below
-are planned ownership, not a list of features already delivered.
+The following subsystem boundaries describe the scaffold directories. Empty
+libraries reserve these responsibilities; compilation does not establish
+implemented behavior.
 
-| Path                      | Owner and planned responsibility                                                                     |
+| Path                      | Subsystem responsibility                                                                             |
 | ------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `crates/xt-store/`        | Storage, canonical schema, migrations, and transactional writes.                                     |
 | `crates/xt-ingest/`       | Normalization, parsers, source cursors, and backfill into the canonical writer.                      |
@@ -22,8 +26,8 @@ are planned ownership, not a list of features already delivered.
 | `apps/desktop/src-tauri/` | Native lifecycle, Tauri commands, window chrome, and later tray, updater, and telemetry integration. |
 | `apps/desktop/ui/src/`    | React shell, UI components, screens, and the typed data-access boundary.                             |
 
-All renderer code lives under the UI path above. The SCA-13 card owns the tray;
-release cards own distribution.
+All renderer code lives under the UI path above. Native lifecycle and window
+behavior belong to the Tauri application.
 
 The intended flow is source observations → canonical ingestion/storage → shared
 Rust metrics → native commands and renderer. The future loopback capture adapter
@@ -31,10 +35,9 @@ feeds the same canonical writer. JavaScript consumes metric DTOs rather than
 reimplementing calculations. The future fixture harness exercises those same
 interfaces; it does not introduce a second storage or metric implementation.
 
-Keep each card within its assigned owner and make cross-crate contracts explicit
-before dependent implementations begin. FND-03 adds storage, FND-04 adds fixture
-behavior, and FND-09 adds the shared shell/data boundary. FND-02 adds CI; the
-commands in [CONTRIBUTING.md](../CONTRIBUTING.md) are local checks today.
+Keep subsystem contracts explicit at crate boundaries. Local checks are in
+[CONTRIBUTING.md](../CONTRIBUTING.md); [CI.md](CI.md) describes automated
+validation and its limits.
 
 The monorepo directory layout uses [Cap](https://github.com/CapSoftware/Cap)
 as a structural reference only.

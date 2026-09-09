@@ -156,3 +156,85 @@ fn prefetch_keeps_sequential_duplicate_enrichment_conflicts_and_ownership() {
         Some(json!({"number":44}))
     );
 }
+
+#[test]
+fn malformed_metadata_on_conflicting_uuids_rolls_back_the_whole_batch() {
+    for conflict in ["other-session", "other-type", "same-batch-type"] {
+        for invalid in ["platform", "evidence-source", "evidence-version"] {
+            for keep_content in [false, true] {
+                let mut store = Store::open_in_memory().unwrap();
+                session(&mut store, "target");
+                session(&mut store, "owner");
+                if conflict != "same-batch-type" {
+                    let owner = if conflict == "other-session" {
+                        "owner"
+                    } else {
+                        "target"
+                    };
+                    store
+                        .upsert_records(owner, &[record("existing", 1)], true)
+                        .unwrap();
+                }
+                let before_counts = store.counts().unwrap();
+                let before_sessions = [
+                    store.session("target").unwrap(),
+                    store.session("owner").unwrap(),
+                ];
+                let before_records = [
+                    store.records("target").unwrap(),
+                    store.records("owner").unwrap(),
+                ];
+                let mut good = record(
+                    if conflict == "same-batch-type" {
+                        "existing"
+                    } else {
+                        "fresh"
+                    },
+                    2,
+                );
+                good.cwd = Some("synthetic-workspace".into());
+                let mut bad = record("existing", 3);
+                if conflict != "other-session" {
+                    bad.record_type = crate::model::RecordType::User;
+                }
+                match invalid {
+                    "platform" => bad.source_platform = Some(String::new()),
+                    "evidence-source" => {
+                        bad.surface_evidence = Some(crate::SurfaceEvidence {
+                            source: "invalid/source".into(),
+                            version: None,
+                        })
+                    }
+                    _ => {
+                        bad.surface_evidence = Some(crate::SurfaceEvidence {
+                            source: "adapter".into(),
+                            version: Some("invalid/version".into()),
+                        })
+                    }
+                }
+                assert!(
+                    matches!(
+                        store.upsert_records("target", &[good, bad], keep_content),
+                        Err(crate::Error::InvalidInput(_))
+                    ),
+                    "{conflict}, {invalid}, keep_content={keep_content}"
+                );
+                assert_eq!(store.counts().unwrap(), before_counts);
+                assert_eq!(
+                    [
+                        store.session("target").unwrap(),
+                        store.session("owner").unwrap()
+                    ],
+                    before_sessions
+                );
+                assert_eq!(
+                    [
+                        store.records("target").unwrap(),
+                        store.records("owner").unwrap()
+                    ],
+                    before_records
+                );
+            }
+        }
+    }
+}

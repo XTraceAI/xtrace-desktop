@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  workflow_call:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  MACOSX_DEPLOYMENT_TARGET: '14.0'
+
+jobs:
+  policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # This job never checks out or imports candidate code. The bootstrap
+      # variable must name a separately reviewed commit, never a candidate ref.
+      - name: Validate optional bootstrap identity
+        env:
+          BOOTSTRAP_SHA: ${{ vars.CI_POLICY_SHA }}
+        run: |
+          if [[ -n "$BOOTSTRAP_SHA" && ! "$BOOTSTRAP_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'CI_POLICY_SHA must be a reviewed full commit SHA.'
+            exit 1
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ vars.CI_POLICY_SHA || github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Require the reviewed contribution validator
+        run: |
+          test -f scripts/ci/check-pr.mjs || { echo 'Reviewed policy bootstrap is required; see docs/CI.md.'; exit 1; }
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: node scripts/ci/check-pr.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm check
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-ubuntu-24.04-x64-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm --dir apps/desktop/ui exec playwright install --with-deps webkit chromium
+      - run: pnpm e2e
+        env:
+          E2E_PORT: '5174'
+
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm test:ci
+      - run: pnpm test:supply-chain
+      - run: pnpm publication:test
+      - name: Scan source history and the combined candidate diff
+        env:
+          PUBLICATION_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          PUBLICATION_HEAD: ${{ github.sha }}
+        run: node scripts/security/scan-secrets.mjs --diff "$PUBLICATION_BASE..$PUBLICATION_HEAD"
+
+  ci-ok:
+    name: ci-ok
+    if: ${{ always() }}
+    needs: [policy, ui, security]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+      - run: node scripts/ci/aggregate.mjs
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
