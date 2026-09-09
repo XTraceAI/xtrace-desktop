@@ -27,7 +27,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-      issues: read
     steps:
       # This job never checks out or imports candidate code. The bootstrap
       # variable must name a separately reviewed commit, never a candidate ref.
@@ -43,10 +42,9 @@ jobs:
         with:
           ref: ${{ vars.CI_POLICY_SHA || github.event.repository.default_branch }}
           persist-credentials: false
-      - name: Require installed policy and bind its stage map to this checkout
+      - name: Require the reviewed contribution validator
         run: |
           test -f scripts/ci/check-pr.mjs || { echo 'Reviewed policy bootstrap is required; see docs/CI.md.'; exit 1; }
-          echo "CI_POLICY_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -55,7 +53,6 @@ jobs:
       - run: node scripts/ci/check-pr.mjs
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          CHECKPOINT_CONFIG: ${{ vars.CHECKPOINT_CONFIG }}
 
   rust:
     runs-on: macos-14

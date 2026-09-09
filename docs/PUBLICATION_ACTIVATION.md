@@ -27,9 +27,9 @@ as proof of trusted disclosure approval.
    result immediately before merging. If content or source changes, repeat the
    review. A green Actions check alone is insufficient. Preserve existing
    squash-only merges, deletion/force-push prevention and bypass policy.
-5. Review the FND-02 stage map at an exact source SHA and its documented bootstrap
-   configuration separately. Its build/policy diagnostics do not replace manual
-   disclosure or grant later-stage checkpoint approval.
+5. Review the contribution validator at an exact source SHA and follow the
+   bootstrap procedure in [CI.md](CI.md). Its build and DCO diagnostics do not
+   replace manual disclosure review.
 
 Automated disclosure enforcement is deferred. A future, separately reviewed
 change must provide a publisher identity that candidate workflows cannot obtain,
@@ -46,8 +46,8 @@ missing results and rollback. Until those live cases pass, maintain manual revie
 No App setup, ruleset change, visibility change or merge is authorized here.
 
 Do not activate a merge queue in this sequence. Trusted combined-tree scanning
-and live queue acceptance remain deferred. Keep checkpoint approvals tied to
-reviewed demonstrations; no synthetic approval may unblock a later stage.
+and live queue acceptance remain deferred. Synthetic regression tests alone do
+not establish that the live queue is ready.
 
 Before any future settings change, reread the current ruleset, preserve unrelated
 rules and save a rollback request. Stop merges if trustworthy evidence is missing.

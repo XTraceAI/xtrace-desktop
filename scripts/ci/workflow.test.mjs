@@ -43,7 +43,7 @@ test('candidate CI jobs have no metadata credentials or grants', () => {
   );
 });
 
-test('credentialed policy runs only reviewed source with its matching stage map', () => {
+test('credentialed contribution checks run only reviewed source', () => {
   for (const job of [jobs.policy, editedJobs.policy]) {
     assert.equal(job.match(/actions\/checkout@/g).length, 1);
     assert.match(
@@ -52,7 +52,7 @@ test('credentialed policy runs only reviewed source with its matching stage map'
     );
     assert.match(job, /\^\[0-9a-f\]\{40\}\$/);
     assert.match(job, /persist-credentials: false/);
-    assert.match(job, /CI_POLICY_SHA=\$\(git rev-parse HEAD\)/);
+    assert.doesNotMatch(job, /echo.*CI_POLICY_SHA=|issues: read/);
     assert.doesNotMatch(
       job,
       /pull_request\.head|github\.sha|download-artifact|cache:|test:ci|test:supply-chain/,

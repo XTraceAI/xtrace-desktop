@@ -311,10 +311,17 @@ publication decision. Repositories with 1,000 or more commit comments exceed the
 bounded API reader and fail closed until a paginated incremental design is added.
 
 Attachment bytes, embedded metadata and earlier GitHub edits require the separate
-review above. Review changes to the scanner and workflows themselves. Future
-FND-02 CI may fold source tests/scanning into `ci-ok`; manual current-content
-review remains required because metadata edits cannot be authorized by old CI.
+review above. Review changes to the scanner and workflows themselves. CI includes source
+tests and scanning in `ci-ok`; manual current-content review remains required
+because metadata edits cannot be authorized by old CI.
+
+Public documentation uses descriptive feature names and observable acceptance
+criteria. Keep private roadmap identifiers, scheduling maps, conversation
+excerpts and internal review logs outside the repository. Review filenames,
+source comments, command help, PR and issue text, branch names and retained
+history as well as document bodies. Renaming or deleting current files does not
+remove previous commits or hosted revisions.
 
 These checks do not publish content, change repository visibility or merge a PR.
-They cover disclosure prevention; the broader build/test CI, dependency-license
-inventory, DCO automation and release checks remain separate work.
+They cover disclosure prevention; build/test CI, dependency-license inventory and DCO validation are described
+in [CI.md](CI.md). Release packaging needs separate acceptance.

@@ -14,7 +14,7 @@ overall result:
 
 | Job            | Coverage                                                                                  |
 | -------------- | ----------------------------------------------------------------------------------------- |
-| `policy`       | Reviewed source-commit DCO, classification and checkpoint validation.                     |
+| `policy`       | Reviewed source-commit DCO and substantive contribution description checks.               |
 | `rust`         | Formatting, Clippy, tests and installed DTO/plugin integration hooks.                     |
 | `ui`           | Types, lint, formatting, unit tests, WebKit and Chromium boot checks.                     |
 | `security`     | CI/supply-chain/publication regression tests and source-history/diff scanning.            |
@@ -58,7 +58,7 @@ and the [macOS 14 image](https://github.com/actions/runner-images/blob/main/imag
 ## Reviewed merges while private
 
 While the repository is private, maintainers review and merge one PR at a time
-using squash merges. Before each merge, verify DCO, current checkpoint evidence,
+using squash merges. Before each merge, verify DCO,
 `ci-ok`, advisory publication results and review findings against the exact
 source head and current base. Complete the manual disclosure review in
 [PUBLICATION.md](PUBLICATION.md), including retained content and attachments. Test the combined result against that base. If either source
@@ -69,102 +69,46 @@ This procedure grants no merge or publication approval by itself.
 Merge-queue activation is deferred until a separately approved public launch.
 Keep `merge_group` workflow support and synthetic negative tests. Before enabling
 the queue, demonstrate live group execution, trusted combined-tree scanning,
-current disclosure/checkpoint invalidation and fail-closed aggregation. Start
+current disclosure invalidation and fail-closed aggregation. Start
 with one PR per group and a 60-minute timeout, without redundant strict
 up-to-date rebases. Queue-specific open findings remain activation blockers;
 deferral does not mark them fixed.
 
-## PR classification and acceptance
+## Contribution requirements
 
-Every scheduled PR includes a standalone paragraph such as `Plan slot: FND-03`
-and uses the matching `feat/fnd-03-` branch prefix. The reviewed publication repair
-uses `Maintenance: publication-checks` and the exact `feat/publication-checks`
-branch. Unknown classifications fail. Include substantive `## Change` and
-`## Verification` sections describing setup, action, expected results, commands
-actually run and remaining checks. Complete the separate disclosure review in
-[PUBLICATION.md](PUBLICATION.md).
+PRs use descriptive names and include substantive `## Change` and
+`## Verification` sections. Describe the problem, resulting behavior, test setup,
+actions, expected and actual results, and any checks still pending. Complete the
+separate disclosure review in [PUBLICATION.md](PUBLICATION.md). Public acceptance
+contracts describe observable behavior and belong in [acceptance/](acceptance/).
 
-`scripts/ci/stages.json` contains only technical stage/dependency data and named
-maintenance exceptions. It does not schedule work or record completion. The
-`security` job tests candidate code without API credentials. A separate
+The `security` job tests candidate code without API credentials. A separate
 `policy` job checks out the default branch, or the full commit SHA in repository
 variable `CI_POLICY_SHA`, before installing its pinned dependencies. Only that
-reviewed source receives the metadata token. Its stage map is read at the exact
-same checkout SHA, so a candidate body or edited map cannot redefine its stage.
-The workflow itself remains subject to manual provenance review.
+reviewed source receives the read-only metadata token. The workflow itself
+remains subject to manual provenance review.
 
 For initial installation, a maintainer reviews the complete policy entrypoint,
 its imports and dependency graph, and sets `CI_POLICY_SHA` to that exact 40-digit
 commit SHA. Rerun CI on the same candidate after configuration. Missing policy
 fails closed with a bootstrap diagnostic; a green source-only run is not live
-policy validation. After this PR is merged and the default branch contains the
-reviewed validator, remove the bootstrap variable and verify a subsequent run
-uses the default branch. Do not advance the variable automatically with PR pushes.
-No checkpoint configuration is needed for FND-02, which is a producer stage.
+policy validation. After the default branch contains the reviewed validator,
+remove the bootstrap variable and verify a subsequent run uses the default
+branch. Do not advance the variable automatically with PR pushes.
 
-The gate resolves actual source PRs from merge-queue entries and reads each PR's
-contributed commit list. Every author must have a matching final `Signed-off-by`
-trailer. Bootstrap history and GitHub's synthetic queue commit are not substitutes
-for those source commits. Incomplete API pagination, unknown queue shapes and
-metadata changes during validation fail. The supported source PR limit is 250
-commits. DCO and checkpoint decisions are pre-merge PR checks. Main pushes validate
-the resulting source, with policy limited to checking the push repository, default
-branch and commit identities. They do not re-certify GitHub's synthesized squash
-commit or reread mutable merged PR metadata. The repository must require reviewed
-PR merges for this procedure; a green post-merge build does not authorize a direct
-push. Remove the initial policy bootstrap after merge and rerun main CI so it
-uses the installed default-branch policy.
+The validator resolves actual source PRs from merge-queue entries and reads each
+PR's contributed commit list. Every author must have a matching final
+`Signed-off-by` trailer. Bootstrap history and GitHub's synthetic queue commit are
+not substitutes for those source commits. Incomplete API pagination, unknown
+queue shapes and metadata changes during validation fail. The supported source
+PR limit is 250 commits.
 
-## Checkpoint evidence
-
-Stages 1–2 can produce CP1 without an existing approval. CP1 gates stage 3 onward,
-CP3 stage 7 onward, CP5 stage 12 onward and CP7 stage 15 onward. CP7 additionally
-guards release publication. A release workflow must invoke the publication intent
-with the exact candidate artifact identities; this CI change does not implement a
-release workflow or grant release authorization.
-
-Repository variable `CHECKPOINT_CONFIG` supplies the configured checkpoint issue
-numbers and authorized human approver logins:
-
-```json
-{ "approvers": ["maintainer-login"], "issues": { "CP1": 17, "CP3": 18, "CP5": 19, "CP7": 20 } }
-```
-
-These are illustrative values, not configured accounts or approvals. Missing
-configuration blocks dependent stages. Each required checkpoint issue must be
-linked in the PR body, for example `Checkpoint evidence: #17`, so current
-manual disclosure review and the advisory snapshot include changes to its evidence and discussion.
-
-The open checkpoint issue body is a JSON evidence identity:
-
-```json
-{
-  "checkpoint": "CP1",
-  "source": "<40-character tested source SHA>",
-  "artifacts": [],
-  "decisions": "<64-character SHA-256 of accepted decisions>"
-}
-```
-
-A configured person posts that same JSON with `"status":"approved"` added to
-explicitly approve it. Artifact entries are SHA-256 digests; publication requires
-at least one. Hash the exact reviewed decision document bytes and attach or link
-that document after disclosure review. The latest explicit checkpoint decision
-from a configured person wins, including rejection or revocation. Bots, labels,
-quotes, examples, timeouts and agent disclosure attestations do not grant approval.
-The demonstrated source must be part of the PR's base history.
-
-Update the issue identity after a substantive change to demonstrated behavior,
-artifacts or accepted decisions; an older approval then fails. CI compares the
-declared identities and rereads current evidence, but cannot determine semantic
-equivalence or decide what a person approved. Checkpoint review remains the
-approver's responsibility. Advisory event delivery and reconciliation
-limitations also apply; run current checks again before a publication decision.
-
-A configured person may approve a repair-only exception by posting a JSON PR
-comment with `checkpoint`, `kind: "checkpoint-fix"`, `status: "approved"` and
-`source` equal to that PR's current head SHA. A push invalidates it. This exception
-never permits publication and never changes the checkpoint approval itself.
+DCO and contribution descriptions are checked before merge. Main pushes validate
+the resulting source, with policy limited to checking the push repository,
+default branch and commit identities. They do not re-certify GitHub's synthesized
+squash commit or reread mutable merged PR metadata. The repository must require
+reviewed PR merges for this procedure; a green post-merge build does not
+authorize a direct push.
 
 ## Local checks and integration hooks
 
@@ -205,19 +149,19 @@ interaction or production packaging. Those checks belong to later native and
 release acceptance.
 
 `node scripts/ci/run-hook.mjs plugin-conformance` invokes
-`scripts/ci/plugin-conformance.sh` once FND-13 installs it. A `.plugin-pin` or
-`assert-no-skipped-conformance.sh` also makes the runner mandatory. FND-13 owns
-the pinned plugin checkout, environment and rejection of skipped conformance
-tests. `node scripts/ci/run-hook.mjs dto` invokes `scripts/ci/check-dto.sh` once
-FND-09 installs it; a generated DTO directory makes that check mandatory. The DTO
+`scripts/ci/plugin-conformance.sh` when installed. A `.plugin-pin` or
+`assert-no-skipped-conformance.sh` also makes the runner mandatory. The hook must
+use a pinned plugin checkout, configure its environment and reject skipped
+conformance tests. `node scripts/ci/run-hook.mjs dto` invokes `scripts/ci/check-dto.sh` once
+installed; a generated DTO directory makes that check mandatory. The DTO
 hook must generate into temporary output and reject missing, extra or stale
 committed exports. UI jobs consume those committed exports, and `ci-ok` waits for
 parity. Any installed hook failure or removal of a default-branch declaration
 fails CI.
 
 Actions use pinned commits. Rust, pnpm, Playwright and pinned supply-chain tools
-have caches. Automated dependency-update PRs are deferred until policy supports
-their generated branches and metadata; no Dependabot schedule is installed by
+have caches. Automated dependency-update PRs are deferred until their generated commits and metadata meet
+the sign-off, verification and disclosure requirements; no Dependabot schedule is installed by
 this change. Dependency updates use the normal reviewed PR process. Cache timing,
 manual combined-result validation and default-branch advisory invalidation need
 recorded run evidence before this foundation is accepted. Live queue evidence
