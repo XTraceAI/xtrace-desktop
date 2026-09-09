@@ -48,12 +48,14 @@ test('appearance follows emulated system, persists overrides, and renders both t
 test('local fonts load with external network denied and remain usable offline', async ({
   page,
   context,
+  baseURL,
 }, info) => {
+  const localOrigin = new URL(baseURL!).origin;
   const fontRequests: string[] = [];
   const external: string[] = [];
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url());
-    if (url.origin !== 'http://127.0.0.1:5175') {
+    if (url.origin !== localOrigin) {
       external.push(url.origin);
       await route.abort();
     } else {
@@ -169,9 +171,14 @@ test('modal contains Tab, rejects background focus, preserves theme and returns 
   await trigger.click();
   await expect(modal).toBeVisible();
   await expect(modal).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-  for (let repeat = 0; repeat < 6; repeat++) {
-    await page.keyboard.press(repeat % 2 ? 'Shift+Tab' : 'Tab');
-    expect(await modal.evaluate((dialog) => dialog.contains(document.activeElement))).toBe(true);
+  const input = modal.getByRole('textbox', { name: 'Name' });
+  const close = modal.getByRole('button', { name: 'Close modal' });
+  await input.focus();
+  for (let repeat = 0; repeat < 3; repeat++) {
+    await page.keyboard.press('Tab');
+    await expect(close).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(input).toBeFocused();
   }
   await trigger.evaluate((element) => element.focus());
   expect(await modal.evaluate((dialog) => dialog.contains(document.activeElement))).toBe(true);
@@ -180,7 +187,15 @@ test('modal contains Tab, rejects background focus, preserves theme and returns 
   await expect(modal).toBeHidden();
   await expect(trigger).toBeFocused();
   await trigger.click();
-  await page.getByRole('button', { name: 'Close modal' }).click();
+  await close.click();
+  await expect(modal).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await page.getByRole('button', { name: 'Open popover' }).focus();
+  await page.keyboard.press('Tab');
+  await expect(trigger).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(modal).toBeVisible();
+  await page.keyboard.press('Escape');
   await expect(modal).toBeHidden();
   await expect(trigger).toBeFocused();
 });
