@@ -82,6 +82,14 @@ test('sidebar geometry, controlled state, theme and native Hub dismissal', async
   await trigger.click();
   await page.getByTestId('outside').click();
   await expect(hub).toBeHidden();
+  await trigger.click();
+  await page.getByRole('button', { name: 'Sessions' }).click();
+  await expect(hub).toBeHidden();
+  await trigger.click();
+  await page.getByRole('button', { name: 'Switch to dark appearance' }).click();
+  await expect(hub).toBeHidden();
+  await page.getByRole('button', { name: 'Switch to light appearance' }).click();
+  await active.click();
   const capture = page.getByRole('button', { name: 'Capture status', exact: true });
   const coverage = page.getByRole('dialog', { name: 'Capture by surface' });
   await expect(coverage).toBeHidden();

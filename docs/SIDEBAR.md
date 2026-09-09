@@ -68,7 +68,7 @@ existing native Popover; Escape, outside dismissal, and focus restoration stay
 with that primitive. Its visible “esc” button also closes it. Content can scroll
 in a constrained viewport. The shared popover supplies viewport clamping.
 
-Sidebar opening is controlled so switching between Hub and capture details cannot race deferred native toggle events. Native Escape, outside dismissal and focus return remain in the shared Popover.
+Sidebar opening is controlled so switching between Hub and capture details cannot race deferred native toggle events. Shared geometry updates are separate from native opening, so outside clicks that change navigation or appearance keep a dismissed panel closed. Native Escape, outside dismissal and focus return remain in the shared Popover.
 
 The CTA only invokes the supplied callback; it does
 not connect, navigate, or mark the desktop connected on its own. The CTA uses

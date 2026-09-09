@@ -138,6 +138,48 @@ it.each(['invoker', 'position'])(
   },
 );
 
+it('keeps native dismissal closed through a render before the queued toggle event', () => {
+  const anchor = document.createElement('button');
+  document.body.append(anchor);
+  const anchorRef = createRef<HTMLElement>();
+  anchorRef.current = anchor;
+  const changed = vi.fn();
+  const props = { id: 'dismissed', anchorRef, onOpenChange: changed };
+  const view = render(
+    <Popover {...props} open>
+      Content
+    </Popover>,
+  );
+  const content = view.getByText('Content');
+  // Light dismissal is synchronous; its toggle notification is queued.
+  content.hidePopover();
+  view.rerender(
+    <Popover {...props} open>
+      Changed content
+    </Popover>,
+  );
+  expect(content.dataset.open).toBe('false');
+  expect(HTMLElement.prototype.showPopover).toHaveBeenCalledOnce();
+  const toggle = new Event('toggle');
+  Object.defineProperty(toggle, 'newState', { value: 'closed' });
+  content.dispatchEvent(toggle);
+  expect(changed).toHaveBeenCalledWith(false);
+  view.rerender(
+    <Popover {...props} open={false}>
+      Changed content
+    </Popover>,
+  );
+  view.rerender(
+    <Popover {...props} open>
+      Changed content
+    </Popover>,
+  );
+  expect(content.dataset.open).toBe('true');
+  expect(HTMLElement.prototype.showPopover).toHaveBeenCalledTimes(2);
+  view.unmount();
+  anchor.remove();
+});
+
 it.each(['invoker', 'position'])(
   'dismisses when the %s detaches, including a simultaneous controlled close',
   (target) => {

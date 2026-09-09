@@ -7,9 +7,9 @@ the component fixture demonstrates the new controls independently.
 ## Verification
 
 - Typechecking, ESLint, token-color lint and the production build pass.
-- All 24 Vitest tests and the Node color-lint regression pass. Seven component
+- All 25 Vitest tests and the Node color-lint regression pass. Seven component
   tests cover Sidebar, HubPopover and BrandMark; the shared Popover tests also
-  cover detachment and replacement of the invoking and positioning targets.
+  cover detachment/replacement of the invoking and positioning targets and native dismissal before a queued toggle event.
 - `pnpm e2e` passes all 14 tests using pinned Playwright 1.58.2 with Chromium and
   WebKit. This includes the sidebar scenario in both engines and the inherited
   appearance, font-loading, popover, modal and shell tests.
@@ -78,7 +78,7 @@ The shared Popover owns native dismissal and focus restoration. Its optional
 positioning reference affects geometry while the original invoking button remains
 the focus-return target. Replacing either DOM target behind a stable ref updates
 the observers and position before paint; detaching it without a replacement
-dismisses the panel. The sidebar adds no global Escape or outside-click listeners.
+dismisses the panel. Geometry rebinding never opens it; native opening runs only when the controlled opening inputs change, so an outside navigation/theme update cannot reopen a dismissed panel. The sidebar adds no global Escape or outside-click listeners.
 
 The caller supplies navigation, real measurements, shared icons and connection
 actions. These components neither connect to Hub nor change routes by themselves.

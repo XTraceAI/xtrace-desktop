@@ -63,6 +63,21 @@ export function Popover({
   });
 
   useLayoutEffect(() => {
+    const element = ref.current;
+    if (
+      open &&
+      element &&
+      anchorRef.current?.isConnected &&
+      (!positionRef || positionRef.current?.isConnected) &&
+      !element.matches(':popover-open')
+    ) {
+      element.showPopover();
+    }
+    // Native dismissal precedes its queued toggle event. Unrelated renders
+    // must not reopen the panel while the controlled prop catches up.
+  }, [open, anchorRef, positionRef]);
+
+  useLayoutEffect(() => {
     // Stable ref objects can point to new DOM nodes after any commit.
     // Rebind geometry and observers to the current targets before paint.
     const element = ref.current;
@@ -91,7 +106,6 @@ export function Popover({
       element.style.left = `${Math.max(8, Math.min(x, innerWidth - element.offsetWidth - 8))}px`;
       element.style.top = `${Math.max(8, Math.min(y, innerHeight - element.offsetHeight - 8))}px`;
     }
-    if (!element.matches(':popover-open')) element.showPopover();
     position();
     const observer = new ResizeObserver(position);
     observer.observe(anchor);
