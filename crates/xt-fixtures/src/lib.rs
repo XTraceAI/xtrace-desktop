@@ -1,6 +1,7 @@
 //! Shared, synthetic fixture inputs with explicit time anchors and honest coverage.
 //! A skeleton can validate and export structurally, but cannot pass acceptance.
 //! File-backed databases retain their temporary directory for the owner's lifetime.
+//! Production crates must not depend on this development crate by default.
 
 mod db;
 mod f1;

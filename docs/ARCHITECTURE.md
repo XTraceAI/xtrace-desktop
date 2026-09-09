@@ -4,6 +4,9 @@ The workspace contains a native Tauri 2 shell with a React UI.
 `xt-store` implements canonical SQLite storage, migrations, replay-safe writes
 and typed reads. Its [API contract](../crates/xt-store/README.md) and
 [acceptance cases](acceptance/storage.md) describe the available behavior.
+`xt-fixtures` and `xtask` provide a shared synthetic catalog, disposable SQLite
+databases and fixture validation/export commands. Their [acceptance cases](acceptance/fixtures.md)
+distinguish the populated baseline from unimplemented skeletons.
 The other subsystem libraries remain scaffolds validated by compilation.
 The app exposes only `app_info`; storage is not connected to the desktop UI,
 ingestion pipeline or host integrations yet.
@@ -32,8 +35,9 @@ behavior belong to the Tauri application.
 The intended flow is source observations → canonical ingestion/storage → shared
 Rust metrics → native commands and renderer. The future loopback capture adapter
 feeds the same canonical writer. JavaScript consumes metric DTOs rather than
-reimplementing calculations. The future fixture harness exercises those same
-interfaces; it does not introduce a second storage or metric implementation.
+reimplementing calculations. The fixture harness uses the canonical storage API;
+its bounded baseline reference assertions do not implement the production metric
+engine or establish whole-rule coverage.
 
 Keep subsystem contracts explicit at crate boundaries. Local checks are in
 [CONTRIBUTING.md](../CONTRIBUTING.md); [CI.md](CI.md) describes automated

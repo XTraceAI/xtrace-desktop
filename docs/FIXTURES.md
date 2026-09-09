@@ -18,7 +18,7 @@ Run from the workspace:
 cargo test -p xt-fixtures
 cargo test -p xtask
 cargo xtask fixture-validate
-cargo xtask fixture-db F1 --out /tmp/xtrace-fnd04-F1.sqlite
+cargo xtask fixture-db F1 --out /tmp/xtrace-F1.sqlite
 cargo xtask fixture-export F1
 cargo xtask fixture-export F16 --out /tmp/xtrace-F16.json
 ```
@@ -167,6 +167,10 @@ against the owning product API, implement the behavior, then run its tests and
 catalog validation. Add executable reference dispatch before marking another
 entry populated for `fixture-validate`; fail honestly while that dispatch is
 missing. Never copy live-machine transcripts or totals into a fixture.
+
+The [fixture acceptance contract](acceptance/fixtures.md) lists setup, actions
+and expected outcomes for the loader, database owner, exports and reference
+assertions. Follow [CI.md](CI.md) for combined-source validation.
 
 | ID  | Current status                | Planned input responsibility                                    |
 | --- | ----------------------------- | --------------------------------------------------------------- |
