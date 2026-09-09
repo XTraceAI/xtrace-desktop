@@ -17,6 +17,19 @@ test('one candidate source workflow owns scanning and all current metadata signa
   assert.match(advisory, /schedule:/);
 });
 
+test('the scheduled backstop runs once daily without removing event-driven or manual scans', async () => {
+  const advisory = await workflow('publication-content');
+  const schedules = [...advisory.matchAll(/- cron: '([^']+)'/g)].map((match) => match[1]);
+  assert.equal(schedules.length, 1);
+  const [minute, hour, ...calendar] = schedules[0].split(' ');
+  assert.match(minute, /^\d+$/);
+  assert.match(hour, /^\d+$/);
+  assert.ok(Number(minute) < 60 && Number(hour) < 24);
+  assert.deepEqual(calendar, ['*', '*', '*']);
+  for (const event of ['issues', 'issue_comment', 'workflow_run', 'workflow_dispatch'])
+    assert.ok(advisory.includes('  ' + event + ':'));
+});
+
 test('repository-wide scans stay off PR runs while every PR event retains a completion signal', async () => {
   const advisory = await workflow('publication-content');
   const events = [
