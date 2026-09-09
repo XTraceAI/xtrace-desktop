@@ -100,8 +100,8 @@ Markdown links and HTML anchor links are included. GitHub issue shorthand accept
 `#123` and case-insensitive `GH-123`, including punctuation around a reference.
 Issue-shaped tokens in code examples, HTML comments, ordinary URL paths and
 external link labels are excluded. Fetched
-issue references must belong to this repository: another repository's edits
-cannot trigger local invalidation events. Ordinary external URLs remain prose.
+issue references must belong to this repository; cross-repository disclosure
+collection is unsupported. Ordinary external URLs remain prose.
 
 ## Local checks
 
@@ -152,7 +152,7 @@ scanning, and a value deleted from the current tree can still be detected in his
 ## CI boundary
 
 Manual disclosure review is the publication gate. CI’s `security` job supplies
-candidate source/test diagnostics, and `publication-content-advisory` supplies
+candidate source/test diagnostics, and an explicitly dispatched `publication-content-advisory` supplies
 current-content diagnostics from reviewed default-branch code. Neither a check
 name nor the GitHub Actions app identity proves the producer: a candidate workflow
 can emit an automatic job check with the same name and app. The custom
@@ -170,7 +170,7 @@ identity. No App credential or repository setting is installed by this change.
 Candidate scripts and runtime dependencies receive no repository API token,
 and their jobs have no issue or pull-request metadata permissions. The pinned
 checkout uses read-only contents access without persisting credentials. Metadata
-reads remain confined to reviewed default-branch diagnostic jobs (or the explicitly
+reads remain confined to explicit reviewed default-branch diagnostic jobs (or the explicitly
 reviewed CI policy bootstrap described in [CI.md](CI.md)). Failed,
 cancelled or skipped dependencies cannot produce a successful aggregate.
 
@@ -193,125 +193,40 @@ uses its actual event payload; the manual PR override is unavailable there.
 Fetched refs are invocation-specific and removed after success, rejection or fetch
 failure. Existing refs created by other work remain in the whole-history scan.
 
-The `Publication content advisory` workflow rechecks open PRs and current default-
-branch merge-queue heads after PR/issue edits and conversation comments. PR
-lifecycle and text changes signal it through completion of `CI` and `PR metadata`.
-The scan matrix runs on the default branch, so unrelated PR failures stay in
-that background run. Each PR receives its own `publication-content-advisory`
-check tied to its source head. Manual dispatches must select the default branch.
-Review and review-comment events run a dedicated `Publication review signal`
-workflow; its completion signals the trusted workflow independently of candidate
-tests.
-The relay contains no checkout, actions, script dependencies or token permissions.
-GitHub runs review workflows from the PR merge commit, as described in its
-[event trust model](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target). Runs reconcile current API state, rather than
-trusting an old event's PR content, and reject changes observed during scanning.
-Current queue heads and enumerated PRs receive completed failure checks before
-scan jobs are scheduled. A scan can replace its own failure with success only
-after current source, content and trusted-code identities pass validation.
-They execute only the default branch, use `checks:write` solely to update the
-named content check, and never run PR scripts or consume workflow artifacts.
-The trusted scanner fetches each exact source PR head into a temporary Git ref,
-verifies its SHA and scans its base/head range without checking out candidate
-files or importing candidate scanner code. Before scanning, it requires both
-actual base and source commits to contain the trusted relay’s exact Git blob and
-regular-file mode. This rejects deletion, renaming, trigger changes and conditional
-job changes; checking trigger names alone would not protect event delivery.
-Both base and head must remain unchanged through the final success check. Fetch authentication is transient and
-restricted to the validated repository's GitHub URL; it is not passed to scanner
-processes. Normal completion and handled errors remove the temporary ref. A hard timeout
-discards the isolated job checkout rather than sharing its temporary refs. Pre-existing reachable refs
-remain in the whole-history scan, so an existing repository leak still blocks.
-Queue certification remains disabled: queue heads retain failure until trusted
-combined-tree scanning and live queue acceptance are implemented. Scanning
-individual PRs does not certify their combined result.
+The `Publication content advisory` workflow is an optional, manually dispatched
+repository-wide audit on the default branch. PR changes, issue/comment changes,
+reviews, CI completion and schedules do not start it. The review-event relay and
+its source-blob pin have been retired because automatic event delivery no longer
+participates in disclosure validation. There is no automatic invalidation of old
+hosted results. A maintainer must run the current local check before each merge;
+old green results cannot stand in for that check.
 
-Disposable Git regressions verify that replacing the candidate scanner with a
-success stub cannot hide a source secret, that the candidate code is not executed,
-and that failure/head mismatch removes temporary refs. Relay regressions alter
-real base/source Git commits, remove events, add a false job condition, rename or
-symlink the file; none may reach scanning or certification. Synthetic transport tests
-inspect credential handling; they do not establish live default-branch workflow
-delivery. Separate empty-file tests detect secrets found only in staged, current
-and removed historical Git names, without printing the name.
+An explicit audit enumerates open PRs and queue heads. Each PR receives only its
+own advisory check. Before scheduling work, the coordinator marks results failed
+until that run completes the relevant scan. Setup failure, cancellation, timeout
+or incomplete metadata cannot preserve a successful result for that audit.
+The matrix has at most 256 PR jobs, runs four at a time and gives each worker an
+independent four-minute budget. Queue certification remains disabled until live
+combined-tree scanning is implemented and accepted.
 
-Pending events can coalesce because each run rechecks every open PR and queue
-head. A manual workflow dispatch retries an incomplete run.
+The audit runs reviewed default-branch code. It fetches exact candidate and
+retained source heads into temporary refs, verifies identities, and scans their
+history and diffs without checking out or executing candidate code. Authentication
+is transient, fixed to the validated repository URL and withheld from scanner
+processes. Normal completion and handled failures remove temporary refs. Tests
+verify that a candidate's replacement scanner cannot hide a source secret and
+that mismatches and failed fetches do not leave refs or expose raw diagnostics.
 
-The preparation job enumerates up to 256 open PRs and emits one matrix job per
-PR. Every created `publication-content-advisory` check starts as a completed failure,
-labelled as an unfinished scan. Successful validation replaces only that run's
-matching head/check identity with success. Setup failure, cancellation, timeout
-or a failed result update leaves a terminal failure result. The check can
-therefore appear red while a scan is running; this is deliberate.
+Before writing success, the worker rereads source, content and trusted-code
+identities. Separate API reads and writes are not atomic: edits after observation
+require another local review or explicit audit. Success records observed content;
+it does not lock it. Commit comments and manually edited relationships have the
+same freshness requirement. Repositories with 1,000 or more commit comments exceed
+the bounded reader and fail closed pending a paginated incremental design.
 
-Each matrix job gets an isolated checkout of the preparation job's trusted
-source SHA, with at most four jobs active and `fail-fast: false`. A separate
-supervisor terminates the entire scanner process group after four minutes,
-including synchronous Git/scanner descendants. The job has a ten-minute limit
-including setup. A slow or failed early PR cannot cancel later jobs or consume
-their scan budgets. No shared per-run scan deadline or retry cursor selects only
-a prefix of PRs. Default-branch advances invalidate old-policy workers; source,
-base and disclosure content are reread before success. Jobs never consume
-candidate artifacts or share fetched candidate refs.
-
-Above 256 open PRs, preparation fails after creating failure results for the
-enumerated PRs; it never silently truncates the matrix. The existing bounded
-API pagination limit still applies. GitHub event delivery, runner availability
-and successful API writes remain prerequisites: an API outage cannot guarantee
-invalidation of checks whose creation was never reached. Rerun reconciliation
-and verify current results immediately before a merge or publication decision.
-
-Regression tests run multiple real blocking child processes beyond one scan
-budget and prove later jobs still receive an attempt. They also verify descendant
-termination, no delayed write, terminal failure without a worker, failed result
-updates, run/head/context ownership, matrix overflow and trusted-code advances.
-These local tests do not claim live GitHub matrix scheduling evidence; activation
-must exercise that behavior on the installed default-branch workflow.
-
-Install the dedicated relay first in a small, maintainer-reviewed prerequisite
-change on the default branch. Then update the publication-gate branch so its
-actual base and head both include that relay, and review/install the remaining
-trusted workflow. The initial gate cannot certify a base lacking the relay;
-stacking the gate on the prerequisite makes this dependency reviewable but does
-not activate trusted default-branch execution. Follow [the activation sequence](PUBLICATION_ACTIVATION.md); keep activation
-evidence pending until reviewed changes land. Queue activation remains separately
-deferred until a public launch and its required combined-tree checks.
-
-The relay is immutable while it is pinned. To change it later, first add a
-separately named replacement while preserving the current relay. A subsequent
-maintainer-reviewed trusted-code change can switch to that installed replacement;
-retire the old relay only after the switch and branch synchronization. Direct
-changes to the currently pinned relay remain blocked. No automatic exception or
-repository-setting change is provided.
-
-The event workflow becomes active only after it lands on the default branch.
-Live issue/comment-event delivery, check creation and queue success remain
-integration checks until then; synthetic API-shaped tests cover their failure
-paths. GitHub must deliver an event and start the run to invalidate an earlier
-result. Repeat the review and update the snapshot when manually changing linked
-relationships. No repository rule is changed by these files.
-
-Before writing success, the worker rereads the complete disclosure digest after
-checking trusted-code identity, including titles, discussions, linked records
-and retained revisions. It compares that digest with the scanned snapshot and
-performs no intervening API work before the check update. GitHub content reads
-and check writes are separate requests: edits during or after that final read
-still depend on subsequent reconciliation, including workflow scheduling delay.
-Success records the observed snapshot; it cannot lock public content against edits.
-
-Comments on the source PR's commits are included, with complete source-commit
-pagination required. GitHub Actions does not support a commit-comment trigger;
-the [documented workflow triggers](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)
-are a subset of webhook events. Commit-comment creation, edits/deletions and manual
-relationship changes use daily scheduled reconciliation at 07:17 UTC. This
-backstop reduces idle runner usage; delivered PR, review, issue and comment
-events still trigger reconciliation. Changes without an event may wait until
-the next daily sweep, and scheduled runs can be delayed by GitHub. This is
-eventual detection, not an instantaneous
-publication barrier. Run the local current-content check immediately before a
-publication decision. Repositories with 1,000 or more commit comments exceed the
-bounded API reader and fail closed until a paginated incremental design is added.
+Follow [manual review and audit setup](PUBLICATION_ACTIVATION.md). Re-enabling
+automatic disclosure enforcement or a merge queue requires separate design and
+live acceptance; a shared Actions check identity remains insufficient.
 
 Attachment bytes, embedded metadata and earlier GitHub edits require the separate
 review above. Review changes to the scanner and workflows themselves. CI includes source

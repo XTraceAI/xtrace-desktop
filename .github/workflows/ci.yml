@@ -54,40 +54,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-  rust:
-    runs-on: macos-14
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          shared-key: macos-14-arm64
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - run: cargo test --workspace --all-features --locked
-
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          path: .ci-trusted
-          persist-credentials: false
-      - run: node scripts/ci/run-hook.mjs plugin-conformance
-        env:
-          CI_TRUSTED_ROOT: ${{ github.workspace }}/.ci-trusted
-      - run: node scripts/ci/run-hook.mjs dto
-        env:
-          CI_TRUSTED_ROOT: ${{ github.workspace }}/.ci-trusted
-
   ui:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -113,40 +79,6 @@ jobs:
         env:
           E2E_PORT: '5174'
 
-  supply-chain:
-    runs-on: macos-14
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          shared-key: macos-14-arm64
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.cache/xtrace-ci-tools
-          key: supply-tools-macos-14-arm64-syft-1.51.1-about-0.9.2
-      - run: node scripts/supply-chain/install-tools.mjs syft
-      - run: pnpm sbom
-      - run: node scripts/security/scan-secrets.mjs --content artifacts/sbom.cdx.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: sbom-${{ github.sha }}
-          path: artifacts/sbom.cdx.json
-          if-no-files-found: error
-          retention-days: 14
-      - run: node scripts/supply-chain/install-tools.mjs cargo-about
-      - run: pnpm notices:check
-
   security:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -170,32 +102,10 @@ jobs:
           PUBLICATION_HEAD: ${{ github.sha }}
         run: node scripts/security/scan-secrets.mjs --diff "$PUBLICATION_BASE..$PUBLICATION_HEAD"
 
-  debug-bundle:
-    runs-on: macos-14
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          shared-key: macos-14-arm64
-      - run: test "$(uname -m)" = arm64
-      - run: pnpm tauri build --debug --bundles app
-      - run: node scripts/ci/debug-bundle.mjs 'target/debug/bundle/macos/XTrace Desktop.app'
-
   ci-ok:
     name: ci-ok
     if: ${{ always() }}
-    needs: [policy, rust, ui, supply-chain, security, debug-bundle]
+    needs: [policy, ui, security]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

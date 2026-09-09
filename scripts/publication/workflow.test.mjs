@@ -6,63 +6,21 @@ import { runInNewContext } from 'node:vm';
 const workflow = (name) =>
   readFile(new URL(`../../.github/workflows/${name}.yml`, import.meta.url), 'utf8');
 
-test('one candidate source workflow owns scanning and all current metadata signals remain wired', async () => {
+test('source scanning remains in CI and repository-wide audits require explicit dispatch', async () => {
   await assert.rejects(workflow('publication'), { code: 'ENOENT' });
+  await assert.rejects(workflow('publication-review'), { code: 'ENOENT' });
   const source = await workflow('ci');
   assert.equal(source.match(/run: pnpm publication:test/g).length, 1);
   assert.equal(source.match(/scan-secrets\.mjs --diff/g).length, 1);
-  const advisory = await workflow('publication-content');
-  assert.match(advisory, /workflows: \[CI, PR metadata, Publication review signal\]/);
-  assert.match(advisory, /issue_comment:/);
-  assert.match(advisory, /schedule:/);
-});
-
-test('the scheduled backstop runs once daily without removing event-driven or manual scans', async () => {
-  const advisory = await workflow('publication-content');
-  const schedules = [...advisory.matchAll(/- cron: '([^']+)'/g)].map((match) => match[1]);
-  assert.equal(schedules.length, 1);
-  const [minute, hour, ...calendar] = schedules[0].split(' ');
-  assert.match(minute, /^\d+$/);
-  assert.match(hour, /^\d+$/);
-  assert.ok(Number(minute) < 60 && Number(hour) < 24);
-  assert.deepEqual(calendar, ['*', '*', '*']);
-  for (const event of ['issues', 'issue_comment', 'workflow_run', 'workflow_dispatch'])
-    assert.ok(advisory.includes('  ' + event + ':'));
-});
-
-test('repository-wide scans stay off PR runs while every PR event retains a completion signal', async () => {
   const advisory = await workflow('publication-content');
   const events = [
     ...advisory
       .split('\non:\n')[1]
       .split('\npermissions:')[0]
       .matchAll(/^ {2}(\w+):/gm),
-  ]
-    .map(([, event]) => event)
-    .sort();
-  assert.deepEqual(events, [
-    'issue_comment',
-    'issues',
-    'schedule',
-    'workflow_dispatch',
-    'workflow_run',
-  ]);
-  const ci = await workflow('ci');
-  const metadata = await workflow('pr-metadata');
-  const review = await workflow('publication-review');
-  const prTypes = (source) => source.match(/pull_request:\n {4}types: \[([^\]]+)\]/)[1].split(', ');
-  assert.deepEqual([...prTypes(ci), ...prTypes(metadata)].sort(), [
-    'edited',
-    'opened',
-    'ready_for_review',
-    'reopened',
-    'synchronize',
-  ]);
-  assert.match(review, /pull_request_review:\n {4}types: \[submitted, edited, dismissed\]/);
-  assert.match(review, /pull_request_review_comment:\n {4}types: \[created, edited, deleted\]/);
-  assert.match(advisory, /types: \[completed\]/);
-  assert.doesNotMatch(advisory, /workflow_run\.conclusion/);
-
+  ].map((x) => x[1]);
+  assert.deepEqual(events, ['workflow_dispatch']);
+  assert.doesNotMatch(advisory, /cron:|actions: read|workflow_run:/);
   const condition = advisory.split('\n  prepare:\n')[1].match(/if: \$\{\{ (.+) \}\}/)[1];
   for (const defaultBranch of ['main', 'develop']) {
     for (const ref of [

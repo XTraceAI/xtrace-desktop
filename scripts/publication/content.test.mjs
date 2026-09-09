@@ -240,9 +240,9 @@ test('linked issue and PR disclosure controls are hashed verbatim', async () => 
       const current = await readPublicContent(state.api, repository, 3);
       assert.equal(current.content.linked[0].body, state.issue.body);
       assert.throws(() => requireDisclosure(current), /stale/);
-      assert.equal((await reconcile(state, async () => {}, 'issues')).failures, 1);
+      assert.equal((await reconcile(state, async () => {}, 'workflow_dispatch')).failures, 1);
       await seal(state);
-      assert.equal((await reconcile(state, async () => {}, 'issues')).failures, 0);
+      assert.equal((await reconcile(state, async () => {}, 'workflow_dispatch')).failures, 0);
     }
   }
 });
@@ -338,7 +338,7 @@ const event = { repository: { full_name: repository } };
 const reconcile = async (
   state,
   scan = async () => {},
-  eventName = 'issue_comment',
+  eventName = 'workflow_dispatch',
   payload = event,
 ) => {
   const options = {
@@ -383,7 +383,7 @@ test('source commit comments and attachments invalidate snapshots on creation, e
     if (change === 'delete') state.commitComments = [];
     const review = await readPublicContent(state.api, repository, 3);
     assert.throws(() => requireDisclosure(review), /stale/);
-    assert.equal((await reconcile(state, async () => {}, 'schedule')).failures, 1);
+    assert.equal((await reconcile(state, async () => {}, 'workflow_dispatch')).failures, 1);
     await seal(state);
     assert.equal(
       (
@@ -392,8 +392,8 @@ test('source commit comments and attachments invalidate snapshots on creation, e
           async (_, texts) => {
             for (const comment of state.commitComments) assert.ok(texts.includes(comment.body));
           },
-          'schedule',
-          {},
+          'workflow_dispatch',
+          event,
         )
       ).failures,
       0,
@@ -430,7 +430,7 @@ test('issue edits invalidate the check and refreshed disclosure passes without w
         async () => {
           scans++;
         },
-        'issues',
+        'workflow_dispatch',
       )
     ).failures,
     1,
@@ -446,7 +446,7 @@ test('issue edits invalidate the check and refreshed disclosure passes without w
         async () => {
           scans++;
         },
-        'issues',
+        'workflow_dispatch',
       )
     ).failures,
     0,
@@ -571,60 +571,26 @@ test('raw API or scanner errors cannot become public diagnostics or successful c
   await assert.rejects(reconcile(state), /pagination/);
 });
 
-test('trusted workflow signals require an allowed workflow, event and repository identity', async () => {
-  const cases = [
-    ['ci-pr', 7, 'pull_request', true],
-    ['ci-failure', 7, 'pull_request', true],
-    ['ci-cancelled', 7, 'pull_request', true],
-    ['ci-queue', 7, 'merge_group', true],
-    ['ci-push', 7, 'push', true],
-    ['metadata', 9, 'pull_request', true],
-    ['review', 8, 'pull_request_review', true],
-    ['review-comment', 8, 'pull_request_review_comment', true],
-    ['repository', 7, 'pull_request', false],
-    ['workflow', 99, 'pull_request', false],
-    ['ci-wrong-event', 7, 'workflow_dispatch', false],
-    ['metadata-wrong-event', 9, 'push', false],
-    ['review-wrong-event', 8, 'pull_request', false],
-    ['missing-workflow', 7, 'pull_request', false],
-    ['incomplete-workflow', 7, 'pull_request', false],
-  ];
-  for (const [variant, workflowId, eventName, allowed] of cases) {
+test('manual audits reject automatic events and another repository before API access', async () => {
+  for (const eventName of [
+    'issues',
+    'issue_comment',
+    'schedule',
+    'workflow_run',
+    'pull_request_review',
+    'pull_request_target',
+  ]) {
     const state = fixture();
-    await seal(state);
-    const api = state.api;
-    state.api = async (...args) => {
-      if (args[0].endsWith('/actions/runs/1'))
-        return {
-          repository: { full_name: variant === 'repository' ? 'other/project' : repository },
-          workflow_id: workflowId,
-          event: eventName,
-          status: variant === 'incomplete-workflow' ? 'in_progress' : 'completed',
-          conclusion:
-            variant === 'ci-failure'
-              ? 'failure'
-              : variant === 'ci-cancelled'
-                ? 'cancelled'
-                : 'success',
-        };
-      if (args[0].endsWith('/actions/workflows/ci.yml')) return { id: 7 };
-      if (args[0].endsWith('/actions/workflows/pr-metadata.yml')) return { id: 9 };
-      if (args[0].endsWith('/actions/workflows/publication-review.yml'))
-        return variant === 'missing-workflow' ? {} : { id: 8 };
-      return api(...args);
-    };
-    const run = () =>
-      reconcile(state, undefined, 'workflow_run', { ...event, workflow_run: { id: 1 } });
-    if (allowed) assert.equal((await run()).failures, 0);
-    else {
-      await assert.rejects(run(), /expected repository workflow|identities are unavailable/);
-      assert.equal(state.writes.length, 0);
-    }
+    state.api = async () => assert.fail('Automatic events must not read metadata');
+    await assert.rejects(reconcile(state, undefined, eventName), /explicit workflow dispatch/);
+    assert.equal(state.writes.length, 0);
   }
-  await assert.rejects(reconcile(fixture(), undefined, 'pull_request_review'), /Unsupported/);
-  const directPr = fixture();
-  await assert.rejects(reconcile(directPr, undefined, 'pull_request_target'), /Unsupported/);
-  assert.equal(directPr.writes.length, 0);
+  await assert.rejects(
+    reconcile(fixture(), undefined, 'workflow_dispatch', {
+      repository: { full_name: 'other/project' },
+    }),
+    /explicit workflow dispatch/,
+  );
 });
 
 test('queue certification remains failed until trusted combined-tree scanning is activated', async () => {
@@ -839,7 +805,7 @@ test('every scheduled check is already terminal when work is cancelled or metada
     repository,
     runId: 1,
     trustedHead: base,
-    eventName: 'issue_comment',
+    eventName: 'workflow_dispatch',
     event,
   });
   assert.equal(plan.pending.length, 1);
@@ -888,7 +854,7 @@ test('a scan cannot update a check from another run, head or context', async () 
       repository,
       runId: 1,
       trustedHead: base,
-      eventName: 'issue_comment',
+      eventName: 'workflow_dispatch',
       event,
     });
     change(state.writes[0].body);
@@ -921,7 +887,7 @@ test('matrix overflow leaves every enumerated PR failed instead of truncating wo
     return state.api(...args);
   };
   await assert.rejects(
-    preparePublication({ api, repository, runId: 1, eventName: 'issue_comment', event }),
+    preparePublication({ api, repository, runId: 1, eventName: 'workflow_dispatch', event }),
     /256/,
   );
   assert.equal(state.writes.length, 257);
@@ -1002,8 +968,13 @@ test('GH-number references without closing relationships include issue text and 
   state.issue.body = 'Changed linked issue text.';
   state.issue.updated_at = '2026-01-01T00:00:01Z';
   assert.equal(
-    (await reconcile(state, async () => assert.fail('Stale content must not scan'), 'issues'))
-      .failures,
+    (
+      await reconcile(
+        state,
+        async () => assert.fail('Stale content must not scan'),
+        'workflow_dispatch',
+      )
+    ).failures,
     1,
   );
 });
