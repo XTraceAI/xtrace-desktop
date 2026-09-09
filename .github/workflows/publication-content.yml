@@ -1,19 +1,6 @@
 name: Publication content advisory
 
 on:
-  issues:
-    types: [edited, deleted, closed, reopened, transferred]
-  issue_comment:
-    types: [created, edited, deleted]
-  # GitHub Actions has no commit-comment or relationship-edit trigger.
-  # Reconcile those changes periodically as well as on delivered events.
-  schedule:
-    - cron: '7,22,37,52 * * * *'
-  workflow_run:
-    # Run the repository-wide matrix on the default branch. Each PR receives
-    # only its own explicit publication-content-advisory check.
-    workflows: [CI, PR metadata, Publication review signal]
-    types: [completed]
   workflow_dispatch:
 
 # Diagnostic results only. GitHub Actions check names are candidate-spoofable;
@@ -21,8 +8,8 @@ on:
 permissions:
   contents: read
 
-# Each run reconciles all open PRs and current queue heads. Coalescing pending
-# events therefore cannot omit a different PR affected by a linked issue edit.
+# Explicit audits reconcile all open PRs and current queue heads.
+# Automatic reconciliation is disabled; local disclosure review precedes merges.
 concurrency:
   group: publication-content-${{ github.repository }}
   cancel-in-progress: false
@@ -41,7 +28,6 @@ jobs:
       contents: read
       pull-requests: read
       issues: read
-      actions: read
       checks: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

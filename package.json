@@ -27,7 +27,8 @@
     "security:scan": "node scripts/security/scan-secrets.mjs",
     "secrets:check": "node scripts/security/scan-secrets.mjs",
     "publication:check": "node scripts/publication/check.mjs",
-    "publication:test": "node --test scripts/publication/*.test.mjs scripts/security/*.test.mjs"
+    "publication:test": "node --test scripts/publication/*.test.mjs scripts/security/*.test.mjs",
+    "check:native": "node scripts/ci/native-check.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

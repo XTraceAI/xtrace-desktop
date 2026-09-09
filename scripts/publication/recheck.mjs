@@ -16,14 +16,6 @@ import {
   sha,
 } from './metadata.mjs';
 
-const events = new Set([
-  'issues',
-  'issue_comment',
-  'schedule',
-  'workflow_run',
-  'workflow_dispatch',
-]);
-
 export async function scanText(repo, texts, source, sourceOptions) {
   const temporary = await mkdtemp(join(tmpdir(), 'publication-content-'));
   try {
@@ -55,38 +47,10 @@ export async function preparePublication({ api, repository, eventName, event, ru
   repositoryName(repository);
   prNumber(runId);
   requireValue(
-    events.has(eventName) &&
-      (event.repository?.full_name === repository || eventName === 'schedule'),
-    'Unsupported publication content event.',
+    eventName === 'workflow_dispatch' && event.repository?.full_name === repository,
+    'Publication audits require an explicit workflow dispatch for this repository.',
   );
   const path = '/repos/' + repository;
-  if (eventName === 'workflow_run') {
-    prNumber(event.workflow_run?.id);
-    const run = await api(path + '/actions/runs/' + event.workflow_run.id);
-    const workflows = await Promise.all(
-      ['ci.yml', 'pr-metadata.yml', 'publication-review.yml'].map((file) =>
-        api(path + '/actions/workflows/' + file),
-      ),
-    );
-    requireValue(
-      workflows.every((workflow) => Number.isSafeInteger(workflow.id) && workflow.id > 0),
-      'Publication signal workflow identities are unavailable.',
-    );
-    const allowedEvents = [
-      ['pull_request', 'merge_group', 'push'],
-      ['pull_request'],
-      ['pull_request_review', 'pull_request_review_comment'],
-    ];
-    requireValue(
-      run.repository?.full_name === repository &&
-        workflows.some(
-          (workflow, index) =>
-            run.workflow_id === workflow.id && allowedEvents[index].includes(run.event),
-        ) &&
-        run.status === 'completed',
-      'Publication signal does not belong to the expected repository workflow.',
-    );
-  }
   // Write terminal failures before scheduling scans. Cancellation, setup failure or
   // timeout cannot strand an in-progress check or preserve a previous success.
   const metadata = await api(path);

@@ -1,78 +1,108 @@
 # Continuous integration
 
-`ci-ok` aggregates source validation and policy diagnostics. Maintainers inspect
-its run provenance and results before merging. Disclosure review remains manual;
-`publication-content` is advisory and must not be configured as an enforcement
-boundary. Candidate Actions workflows can imitate check names under the same
-GitHub Actions app. Source publication tests and scanning run once in CI; the
-standalone duplicate workflow has been removed. These files do not configure
-repository rules or merge changes.
+Routine CI runs on Ubuntu 24.04 for PRs, merge groups and pushes to `main`.
+Native validation runs locally before merging and on a hosted macOS 14 runner
+only when explicitly preparing a downloadable release. Public disclosure review
+remains manual. These workflows do not publish releases or change repository rules.
 
-`CI` runs when a PR opens, reopens, receives code or becomes ready for review,
-on merge groups, and on pushes to `main`. It has six substantive jobs and one
-overall result:
+| Job        | Required hosted coverage                                                                   |
+| ---------- | ------------------------------------------------------------------------------------------ |
+| `policy`   | Reviewed source-commit DCO and substantive contribution descriptions.                      |
+| `ui`       | Types, lint, formatting, unit tests, WebKit and Chromium boot tests.                       |
+| `security` | CI/supply-chain/publication regressions and source-history/diff scanning.                  |
+| `ci-ok`    | Requires all three jobs to succeed; rejects missing, skipped, cancelled or failed results. |
 
-| Job            | Coverage                                                                                  |
-| -------------- | ----------------------------------------------------------------------------------------- |
-| `policy`       | Reviewed source-commit DCO and substantive contribution description checks.               |
-| `rust`         | Formatting, Clippy, tests and installed DTO/plugin integration hooks.                     |
-| `ui`           | Types, lint, formatting, unit tests, WebKit and Chromium boot checks.                     |
-| `security`     | CI/supply-chain/publication regression tests and source-history/diff scanning.            |
-| `supply-chain` | Validated and scanned SBOM, license policy and reproducible notices.                      |
-| `debug-bundle` | Actual native macOS debug build and launch.                                               |
-| `ci-ok`        | Requires all six jobs to succeed; rejects failure, cancellation, missing or skipped jobs. |
+`ci-ok` certifies these hosted checks only. It does not certify native tests,
+dependency notices, local evidence or disclosure approval. Maintainers review
+those results separately before merging. Browser tests install their Linux system
+dependencies even with cached binaries and do not certify native WKWebView behavior.
 
-`PR metadata` handles PR edits. Title/body-only edits run the same reviewed policy
-validator without rebuilding the app or replacing the existing `ci-ok` result.
-A changed target branch instead calls the full CI workflow against the new base.
-Its full result appears under `base-ci / ci-ok`; review that run's current
-head/base rather than an older source run. Separate concurrency groups prevent a
-text edit from cancelling that full validation. A new source push runs normal CI
-again. Current metadata policy failures still block the manual merge decision,
-even when the unchanged source has a previous successful build.
+`PR metadata` handles title/body edits with the same reviewed policy validator.
+A target-branch edit calls the full Linux CI against the new base. Separate
+concurrency groups prevent a text edit from cancelling base-change validation.
+Review `base-ci / ci-ok` when present instead of relying on an older source result.
 
-Publication's default-branch advisory continues to handle mutable content and
-reviews. Its workflow-completion signals follow `CI`, `PR metadata` and the
-unchanged review-event relay. The repository-wide scan matrix runs on the default
-branch; each PR receives only its own `publication-content-advisory` result.
-PR lifecycle and text edits reach the scanner through workflow completion,
-including failed or cancelled runs. Issue/comment events and periodic rescans
-remain enabled. Dispatch manual rescans against the default branch; dispatches
-against another branch or a tag skip the matrix.
+## Native validation before merging
 
-This routing takes effect after merge. Existing workflow runs retain their old
-results; merging does not rewrite them. Verify the next PR event produces a
-default-branch advisory run and only a PR-specific publication result on its head.
+Quit any running XTrace Desktop instance before the launch checks; the smoke
+test does not terminate an existing app, and single-instance behavior prevents a
+second copy from opening. Use a clean macOS checkout containing the exact combined source and current base.
+After fetching the current target branch, record its full commit SHA and integrate
+it into the candidate. Run:
 
-Hook absence before implementation is explicit success with no conformance or
-DTO coverage claimed; installed failures and removal still fail the Rust job
-and aggregate.
+```sh
+pnpm check:native --base FULL_REVIEWED_BASE_SHA
+```
 
-The native jobs use `macos-14` and verify arm64 before the bundle smoke.
-GitHub currently assigns that label to arm64, but the image is scheduled for
-retirement on November 2, 2026. A replacement runner must preserve macOS 14 floor
-testing; changing the deployment target is a separate decision.
-See [runner specifications](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
-and the [macOS 14 image](https://github.com/actions/runner-images/blob/main/images/macos/macos-14-arm64-Readme.md).
+The command requires a clean checkout and verifies the base is an ancestor of the
+tested head. It installs frozen dependencies; runs workspace Rust fmt, strict
+all-target/all-feature Clippy and tests; verifies installed DTO/plugin hooks
+against a temporary copy of that base; generates and scans the SBOM; checks
+notices; and builds and launches the debug app. It stops on the first failure.
+The temporary hook baseline is removed on success and failure. Installed hooks
+cannot disappear compared with the base; absent hooks claim no coverage.
 
-## Reviewed merges while private
+Record the returned source SHA, base SHA and actual macOS version in the PR,
+with test counts and relevant behavior checks. Local validation on a newer OS
+is not macOS 14 compatibility evidence. Source changes or a dirty checkout during
+the run invalidate the result. Before merging, verify the target branch still
+matches the recorded base and repeat affected validation when either input advances.
+Routine PRs require this local evidence; it is a maintainer review requirement,
+not an automatically enforced status check. No self-hosted runner is installed.
 
-While the repository is private, maintainers review and merge one PR at a time
-using squash merges. Before each merge, verify DCO,
-`ci-ok`, advisory publication results and review findings against the exact
-source head and current base. Complete the manual disclosure review in
-[PUBLICATION.md](PUBLICATION.md), including retained content and attachments. Test the combined result against that base. If either source
-or base advances, rerun the affected validation before merging. Missing reviewed
-policy, failed source checks or unresolved blocking findings prevent a merge.
-This procedure grants no merge or publication approval by itself.
+## Native validation for a downloadable release
 
-Merge-queue activation is deferred until a separately approved public launch.
-Keep `merge_group` workflow support and synthetic negative tests. Before enabling
-the queue, demonstrate live group execution, trusted combined-tree scanning,
-current disclosure invalidation and fail-closed aggregation. Start
-with one PR per group and a 60-minute timeout, without redundant strict
-up-to-date rebases. Queue-specific open findings remain activation blockers;
-deferral does not mark them fixed.
+Only an explicit `workflow_dispatch` starts `Release native validation`.
+Select the default branch for the workflow and supply the full SHA of a candidate
+already merged into that branch. The workflow rejects malformed identities,
+non-default workflow refs and candidates outside default-branch history. It checks
+out the exact candidate without persistent credentials and verifies macOS 14 arm64.
+
+The workflow resolves the candidate's first parent as its reviewed baseline and
+runs `pnpm check:native --base REVIEWED_BASE_SHA --release`. Comparing against that
+distinct predecessor detects installed hook declarations removed by the candidate;
+using the candidate itself as its baseline would lose that protection. Earlier
+merged changes still require their own recorded local validation before merging.
+Release mode additionally builds and launches the production app configuration.
+Only the validated, secret-scanned SBOM is uploaded. The recorded candidate SHA
+identifies the tested source; the workflow does not publish a downloadable app.
+
+Before publishing each downloadable version, require successful native release
+validation for its exact source plus the separate acceptance of the final signed
+and notarized downloadable bytes. Signing, notarization, universal builds,
+Gatekeeper behavior and update delivery are not certified by this unsigned app
+launch. Changes to source or packaging invalidate the relevant release evidence.
+
+`macos-14` is scheduled for retirement on November 2, 2026. Before retirement,
+replace it with a runner that preserves actual macOS 14 floor testing. Building
+with a deployment target of 14 on a newer OS does not test that floor.
+See the [runner image](https://github.com/actions/runner-images/blob/main/images/macos/macos-14-arm64-Readme.md).
+
+## Disclosure and manual audits
+
+Run the local current-content disclosure check immediately before every merge,
+after reviewing source/history, final PR text, linked records, comments and
+attachments. Follow [PUBLICATION.md](PUBLICATION.md) for token isolation and
+snapshot preparation. Ordinary PR events, comments, reviews, CI completion and
+time passing do not start hosted publication scans. There is no scheduled sweep
+or review-event relay. Old advisory results may remain on existing PRs and are
+not current approval evidence.
+
+`Publication content advisory` remains available for an explicitly requested
+repository-wide audit through manual dispatch on the default branch. It reads
+reviewed code and never executes a candidate's scanner with metadata credentials.
+It has no automatic enforcement role; its GitHub Actions identity is spoofable.
+
+## Reviewed merges
+
+Serialize reviewed squash merges. Verify current head/base identities, hosted CI
+provenance, DCO, local native results, current disclosure review and unresolved
+findings together. Green Linux CI alone does not authorize a merge or direct push.
+Failed required local checks prevent merging just as failed hosted checks do.
+
+Merge queues remain disabled pending separately approved activation and live
+combined-result acceptance. Linux `merge_group` support and synthetic queue tests
+remain, but they do not certify native or disclosure validation of a live queue.
 
 ## Contribution requirements
 
@@ -118,22 +148,14 @@ pnpm test:ci
 pnpm test:supply-chain
 pnpm --dir apps/desktop/ui exec playwright install webkit chromium
 pnpm e2e
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --all-features --locked
+pnpm check:native --base FULL_REVIEWED_BASE_SHA
 pnpm publication:test
 pnpm secrets:check
-node scripts/supply-chain/install-tools.mjs syft
-node scripts/supply-chain/install-tools.mjs cargo-about
-pnpm sbom
-pnpm notices:check
-pnpm tauri build --debug --bundles app
-node scripts/ci/debug-bundle.mjs 'target/debug/bundle/macos/XTrace Desktop.app'
 ```
 
-Outside Actions, add the installed tool cache directories to `PATH`, or set `SYFT`
-and `CARGO_ABOUT` to their executables. The pinned installer adds them to
-`GITHUB_PATH` in Actions. Syft 1.51.1 produces the schema-validated CycloneDX 1.5
+The native validation command installs the pinned tools and adds their cache
+directories to its child-command `PATH`. For separate supply-chain commands, add
+those directories to `PATH`, or set `SYFT` and `CARGO_ABOUT` explicitly. Syft 1.51.1 produces the schema-validated CycloneDX 1.5
 artifact; cargo-about 0.9.2 and actual npm license texts produce notices. The active
 license allowlist includes MPL-2.0, Zlib and Unicode-3.0. See
 [dependency obligations](DEPENDENCY_LICENSES.md) for retained notices and
@@ -155,16 +177,15 @@ use a pinned plugin checkout, configure its environment and reject skipped
 conformance tests. `node scripts/ci/run-hook.mjs dto` invokes `scripts/ci/check-dto.sh` once
 installed; a generated DTO directory makes that check mandatory. The DTO
 hook must generate into temporary output and reject missing, extra or stale
-committed exports. UI jobs consume those committed exports, and `ci-ok` waits for
-parity. Any installed hook failure or removal of a default-branch declaration
-fails CI.
+committed exports. UI jobs consume those committed exports; the local native result supplies
+the separate parity evidence. Any installed hook failure or removal compared with the reviewed base
+fails native validation.
 
 Actions use pinned commits. Rust, pnpm, Playwright and pinned supply-chain tools
 have caches. Automated dependency-update PRs are deferred until their generated commits and metadata meet
 the sign-off, verification and disclosure requirements; no Dependabot schedule is installed by
-this change. Dependency updates use the normal reviewed PR process. Cache timing,
-manual combined-result validation and default-branch advisory invalidation need
-recorded run evidence before this foundation is accepted. Live queue evidence
+this change. Dependency updates use the normal reviewed PR process. Cache timing and manual combined-result validation need recorded run evidence.
+The first hosted release dispatch remains pending until release preparation. Live queue evidence
 is required before queue activation, rather than during private manual merging.
 
-Rust test and Clippy jobs enable all debug features so fixture-mode tests cannot silently disappear behind an optional feature. Production packaging uses its normal feature set and must still exclude debug fixture assets.
+Native Rust tests and Clippy enable all debug features so fixture-mode tests cannot silently disappear behind an optional feature. Production packaging uses its normal feature set and must still exclude debug fixture assets.
