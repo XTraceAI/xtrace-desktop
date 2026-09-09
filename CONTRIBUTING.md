@@ -57,21 +57,19 @@ Run from the repository root after installing the pinned toolchains and dependen
 
 ```sh
 pnpm check
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --all-features --locked
-pnpm tauri build --debug --bundles app
+pnpm check:native --base FULL_REVIEWED_BASE_SHA
 ```
 
-`pnpm check` runs UI type checking, lint, formatting, and tests. The Rust commands
-check the full workspace separately. A native build proves
+`pnpm check` runs UI type checking, lint, formatting, and tests. The native command requires a clean macOS checkout with the recorded base
+integrated, and checks Rust, dependency notices and native launch separately.
+Record its source SHA, base SHA and actual macOS version in the PR. A native build proves
 packaging, while opening the bundle and exercising the changed interactions
 provides separate runtime evidence. See [DEVELOPING.md](DEVELOPING.md) for
 the current native smoke-test procedure.
 
 Add focused regression tests for behavior changes and run the affected PR's
-acceptance cases. [CI.md](docs/CI.md) lists the automated Rust, UI, browser, DCO,
-secret-scanning and dependency-license checks with local commands. Installed
+acceptance cases. [CI.md](docs/CI.md) separates required Linux CI, local native validation and
+explicit release checks. Hosted macOS checks run only during release preparation. Installed
 DTO and plugin-conformance hooks must pass; absent hooks claim no coverage.
 Publication checks provide advisory disclosure evidence; maintainer review
 remains required. Release packaging needs separate acceptance.

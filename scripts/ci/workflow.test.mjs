@@ -17,11 +17,16 @@ const jobsOf = (workflow) =>
         .matchAll(/^ {2}([a-z0-9-]+):\n([\s\S]*?)(?=^ {2}[a-z0-9-]+:\n|$(?![\s\S]))/gm),
     ].map(([, name, body]) => [name, body]),
   );
+const release = await readFile(
+  new URL('../../.github/workflows/release-native.yml', import.meta.url),
+  'utf8',
+);
+const nativeSource = await readFile(new URL('./native-check.mjs', import.meta.url), 'utf8');
 const jobs = jobsOf(source);
 const editedJobs = jobsOf(metadata);
 
 test('candidate CI jobs have no metadata credentials or grants', () => {
-  assert.equal(Object.keys(jobs).length, 7);
+  assert.equal(Object.keys(jobs).length, 4);
   assert.match(source, /^permissions:\n {2}contents: read\n/m);
   assert.doesNotMatch(
     source.split('\njobs:\n')[0],
@@ -43,16 +48,31 @@ test('candidate CI jobs have no metadata credentials or grants', () => {
   );
 });
 
-test('portable checks use Linux while native and macOS dependency checks retain their platform', () => {
-  for (const name of ['policy', 'ui', 'security', 'ci-ok'])
-    assert.match(jobs[name], /runs-on: ubuntu-24\.04/, name);
+test('routine CI is Linux-only and native work is explicit release preparation', () => {
+  assert.deepEqual(Object.keys(jobs).sort(), ['ci-ok', 'policy', 'security', 'ui']);
+  for (const [name, job] of Object.entries(jobs)) assert.match(job, /runs-on: ubuntu-24\.04/, name);
   assert.match(editedJobs.policy, /runs-on: ubuntu-24\.04/);
-  for (const name of ['rust', 'supply-chain', 'debug-bundle'])
-    assert.match(jobs[name], /runs-on: macos-14/, name);
-  assert.match(jobs['debug-bundle'], /test "\$\(uname -m\)" = arm64/);
+  assert.deepEqual(
+    [
+      ...release
+        .split('\non:\n')[1]
+        .split('\npermissions:')[0]
+        .matchAll(/^ {2}(\w+):/gm),
+    ].map((x) => x[1]),
+    ['workflow_dispatch'],
+  );
+  assert.match(release, /runs-on: macos-14/);
+  assert.match(release, /test "\$\(uname -m\)" = arm64/);
+  assert.match(release, /sw_vers -productVersion/);
+  assert.match(release, /CANDIDATE_SHA.*\^\[0-9a-f\]\{40\}\$/);
+  assert.match(release, /test "\$WORKFLOW_REF" = "refs\/heads\/\$DEFAULT_BRANCH"/);
+  assert.match(release, /git merge-base --is-ancestor "\$CANDIDATE_SHA"/);
+  assert.match(release, /ref: \$\{\{ inputs\.candidate_sha \}\}/);
+  assert.match(release, /REVIEWED_BASE_SHA="\$\(git rev-parse "\$CANDIDATE_SHA\^1"\)"/);
+  assert.match(release, /pnpm check:native --base "\$REVIEWED_BASE_SHA" --release/);
+  assert.doesNotMatch(release, /GITHUB_TOKEN|GH_TOKEN|secrets\.|contents: write|gh release/);
+  assert.match(release, /persist-credentials: false/);
   assert.match(jobs.ui, /path: ~\/\.cache\/ms-playwright/);
-  assert.match(jobs.ui, /key: playwright-ubuntu-24\.04-x64-/);
-  // Browser binaries may be cached; Linux system libraries must still be installed.
   assert.match(jobs.ui, /playwright install --with-deps webkit chromium/);
 });
 
@@ -135,24 +155,22 @@ test('consolidated jobs retain each real command and do not blanket-accept failu
   ])
     assert.ok(jobs.ui.includes(command), command);
   for (const command of [
-    'cargo fmt',
-    'cargo clippy',
-    'cargo test',
-    'run-hook.mjs plugin-conformance',
-    'run-hook.mjs dto',
-  ])
-    assert.ok(jobs.rust.includes(command), command);
-  assert.match(jobs.rust, /CI_TRUSTED_ROOT: \$\{\{ github\.workspace \}\}\/\.ci-trusted/);
-  for (const command of [
     'pnpm test:ci',
     'pnpm test:supply-chain',
     'pnpm publication:test',
     'scan-secrets.mjs --diff',
   ])
     assert.ok(jobs.security.includes(command), command);
-  for (const command of ['pnpm sbom', 'pnpm notices:check', '--content artifacts/sbom.cdx.json'])
-    assert.ok(jobs['supply-chain'].includes(command), command);
-  assert.match(jobs['debug-bundle'], /tauri build --debug/);
-  assert.match(jobs['debug-bundle'], /scripts\/ci\/debug-bundle\.mjs/);
+  for (const command of [
+    "['fmt', '--all'",
+    "['clippy', '--workspace'",
+    "['test', '--workspace'",
+    "['sbom']",
+    "['notices:check']",
+    "'--debug'",
+    "'plugin-conformance', 'dto'",
+  ])
+    assert.ok(nativeSource.replace(/\s/g, '').includes(command.replace(/\s/g, '')), command);
+  assert.match(nativeSource, /CI_TRUSTED_ROOT = trusted/);
   assert.doesNotMatch(source + metadata, /continue-on-error|\|\| true/);
 });

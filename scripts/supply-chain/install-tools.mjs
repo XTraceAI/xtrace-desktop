@@ -51,7 +51,7 @@ export function extractSyft(archive) {
   throw new Error('Tool archive has no regular Syft executable.');
 }
 
-async function installSyft() {
+export async function installSyft() {
   const asset = archives[`${platform()}-${arch()}`];
   if (!asset) throw new Error('Unsupported tool platform.');
   const [suffix, expected] = asset;
@@ -88,7 +88,7 @@ async function installSyft() {
   return directory;
 }
 
-async function installAbout() {
+export async function installAbout() {
   const directory = join(cache, `cargo-about-${aboutVersion}`);
   const executable = join(directory, 'bin/cargo-about');
   const options = {
