@@ -131,7 +131,9 @@ These checks exercise F1's baseline shapes for M-02/M-03/M-04/M-05/M-10. They do
 not implement the production metric engine or establish whole-rule coverage.
 Prices, unknown counters, tie-breaking by native sequence, other host adapters,
 window boundaries and other edge cases require their owning fixtures and product
-tests. The bounded reference checker rejects unsupported F1 shapes.
+tests. The bounded reference checker rejects unsupported F1 shapes. It checks the
+persisted session host and conflict flag as well as record flags: contradictory
+platform, surface or native session identity cannot pass reference acceptance.
 
 ## Ownership and test loop
 

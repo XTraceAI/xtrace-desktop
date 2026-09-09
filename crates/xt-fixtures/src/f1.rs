@@ -14,7 +14,17 @@ pub(crate) fn assert_rows(fixture: &Fixture, store: &Store) -> Result<()> {
             "reference assertions require one Claude session",
         ));
     }
-    let rows = store.records(&sessions[0].metadata.session_id)?;
+    let session = store
+        .session(&sessions[0].metadata.session_id)?
+        .ok_or_else(|| invalid("F1", "reference session must exist in the database"))?;
+    // Record metadata can mark the session conflicted without flagging any row.
+    if session.meta.host != Host::Claude || session.has_conflict {
+        return Err(invalid(
+            "F1",
+            "reference session must be Claude and have no conflicts",
+        ));
+    }
+    let rows = store.records(&session.meta.session_id)?;
     if rows.is_empty()
         || rows
             .iter()

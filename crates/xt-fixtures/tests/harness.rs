@@ -160,6 +160,49 @@ fn f1_independent_arithmetic_and_two_logical_builds_agree() {
 }
 
 #[test]
+fn f1_reference_checks_persisted_session_identity_and_conflicts() {
+    for (field, matching, conflicting) in [
+        ("source_platform", "claude", "codex"),
+        ("source_surface", "cli", "desktop"),
+        (
+            "native_session_id",
+            "00000000-0000-4000-8000-000000000001",
+            "00000000-0000-4000-8000-000000000002",
+        ),
+    ] {
+        for conflict in [false, true] {
+            let directory = editable("F1");
+            edit_record(directory.path(), 0, |record| {
+                record[field] = json!(if conflict { conflicting } else { matching });
+            });
+            let fixture = Fixture::load(directory.path()).unwrap();
+            let database = fixture.build_db(true).unwrap();
+            let session_id = &fixture.sessions()[0].metadata.session_id;
+            let stored = database.store().session(session_id).unwrap().unwrap();
+            assert_eq!(stored.has_conflict, conflict, "{field}");
+            assert!(
+                database
+                    .store()
+                    .records(session_id)
+                    .unwrap()
+                    .iter()
+                    .all(|r| !r.has_conflict),
+                "{field} conflict belongs to the session, not its records"
+            );
+            if conflict {
+                let error = fixture.assert_reference().unwrap_err().to_string();
+                assert!(
+                    error.contains("session") && error.contains("conflicts"),
+                    "{error}"
+                );
+            } else {
+                fixture.assert_reference().unwrap();
+            }
+        }
+    }
+}
+
+#[test]
 fn wal_reader_snapshot_survives_a_writer_and_owner_cleans_up() {
     let fixture = f1();
     let mut owner = fixture.build_db(true).unwrap();
