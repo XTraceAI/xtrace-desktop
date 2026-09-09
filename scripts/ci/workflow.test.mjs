@@ -68,7 +68,8 @@ test('routine CI is Linux-only and native work is explicit release preparation',
   assert.match(release, /test "\$WORKFLOW_REF" = "refs\/heads\/\$DEFAULT_BRANCH"/);
   assert.match(release, /git merge-base --is-ancestor "\$CANDIDATE_SHA"/);
   assert.match(release, /ref: \$\{\{ inputs\.candidate_sha \}\}/);
-  assert.match(release, /pnpm check:native --base "\$CANDIDATE_SHA" --release/);
+  assert.match(release, /REVIEWED_BASE_SHA="\$\(git rev-parse "\$CANDIDATE_SHA\^1"\)"/);
+  assert.match(release, /pnpm check:native --base "\$REVIEWED_BASE_SHA" --release/);
   assert.doesNotMatch(release, /GITHUB_TOKEN|GH_TOKEN|secrets\.|contents: write|gh release/);
   assert.match(release, /persist-credentials: false/);
   assert.match(jobs.ui, /path: ~\/\.cache\/ms-playwright/);

@@ -58,7 +58,11 @@ already merged into that branch. The workflow rejects malformed identities,
 non-default workflow refs and candidates outside default-branch history. It checks
 out the exact candidate without persistent credentials and verifies macOS 14 arm64.
 
-The workflow runs `pnpm check:native --base CANDIDATE_SHA --release`.
+The workflow resolves the candidate's first parent as its reviewed baseline and
+runs `pnpm check:native --base REVIEWED_BASE_SHA --release`. Comparing against that
+distinct predecessor detects installed hook declarations removed by the candidate;
+using the candidate itself as its baseline would lose that protection. Earlier
+merged changes still require their own recorded local validation before merging.
 Release mode additionally builds and launches the production app configuration.
 Only the validated, secret-scanned SBOM is uploaded. The recorded candidate SHA
 identifies the tested source; the workflow does not publish a downloadable app.
