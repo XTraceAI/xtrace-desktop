@@ -22,6 +22,15 @@ overall result:
 | `debug-bundle` | Actual native macOS debug build and launch.                                               |
 | `ci-ok`        | Requires all six jobs to succeed; rejects failure, cancellation, missing or skipped jobs. |
 
+`policy`, `ui`, `security` and `ci-ok` run on `ubuntu-24.04`. PR text-edit policy
+checks use the same Linux runner. WebKit and Chromium boot tests run on Linux;
+Playwright installs their system dependencies even when browser binaries are
+cached. These browser checks do not certify native WKWebView behavior.
+
+Workspace Rust checks, dependency notices/SBOM generation and the native debug
+build/launch remain on `macos-14`. This preserves native compilation and macOS
+dependency coverage while avoiding macOS runner charges for portable checks.
+
 `PR metadata` handles PR edits. Title/body-only edits run the same reviewed policy
 validator without rebuilding the app or replacing the existing `ci-ok` result.
 A changed target branch instead calls the full CI workflow against the new base.
@@ -36,8 +45,13 @@ reviews. Its workflow-completion signals follow `CI`, `PR metadata` and the
 unchanged review-event relay. The repository-wide scan matrix runs on the default
 branch; each PR receives only its own `publication-content-advisory` result.
 PR lifecycle and text edits reach the scanner through workflow completion,
-including failed or cancelled runs. Issue/comment events and periodic rescans
-remain enabled. Dispatch manual rescans against the default branch; dispatches
+including failed or cancelled runs. Issue/comment events remain enabled. A daily
+sweep at 07:17 UTC replaces the 15-minute sweep, reducing scheduled full-repository
+runs from 96 to one per day. Changes without a supported event, such as commit
+comments and manually edited relationships, can wait until that sweep; GitHub
+may delay schedules further. Run the current local disclosure check immediately
+before each manual merge rather than relying on the scheduled result.
+Dispatch manual rescans against the default branch; dispatches
 against another branch or a tag skip the matrix.
 
 This routing takes effect after merge. Existing workflow runs retain their old

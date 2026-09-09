@@ -6,9 +6,9 @@ on:
   issue_comment:
     types: [created, edited, deleted]
   # GitHub Actions has no commit-comment or relationship-edit trigger.
-  # Reconcile those changes periodically as well as on delivered events.
+  # Use a daily backstop for those changes; delivered events still trigger scans.
   schedule:
-    - cron: '7,22,37,52 * * * *'
+    - cron: '17 7 * * *'
   workflow_run:
     # Run the repository-wide matrix on the default branch. Each PR receives
     # only its own explicit publication-content-advisory check.

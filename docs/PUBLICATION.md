@@ -304,8 +304,11 @@ Comments on the source PR's commits are included, with complete source-commit
 pagination required. GitHub Actions does not support a commit-comment trigger;
 the [documented workflow triggers](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)
 are a subset of webhook events. Commit-comment creation, edits/deletions and manual
-relationship changes use a 15-minute scheduled reconciliation. Scheduled
-runs can be delayed by GitHub; this is eventual detection, not an instantaneous
+relationship changes use daily scheduled reconciliation at 07:17 UTC. This
+backstop reduces idle runner usage; delivered PR, review, issue and comment
+events still trigger reconciliation. Changes without an event may wait until
+the next daily sweep, and scheduled runs can be delayed by GitHub. This is
+eventual detection, not an instantaneous
 publication barrier. Run the local current-content check immediately before a
 publication decision. Repositories with 1,000 or more commit comments exceed the
 bounded API reader and fail closed until a paginated incremental design is added.

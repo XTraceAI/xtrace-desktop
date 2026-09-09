@@ -22,7 +22,7 @@ env:
 
 jobs:
   policy:
-    runs-on: macos-14
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -89,7 +89,7 @@ jobs:
           CI_TRUSTED_ROOT: ${{ github.workspace }}/.ci-trusted
 
   ui:
-    runs-on: macos-14
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -106,9 +106,9 @@ jobs:
 
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ~/Library/Caches/ms-playwright
-          key: playwright-macos-14-arm64-${{ hashFiles('pnpm-lock.yaml') }}
-      - run: pnpm --dir apps/desktop/ui exec playwright install webkit chromium
+          path: ~/.cache/ms-playwright
+          key: playwright-ubuntu-24.04-x64-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm --dir apps/desktop/ui exec playwright install --with-deps webkit chromium
       - run: pnpm e2e
         env:
           E2E_PORT: '5174'
@@ -148,7 +148,7 @@ jobs:
       - run: pnpm notices:check
 
   security:
-    runs-on: macos-14
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -196,7 +196,7 @@ jobs:
     name: ci-ok
     if: ${{ always() }}
     needs: [policy, rust, ui, supply-chain, security, debug-bundle]
-    runs-on: macos-14
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

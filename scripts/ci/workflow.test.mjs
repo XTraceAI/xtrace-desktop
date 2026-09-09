@@ -43,6 +43,19 @@ test('candidate CI jobs have no metadata credentials or grants', () => {
   );
 });
 
+test('portable checks use Linux while native and macOS dependency checks retain their platform', () => {
+  for (const name of ['policy', 'ui', 'security', 'ci-ok'])
+    assert.match(jobs[name], /runs-on: ubuntu-24\.04/, name);
+  assert.match(editedJobs.policy, /runs-on: ubuntu-24\.04/);
+  for (const name of ['rust', 'supply-chain', 'debug-bundle'])
+    assert.match(jobs[name], /runs-on: macos-14/, name);
+  assert.match(jobs['debug-bundle'], /test "\$\(uname -m\)" = arm64/);
+  assert.match(jobs.ui, /path: ~\/\.cache\/ms-playwright/);
+  assert.match(jobs.ui, /key: playwright-ubuntu-24\.04-x64-/);
+  // Browser binaries may be cached; Linux system libraries must still be installed.
+  assert.match(jobs.ui, /playwright install --with-deps webkit chromium/);
+});
+
 test('credentialed contribution checks run only reviewed source', () => {
   for (const job of [jobs.policy, editedJobs.policy]) {
     assert.equal(job.match(/actions\/checkout@/g).length, 1);
@@ -115,7 +128,11 @@ test('text edits run metadata only; target-branch edits call the full CI and can
 });
 
 test('consolidated jobs retain each real command and do not blanket-accept failures', () => {
-  for (const command of ['pnpm check', 'playwright install webkit chromium', 'pnpm e2e'])
+  for (const command of [
+    'pnpm check',
+    'playwright install --with-deps webkit chromium',
+    'pnpm e2e',
+  ])
     assert.ok(jobs.ui.includes(command), command);
   for (const command of [
     'cargo fmt',
