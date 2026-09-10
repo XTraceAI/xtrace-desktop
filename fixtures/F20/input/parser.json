@@ -1,0 +1,91 @@
+{
+  "scope": "parser-only",
+  "cases": [
+    {
+      "name": "future-entrypoint",
+      "line": {
+        "uuid": "02000000-0000-4000-8000-000000000010",
+        "type": "user",
+        "entrypoint": "future.desktop.v3",
+        "sessionId": "raw-native",
+        "message": {
+          "content": []
+        }
+      },
+      "expected_variant": "record"
+    },
+    {
+      "name": "distinct-line-identities",
+      "line": {
+        "uuid": "02000000-0000-4000-8000-000000000011",
+        "type": "assistant",
+        "entrypoint": "native-entry",
+        "source_surface": "wire-surface",
+        "native_session_id": "wire-native",
+        "sessionId": "raw-native",
+        "conversation_id": "wire-canonical",
+        "source_platform": "future-agent",
+        "started_at": "2026-09-07T11:00:00Z",
+        "message": {
+          "content": []
+        }
+      },
+      "expected_variant": "record"
+    },
+    {
+      "name": "reader-header-context",
+      "line": {
+        "uuid": "02000000-0000-4000-8000-000000000012",
+        "type": "user"
+      },
+      "expected_variant": "record",
+      "context": {
+        "conversation_id": "cursor-canonical",
+        "native_session_id": "cursor-native",
+        "source_platform": "cursor",
+        "source_surface": "future.header",
+        "started_at": "2026-09-07T11:00:00Z",
+        "source": "readers_cli"
+      }
+    },
+    {
+      "name": "unknown-summary-time",
+      "line": {
+        "type": "system",
+        "subtype": "stop_hook_summary",
+        "uuid": "02000000-0000-4000-8000-000000000013",
+        "timestamp": null,
+        "source_surface": "native-surface",
+        "native_session_id": "line-native",
+        "sessionId": "raw-native"
+      },
+      "expected_variant": "structural",
+      "context": {
+        "conversation_id": "header-canonical",
+        "native_session_id": "header-native",
+        "source_surface": "header-surface"
+      }
+    },
+    {
+      "name": "future-native-type",
+      "line": {
+        "type": "future_native_event",
+        "uuid": "02000000-0000-4000-8000-000000000014",
+        "subtype": false,
+        "message": []
+      },
+      "expected_variant": "inert"
+    },
+    {
+      "name": "measured-empty-string",
+      "line": {
+        "uuid": "02000000-0000-4000-8000-000000000015",
+        "type": "user",
+        "message": {
+          "content": ""
+        }
+      },
+      "expected_variant": "record"
+    }
+  ]
+}
