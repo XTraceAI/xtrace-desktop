@@ -6,7 +6,7 @@ automatically from the native app.
 
 ## HTTP behavior
 
-Run `cargo test -p xt-server import_conversation --locked`. Seven tests use real
+Run `cargo test -p xt-server import_conversation --locked`. Eight tests use real
 loopback HTTP connections and disposable SQLite databases:
 
 | Setup and action                                                                                                                     | Expected result                                                                                                                                                                                                                                                                             |
@@ -61,3 +61,7 @@ The protocol and remaining producer limits are documented in
 [the wire contract](../wire-contract.md). These focused cases do not claim that
 multi-destination capture, other host producers, complete session-health fixtures
 or production capture-verification consumers are finished.
+
+Identity bounds apply after message metadata is resolved as well as to top-level
+arguments. Oversized surface/native-ID labels through all four message aliases
+fail without rows, receipts or events; 512-byte multibyte labels round-trip.

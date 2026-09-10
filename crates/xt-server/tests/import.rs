@@ -454,3 +454,38 @@ async fn import_conversation_concurrent_duplicates_remain_one_record() {
     );
     assert_eq!(count(&server.sql(), "capture_receipts"), 2);
 }
+
+#[tokio::test]
+async fn import_conversation_bounds_message_derived_identity_labels() {
+    let mut server = Server::new().await;
+    for key in [
+        "source_surface",
+        "entrypoint",
+        "native_session_id",
+        "sessionId",
+    ] {
+        for value in ["x".repeat(513), "é".repeat(257)] {
+            let mut record = poor("oversized");
+            record[key] = json!(value);
+            let mut input = args("label-probe", vec![record]);
+            input["source_platform"] = json!("future-host");
+            let before = snapshot(&server.sql());
+            failure(&server.import(input).await);
+            assert_eq!(snapshot(&server.sql()), before);
+            assert!(server.events.try_recv().is_err());
+        }
+        let mut record = poor(key);
+        record[key] = json!("é".repeat(256));
+        let mut input = args(key, vec![record]);
+        input["source_platform"] = json!("future-host");
+        success(&server.import(input).await);
+        let session = server.store().session(key).unwrap().unwrap();
+        let saved = if ["source_surface", "entrypoint"].contains(&key) {
+            session.meta.surface.unwrap()
+        } else {
+            session.meta.native_session_id.unwrap()
+        };
+        assert_eq!(saved.len(), 512);
+        server.changed().await;
+    }
+}

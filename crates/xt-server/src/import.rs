@@ -102,6 +102,18 @@ pub(crate) fn apply(store: &mut Store, args: ImportArgs) -> Result<ImportOutcome
         cursor: None,
     };
     let session = resolve_session(&batch).map_err(|_| "Import session identities disagree")?;
+    if !label(&session.session_id)
+        || [
+            &session.source_platform,
+            &session.surface,
+            &session.native_session_id,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|value| !label(value))
+    {
+        return Err("Import identity labels must be nonempty and bounded");
+    }
     let receipt = CaptureReceipt {
         receipt_id: uuid::Uuid::new_v4().to_string(),
         session_id: session.session_id,
