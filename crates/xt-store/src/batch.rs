@@ -1,0 +1,202 @@
+//! Restricted storage composition for ingestion. Supplied coverage remains an
+//! observation of the caller's payload; this module never generates a digest or
+//! returns a plugin acknowledgement. Results escape only after the sole commit.
+
+use crate::{
+    CanonicalRecord, Error, Result, SessionMeta, SessionSource, Store, WriteStats,
+    ingest::{
+        self, CaptureReceipt, RecordCoverage, RecordSourceObservation, SessionSourceObservation,
+    },
+    write,
+};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use std::collections::BTreeSet;
+
+/// One canonical session and its submitted facts. Empty record batches may
+/// update metadata/cursors, but cannot manufacture receipt coverage.
+/// UUID-level evidence requires every occurrence of that UUID to be accepted;
+/// mixed accepted/rejected occurrences cannot identify the evidence's input.
+pub struct IngestBatch<'a> {
+    pub session: &'a SessionMeta,
+    pub records: &'a [CanonicalRecord],
+    pub keep_content: bool,
+    pub session_sources: &'a [SessionSourceObservation],
+    pub record_sources: &'a [RecordSourceObservation],
+    pub receipt: Option<SubmittedReceipt<'a>>,
+    pub cursor: Option<&'a SourceCursor>,
+}
+
+impl<'a> IngestBatch<'a> {
+    pub fn new(
+        session: &'a SessionMeta,
+        records: &'a [CanonicalRecord],
+        keep_content: bool,
+    ) -> Self {
+        Self {
+            session,
+            records,
+            keep_content,
+            session_sources: &[],
+            record_sources: &[],
+            receipt: None,
+            cursor: None,
+        }
+    }
+}
+
+/// Precomputed receipt facts. Reusing a sealed receipt ID fails atomically;
+/// idempotent delivery and acknowledgement policy belong to the ingest writer.
+pub struct SubmittedReceipt<'a> {
+    pub receipt: &'a CaptureReceipt,
+    pub coverage: &'a [RecordCoverage],
+}
+
+/// Positions are monotonically nondecreasing within a source/key. A reader that
+/// needs to represent a new/truncated source generation must use a distinct key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceCursor {
+    pub source: SessionSource,
+    pub cursor_key: String,
+    pub position: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordDisposition {
+    Inserted,
+    /// A missing record field or session metadata field was filled.
+    Enriched,
+    /// Same canonical identity; known conflicting values may set a sticky flag.
+    Duplicate,
+    RejectedOwnership,
+    RejectedType,
+    DroppedMissingUuid,
+}
+
+impl RecordDisposition {
+    pub fn is_accepted(self) -> bool {
+        matches!(self, Self::Inserted | Self::Enriched | Self::Duplicate)
+    }
+}
+
+/// One result per input, in input order. An index disambiguates repeated UUIDs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordOutcome {
+    pub input_index: usize,
+    /// None for missing/blank UUIDs; accepted/rejected valid identities are exact.
+    pub uuid: Option<String>,
+    pub disposition: RecordDisposition,
+    /// Sticky row conflict state immediately after this input. A later input of
+    /// the same UUID can add a conflict; this is not a per-field provenance mask.
+    pub stored_has_conflict: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IngestBatchOutcome {
+    /// Legacy per-input counters: `ignored` also includes ownership/type rejects.
+    pub stats: WriteStats,
+    pub records: Vec<RecordOutcome>,
+}
+
+impl Store {
+    /// Apply one fixed batch under one immediate transaction. Any validation,
+    /// write or commit failure returns no successful outcome and rolls back all
+    /// participating facts. There is no callback, nested commit or event hook.
+    pub fn apply_ingest_batch(&mut self, batch: &IngestBatch<'_>) -> Result<IngestBatchOutcome> {
+        write::validate_session(batch.session)?;
+        if batch
+            .session_sources
+            .iter()
+            .any(|observation| observation.session_id != batch.session.session_id)
+            || batch
+                .receipt
+                .as_ref()
+                .is_some_and(|submitted| submitted.receipt.session_id != batch.session.session_id)
+        {
+            return Err(Error::InvalidInput(
+                "batch facts must belong to its canonical session",
+            ));
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        write::upsert_session(&transaction, batch.session, batch.keep_content)?;
+        let outcome = write::upsert_records(
+            &transaction,
+            &batch.session.session_id,
+            batch.records,
+            batch.keep_content,
+        )?;
+        let rejected = outcome
+            .records
+            .iter()
+            .filter(|record| !record.disposition.is_accepted())
+            .filter_map(|record| record.uuid.as_deref())
+            .collect::<BTreeSet<_>>();
+        let accepted = outcome
+            .records
+            .iter()
+            .filter(|record| record.disposition.is_accepted())
+            .filter_map(|record| record.uuid.as_deref())
+            .filter(|uuid| !rejected.contains(uuid))
+            .collect::<BTreeSet<_>>();
+        // A stored UUID outside this submission (or rejected by the merger) must
+        // not acquire this batch's source/receipt evidence just because it exists.
+        // Any rejected occurrence makes UUID-level evidence ambiguous, even if
+        // another occurrence was accepted. Known-field conflicts remain accepted.
+        if batch
+            .record_sources
+            .iter()
+            .any(|observation| !accepted.contains(observation.uuid.as_str()))
+            || batch.receipt.as_ref().is_some_and(|submitted| {
+                submitted
+                    .coverage
+                    .iter()
+                    .any(|coverage| !accepted.contains(coverage.record_uuid.as_str()))
+            })
+        {
+            return Err(Error::InvalidInput(
+                "record facts require a submitted UUID with no rejected occurrences",
+            ));
+        }
+        for observation in batch.session_sources {
+            ingest::observe_session_source(&transaction, observation)?;
+        }
+        for observation in batch.record_sources {
+            ingest::observe_record_source(&transaction, observation)?;
+        }
+        if let Some(submitted) = &batch.receipt {
+            ingest::insert_receipt(&transaction, submitted.receipt, submitted.coverage)?;
+        }
+        if let Some(cursor) = batch.cursor {
+            advance_cursor(&transaction, cursor)?;
+        }
+        transaction.commit()?;
+        Ok(outcome)
+    }
+
+    pub fn source_cursor(&self, source: SessionSource, key: &str) -> Result<Option<SourceCursor>> {
+        Ok(self.connection.query_row(
+            "SELECT source,cursor_key,position,updated_at FROM source_cursors WHERE source=?1 AND cursor_key=?2",
+            params![source,key], |row| Ok(SourceCursor { source: row.get(0)?, cursor_key: row.get(1)?, position: row.get(2)?, updated_at: row.get(3)? }),
+        ).optional()?)
+    }
+}
+
+fn advance_cursor(connection: &Connection, cursor: &SourceCursor) -> Result<()> {
+    let changed = connection.execute(
+        "INSERT INTO source_cursors(source,cursor_key,position,updated_at) VALUES (?1,?2,?3,?4)
+         ON CONFLICT(source,cursor_key) DO UPDATE SET position=excluded.position,
+             updated_at=max(updated_at,excluded.updated_at) WHERE excluded.position >= position",
+        params![
+            cursor.source,
+            cursor.cursor_key,
+            cursor.position,
+            cursor.updated_at
+        ],
+    )?;
+    if changed == 0 {
+        return Err(Error::InvalidInput("source cursor cannot regress"));
+    }
+    Ok(())
+}

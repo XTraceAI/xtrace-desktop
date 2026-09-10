@@ -3,7 +3,7 @@
 //! this module stores their exact values and seals each submitted coverage set.
 
 use crate::{Error, Host, Result, SessionSource, Store, model::text_enum, timestamp};
-use rusqlite::{TransactionBehavior, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,14 +85,7 @@ pub struct ToolEvent {
 impl Store {
     /// Monotonic observation interval; this is not a delivery receipt.
     pub fn observe_session_source(&mut self, observation: &SessionSourceObservation) -> Result<()> {
-        self.connection.execute(
-            "INSERT INTO session_sources(session_id,source,first_seen_at,last_seen_at) VALUES (?1,?2,?3,?4)
-             ON CONFLICT(session_id,source) DO UPDATE SET
-                 first_seen_at=min(first_seen_at,excluded.first_seen_at),
-                 last_seen_at=max(last_seen_at,excluded.last_seen_at)",
-            params![observation.session_id, observation.source, observation.first_seen_at, observation.last_seen_at],
-        )?;
-        Ok(())
+        observe_session_source(&self.connection, observation)
     }
 
     pub fn session_sources(&self, session_id: &str) -> Result<Vec<SessionSourceObservation>> {
@@ -106,13 +99,7 @@ impl Store {
     /// Accumulate supplied presence/conflict bits without reading stored content
     /// or claiming that these observations were covered by a plugin receipt.
     pub fn observe_record_source(&mut self, observation: &RecordSourceObservation) -> Result<()> {
-        self.connection.execute(
-            "INSERT INTO record_sources(uuid,source,field_presence,conflict_flags) VALUES (?1,?2,?3,?4)
-             ON CONFLICT(uuid,source) DO UPDATE SET field_presence=field_presence | excluded.field_presence,
-                 conflict_flags=conflict_flags | excluded.conflict_flags",
-            params![observation.uuid, observation.source, observation.field_presence, observation.conflict_flags],
-        )?;
-        Ok(())
+        observe_record_source(&self.connection, observation)
     }
 
     pub fn record_sources(&self, uuid: &str) -> Result<Vec<RecordSourceObservation>> {
@@ -131,29 +118,10 @@ impl Store {
         receipt: &CaptureReceipt,
         coverage: &[RecordCoverage],
     ) -> Result<()> {
-        if coverage.is_empty() {
-            return Err(Error::InvalidInput(
-                "capture receipt requires submitted record coverage",
-            ));
-        }
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute(
-            "INSERT INTO capture_receipts(receipt_id,session_id,surface,received_at) VALUES (?1,?2,?3,?4)",
-            params![receipt.receipt_id, receipt.session_id, receipt.surface, receipt.received_at],
-        )?;
-        for item in coverage {
-            transaction.execute(
-                "INSERT INTO capture_record_coverage(receipt_id,record_uuid,session_id,metric_field_mask,measurement_revision,digest_schema_version)
-                 VALUES (?1,?2,?3,?4,?5,?6)",
-                params![receipt.receipt_id, item.record_uuid, receipt.session_id, item.metric_field_mask, item.measurement_revision, item.digest_schema_version],
-            )?;
-        }
-        transaction.execute(
-            "UPDATE capture_receipts SET coverage_sealed=1 WHERE receipt_id=?1",
-            [&receipt.receipt_id],
-        )?;
+        insert_receipt(&transaction, receipt, coverage)?;
         transaction.commit()?;
         Ok(())
     }
@@ -258,4 +226,59 @@ impl Store {
             timestamp:row.get(8)?,
         }))?.collect::<rusqlite::Result<_>>()?)
     }
+}
+
+pub(crate) fn observe_session_source(
+    connection: &Connection,
+    observation: &SessionSourceObservation,
+) -> Result<()> {
+    connection.execute(
+        "INSERT INTO session_sources(session_id,source,first_seen_at,last_seen_at) VALUES (?1,?2,?3,?4)
+         ON CONFLICT(session_id,source) DO UPDATE SET
+             first_seen_at=min(first_seen_at,excluded.first_seen_at),
+             last_seen_at=max(last_seen_at,excluded.last_seen_at)",
+        params![observation.session_id, observation.source, observation.first_seen_at, observation.last_seen_at],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn observe_record_source(
+    connection: &Connection,
+    observation: &RecordSourceObservation,
+) -> Result<()> {
+    connection.execute(
+        "INSERT INTO record_sources(uuid,source,field_presence,conflict_flags) VALUES (?1,?2,?3,?4)
+         ON CONFLICT(uuid,source) DO UPDATE SET field_presence=field_presence | excluded.field_presence,
+             conflict_flags=conflict_flags | excluded.conflict_flags",
+        params![observation.uuid, observation.source, observation.field_presence, observation.conflict_flags],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn insert_receipt(
+    connection: &Connection,
+    receipt: &CaptureReceipt,
+    coverage: &[RecordCoverage],
+) -> Result<()> {
+    if coverage.is_empty() {
+        return Err(Error::InvalidInput(
+            "capture receipt requires submitted record coverage",
+        ));
+    }
+    connection.execute(
+        "INSERT INTO capture_receipts(receipt_id,session_id,surface,received_at) VALUES (?1,?2,?3,?4)",
+        params![receipt.receipt_id, receipt.session_id, receipt.surface, receipt.received_at],
+    )?;
+    for item in coverage {
+        connection.execute(
+            "INSERT INTO capture_record_coverage(receipt_id,record_uuid,session_id,metric_field_mask,measurement_revision,digest_schema_version)
+             VALUES (?1,?2,?3,?4,?5,?6)",
+            params![receipt.receipt_id, item.record_uuid, receipt.session_id, item.metric_field_mask, item.measurement_revision, item.digest_schema_version],
+        )?;
+    }
+    connection.execute(
+        "UPDATE capture_receipts SET coverage_sealed=1 WHERE receipt_id=?1",
+        [&receipt.receipt_id],
+    )?;
+    Ok(())
 }
