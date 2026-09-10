@@ -367,6 +367,47 @@ fn writer_projection_is_versioned_content_free_nullable_and_precise() {
 }
 
 #[test]
+fn writer_start_identity_compares_precise_instants_not_rfc3339_spelling() {
+    for (left, right) in [
+        ("2026-09-07T01:00:00Z", "2026-09-07T02:00:00+01:00"),
+        (
+            "2026-09-07T01:00:00.123456789012Z",
+            "2026-09-07T02:00:00.1234567890120+01:00",
+        ),
+    ] {
+        let mut db = TempDb::empty().unwrap();
+        let mut native = context(SessionSource::Transcript);
+        native.started_at = Some(left.into());
+        let mut record = poor("start");
+        record.context.started_at = Some(right.into());
+        record.source.started_at = Some(left.into());
+        write_batch(db.store_mut(), &request(&native, &[record.clone()], None)).unwrap();
+        assert_eq!(
+            db.store()
+                .session("cursor-native")
+                .unwrap()
+                .unwrap()
+                .meta
+                .started_at_ms,
+            Some(
+                chrono::DateTime::parse_from_rfc3339(left)
+                    .unwrap()
+                    .timestamp_millis()
+            )
+        );
+        let before = db.store().session("cursor-native").unwrap();
+        for different in ["2026-09-07T01:00:00.123456789013Z", "invalid"] {
+            record.source.started_at = Some(different.into());
+            assert!(
+                write_batch(db.store_mut(), &request(&native, &[record.clone()], None)).is_err()
+            );
+            assert_eq!(db.store().session("cursor-native").unwrap(), before);
+            assert_eq!(db.store().counts().unwrap().records, 1);
+        }
+    }
+}
+
+#[test]
 fn writer_identity_unknowns_limits_and_native_cursor_progress_are_explicit() {
     let mut db = TempDb::empty().unwrap();
     let mut context = context(SessionSource::ReadersCli);
@@ -870,4 +911,67 @@ fn capture_receipts_empty_retry_cannot_commit_metadata_conflicts_or_cursor() {
             Some(cursor)
         );
     }
+}
+
+#[test]
+fn writer_retained_content_conflict_invalidates_cached_receipt_without_new_measurements() {
+    for tool_input in [false, true] {
+        let mut db = TempDb::empty().unwrap();
+        let plugin = context(SessionSource::Plugin);
+        let native = context(SessionSource::ReadersCli);
+        let receipt = receipt("retained");
+        let rows = [rich("retained")];
+        let mut original = request(&plugin, &rows, Some(&receipt));
+        original.keep_content = true;
+        write_batch(db.store_mut(), &original).unwrap();
+        let evidence = db.store().capture_coverage("retained").unwrap();
+        let before = db.store().records("cursor-native").unwrap();
+        assert!(matches_current(&evidence[0], &before[0]).unwrap());
+        let mut altered = rows[0].clone();
+        if tool_input {
+            altered.canonical.message.content.as_mut().unwrap()[1]["input"] =
+                json!({"different":"synthetic value"});
+        } else {
+            altered.canonical.message.content.as_mut().unwrap()[0]["text"] =
+                json!("Other text xxx");
+        }
+        assert_eq!(coverage("cursor-native", &altered).unwrap(), evidence[0]);
+        let rows = [altered];
+        let mut replay = request(&native, &rows, None);
+        replay.keep_content = true;
+        let output = write_batch(db.store_mut(), &replay).unwrap();
+        assert_eq!((output.records_new, output.records_enriched), (0, 0));
+        assert!(output.events[0].invalidate_measurements);
+        assert!(output.events[0].invalidate_cost);
+        let after = db.store().records("cursor-native").unwrap();
+        assert!(after[0].has_conflict);
+        assert_eq!(after[0].content_json, before[0].content_json);
+        assert_eq!(after[0].tool_uses, before[0].tool_uses);
+        assert!(!matches_current(&evidence[0], &after[0]).unwrap());
+        assert_eq!(db.store().capture_coverage("retained").unwrap(), evidence);
+    }
+}
+
+#[test]
+fn writer_event_surface_comes_from_the_committed_session() {
+    let mut db = TempDb::empty().unwrap();
+    let known = context(SessionSource::ReadersCli);
+    write_batch(db.store_mut(), &request(&known, &[poor("known")], None)).unwrap();
+    let mut sparse = known.clone();
+    sparse.source_surface = None;
+    let output = write_batch(db.store_mut(), &request(&sparse, &[poor("known")], None)).unwrap();
+    let stored = db.store().session("cursor-native").unwrap().unwrap();
+    assert_eq!(stored.meta.surface.as_deref(), Some("cli"));
+    assert_eq!(output.events[0].surface, stored.meta.surface);
+    let mut conflicting = known.clone();
+    conflicting.source_surface = Some("ide".into());
+    let output = write_batch(
+        db.store_mut(),
+        &request(&conflicting, &[poor("known")], None),
+    )
+    .unwrap();
+    let stored = db.store().session("cursor-native").unwrap().unwrap();
+    assert!(stored.has_conflict);
+    assert_eq!(stored.meta.surface.as_deref(), Some("cli"));
+    assert_eq!(output.events[0].surface, stored.meta.surface);
 }

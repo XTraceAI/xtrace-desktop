@@ -14,7 +14,7 @@ mod migrations;
 pub mod model;
 mod read;
 pub mod retention;
-mod timestamp;
+pub mod timestamp;
 mod write;
 
 pub use model::{

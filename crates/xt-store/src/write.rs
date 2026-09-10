@@ -232,6 +232,7 @@ pub(crate) fn upsert_records(
         params![stats.inserted as i64, session_id],
     )?;
     Ok(IngestBatchOutcome {
+        session_surface: session.meta.surface.clone(),
         affected_owners: affected_owners.into_values().collect(),
         receipt_committed: false,
         session_changed: session != previous_session,
