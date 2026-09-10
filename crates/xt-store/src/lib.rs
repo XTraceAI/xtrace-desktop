@@ -15,7 +15,7 @@ pub mod model;
 mod read;
 pub mod retention;
 mod server_settings;
-mod timestamp;
+pub mod timestamp;
 mod write;
 
 pub use model::{
