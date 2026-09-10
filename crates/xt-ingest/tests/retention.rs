@@ -23,6 +23,7 @@ fn context() -> SourceContext {
 }
 fn batch<'a>(context: &'a SourceContext, records: &'a [ParsedRecord]) -> WriteBatch<'a> {
     WriteBatch {
+        namespace: None,
         context,
         declared_host: None,
         records,

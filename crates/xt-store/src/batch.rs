@@ -20,6 +20,7 @@ pub struct IngestBatch<'a> {
     pub session: &'a SessionMeta,
     pub records: &'a [CanonicalRecord],
     pub keep_content: bool,
+    pub namespace: Option<&'a str>,
     /// Empty means unknown; otherwise exactly one native identity per input.
     pub identities: &'a [crate::model::RecordIdentity],
     pub session_sources: &'a [SessionSourceObservation],
@@ -42,6 +43,7 @@ impl<'a> IngestBatch<'a> {
             session,
             records,
             keep_content,
+            namespace: None,
             identities: &[],
             session_sources: &[],
             record_sources: &[],
@@ -164,7 +166,8 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let keep_content = crate::retention::allows_content(&transaction, batch.keep_content)?;
-        let session_changed = write::upsert_session(&transaction, batch.session, keep_content)?;
+        let session_changed =
+            write::upsert_session(&transaction, batch.session, keep_content, batch.namespace)?;
         let mut outcome = write::upsert_records(
             &transaction,
             &batch.session.session_id,

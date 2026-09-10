@@ -38,7 +38,7 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let keep_content = crate::retention::allows_content(&transaction, keep_content)?;
-        upsert_session(&transaction, meta, keep_content)?;
+        upsert_session(&transaction, meta, keep_content, None)?;
         transaction.commit()?;
         Ok(())
     }
@@ -68,9 +68,13 @@ pub(crate) fn upsert_session(
     connection: &Connection,
     meta: &SessionMeta,
     keep_content: bool,
+    namespace: Option<&str>,
 ) -> Result<bool> {
+    if namespace.is_some_and(|value| value.trim().is_empty()) {
+        return Err(Error::InvalidInput("session namespace is empty"));
+    }
     let before = read::session(connection, &meta.session_id)?;
-    let stored = match before.clone() {
+    let mut stored = match before.clone() {
         Some(mut stored) => {
             merge_session(&mut stored, meta, keep_content);
             stored
@@ -81,6 +85,7 @@ pub(crate) fn upsert_session(
                 meta.title = None;
             }
             StoredSession {
+                namespace: None,
                 meta,
                 first_ts: None,
                 last_ts: None,
@@ -88,6 +93,9 @@ pub(crate) fn upsert_session(
             }
         }
     };
+    let mut namespace_change = Change::default();
+    namespace_change.fill(&mut stored.namespace, &namespace.map(str::to_owned));
+    stored.has_conflict |= namespace_change.conflict;
     save_session(connection, &stored)?;
     Ok(before.as_ref() != Some(&stored))
 }
@@ -558,15 +566,15 @@ fn save_session(connection: &Connection, session: &StoredSession) -> Result<()> 
         .transpose()?;
     connection.execute(
         "INSERT INTO sessions(session_id,host,source_platform,source,cwd,git_branch,title,surface,
-             surface_evidence_json,native_session_id,started_at_ms,first_ts,last_ts,has_conflict)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
+             surface_evidence_json,native_session_id,started_at_ms,first_ts,last_ts,has_conflict,namespace)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
          ON CONFLICT(session_id) DO UPDATE SET host=excluded.host,source_platform=excluded.source_platform,
              cwd=excluded.cwd,git_branch=excluded.git_branch,title=excluded.title,surface=excluded.surface,
              surface_evidence_json=excluded.surface_evidence_json,native_session_id=excluded.native_session_id,
              started_at_ms=excluded.started_at_ms,first_ts=excluded.first_ts,last_ts=excluded.last_ts,
-             has_conflict=excluded.has_conflict",
+             has_conflict=excluded.has_conflict,namespace=excluded.namespace",
         params![s.session_id,s.host,s.source_platform,s.source,s.cwd,s.git_branch,s.title,s.surface,
-            evidence,s.native_session_id,s.started_at_ms,session.first_ts,session.last_ts,session.has_conflict],
+            evidence,s.native_session_id,s.started_at_ms,session.first_ts,session.last_ts,session.has_conflict,session.namespace],
     )?;
     Ok(())
 }

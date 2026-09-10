@@ -5055,6 +5055,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "uuid",
+ "xt-ingest",
  "xt-store",
 ]
 

@@ -1,5 +1,7 @@
 use axum::{
     Json,
+    body::Bytes,
+    extract::State,
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -49,14 +51,19 @@ fn error(id: Value, code: i32, message: &str) -> Response {
     sse(json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}}))
 }
 pub(crate) async fn mcp(
-    body: Result<Json<Value>, axum::extract::rejection::JsonRejection>,
+    State(state): State<crate::AppState>,
+    body: Result<Bytes, axum::extract::rejection::BytesRejection>,
 ) -> Response {
-    let Json(input) = match body {
+    let bytes = match body {
         Ok(body) => body,
         Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
             return StatusCode::PAYLOAD_TOO_LARGE.into_response();
         }
         Err(_) => return error(Value::Null, -32700, "Parse error"),
+    };
+    let mut input = match tokio::task::spawn_blocking(move || crate::json::parse(&bytes)).await {
+        Ok(Ok(input)) => input,
+        _ => return error(Value::Null, -32700, "Parse error"),
     };
     let id = input.get("id").cloned().unwrap_or(Value::Null);
     if !input.is_object()
@@ -80,11 +87,40 @@ pub(crate) async fn mcp(
         "initialize" => {
             json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"xtrace-core","version":env!("CARGO_PKG_VERSION")}})
         }
-        "tools/list" => {
-            json!({"tools":[{"name":"import_conversation","description":"Import a coding session (not implemented in this transport scaffold).","inputSchema":{"type":"object","properties":{"conversation_id":{"type":"string"},"messages":{"type":"array","items":{"type":"object"}},"source_platform":{"type":"string"}},"required":["conversation_id","messages","source_platform"]}}]})
-        }
+        "tools/list" => json!({"tools":[crate::import::schema()]}),
         "tools/call" if input["params"]["name"] == "import_conversation" => {
-            json!({"isError":true,"content":[{"type":"text","text":"Conversation import is not implemented."}]})
+            let args = match serde_json::from_value(input["params"]["arguments"].take()) {
+                Ok(args) => args,
+                Err(_) => return error(id, -32602, "Invalid import arguments"),
+            };
+            let store = state.store.clone();
+            let sender = state.events.clone();
+            match tokio::task::spawn_blocking(move || {
+                let outcome = {
+                    let mut store = store.lock().map_err(|_| "Import store is unavailable")?;
+                    crate::import::apply(&mut store, args)?
+                };
+                // Publish in the commit worker so a disconnected HTTP caller cannot
+                // cancel invalidation delivery after its transaction commits.
+                if let Some(sender) = sender {
+                    for event in outcome.events {
+                        let _ = sender.send(event);
+                    }
+                }
+                outcome.result
+            })
+            .await
+            {
+                Ok(Ok(output)) => {
+                    json!({"isError":false,"structuredContent":output,"content":[{"type":"text","text":output.to_string()}]})
+                }
+                Ok(Err(message)) => {
+                    json!({"isError":true,"content":[{"type":"text","text":message}]})
+                }
+                Err(_) => {
+                    json!({"isError":true,"content":[{"type":"text","text":"Import worker is unavailable"}]})
+                }
+            }
         }
         "tools/call" => return error(id, -32602, "Unknown tool"),
         "ping" => json!({}),

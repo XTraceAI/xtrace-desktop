@@ -23,6 +23,7 @@ pub struct WriteBatch<'a> {
     pub declared_host: Option<Host>,
     pub records: &'a [ParsedRecord],
     pub title: Option<&'a str>,
+    pub namespace: Option<&'a str>,
     pub keep_content: bool,
     pub observed_at: i64,
     /// Stable parent facts reused verbatim on retry. Only Plugin accepts receipts.
@@ -163,6 +164,7 @@ pub fn write_batch(store: &mut Store, request: &WriteBatch<'_>) -> Result<BatchO
     }];
     let mut batch = IngestBatch::new(&session, &records, request.keep_content);
     batch.identities = &identities;
+    batch.namespace = request.namespace;
     batch.session_sources = &session_sources;
     batch.record_sources = &record_sources;
     batch.receipt = request.receipt.map(|receipt| SubmittedReceipt {
@@ -271,7 +273,8 @@ fn agree(target: &mut Option<String>, incoming: Option<&String>) -> Result<()> {
     Ok(())
 }
 
-fn resolve_session(request: &WriteBatch<'_>) -> Result<SessionMeta> {
+/// Resolve submitted identity without I/O or borrowing facts from stored rows.
+pub fn resolve_session(request: &WriteBatch<'_>) -> Result<SessionMeta> {
     let mut context = request.context.clone();
     let mut started = context
         .started_at
