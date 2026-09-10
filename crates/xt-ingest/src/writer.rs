@@ -273,6 +273,11 @@ fn agree(target: &mut Option<String>, incoming: Option<&String>) -> Result<()> {
 
 fn resolve_session(request: &WriteBatch<'_>) -> Result<SessionMeta> {
     let mut context = request.context.clone();
+    let mut started = context
+        .started_at
+        .as_deref()
+        .map(xt_store::timestamp::parse)
+        .transpose()?;
     for value in [
         &context.conversation_id,
         &context.native_session_id,
@@ -313,7 +318,13 @@ fn resolve_session(request: &WriteBatch<'_>) -> Result<SessionMeta> {
                 &mut context.source_surface,
                 observed.source_surface.as_ref(),
             )?;
-            agree(&mut context.started_at, observed.started_at.as_ref())?;
+            if let Some(value) = &observed.started_at {
+                let incoming = xt_store::timestamp::parse(value)?;
+                if started.as_ref().is_some_and(|old| old != &incoming) {
+                    return Err(Error::InvalidInput("native start instants disagree"));
+                }
+                started.get_or_insert(incoming);
+            }
             if observed.source.is_some_and(|value| value != source) {
                 return Err(Error::InvalidInput(
                     "record source disagrees with its import",
@@ -382,15 +393,7 @@ fn resolve_session(request: &WriteBatch<'_>) -> Result<SessionMeta> {
             ));
         }
     }
-    let started_at_ms = context
-        .started_at
-        .as_deref()
-        .map(|text| {
-            chrono::DateTime::parse_from_rfc3339(text)
-                .map(|time| time.timestamp_millis())
-                .map_err(|_| Error::InvalidInput("native start must be RFC3339"))
-        })
-        .transpose()?;
+    let started_at_ms = started.map(|(_, millis)| millis);
     Ok(SessionMeta {
         session_id: canonical,
         host,

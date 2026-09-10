@@ -367,6 +367,47 @@ fn writer_projection_is_versioned_content_free_nullable_and_precise() {
 }
 
 #[test]
+fn writer_start_identity_compares_precise_instants_not_rfc3339_spelling() {
+    for (left, right) in [
+        ("2026-09-07T01:00:00Z", "2026-09-07T02:00:00+01:00"),
+        (
+            "2026-09-07T01:00:00.123456789012Z",
+            "2026-09-07T02:00:00.1234567890120+01:00",
+        ),
+    ] {
+        let mut db = TempDb::empty().unwrap();
+        let mut native = context(SessionSource::Transcript);
+        native.started_at = Some(left.into());
+        let mut record = poor("start");
+        record.context.started_at = Some(right.into());
+        record.source.started_at = Some(left.into());
+        write_batch(db.store_mut(), &request(&native, &[record.clone()], None)).unwrap();
+        assert_eq!(
+            db.store()
+                .session("cursor-native")
+                .unwrap()
+                .unwrap()
+                .meta
+                .started_at_ms,
+            Some(
+                chrono::DateTime::parse_from_rfc3339(left)
+                    .unwrap()
+                    .timestamp_millis()
+            )
+        );
+        let before = db.store().session("cursor-native").unwrap();
+        for different in ["2026-09-07T01:00:00.123456789013Z", "invalid"] {
+            record.source.started_at = Some(different.into());
+            assert!(
+                write_batch(db.store_mut(), &request(&native, &[record.clone()], None)).is_err()
+            );
+            assert_eq!(db.store().session("cursor-native").unwrap(), before);
+            assert_eq!(db.store().counts().unwrap().records, 1);
+        }
+    }
+}
+
+#[test]
 fn writer_identity_unknowns_limits_and_native_cursor_progress_are_explicit() {
     let mut db = TempDb::empty().unwrap();
     let mut context = context(SessionSource::ReadersCli);
