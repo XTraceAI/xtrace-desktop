@@ -5,7 +5,7 @@ coverage and receipt acknowledgement through one storage transaction. The tests 
 
 ## Setup, action and expected result
 
-`cargo test -p xt-ingest --test writer --locked --offline` runs thirteen tests using
+`cargo test -p xt-ingest --test writer --locked --offline` runs fourteen tests using
 synthetic records and shared disposable fixture databases.
 
 | Case                    | Setup and action                                                                                                                              | Expected result                                                                                                                                                                                                                                                  |
@@ -45,7 +45,9 @@ the consumer rejects the formerly matching receipt; the receipt itself is intact
 
 Receipt replay checks bind the original timestamp, session, surface, complete UUID
 set and measurement revisions. Changing any one fails without altering rows or
-receipt coverage. Reordering the identical set succeeds and acknowledges the last
+receipt coverage. Reusing a sealed ID with empty, missing-UUID or wholly rejected input also
+rolls back session changes, conflict flags and cursor advancement.
+Reordering the identical set succeeds and acknowledges the last
 accepted UUID in that request's order. Concurrency is covered with two independent
 store connections delivering one exact receipt simultaneously.
 

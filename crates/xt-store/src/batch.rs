@@ -233,15 +233,13 @@ impl Store {
                 .filter(|item| accepted.contains(item.record_uuid.as_str()))
                 .cloned()
                 .collect::<Vec<_>>();
-            if !coverage.is_empty() || batch.evidence_policy == EvidencePolicy::RequireAll {
-                ingest::insert_or_match_receipt(
-                    &transaction,
-                    submitted.receipt,
-                    &coverage,
-                    batch.receipt_replay == ReceiptReplay::MatchExact,
-                )?;
-                outcome.receipt_committed = true;
-            }
+            outcome.receipt_committed = ingest::insert_or_match_receipt(
+                &transaction,
+                submitted.receipt,
+                &coverage,
+                batch.receipt_replay == ReceiptReplay::MatchExact,
+                batch.evidence_policy == EvidencePolicy::AcceptedOnly,
+            )?;
         }
         if let Some(cursor) = batch.cursor {
             advance_cursor(&transaction, cursor)?;
