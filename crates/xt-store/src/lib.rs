@@ -2,8 +2,9 @@
 //!
 //! Opening a store configures its connection and applies embedded migrations.
 //! Callers supply the canonical conversation ID unchanged, upsert its session,
-//! and write records with the same explicit `keep_content` setting. Disabling
-//! content retention affects future writes; it does not purge saved content.
+//! and write records with the same explicit `keep_content` restriction. The
+//! persisted policy may restrict them further. Disabling content retention affects
+//! future writes; explicit purge is a separate transaction.
 //! The connection is private so consumers cannot bypass the canonical writer.
 
 pub mod batch;
@@ -12,6 +13,7 @@ pub mod measurement;
 mod migrations;
 pub mod model;
 mod read;
+pub mod retention;
 mod server_settings;
 pub mod timestamp;
 mod write;

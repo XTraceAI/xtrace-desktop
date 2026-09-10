@@ -156,6 +156,9 @@ fn every_late_failure_including_commit_rolls_back_before_retry() {
         "commit",
     ] {
         let mut db = TempDb::empty().unwrap();
+        db.store_mut()
+            .set_retention_mode(xt_store::retention::RetentionMode::FullContent)
+            .unwrap();
         let original = session("target");
         let original_records = [record("existing")];
         let prior_cursor = cursor(SessionSource::Fixture, "tail", 10);

@@ -9,6 +9,9 @@ fn metadata_retention_is_future_only() {
     let directory = TempDir::new().unwrap();
     let path = directory.path().join("privacy.sqlite");
     let mut store = Store::open(&path).unwrap();
+    store
+        .set_retention_mode(xt_store::retention::RetentionMode::FullContent)
+        .unwrap();
     let mut saved_meta = session("saved");
     saved_meta.title = Some("saved synthetic title".into());
     store.upsert_session(&saved_meta, true).unwrap();

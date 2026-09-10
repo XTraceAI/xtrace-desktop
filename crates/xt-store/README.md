@@ -51,8 +51,30 @@ extra synchronization across an import. See SQLite's
 Pass the same `keep_content` value to both write methods. With `false`, new
 session titles, content arrays and tool inputs are discarded; structural counts,
 IDs, names and usage remain available. Enrichment cannot acquire content while
-this mode is active. Previously saved content remains unchanged. A separately
-confirmed purge is not implemented here.
+this mode is active. Previously saved content remains unchanged.
+
+`retention_mode()` and `set_retention_mode()` share the persisted `content_retention`
+setting. An absent setting defaults to metadata-only storage for metrics and indexing.
+Full-content storage requires an explicitly saved opt-in. Older databases without
+a saved mode also use metadata-only for future writes; their existing content is
+left in place. An explicitly saved full-content preference is preserved. Metadata-only mode restricts
+all canonical write entry points even if a caller requests content; explicit
+`keep_content=false` remains restrictive in full-content mode. Each transaction
+reads the policy after obtaining its write lock, so earlier-opened connections
+cannot bypass a later setting change. Invalid stored values fail writes without
+acquiring content. Changing the mode never calls purge.
+
+`purge_content(&ContentRegistry)` is the separate deletion boundary. The default
+inventory clears `sessions.title`, `records.content_json` (including embedded tool
+results) and `tool_uses.input_json`. Compiled table owners register additional
+nullable content fields through `register(table, columns)`; no SQL callback or
+raw connection is exposed. All registrations are validated, then cleared in one
+transaction. Only a committed result can request content-view invalidation.
+IDs, counts, usage, source facts, receipt evidence and original host files survive.
+The caller owns user confirmation; no Settings action is connected by this API.
+This is logical database content removal, not erasure of backups or free pages.
+Future content-bearing table owners must extend the inventory and their retention
+writers; synthetic fire/judge tests demonstrate the registration boundary only.
 
 A UUID never moves between sessions or changes record type. Each nullable field
 can fill once; later conflicting values preserve the saved value and set a
@@ -159,9 +181,9 @@ reported, so filling host/surface identity can invalidate grouped projections.
 retry is allowed and cannot lower `updated_at`. Different sources and keys are
 independent. A truncated or replaced source generation needs a distinct key;
 this API does not reset cursors. Empty batches may update session metadata and
-cursors, but cannot manufacture receipt coverage. Retention remains caller-supplied
-and future-only; persisted policy, purge and post-commit product events remain
-separate work.
+cursors, but cannot manufacture receipt coverage. Effective retention combines the
+persisted policy with the caller's restriction. Adapters publish product events
+only after the returned transaction outcome.
 
 ## Verification
 

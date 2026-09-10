@@ -163,13 +163,13 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let session_changed =
-            write::upsert_session(&transaction, batch.session, batch.keep_content)?;
+        let keep_content = crate::retention::allows_content(&transaction, batch.keep_content)?;
+        let session_changed = write::upsert_session(&transaction, batch.session, keep_content)?;
         let mut outcome = write::upsert_records(
             &transaction,
             &batch.session.session_id,
             batch.records,
-            batch.keep_content,
+            keep_content,
             batch.identities,
         )?;
         outcome.session_changed |= session_changed;
