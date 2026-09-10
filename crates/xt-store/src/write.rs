@@ -55,7 +55,7 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let result = upsert_records(&transaction, session_id, records, keep_content)?;
+        let result = upsert_records(&transaction, session_id, records, keep_content, &[])?;
         transaction.commit()?;
         Ok(result.stats)
     }
@@ -66,8 +66,9 @@ pub(crate) fn upsert_session(
     connection: &Connection,
     meta: &SessionMeta,
     keep_content: bool,
-) -> Result<()> {
-    let stored = match read::session(connection, &meta.session_id)? {
+) -> Result<bool> {
+    let before = read::session(connection, &meta.session_id)?;
+    let stored = match before.clone() {
         Some(mut stored) => {
             merge_session(&mut stored, meta, keep_content);
             stored
@@ -86,7 +87,7 @@ pub(crate) fn upsert_session(
         }
     };
     save_session(connection, &stored)?;
-    Ok(())
+    Ok(before.as_ref() != Some(&stored))
 }
 
 pub(crate) fn upsert_records(
@@ -94,10 +95,12 @@ pub(crate) fn upsert_records(
     session_id: &str,
     records: &[CanonicalRecord],
     keep_content: bool,
+    identities: &[crate::model::RecordIdentity],
 ) -> Result<IngestBatchOutcome> {
     let mut session = read::session(connection, session_id)?.ok_or(Error::InvalidInput(
         "session must be created before writing records",
     ))?;
+    let previous_session = session.clone();
     let mut existing_records = read::records_by_uuid(
         connection,
         records
@@ -106,6 +109,7 @@ pub(crate) fn upsert_records(
     )?;
     let mut stats = WriteStats::default();
     let mut outcomes = Vec::with_capacity(records.len());
+    let mut affected_owners = std::collections::BTreeMap::new();
     for (input_index, input) in records.iter().enumerate() {
         let Some(uuid) = input.uuid.as_deref().filter(|id| !id.trim().is_empty()) else {
             stats.dropped_no_uuid += 1;
@@ -113,11 +117,13 @@ pub(crate) fn upsert_records(
                 input_index,
                 uuid: None,
                 disposition: RecordDisposition::DroppedMissingUuid,
+                conflict_fields: 0,
                 stored_has_conflict: None,
             });
             continue;
         };
-        let incoming = prepare(input, uuid, session_id, keep_content)?;
+        let mut incoming = prepare(input, uuid, session_id, keep_content)?;
+        incoming.identity = identities.get(input_index).cloned().unwrap_or_default();
         let metadata = SessionMeta {
             session_id: session_id.to_owned(),
             host: input
@@ -138,10 +144,35 @@ pub(crate) fn upsert_records(
         validate_session(&metadata)?;
         // Ownership/type conflicts do not exempt nonblank input from validation.
         let mut existing = existing_records.get_mut(uuid);
+        let conflict_fields = existing
+            .as_ref()
+            .map(|saved| {
+                crate::measurement::Projection::from_stored(saved).and_then(|old| {
+                    Ok(
+                        old.conflicting_fields(&crate::measurement::Projection::from_stored(
+                            &incoming,
+                        )?),
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(0);
         if let Some(stored) = existing.as_mut()
             && (stored.session_id != session_id || stored.record_type != incoming.record_type)
         {
             stored.has_conflict = true;
+            if stored.session_id != session_id && !affected_owners.contains_key(&stored.session_id)
+            {
+                let owner = read::session(connection, &stored.session_id)?
+                    .ok_or(Error::IncompatibleSchema)?;
+                affected_owners.insert(
+                    stored.session_id.clone(),
+                    crate::batch::AffectedSession {
+                        session_id: stored.session_id.clone(),
+                        surface: owner.meta.surface,
+                    },
+                );
+            }
             connection.execute("UPDATE records SET has_conflict=1 WHERE uuid=?1", [uuid])?;
             stats.ignored += 1;
             outcomes.push(RecordOutcome {
@@ -153,6 +184,7 @@ pub(crate) fn upsert_records(
                     RecordDisposition::RejectedType
                 },
                 stored_has_conflict: Some(true),
+                conflict_fields,
             });
             continue;
         }
@@ -185,6 +217,7 @@ pub(crate) fn upsert_records(
             input_index,
             uuid: Some(uuid.to_owned()),
             disposition,
+            conflict_fields,
             stored_has_conflict: Some(stored_has_conflict),
         });
     }
@@ -197,6 +230,10 @@ pub(crate) fn upsert_records(
         params![stats.inserted as i64, session_id],
     )?;
     Ok(IngestBatchOutcome {
+        session_surface: session.meta.surface.clone(),
+        affected_owners: affected_owners.into_values().collect(),
+        receipt_committed: false,
+        session_changed: session != previous_session,
         stats,
         records: outcomes,
     })
@@ -261,7 +298,7 @@ fn merge_session(stored: &mut StoredSession, incoming: &SessionMeta, keep_conten
     change.enriched
 }
 
-fn prepare(
+pub(crate) fn prepare(
     input: &CanonicalRecord,
     uuid: &str,
     session_id: &str,
@@ -334,7 +371,10 @@ fn prepare(
         );
         carrier = Some(has_tool_result);
     }
+    let classification = classify(input);
     Ok(StoredRecord {
+        identity: crate::model::RecordIdentity::default(),
+        classification,
         uuid: uuid.to_owned(),
         session_id: session_id.to_owned(),
         record_type: input.record_type,
@@ -386,11 +426,43 @@ fn merge_record(old: &mut StoredRecord, incoming: &StoredRecord) -> bool {
         }
         _ => {}
     }
+    change.fill(
+        &mut old.identity.parent_uuid,
+        &incoming.identity.parent_uuid,
+    );
+    change.fill(&mut old.identity.agent_id, &incoming.identity.agent_id);
+    change.fill(&mut old.identity.subtype, &incoming.identity.subtype);
+    if incoming
+        .identity
+        .first_seen_at
+        .is_some_and(|time| old.identity.first_seen_at.is_none_or(|old| time < old))
+    {
+        old.identity.first_seen_at = incoming.identity.first_seen_at;
+        change.enriched = true;
+    }
     change.fill(&mut old.api_message_id, &incoming.api_message_id);
     change.fill(&mut old.request_id, &incoming.request_id);
     change.fill(&mut old.role, &incoming.role);
     change.fill(&mut old.model, &incoming.model);
     let content_change = merge_content(old, incoming);
+    if !content_change.conflict {
+        change.fill(
+            &mut old.classification.is_human,
+            &incoming.classification.is_human,
+        );
+        change.fill(
+            &mut old.classification.is_command,
+            &incoming.classification.is_command,
+        );
+        change.fill(
+            &mut old.classification.is_interrupted,
+            &incoming.classification.is_interrupted,
+        );
+        change.fill(
+            &mut old.classification.is_system_reminder,
+            &incoming.classification.is_system_reminder,
+        );
+    }
     if let Some(usage) = &incoming.usage {
         match &mut old.usage {
             None => {
@@ -510,14 +582,18 @@ fn save_record(connection: &Connection, record: &StoredRecord) -> Result<()> {
         .transpose()?;
     connection.execute(
         "INSERT INTO records(uuid,session_id,type,ts,ts_ms,api_message_id,request_id,is_meta,is_sidechain,
-             role,model,is_tool_result_carrier,text_len,tool_use_count,content_json,has_conflict)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
+             role,model,is_tool_result_carrier,text_len,tool_use_count,content_json,has_conflict,parent_uuid,agent_id,subtype,first_seen_at,is_human,is_command,is_interrupted,is_system_reminder)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24)
          ON CONFLICT(uuid) DO UPDATE SET ts=excluded.ts,ts_ms=excluded.ts_ms,api_message_id=excluded.api_message_id,
              request_id=excluded.request_id,role=excluded.role,model=excluded.model,
              is_tool_result_carrier=excluded.is_tool_result_carrier,text_len=excluded.text_len,
-             tool_use_count=excluded.tool_use_count,content_json=excluded.content_json,has_conflict=excluded.has_conflict",
+             tool_use_count=excluded.tool_use_count,content_json=excluded.content_json,has_conflict=excluded.has_conflict,
+             parent_uuid=excluded.parent_uuid,agent_id=excluded.agent_id,subtype=excluded.subtype,first_seen_at=excluded.first_seen_at,
+             is_human=excluded.is_human,is_command=excluded.is_command,is_interrupted=excluded.is_interrupted,is_system_reminder=excluded.is_system_reminder",
         params![r.uuid,r.session_id,r.record_type,r.ts,r.ts_ms,r.api_message_id,r.request_id,r.is_meta,r.is_sidechain,
-            r.role,r.model,r.is_tool_result_carrier,r.text_len,r.tool_use_count,content,r.has_conflict],
+            r.role,r.model,r.is_tool_result_carrier,r.text_len,r.tool_use_count,content,r.has_conflict,
+            r.identity.parent_uuid,r.identity.agent_id,r.identity.subtype,r.identity.first_seen_at,
+            r.classification.is_human,r.classification.is_command,r.classification.is_interrupted,r.classification.is_system_reminder],
     )?;
     if let Some(u) = &r.usage {
         let five = u
@@ -555,3 +631,26 @@ fn save_record(connection: &Connection, record: &StoredRecord) -> Result<()> {
 #[cfg(test)]
 #[path = "write_tests.rs"]
 mod tests;
+
+fn classify(input: &CanonicalRecord) -> crate::model::RecordClassification {
+    let Some(blocks) = &input.message.content else {
+        return Default::default();
+    };
+    let text = blocks
+        .iter()
+        .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|block| block.get("text").and_then(Value::as_str))
+        .collect::<String>();
+    let command = text.starts_with("<command-name>") || text.starts_with("<local-command-stdout>");
+    let interrupted = text.starts_with("[Request interrupted");
+    let reminder = text.starts_with("<system-reminder>");
+    crate::model::RecordClassification {
+        // The role-sensitive human rule belongs to its classification consumer.
+        // Keep only facts that would
+        // be lost by content discard; record type does not establish role.
+        is_human: None,
+        is_command: Some(command),
+        is_interrupted: Some(interrupted),
+        is_system_reminder: Some(reminder),
+    }
+}

@@ -41,3 +41,45 @@ Run `cargo test -p xt-ingest canonical` and the explicit release performance gat
 `cargo test -p xt-ingest --release canonical_parse_50k -- --nocapture`.
 Producer provenance, input variants, exact dataset hashes and measured evidence
 are recorded in `docs/acceptance/canonical-parser.md`.
+
+## Ingestion writer
+
+`writer::write_batch(&mut Store, &WriteBatch)` accepts the existing parsed record
+envelopes, an authoritative source context, explicit content retention and optional
+native cursor. It resolves canonical/native identity and preserves a known adapter
+host independently from an absent raw platform. Conflicting known identities fail.
+Native ancestry and structural prefix facts survive content discard.
+
+Plugin batches require stable receipt parent facts; other sources cannot supply
+receipts. The writer computes a versioned SHA-256 measurement revision and field
+mask from incoming records before merging. Compatible duplicate UUID observations
+union only their submitted measurements; contradictory measurements cannot define
+one receipt. No title, transcript text or tool input/output enters the projection.
+Timestamp encoding preserves full precision and equivalent offsets using tuples;
+it is independent of JSON object-map feature ordering.
+
+The store's single transaction filters rejected identities from evidence, inserts
+or exactly matches immutable receipt facts, and advances an optional cursor.
+Receipt ID retries must reuse the original parent time and complete submitted set.
+`BatchOutcome` and its typed change events are returned only after commit.
+Acknowledgement exists only when receipt facts committed and names the last
+accepted eligible input UUID. Duplicate-only imports can acknowledge; empty or
+fully rejected sets cannot manufacture receipt coverage.
+
+New/enriched counters count each accepted UUID once, with insertion taking
+precedence over enrichment within one call. Dropped counts include each missing
+UUID input and each wholly rejected UUID once; indexed reasons retain individual
+rejections. A batch is bounded to 2,000 records; native adapters submit explicit
+cursor positions with successive chunks. Event values describe invalidation and
+backfill progress; adapters remain responsible for actual publication.
+
+`coverage` and `matches_current` provide a record-level measurement comparison.
+They are not a complete session verification policy: identity, conflicts and
+selected response representatives still require their owning consumer. Parser
+stop-hook/PR-link variants retain their dedicated later consumers; this method
+accepts `ParsedRecord`, not arbitrary raw event payloads. Namespace/repository
+session extensions, full tool-kind classification and named native event routing
+belong to their adapter and classification consumers.
+
+Run `cargo test -p xt-ingest --test writer --locked --offline`. Exact test evidence
+and remaining work are recorded in `docs/acceptance/ingestion-writer.md`.

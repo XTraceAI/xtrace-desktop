@@ -3,7 +3,7 @@
 //! this module stores their exact values and seals each submitted coverage set.
 
 use crate::{Error, Host, Result, SessionSource, Store, model::text_enum, timestamp};
-use rusqlite::{Connection, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,13 +145,7 @@ impl Store {
     }
 
     pub fn capture_coverage(&self, receipt_id: &str) -> Result<Vec<RecordCoverage>> {
-        Ok(self.connection.prepare(
-            "SELECT c.record_uuid,c.metric_field_mask,c.measurement_revision,c.digest_schema_version
-             FROM capture_record_coverage c JOIN capture_receipts r ON r.receipt_id=c.receipt_id
-             WHERE c.receipt_id=?1 AND r.coverage_sealed=1 ORDER BY c.record_uuid"
-        )?.query_map([receipt_id], |row| Ok(RecordCoverage {
-            record_uuid: row.get(0)?, metric_field_mask: row.get(1)?, measurement_revision: row.get(2)?, digest_schema_version: row.get(3)?,
-        }))?.collect::<rusqlite::Result<_>>()?)
+        coverage(&self.connection, receipt_id)
     }
 
     /// Discovery exists independently of canonical ingestion. Known identities
@@ -281,4 +275,51 @@ pub(crate) fn insert_receipt(
         [&receipt.receipt_id],
     )?;
     Ok(())
+}
+
+fn coverage(connection: &Connection, receipt_id: &str) -> Result<Vec<RecordCoverage>> {
+    Ok(connection.prepare(
+            "SELECT c.record_uuid,c.metric_field_mask,c.measurement_revision,c.digest_schema_version
+             FROM capture_record_coverage c JOIN capture_receipts r ON r.receipt_id=c.receipt_id
+             WHERE c.receipt_id=?1 AND r.coverage_sealed=1 ORDER BY c.record_uuid"
+        )?.query_map([receipt_id], |row| Ok(RecordCoverage {
+            record_uuid: row.get(0)?, metric_field_mask: row.get(1)?, measurement_revision: row.get(2)?, digest_schema_version: row.get(3)?,
+        }))?.collect::<rusqlite::Result<_>>()?)
+}
+
+// Called only inside the owning immediate write transaction. An existing ID
+// cannot race another writer between comparison and canonical/cursor commit.
+pub(crate) fn insert_or_match_receipt(
+    connection: &Connection,
+    receipt: &CaptureReceipt,
+    submitted: &[RecordCoverage],
+    allow_exact: bool,
+    ignore_new_empty: bool,
+) -> Result<bool> {
+    let saved = connection.query_row(
+        "SELECT session_id,surface,received_at,coverage_sealed FROM capture_receipts WHERE receipt_id=?1",
+        [&receipt.receipt_id], |row| Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,i64>(2)?,row.get::<_,bool>(3)?)),
+    ).optional()?;
+    if let Some((session, surface, received, sealed)) = saved {
+        let mut expected = submitted.to_vec();
+        expected.sort_by(|a, b| a.record_uuid.cmp(&b.record_uuid));
+        if !allow_exact
+            || !sealed
+            || expected.is_empty()
+            || session != receipt.session_id
+            || surface != receipt.surface
+            || received != receipt.received_at
+            || coverage(connection, &receipt.receipt_id)? != expected
+        {
+            return Err(Error::InvalidInput(
+                "receipt retry does not match immutable submitted facts",
+            ));
+        }
+        return Ok(true);
+    }
+    if ignore_new_empty && submitted.is_empty() {
+        return Ok(false);
+    }
+    insert_receipt(connection, receipt, submitted)?;
+    Ok(true)
 }

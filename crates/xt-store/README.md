@@ -138,9 +138,21 @@ Record observations and receipt coverage may reference only submitted UUIDs with
 no rejected occurrence anywhere in the batch. This restriction avoids assigning
 UUID-level evidence to an ambiguous accepted/rejected duplicate. Supplied masks
 and digests remain the caller's observation; the store never computes them from
-enriched canonical data. Reusing a sealed receipt ID fails atomically, including
-an identical replay. Idempotent delivery, receipt arbitration and plugin
-acknowledgements belong to the subsequent ingestion writer work.
+enriched canonical data. The default policy rejects sealed receipt ID reuse.
+The ingestion writer may explicitly select exact-match replay and accepted-only
+evidence. Matching occurs under the same immediate transaction and requires
+identical parent facts and the complete unordered coverage set; mismatches roll
+back canonical and cursor changes. Accepted-only mode omits UUIDs rejected by any
+occurrence, and empty eligible coverage creates no receipt. Results explicitly
+report whether receipt facts committed; the store itself returns no plugin ack.
+
+An optional per-input `RecordIdentity` preserves native ancestry and first-seen
+metadata. Command/interrupt/reminder prefix flags are derived before content
+retention is applied; `is_human` remains unset for its owning rule. `measurement::Projection` defines the fixed versioned,
+content-free field ordering shared with readers. Per-input measurement conflict
+bits come from the merger's locked snapshot and only accumulate into source
+fields actually reported by that observation. Session metadata changes are also
+reported, so filling host/surface identity can invalidate grouped projections.
 
 `source_cursor(source, key)` returns `None` for an unobserved source/key.
 `SourceCursor` positions are nonnegative and cannot regress; an equal-position

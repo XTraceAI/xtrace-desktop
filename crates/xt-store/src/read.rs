@@ -24,6 +24,8 @@ pub struct StoredToolUse {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredRecord {
+    pub identity: crate::model::RecordIdentity,
+    pub classification: crate::model::RecordClassification,
     pub uuid: String,
     pub session_id: String,
     pub record_type: RecordType,
@@ -178,7 +180,7 @@ pub(crate) fn session(connection: &Connection, id: &str) -> Result<Option<Stored
 }
 
 const RECORD_FIELDS: &str = "r.uuid,r.session_id,r.type,r.ts,r.ts_ms,r.api_message_id,r.request_id,
-    r.is_meta,r.is_sidechain,r.role,r.model,r.is_tool_result_carrier,r.text_len,r.tool_use_count,r.content_json,r.has_conflict";
+    r.is_meta,r.is_sidechain,r.role,r.model,r.is_tool_result_carrier,r.text_len,r.tool_use_count,r.content_json,r.has_conflict,r.parent_uuid,r.agent_id,r.subtype,r.first_seen_at,r.is_human,r.is_command,r.is_interrupted,r.is_system_reminder";
 const USAGE_FIELDS: &str =
     "u.input_tokens,u.output_tokens,u.cache_read_tokens,u.cache_creation_tokens,
     u.cache_creation_5m,u.cache_creation_1h,u.service_tier";
@@ -250,6 +252,18 @@ fn records_matching(
 
 fn record_from_row(row: &Row<'_>) -> rusqlite::Result<StoredRecord> {
     Ok(StoredRecord {
+        identity: crate::model::RecordIdentity {
+            parent_uuid: row.get(16)?,
+            agent_id: row.get(17)?,
+            subtype: row.get(18)?,
+            first_seen_at: row.get(19)?,
+        },
+        classification: crate::model::RecordClassification {
+            is_human: row.get(20)?,
+            is_command: row.get(21)?,
+            is_interrupted: row.get(22)?,
+            is_system_reminder: row.get(23)?,
+        },
         uuid: row.get(0)?,
         session_id: row.get(1)?,
         record_type: row.get(2)?,

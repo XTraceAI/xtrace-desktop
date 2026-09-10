@@ -8,11 +8,12 @@
 
 pub mod batch;
 pub mod ingest;
+pub mod measurement;
 mod migrations;
 pub mod model;
 mod read;
 mod server_settings;
-mod timestamp;
+pub mod timestamp;
 mod write;
 
 pub use model::{
