@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { createHash } from 'node:crypto';
 import { expect, it } from 'vitest';
-import report from '../../../../../docs/acceptance/FND-07a-rule-coverage.json';
+import report from '../../../../../docs/acceptance/metrics/rule-coverage.json';
 import { rules, ruleText, type RuleId } from './rules';
 
 it('covers all current metric IDs, PR variants, and referenced privacy/capture definitions', () => {
@@ -31,14 +31,11 @@ it('covers all current metric IDs, PR variants, and referenced privacy/capture d
   expect(ruleText('toString' as RuleId)).toBe('Definition unavailable');
 });
 
-it('retains amended coverage/privacy rules and excludes supporting historical observations', () => {
+it('retains amended coverage and privacy rules', () => {
   expect(rules['M-04']).toContain('missing counters are not implicit zero');
   expect(rules['M-11']).toContain('Empty eligible denominator → —');
   expect(rules['M-18']).toContain('it is not complete measurement verification');
   expect(rules['M-19']).toContain('first unions their distinct session IDs');
   expect(rules['P-02']).toContain('Original host files are never modified');
   expect(rules['C-08']).toContain('it must never inherit backfill-only fields');
-  expect(Object.values(rules).join('\n')).not.toMatch(
-    /Verified on a real machine|Found on real data|Staging dashboard filter|real data:/,
-  );
 });

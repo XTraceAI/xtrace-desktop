@@ -1,0 +1,27 @@
+{
+  "M-02": {
+    "human_messages": 5
+  },
+  "M-03": {
+    "assistant_turns": 5,
+    "assistant_records": 15,
+    "tool_result_carriers": 5,
+    "tool_calls": 5,
+    "records": 25
+  },
+  "M-04": {
+    "selected_responses": 10,
+    "input_tokens": 750,
+    "output_tokens": 150,
+    "cache_read_input_tokens": 150,
+    "cache_creation_input_tokens": 50,
+    "total_tokens": 1100
+  },
+  "M-05": {
+    "active_ms": 1380000
+  },
+  "M-10": {
+    "favorite_model": "fixture-model-v1",
+    "output_tokens": 150
+  }
+}

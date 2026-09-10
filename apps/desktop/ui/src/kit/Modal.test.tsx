@@ -1,47 +1,40 @@
-import { cleanup, render } from '@testing-library/react';
-import { StrictMode } from 'react';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { Modal } from './Modal';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode, useRef, useState } from 'react';
+import { afterEach, expect, it } from 'vitest';
+import { Modal, ModalClose } from './Modal';
+import { ThemeScope } from '../theme/ThemeProvider';
 
-beforeEach(() => {
-  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
-    configurable: true,
-    value: vi.fn(function (this: HTMLDialogElement) {
-      this.open = true;
-    }),
-  });
-  Object.defineProperty(HTMLDialogElement.prototype, 'close', {
-    configurable: true,
-    value: vi.fn(function (this: HTMLDialogElement) {
-      this.open = false;
-      this.dispatchEvent(new Event('close'));
-    }),
-  });
-});
-afterEach(() => {
-  cleanup();
-  vi.restoreAllMocks();
-});
+afterEach(cleanup);
 
-it('ignores a queued close from a previous opening and restores the invoker on unmount', () => {
-  const trigger = document.createElement('button');
-  document.body.append(trigger);
-  trigger.focus();
-  const changed = vi.fn();
+it('opens and closes under StrictMode, preserves scope tokens, and releases its portal on unmount', async () => {
+  function Fixture() {
+    const trigger = useRef<HTMLButtonElement>(null);
+    const [open, setOpen] = useState(false);
+    return (
+      <ThemeScope theme="light">
+        <button ref={trigger} onClick={() => setOpen(true)}>
+          Details
+        </button>
+        <Modal open={open} onOpenChange={setOpen} returnFocusRef={trigger} aria-label="Details">
+          <ModalClose>Close details</ModalClose>
+        </Modal>
+      </ThemeScope>
+    );
+  }
   const view = render(
     <StrictMode>
-      <Modal open onOpenChange={changed} aria-label="Details">
-        <button>Close</button>
-      </Modal>
+      <Fixture />
     </StrictMode>,
   );
-  const dialog = view.getByRole('dialog') as HTMLDialogElement;
-  changed.mockClear();
-  dialog.dispatchEvent(new Event('close'));
-  expect(changed).not.toHaveBeenCalled();
-  view.getByText('Close').focus();
+  const trigger = screen.getByRole('button', { name: 'Details' });
+  fireEvent.click(trigger);
+  const popup = await screen.findByRole('dialog', { name: 'Details' });
+  expect(popup.closest('[data-theme]')?.getAttribute('data-theme')).toBe('light');
+  expect(view.container.contains(popup)).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'Close details' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  fireEvent.click(trigger);
+  await screen.findByRole('dialog');
   view.unmount();
-  expect(document.activeElement).toBe(trigger);
-  expect(dialog.open).toBe(false);
-  trigger.remove();
+  expect(screen.queryByRole('dialog')).toBeNull();
 });

@@ -1,23 +1,39 @@
 import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ThemeProvider } from '../src/theme/ThemeProvider';
+import { ThemeProvider, ThemeScope, useTheme } from '../src/theme/ThemeProvider';
 import { MetricCell } from '../src/kit/MetricCell';
 import { RuleChip } from '../src/kit/RuleChip';
 import { StatTile } from '../src/kit/StatTile';
 import { SectionCard } from '../src/kit/SectionCard';
 import { count, hours, tokens } from '../src/kit/format';
 import '../src/index.css';
+import './metrics.css';
 
 function Fixture() {
+  const { theme, setPreference } = useTheme();
+  const [scopeTheme, setScopeTheme] = useState<'dark' | 'light'>('light');
   const [clicks, setClicks] = useState(0);
   const missing = 'Cursor Agent CLI usage is absent; token totals were not measured.';
   return (
     <div style={{ padding: 32, maxWidth: 1120, margin: 'auto' }}>
-      <h1 style={{ fontSize: 24, margin: 0 }}>Metric presentation</h1>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 12,
+        }}
+      >
+        <h1 style={{ fontSize: 24, margin: 0 }}>Metric cards preview</h1>
+        <button onClick={() => setPreference(theme === 'dark' ? 'light' : 'dark')}>
+          Switch to {theme === 'dark' ? 'light' : 'dark'} theme
+        </button>
+      </div>
       <p style={{ color: 'var(--secondary)', margin: '8px 0 20px' }}>
-        Synthetic component states · No metric computation or source data
+        Synthetic examples · Hover or Tab to a card for its definition
       </p>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 300px)', gap: 12 }}>
+      <div className="metrics-preview-grid">
         <StatTile
           label="Parallelism"
           ruleId="M-06"
@@ -69,7 +85,7 @@ function Fixture() {
           value="Partial"
         />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, margin: '24px 0' }}>
+      <div className="metrics-section-grid">
         <SectionCard
           title="Measured values"
           ruleId="M-04"
@@ -101,7 +117,7 @@ function Fixture() {
           </div>
         </SectionCard>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
         <label>
           Outside focus{' '}
           <input
@@ -122,7 +138,7 @@ function Fixture() {
           <RuleChip ruleId="C-08" size="sm" />
         </span>
       </div>
-      <div style={{ position: 'relative', height: 160, marginTop: 16 }}>
+      <div style={{ position: 'relative', height: 120, marginTop: 16 }}>
         <span data-testid="click-rule">
           <RuleChip ruleId="M-06" />
         </span>
@@ -135,6 +151,7 @@ function Fixture() {
             left: 0,
             top: 32,
             width: 400,
+            maxWidth: '100%',
             height: 72,
             border: '1px solid var(--border)',
             textAlign: 'left',
@@ -144,6 +161,23 @@ function Fixture() {
           Underlying control · clicks {clicks}
         </button>
       </div>
+      <ThemeScope
+        theme={scopeTheme}
+        data-testid="theme-scope"
+        style={{
+          padding: 8,
+          overflow: 'hidden',
+          background: 'var(--canvas)',
+          color: 'var(--body)',
+        }}
+      >
+        <span data-testid="scope-rule">
+          <RuleChip ruleId="M-06" />
+        </span>{' '}
+        <button onClick={() => setScopeTheme(scopeTheme === 'light' ? 'dark' : 'light')}>
+          Switch scoped theme
+        </button>
+      </ThemeScope>
     </div>
   );
 }

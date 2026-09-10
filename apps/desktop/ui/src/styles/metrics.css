@@ -12,10 +12,6 @@
 .xt-unmeasured {
   color: var(--body);
 }
-.xt-rule-anchor {
-  display: inline-flex;
-  min-width: 0;
-}
 .xt-rule-chip {
   display: inline-block;
   flex-shrink: 0;
@@ -39,7 +35,12 @@ button.xt-rule-chip {
   font-size: 9px;
   line-height: 11px;
 }
-.xt-popover.xt-rule-popover {
+.xt-rule-positioner {
+  z-index: 50;
+  pointer-events: none;
+}
+.xt-rule-popover {
+  border: 1px solid var(--border);
   width: max-content;
   max-width: min(560px, calc(100vw - 16px));
   padding: 10px 12px;
@@ -59,15 +60,12 @@ button.xt-rule-chip {
   margin-top: 8px;
   color: var(--secondary);
 }
-.xt-stat-anchor {
-  display: block;
-  width: 100%;
-}
 .xt-stat-tile {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
+  justify-content: space-between;
   height: 52px;
   padding: 10px 14px;
   border: 1px solid var(--border);
@@ -103,16 +101,14 @@ button.xt-rule-chip {
 .xt-metric-icon[data-tone='warning'] {
   color: var(--warning);
 }
-.xt-stat-content {
+.xt-stat-label-group {
   display: flex;
-  flex-direction: column;
-  flex: 1;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
 }
 .xt-stat-label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--meta);
@@ -124,25 +120,28 @@ button.xt-rule-chip {
   letter-spacing: 0.1em;
   white-space: nowrap;
 }
-.xt-stat-label-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.xt-stat-label .xt-rule-chip {
-  letter-spacing: normal;
-  text-transform: none;
-  vertical-align: top;
-}
 .xt-stat-row {
   display: flex;
   align-items: baseline;
   min-width: 0;
-  height: 18px;
+  max-width: 65%;
+  font-weight: 600;
+  font-family: 'Geist Mono', Menlo, monospace;
+}
+.xt-stat-value {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  flex-shrink: 0;
+  max-width: 100%;
 }
 .xt-stat-row .xt-metric-cell {
   font-weight: 600;
-  line-height: 18px;
+  line-height: 20px;
+}
+.xt-stat-unit,
+.xt-stat-delta {
+  flex-shrink: 0;
 }
 .xt-stat-unit {
   margin-left: 3px;

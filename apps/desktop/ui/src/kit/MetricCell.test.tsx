@@ -4,7 +4,7 @@ import { MetricCell } from './MetricCell';
 import { tokens } from './format';
 afterEach(cleanup);
 
-it('exposes the F7 missing-usage reason without replacing unmeasured with zero', () => {
+it('exposes a missing-usage reason without replacing unmeasured with zero', () => {
   const format = vi.fn(String);
   const view = render(
     <MetricCell value={null} format={format} reason="Cursor Agent CLI transcript has no usage" />,
