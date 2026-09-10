@@ -174,22 +174,11 @@
   --host-tone: var(--host-cursor);
 }
 .xt-host-glyph {
+  border-radius: 4px;
   display: grid;
   place-items: center;
   width: 16px;
   height: 16px;
-}
-.xt-host-glyph img {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  object-fit: contain;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  padding: 1px;
-}
-.xt-host-cursor .xt-host-glyph img {
-  background: var(--host-logo-light-surface);
 }
 .xt-host-name {
   display: flex;

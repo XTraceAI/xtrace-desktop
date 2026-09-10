@@ -1,4 +1,5 @@
 import { useId, useState, type ReactNode } from 'react';
+import { HostGlyph } from './HostGlyph';
 import { BrandMark } from './BrandMark';
 import { HubPopover } from './HubPopover';
 import { createPopoverHandle, Popover, PopoverTrigger } from './Popover';
@@ -46,7 +47,6 @@ export interface SidebarProps {
 }
 
 const hostLabels = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
-const hostImages = { claude: 'claude.svg', codex: 'codex.webp', cursor: 'cursor.png' };
 const compactTokens = new Intl.NumberFormat('en-US', {
   notation: 'compact',
   maximumFractionDigits: 1,
@@ -156,7 +156,7 @@ export function Sidebar({
             return (
               <div className={`xt-host-row xt-host-${row.host}`} key={row.host}>
                 <span className="xt-host-glyph" aria-hidden="true">
-                  {row.glyph ?? <img src={`/hosts/${hostImages[row.host]}`} alt="" />}
+                  {row.glyph ?? <HostGlyph host={row.host} />}
                 </span>
                 <span className="xt-host-name">
                   {hostLabels[row.host]}
