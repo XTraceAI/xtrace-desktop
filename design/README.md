@@ -1,11 +1,9 @@
 # Design token contract
 
-`token-contract.json` records the normative FND-05 technical token contract,
-reconciled with SPEC S7. It is a reference for dark/light key and value parity;
-it is not an independently exported design file. The original `xt-theme.css`
-export is unavailable. The file contains only project design values, with no
-private workspace or conversation content.
+`token-contract.json` defines the shared colors, typography, corner radii and
+shadows. Tests compare the dark/light styles with these values so new components
+use a consistent appearance.
 
-Changes to the approved palette must update the contract and implementation
-together and explain the design change. Runtime styles live in
+Changes to the palette must update the contract and implementation together
+and explain the design change. Runtime styles live in
 `apps/desktop/ui/src/styles/tokens.css`.

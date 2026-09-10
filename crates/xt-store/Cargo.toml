@@ -6,3 +6,14 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 publish = false
+
+[dependencies]
+chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
+serde.workspace = true
+serde_json = "=1.0.151"
+thiserror = "=2.0.20"
+
+[dev-dependencies]
+rusqlite = { version = "=0.40.2", default-features = false, features = ["limits", "trace"] }
+tempfile = "=3.27.0"
