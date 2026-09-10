@@ -294,12 +294,6 @@ async fn import_conversation_preserves_unknown_identity_namespace_and_local_rout
             .surface
             .is_none()
     );
-    let minted = server
-        .import(json!({"messages":[poor("minted")],"source_platform":"claude"}))
-        .await;
-    let id = success(&minted)["conversation_id"].as_str().unwrap();
-    assert!(uuid::Uuid::parse_str(id.strip_prefix("agent-").unwrap()).is_ok());
-    assert!(server.store().session(id).unwrap().is_some());
     let mut native = args("codex-native", vec![poor("codex")]);
     native["source_platform"] = json!("codex");
     native["native_session_id"] = json!("native");
@@ -307,6 +301,61 @@ async fn import_conversation_preserves_unknown_identity_namespace_and_local_rout
     native["conversation_id"] = json!("wrong-id");
     failure(&server.import(native).await);
     assert!(server.store().session("wrong-id").unwrap().is_none());
+}
+
+#[tokio::test]
+async fn import_conversation_requires_retry_stable_identity_and_recovers_after_an_unread_response()
+{
+    let mut server = Server::new().await;
+    let before = snapshot(&server.sql());
+    for input in [
+        json!({"messages":[poor("missing")],"source_platform":"claude"}),
+        json!({"messages":[poor("missing")],"source_platform":"claude","conversation_id":null}),
+    ] {
+        failure(&server.import(input).await);
+        assert_eq!(snapshot(&server.sql()), before);
+    }
+    let arguments = args("retry-stable", vec![rich("lost-response")]);
+    let body = json!({"jsonrpc":"2.0","id":"lost","method":"tools/call","params":{"name":"import_conversation","arguments":arguments}}).to_string();
+    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port))
+        .await
+        .unwrap();
+    let headers = format!(
+        "POST /mcp-server/mcp HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
+        server.port,
+        body.len()
+    );
+    stream.write_all(headers.as_bytes()).await.unwrap();
+    stream.write_all(body.as_bytes()).await.unwrap();
+    assert_eq!(server.changed().await.conversation_id, "retry-stable");
+    drop(stream); // The first acknowledgement never reaches the caller.
+    let retry = server.import(arguments).await;
+    let output = success(&retry);
+    assert_eq!(output["conversation_id"], "retry-stable");
+    assert_eq!(output["ack_through"], "lost-response");
+    assert_eq!(output["records_new"], 0);
+    assert_eq!(count(&server.sql(), "sessions"), 1);
+    assert_eq!(count(&server.sql(), "records"), 1);
+    assert_eq!(count(&server.sql(), "capture_receipts"), 2);
+    assert!(
+        !server
+            .store()
+            .session("retry-stable")
+            .unwrap()
+            .unwrap()
+            .has_conflict
+    );
+    assert!(!server.store().records("retry-stable").unwrap()[0].has_conflict);
+    let listing = server
+        .raw(&json!({"jsonrpc":"2.0","id":"schema","method":"tools/list"}).to_string())
+        .await;
+    let schema = &listing["result"]["tools"][0]["inputSchema"];
+    assert!(
+        schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("conversation_id"))
+    );
 }
 
 #[tokio::test]

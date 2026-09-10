@@ -57,7 +57,7 @@ pub(crate) fn apply(store: &mut Store, args: ImportArgs) -> Result<ImportOutcome
     }
     let conversation_id = args
         .conversation_id
-        .unwrap_or_else(|| format!("agent-{}", uuid::Uuid::new_v4()));
+        .ok_or("Import requires a stable conversation_id supplied by the caller")?;
     let context = SourceContext {
         conversation_id: Some(conversation_id.clone()),
         source_platform: Some(args.source_platform),
@@ -149,6 +149,6 @@ pub(crate) fn schema() -> Value {
             "flush":{"type":"string","enum":["auto","now","defer"]},
             "namespace":{"type":"string"},"title":{"type":"string"},
             "provenance":{"type":"object"},"agent_brain_id":{"type":"string"},"org_id":{"type":"string"}
-        },"required":["messages","source_platform"]
+        },"required":["messages","conversation_id","source_platform"]
     }})
 }

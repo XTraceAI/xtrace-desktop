@@ -12,7 +12,7 @@ equivalents, are rejected before deserialization can erase them.
 | Field                                    | Meaning                                                                                                                                |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `messages`                               | Required array of 1–2,000 canonical message objects. The caller must split larger batches.                                             |
-| `conversation_id`                        | Canonical session ID, echoed unchanged. If absent, the server creates `agent-<uuid>`.                                                  |
+| `conversation_id`                        | Required canonical session ID chosen before the first attempt and reused on retries; echoed unchanged.                                 |
 | `source_platform`                        | Required raw host label. Known labels map to Claude, Codex or Cursor; novel labels remain stored and map to `other`.                   |
 | `source_surface`, `native_session_id`    | Optional observed identity. Absence stays unknown. Known native IDs must agree with the canonical host prefix.                         |
 | `flush`                                  | Optional `auto`, `now` or `defer`. Local persistence completes before any successful response in all three modes.                      |
@@ -20,9 +20,11 @@ equivalents, are rejected before deserialization can erase them.
 | `title`                                  | Optional transcript-derived title, subject to the saved content policy.                                                                |
 | `provenance`, `agent_brain_id`, `org_id` | Accepted for compatibility. They do not route local data to a cloud account; PR provenance is not acknowledged yet.                    |
 
-Identity labels must be nonblank and at most 512 bytes. When native identity is
-supplied, callers should also supply its canonical conversation ID. A generated
-agent ID cannot satisfy a contradictory known-host native identity.
+Identity labels must be nonblank and at most 512 bytes. Native identity must agree
+with the canonical conversation ID. The server rejects an omitted or null
+conversation ID before writing; it does not generate an identity that could be
+lost with the response. A manual caller can generate its ID before its first
+request and retain it for retries.
 
 User/assistant records use the shared parser and transactional writer. Missing
 UUIDs are counted as dropped; an entirely empty or ineligible input is an error.
