@@ -1,0 +1,95 @@
+import { useId, useState } from 'react';
+import { HostGlyph } from './HostGlyph';
+import { createPopoverHandle, Popover, PopoverTrigger } from './Popover';
+import '../styles/tables.css';
+
+export interface HostOption {
+  id: string;
+  label: string;
+  count?: number | null;
+}
+export function FilterMenu({
+  options,
+  selected,
+  onChange,
+  label = 'Filter hosts',
+}: {
+  options: readonly HostOption[];
+  selected: readonly string[];
+  onChange: (selected: string[]) => void;
+  label?: string;
+}) {
+  const id = useId();
+  const [handle] = useState(createPopoverHandle);
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="xt-filter-anchor">
+      <PopoverTrigger
+        handle={handle}
+        className="xt-filter-trigger"
+        type="button"
+        tabIndex={0}
+        aria-label={label}
+      >
+        <span className="xt-filter-glyphs" aria-hidden="true">
+          {selected.map((host) => (
+            <HostGlyph key={host} host={host} size={18} stacked />
+          ))}
+        </span>
+        {selected.length === 0 && <span>All hosts</span>}
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </PopoverTrigger>
+      <Popover
+        id={id}
+        open={open}
+        onOpenChange={setOpen}
+        handle={handle}
+        aria-label={label}
+        align="end"
+        offset={6}
+        className="xt-filter-menu"
+      >
+        <fieldset>
+          <legend className="sr-only">{label}</legend>
+          {options.length === 0 && <p className="xt-filter-empty">No hosts available</p>}
+          {options.map((option) => (
+            <label key={option.id} className="xt-filter-option">
+              <input
+                type="checkbox"
+                tabIndex={0}
+                checked={selected.includes(option.id)}
+                onChange={() =>
+                  onChange(
+                    selected.includes(option.id)
+                      ? selected.filter((key) => key !== option.id)
+                      : [...selected, option.id],
+                  )
+                }
+              />
+              <span aria-hidden="true">
+                <HostGlyph host={option.id} size={16} />
+              </span>
+              <span>{option.label}</span>{' '}
+              <small>
+                {option.count == null || !Number.isFinite(option.count)
+                  ? '—'
+                  : option.count.toLocaleString('en-US')}
+              </small>
+            </label>
+          ))}
+        </fieldset>
+      </Popover>
+    </span>
+  );
+}
