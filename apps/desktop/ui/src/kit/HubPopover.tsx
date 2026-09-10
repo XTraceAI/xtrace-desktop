@@ -1,9 +1,9 @@
-import { Popover, type PopoverProps } from './Popover';
+import { Popover, PopoverClose, type PopoverProps } from './Popover';
 import '../styles/sidebar.css';
 
 export interface HubPopoverProps extends Pick<
   PopoverProps,
-  'id' | 'open' | 'onOpenChange' | 'anchorRef' | 'positionRef'
+  'id' | 'open' | 'onOpenChange' | 'handle' | 'positionAnchor'
 > {
   connected?: boolean;
   teamLabel?: string;
@@ -29,15 +29,9 @@ export function HubPopover({
       <div className="xt-hub-content">
         <div className="xt-hub-heading">
           <span>XTrace Hub</span>
-          <button
-            type="button"
-            tabIndex={0}
-            popoverTarget={popover.id}
-            popoverTargetAction="hide"
-            aria-label="Close XTrace Hub"
-          >
+          <PopoverClose type="button" tabIndex={0} aria-label="Close XTrace Hub">
             esc
-          </button>
+          </PopoverClose>
         </div>
         <h2 id={`${popover.id}-title`}>
           {connected

@@ -1,234 +1,48 @@
-import { cleanup, render } from '@testing-library/react';
-import { createRef, StrictMode, useRef } from 'react';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { Popover } from './Popover';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode, useState } from 'react';
+import { afterEach, expect, it } from 'vitest';
+import { createPopoverHandle, Popover, PopoverClose, PopoverTrigger } from './Popover';
+import { ThemeScope, type Theme } from '../theme/ThemeProvider';
 
-const disconnect = vi.fn();
-const observe = vi.fn();
-beforeEach(() => {
-  vi.stubGlobal(
-    'ResizeObserver',
-    class {
-      observe = observe;
-      disconnect = disconnect;
-    },
+afterEach(cleanup);
+
+function Fixture({ theme }: { theme: Theme }) {
+  const [handle] = useState(createPopoverHandle);
+  const [open, setOpen] = useState(false);
+  return (
+    <ThemeScope theme={theme}>
+      <PopoverTrigger handle={handle}>Details</PopoverTrigger>
+      <Popover handle={handle} id="details" open={open} onOpenChange={setOpen} aria-label="Details">
+        <PopoverClose>Close details</PopoverClose>
+      </Popover>
+    </ThemeScope>
   );
-  vi.spyOn(HTMLElement.prototype, 'matches').mockImplementation(function (
-    this: HTMLElement,
-    selector,
-  ) {
-    return selector === ':popover-open' && this.dataset.open === 'true';
-  });
-  Object.defineProperty(HTMLElement.prototype, 'showPopover', {
-    configurable: true,
-    value: vi.fn(function (this: HTMLElement) {
-      this.dataset.open = 'true';
-    }),
-  });
-  Object.defineProperty(HTMLElement.prototype, 'hidePopover', {
-    configurable: true,
-    value: vi.fn(function (this: HTMLElement) {
-      this.dataset.open = 'false';
-    }),
-  });
-});
-afterEach(() => {
-  cleanup();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-  disconnect.mockClear();
-  observe.mockClear();
-});
+}
 
-it('positions from the anchor, closes through the native API, and balances listeners under StrictMode', () => {
-  const anchor = document.createElement('button');
-  document.body.append(anchor);
-  anchor.getBoundingClientRect = () => ({ left: 20, right: 50, top: 30, bottom: 60 }) as DOMRect;
-  const anchorRef = createRef<HTMLElement>();
-  anchorRef.current = anchor;
-  const add = vi.spyOn(window, 'addEventListener');
-  const remove = vi.spyOn(window, 'removeEventListener');
-  const props = { id: 'menu', anchorRef, onOpenChange: vi.fn() };
+it('associates its trigger, closes through the library, and carries live scope tokens through a portal', async () => {
   const view = render(
     <StrictMode>
-      <Popover {...props} open>
-        Content
-      </Popover>
+      <Fixture theme="light" />
     </StrictMode>,
   );
-  expect(view.getByText('Content').style.top).toBe('68px');
-  expect(view.getByText('Content').style.left).toBe('20px');
+  const trigger = screen.getByRole('button', { name: 'Details' });
+  fireEvent.click(trigger);
+  const popup = await screen.findByRole('dialog', { name: 'Details' });
+  expect(trigger.getAttribute('aria-expanded')).toBe('true');
+  expect(trigger.getAttribute('aria-controls')).toBe(popup.id);
+  expect(view.container.contains(popup)).toBe(false);
+  expect(popup.closest('[data-theme]')?.getAttribute('data-theme')).toBe('light');
   view.rerender(
     <StrictMode>
-      <Popover {...props} open={false}>
-        Content
-      </Popover>
+      <Fixture theme="dark" />
     </StrictMode>,
   );
-  expect(HTMLElement.prototype.hidePopover).toHaveBeenCalledOnce();
+  expect(popup.closest('[data-theme]')?.getAttribute('data-theme')).toBe('dark');
+  fireEvent.click(screen.getByRole('button', { name: 'Close details' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  fireEvent.click(trigger);
+  await screen.findByRole('dialog');
   view.unmount();
-  for (const event of ['resize', 'scroll']) {
-    expect(remove.mock.calls.filter(([name]) => name === event)).toHaveLength(
-      add.mock.calls.filter(([name]) => name === event).length,
-    );
-  }
-  expect(add.mock.calls.some(([name]) => ['keydown', 'click', 'pointerdown'].includes(name))).toBe(
-    false,
-  );
-  expect(disconnect).toHaveBeenCalledTimes(2);
-  anchor.remove();
+  expect(screen.queryByRole('dialog')).toBeNull();
 });
-
-it.each(['invoker', 'position'])(
-  'tracks a replacement %s node through the same ref while open',
-  (target) => {
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
-      this: HTMLElement,
-    ) {
-      const left = Number(this.dataset.left ?? 0);
-      return { left, right: left + 30, top: 30, bottom: 60 } as DOMRect;
-    });
-    function Fixture({ replaced }: { replaced: boolean }) {
-      const anchorRef = useRef<HTMLButtonElement>(null);
-      const positionRef = useRef<HTMLSpanElement>(null);
-      return (
-        <>
-          <button
-            key={target === 'invoker' ? String(replaced) : 'invoker'}
-            ref={anchorRef}
-            data-testid="invoker"
-            data-left={replaced ? 100 : 20}
-          >
-            Open
-          </button>
-          {target === 'position' && (
-            <span
-              key={String(replaced)}
-              ref={positionRef}
-              data-testid="position"
-              data-left={replaced ? 150 : 50}
-            />
-          )}
-          <Popover
-            id="replacement"
-            anchorRef={anchorRef}
-            positionRef={target === 'position' ? positionRef : undefined}
-            open
-            onOpenChange={() => {}}
-          >
-            Replacement content
-          </Popover>
-        </>
-      );
-    }
-    const view = render(<Fixture replaced={false} />);
-    const oldTarget = view.getByTestId(target);
-    const content = view.getByText('Replacement content');
-    expect(content.style.left).toBe(target === 'position' ? '50px' : '20px');
-    view.rerender(<Fixture replaced />);
-    const replacement = view.getByTestId(target);
-    expect(replacement).not.toBe(oldTarget);
-    expect(oldTarget.isConnected).toBe(false);
-    expect(content.style.left).toBe(target === 'position' ? '150px' : '100px');
-    expect(observe).toHaveBeenCalledWith(replacement);
-    expect(disconnect).toHaveBeenCalledOnce();
-    window.dispatchEvent(new Event('resize'));
-    expect(content.dataset.open).toBe('true');
-    expect(HTMLElement.prototype.hidePopover).not.toHaveBeenCalled();
-  },
-);
-
-it('keeps native dismissal closed through a render before the queued toggle event', () => {
-  const anchor = document.createElement('button');
-  document.body.append(anchor);
-  const anchorRef = createRef<HTMLElement>();
-  anchorRef.current = anchor;
-  const changed = vi.fn();
-  const props = { id: 'dismissed', anchorRef, onOpenChange: changed };
-  const view = render(
-    <Popover {...props} open>
-      Content
-    </Popover>,
-  );
-  const content = view.getByText('Content');
-  // Light dismissal is synchronous; its toggle notification is queued.
-  content.hidePopover();
-  view.rerender(
-    <Popover {...props} open>
-      Changed content
-    </Popover>,
-  );
-  expect(content.dataset.open).toBe('false');
-  expect(HTMLElement.prototype.showPopover).toHaveBeenCalledOnce();
-  const toggle = new Event('toggle');
-  Object.defineProperty(toggle, 'newState', { value: 'closed' });
-  content.dispatchEvent(toggle);
-  expect(changed).toHaveBeenCalledWith(false);
-  view.rerender(
-    <Popover {...props} open={false}>
-      Changed content
-    </Popover>,
-  );
-  view.rerender(
-    <Popover {...props} open>
-      Changed content
-    </Popover>,
-  );
-  expect(content.dataset.open).toBe('true');
-  expect(HTMLElement.prototype.showPopover).toHaveBeenCalledTimes(2);
-  view.unmount();
-  anchor.remove();
-});
-
-it.each(['invoker', 'position'])(
-  'dismisses when the %s detaches, including a simultaneous controlled close',
-  (target) => {
-    for (const nextOpen of [false, true]) {
-      const anchor = document.createElement('button');
-      document.body.append(anchor);
-      const anchorRef = createRef<HTMLElement>();
-      anchorRef.current = anchor;
-      const geometry = document.createElement('span');
-      document.body.append(geometry);
-      const positionRef = createRef<HTMLElement>();
-      positionRef.current = geometry;
-      const changed = vi.fn();
-      const view = render(
-        <Popover
-          id="detached"
-          anchorRef={anchorRef}
-          positionRef={positionRef}
-          open
-          onOpenChange={changed}
-        >
-          Detached content
-        </Popover>,
-      );
-      const content = view.getByText('Detached content');
-      expect(content.dataset.open).toBe('true');
-      if (target === 'invoker') {
-        anchor.remove();
-        anchorRef.current = null;
-      } else {
-        geometry.remove();
-        positionRef.current = null;
-      }
-      view.rerender(
-        <Popover
-          id="detached"
-          anchorRef={anchorRef}
-          positionRef={positionRef}
-          open={nextOpen}
-          onOpenChange={changed}
-        >
-          Detached content
-        </Popover>,
-      );
-      expect(content.dataset.open).toBe('false');
-      if (nextOpen) expect(changed).toHaveBeenCalledWith(false);
-      view.unmount();
-      anchor.remove();
-      geometry.remove();
-    }
-  },
-);

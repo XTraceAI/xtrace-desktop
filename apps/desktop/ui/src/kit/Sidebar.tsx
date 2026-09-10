@@ -1,7 +1,7 @@
-import { useId, useRef, useState, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { BrandMark } from './BrandMark';
 import { HubPopover } from './HubPopover';
-import { Popover } from './Popover';
+import { createPopoverHandle, Popover, PopoverTrigger } from './Popover';
 import { sidebarIcons } from './sidebar-icons';
 import type { Theme } from '../theme/ThemeProvider';
 import '../styles/sidebar.css';
@@ -82,11 +82,11 @@ export function Sidebar({
   icons = {},
 }: SidebarProps) {
   const hubId = useId();
-  const hubTrigger = useRef<HTMLButtonElement>(null);
-  const hubPosition = useRef<HTMLSpanElement>(null);
+  const [hubHandle] = useState(createPopoverHandle);
+  const [hubPosition, setHubPosition] = useState<HTMLSpanElement | null>(null);
   const [hubOpen, setHubOpen] = useState(false);
   const captureId = useId();
-  const captureTrigger = useRef<HTMLButtonElement>(null);
+  const [captureHandle] = useState(createPopoverHandle);
   const [captureOpen, setCaptureOpen] = useState(false);
   const listening = listener.status === 'listening';
   const icon = (key: SidebarIcon) => (
@@ -174,44 +174,30 @@ export function Sidebar({
             );
           })}
         </section>
-        <button
-          ref={hubTrigger}
+        <PopoverTrigger
+          handle={hubHandle}
           type="button"
           className="xt-hub-button"
           aria-label="XTrace Hub"
-          aria-expanded={hubOpen}
-          popoverTarget={hubId}
-          onClick={(event) => {
-            event.preventDefault();
-            setCaptureOpen(false);
-            setHubOpen(!hubOpen);
-          }}
         >
           {icon('hub')}
           <span>Cloud and Team</span>
-        </button>
+        </PopoverTrigger>
         <div className="xt-sidebar-status">
-          <span ref={hubPosition} className="xt-hub-position" aria-hidden="true" />
+          <span ref={setHubPosition} className="xt-hub-position" aria-hidden="true" />
           <div className="xt-version-status">
-            <button
-              ref={captureTrigger}
+            <PopoverTrigger
+              handle={captureHandle}
               type="button"
               className="xt-capture-trigger"
               aria-label="Capture status"
               title="View capture status by surface"
-              aria-expanded={captureOpen}
-              popoverTarget={captureId}
-              onClick={(event) => {
-                event.preventDefault();
-                setHubOpen(false);
-                setCaptureOpen(!captureOpen);
-              }}
             >
               <i className={listening ? 'xt-status-live' : ''} aria-hidden="true" />
               <span>
                 {listening ? `plugin · :${listener.port}` : `plugin · ${listener.status}`}
               </span>
-            </button>
+            </PopoverTrigger>
             <span title={`v${version}${updateLabel ? ` · ${updateLabel}` : ''}`}>
               <i aria-hidden="true" />
               <span>
@@ -244,9 +230,12 @@ export function Sidebar({
       <Popover
         id={captureId}
         open={captureOpen}
-        onOpenChange={setCaptureOpen}
-        anchorRef={captureTrigger}
-        positionRef={hubPosition}
+        onOpenChange={(open) => {
+          setCaptureOpen(open);
+          if (open) setHubOpen(false);
+        }}
+        handle={captureHandle}
+        positionAnchor={hubPosition}
         side="right"
         align="end"
         offset={14}
@@ -273,9 +262,12 @@ export function Sidebar({
       <HubPopover
         id={hubId}
         open={hubOpen}
-        onOpenChange={setHubOpen}
-        anchorRef={hubTrigger}
-        positionRef={hubPosition}
+        onOpenChange={(open) => {
+          setHubOpen(open);
+          if (open) setCaptureOpen(false);
+        }}
+        handle={hubHandle}
+        positionAnchor={hubPosition}
         connected={hubConnected}
         teamLabel={teamLabel}
         onConnect={onConnectHub}

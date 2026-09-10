@@ -54,21 +54,21 @@ chrome space; it draws no replacement traffic lights or drag regions.
 
 ## HubPopover props and states
 
-| Prop                                      | Contract / default                                                                                                      |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `id`, `open`, `onOpenChange`, `anchorRef` | Required shared Popover contract. Use a trigger with the same `popoverTarget`, its ref, and controlled `aria-expanded`. |
-| `positionRef`                             | Optional positioning-only target forwarded to Popover; `anchorRef` remains the native invoker and focus-return target.  |
-| `connected`                               | Defaults to false. Shows the connection invitation and CTA. True shows the connected title and removes the CTA.         |
-| `teamLabel`                               | Optional connected title label, falling back to “XTrace Hub”.                                                           |
-| `onConnect()`                             | Optional callback; an absent callback disables the disconnected CTA.                                                    |
+| Prop                                   | Contract / default                                                                                              |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `id`, `open`, `onOpenChange`, `handle` | Required shared Popover contract. Use a Base UI `PopoverTrigger` with the same stable handle.                   |
+| `positionAnchor`                       | Optional positioning-only target forwarded to Popover; the registered trigger remains the focus-return target.  |
+| `connected`                            | Defaults to false. Shows the connection invitation and CTA. True shows the connected title and removes the CTA. |
+| `teamLabel`                            | Optional connected title label, falling back to “XTrace Hub”.                                                   |
+| `onConnect()`                          | Optional callback; an absent callback disables the disconnected CTA.                                            |
 
 The Hub popover is 264px wide, uses canvas tokens and a left caret, and anchors
-14px right of the footer content edge with its bottom 6px below the status row. The Sidebar supplies that row as its positioning target; the full-width “Cloud and Team” button remains the invoker and focus-return target. Standalone HubPopover consumers can provide their own `positionRef` or use the trigger for geometry. It composes the
-existing native Popover; Escape, outside dismissal, and focus restoration stay
+14px right of the footer content edge with its bottom 6px below the status row. The Sidebar supplies that row as its positioning target; the full-width “Cloud and Team” button remains the invoker and focus-return target. Standalone HubPopover consumers can provide their own `positionAnchor` or use the trigger for geometry. It composes the
+shared Base UI Popover; Escape, outside dismissal, and focus restoration stay
 with that primitive. Its visible “esc” button also closes it. Content can scroll
 in a constrained viewport. The shared popover supplies viewport clamping.
 
-Sidebar opening is controlled so switching between Hub and capture details cannot race deferred native toggle events. Shared geometry updates are separate from native opening, so outside clicks that change navigation or appearance keep a dismissed panel closed. Native Escape, outside dismissal and focus return remain in the shared Popover.
+Sidebar opening is controlled so opening Hub closes capture details and vice versa. Base UI owns trigger association, keyboard dismissal and focus return. Outside clicks that also change navigation or appearance keep the dismissed panel closed.
 
 The CTA only invokes the supplied callback; it does
 not connect, navigate, or mark the desktop connected on its own. The CTA uses
@@ -97,6 +97,6 @@ pnpm e2e --grep sidebar
 ```
 
 The browser fixture uses the shared runner and emulated appearance. It exercises the
-real native popover API; unit tests isolate rendering and callbacks without
+real Base UI popup in the browser; unit tests isolate rendering and callbacks without
 claiming browser behavior. The fixture is outside the production entry point.
 See [Sidebar acceptance](acceptance/sidebar.md) for results, screenshots, and limits.

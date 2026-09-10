@@ -7,12 +7,10 @@ the component fixture demonstrates the new controls independently.
 ## Verification
 
 - Typechecking, ESLint, token-color lint and the production build pass.
-- All 25 Vitest tests and the Node color-lint regression pass. Seven component
-  tests cover Sidebar, HubPopover and BrandMark; the shared Popover tests also
-  cover detachment/replacement of the invoking and positioning targets and native dismissal before a queued toggle event.
-- `pnpm e2e` passes all 14 tests using pinned Playwright 1.58.2 with Chromium and
-  WebKit. This includes the sidebar scenario in both engines and the inherited
-  appearance, font-loading, popover, modal and shell tests.
+- All 20 Vitest tests and the Node color-lint regression pass. Component tests
+  cover controlled Sidebar/Hub/Brand content and Base UI portal/theme lifecycle.
+- `pnpm e2e` covers the sidebar in Chromium and WebKit, plus appearance, fonts,
+  popup dismissal, moving anchors, clipped ancestors and nested modal focus.
 - The sidebar scenario reports no browser console errors or page exceptions.
 
 Run `pnpm e2e --grep sidebar` to repeat the two focused browser tests. Browser
@@ -28,7 +26,7 @@ executables must first be installed with
 | Measurements            | Supply zero, null and positive token counts, then no measurements.                                     | Zero displays `0` with no bar; null displays `—` with no bar. Positive values use compact labels. Empty measurements have an explicit message.                                                                                                           |
 | Capture coverage        | Supply capturing CLI, uncaptured Desktop, unfamiliar and missing identifiers; open plugin status.      | Each row retains its own status. Missing coverage stays unknown; listener status does not certify capture.                                                                                                                                               |
 | Footer                  | Change listener, version, update, settings and appearance props.                                       | Labels follow supplied values; status text and the two controls share one footer row. Long version text truncates with its full value in a title. Only supplied actions run; no “up to date” status is inferred.                                         |
-| Hub interaction         | Open with Enter, dismiss with Escape, reopen and use the close button, then reopen and click outside.  | The native popover opens and dismisses correctly, returns keyboard focus to its invoker and can reopen repeatedly. The disconnected CTA is disabled without a handler; supplied connection state controls the title and CTA.                             |
+| Hub interaction         | Open with Enter, dismiss with Escape, reopen and use the close button, then reopen and click outside.  | The popover opens and dismisses correctly, returns keyboard focus to its invoker and can reopen repeatedly. The disconnected CTA is disabled without a handler; supplied connection state controls the title and CTA.                                    |
 | Layout                  | Render a 228×900 sidebar, then reserve a 74px top inset. Open the Hub panel.                           | The sidebar is 228px wide with 16px default top padding and 32px navigation rows. The Hub is 264px wide, 14px beyond the footer content edge and 6px below the status row at its bottom edge. The configured inset reserves native window-control space. |
 | Appearance and branding | Render dark and light themes with bundled fonts and 20/22/26/34px marks.                               | Shared theme colors apply to the sidebar and Hub. The approved XTrace image retains its geometry at each size.                                                                                                                                           |
 
@@ -56,7 +54,7 @@ Intentional functional differences: the plugin row opens per-surface capture
 details instead of displaying them permanently; long version text truncates
 instead of pushing controls outside the footer; absent actions remain disabled.
 The sample reset caption and update status are fixture props, not product defaults.
-Hub and capture panels use native keyboard dismissal and focus return; switching
+Hub and capture panels use Base UI keyboard dismissal and focus return; switching
 between them is covered in both browser engines. The Hub CTA uses the accessible
 shared foreground token in dark mode. Native shells still reserve their window
 controls through the existing inset prop.
@@ -74,11 +72,12 @@ they contain no personal desktop content or real measurements.
 
 ## Integration and platform limits
 
-The shared Popover owns native dismissal and focus restoration. Its optional
-positioning reference affects geometry while the original invoking button remains
-the focus-return target. Replacing either DOM target behind a stable ref updates
-the observers and position before paint; detaching it without a replacement
-dismisses the panel. Geometry rebinding never opens it; native opening runs only when the controlled opening inputs change, so an outside navigation/theme update cannot reopen a dismissed panel. The sidebar adds no global Escape or outside-click listeners.
+The shared Popover delegates positioning, dismissal and focus restoration to
+Base UI. Its optional element-valued positioning anchor changes geometry while
+the registered trigger remains the focus-return target. Browser tests replace
+both trigger and separate anchor nodes while open and verify position and focus
+return. State-changing outside clicks stay dismissed and can later reopen.
+The sidebar adds no document-level Escape, click or positioning listeners.
 
 The caller supplies navigation, real measurements, shared icons and connection
 actions. These components neither connect to Hub nor change routes by themselves.

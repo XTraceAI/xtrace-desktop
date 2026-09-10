@@ -27,53 +27,63 @@ Tauri `theme()` and `onThemeChanged` request a fresh media read. Subscriptions
 clean up even if native registration resolves after unmount.
 
 `<ThemeScope theme="dark">` or `theme="light"` sets a subtree's theme. Apply token
-utilities or CSS to the content. A native top-layer overlay remains in that DOM
-subtree, so its theme survives opening and page preference changes.
+utilities or CSS to the content. The scope also supplies React context so
+portalled popovers and dialogs retain that palette, including live theme changes.
+
+## Component behavior
+
+Use [Base UI](https://base-ui.com/react/overview/about) directly for shared
+interaction primitives. Keep XTrace layout, typography, colors and domain views
+in the existing kit. Base UI owns positioning, keyboard navigation, dismissal
+and focus management; consumers must not add competing document listeners.
+
+[Shadcn's Base UI components](https://ui.shadcn.com/docs/components/base/popover)
+use the same underlying primitives and can be restyled. Direct Base UI avoids
+maintaining an additional set of styled wrappers while fitting our compact
+custom layouts. This choice does not prescribe a table engine or chart library.
+Adopt other primitives when a consumer needs them; do not prebuild a catalog.
 
 ## Popovers
 
-`Popover` accepts `id`, controlled `open`/`onOpenChange`, `anchorRef`, standard div
-props, `side="bottom" | "right"`, `align="start" | "end"`, and a pixel `offset`
-(default 8). It clamps to an 8px viewport margin and recomputes on resize, scroll,
-and size changes. This uses fixed positioning supported at the Safari 17 floor,
-without newer CSS anchor positioning.
+Create a stable `createPopoverHandle()` with `useState`. Give the same handle to
+`PopoverTrigger` and controlled `Popover`; the library associates their ARIA
+attributes and focus-return target. Use `PopoverClose` for the visible close action.
 
 ```tsx
-const trigger = useRef<HTMLButtonElement>(null);
+const [handle] = useState(createPopoverHandle);
 const [open, setOpen] = useState(false);
 <>
-  <button ref={trigger} popoverTarget="details" aria-expanded={open}>
-    Details
-  </button>
-  <Popover id="details" anchorRef={trigger} open={open} onOpenChange={setOpen}>
-    <button popoverTarget="details" popoverTargetAction="hide" tabIndex={0}>
-      Close
-    </button>
+  <PopoverTrigger handle={handle}>Details</PopoverTrigger>
+  <Popover id="details" handle={handle} open={open} onOpenChange={setOpen} aria-label="Details">
+    <PopoverClose>Close</PopoverClose>
   </Popover>
 </>;
 ```
 
-Use a unique ID and an accessible label/role appropriate to the content. Native
-`popover="auto"` owns Escape, light dismissal, and the top layer; consumers must
-not add global Escape/outside-click listeners. Explicit `tabIndex={0}` on a
-popover action makes it reachable with ordinary Tab in WebKit even when macOS
-skips button focus. Dismissal returns focus to the trigger when focus would
-otherwise be lost, while an outside focused control keeps focus.
+`Popover` accepts standard div props, `side="bottom" | "right"`,
+`align="start" | "end"`, and a pixel `offset` (default 8). Base UI uses fixed
+positioning, an 8px collision margin, and tracks scroll/resize. Panels portal to
+the document body to escape clipped and transformed ancestors. Keyboard opening
+focuses the first action; Escape returns focus to the registered trigger.
+Outside clicks dismiss without replaying an opening on unrelated state updates.
+
+For a separate geometry target, pass `positionAnchor`, an element held in state
+by a callback ref. Passing the element makes replacement reactive; do not cache a
+DOM node from an object ref. The registered trigger remains the focus-return
+target. Mount/unmount the trigger and its popup owner together.
 
 ## Modals
 
 `Modal` accepts controlled `open`/`onOpenChange`, optional `returnFocusRef`, and
-standard dialog props, including an accessible `aria-label` or `aria-labelledby`.
-Supply a visible close action. Pass the invoker's ref because a mouse click on
-a macOS button may not focus it. Without the ref, the prior focused element is
-restored.
+standard div props, including an accessible `aria-label` or `aria-labelledby`.
+Supply a visible `ModalClose`. Pass the invoker's ref because a mouse click on a
+macOS button may not focus it; without it the library uses prior focus.
 
-`showModal()` owns background inertness, Escape, and top-layer placement. A local
-Tab handler cycles visible enabled controls because WebKit can otherwise send
-Tab to browser chrome. There are no document-level keyboard or focus listeners.
-Closing or unmounting restores focus if the invoker remains connected. These
-primitives cover ordinary form controls; a consumer with a composite widget
-owns that widget's arrow-key/roving-tabindex behavior.
+Base UI Dialog owns focus containment, background interaction blocking, Escape,
+and nested-dialog behavior. Pointer clicks on the backdrop do not dismiss this
+wrapper. There is no application Tab-key loop. A nested dialog goes inside its
+parent's React tree so Escape closes the child first and focus returns through
+each layer. The shared portal uses the closest ThemeScope or the app theme.
 
 ## Fonts and evidence
 

@@ -41,7 +41,7 @@ it('renders controlled navigation, groups, badge and disabled Leaderboard withou
   expect(input.onNavigate).toHaveBeenLastCalledWith('leaderboard');
 });
 
-it('distinguishes measured zero, null tokens, listener off and unknown surfaces', () => {
+it('distinguishes measured zero, null tokens, listener off and unknown surfaces', async () => {
   const view = render(
     <Sidebar
       {...props()}
@@ -69,6 +69,8 @@ it('distinguishes measured zero, null tokens, listener off and unknown surfaces'
       .width,
   ).toBe('0%');
   expect(screen.getByText('plugin · off')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Capture status' }));
+  await screen.findByRole('dialog', { name: 'Capture by surface' });
   expect(screen.getByText('Codex · desktop').parentElement?.textContent).toContain('Not capturing');
   expect(screen.getByText('Codex · cli').parentElement?.textContent).toContain('Capturing');
   expect(screen.getByText('Codex · new-surface').parentElement?.textContent).toContain('Unknown');
@@ -106,10 +108,11 @@ it('uses footer/action props, reserves the native top inset and gates Team indep
   expect(input.onToggleTheme).toHaveBeenCalledOnce();
 });
 
-it('keeps missing measurements, listener and capture coverage explicitly unknown', () => {
+it('keeps missing measurements, listener and capture coverage explicitly unknown', async () => {
   render(<Sidebar {...props()} hosts={[]} listener={{ status: 'unknown' }} topInset={NaN} />);
   expect(screen.getByText('No host measurements')).toBeTruthy();
-  expect(screen.getByText('Capture status unknown')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Capture status' }));
+  expect(await screen.findByText('Capture status unknown')).toBeTruthy();
   expect(screen.getByText('plugin · unknown')).toBeTruthy();
   expect(screen.queryByText('Capturing')).toBeNull();
   expect((screen.getByRole('complementary') as HTMLElement).style.paddingTop).toBe('16px');
