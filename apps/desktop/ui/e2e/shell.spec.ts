@@ -128,3 +128,11 @@ test('renders bundled fonts and remains navigable with external network denied',
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page.getByText('fixture://F1', { exact: true })).toBeVisible();
 });
+
+// The ordinary development server explicitly leaves the gallery disabled.
+test('gallery stays unavailable without its development flag', async ({ page }) => {
+  await page.goto('/gallery');
+  await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Component gallery' })).toHaveCount(0);
+  await expect(page.locator('iframe')).toHaveCount(0);
+});

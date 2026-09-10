@@ -3,7 +3,7 @@ const port = Number(process.env.E2E_PRODUCTION_PORT ?? 5194);
 
 export default defineConfig({
   testDir: './e2e',
-  testMatch: 'shell-production.spec.ts',
+  testMatch: '*-production.spec.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: 0,
@@ -20,6 +20,6 @@ export default defineConfig({
     command: `pnpm build && pnpm exec vite preview --host 127.0.0.1 --port ${port} --strictPort`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: false,
-    env: { VITE_XTRACE_FIXTURE: 'F1' },
+    env: { VITE_XTRACE_FIXTURE: 'F1', VITE_GALLERY: '1' },
   },
 });

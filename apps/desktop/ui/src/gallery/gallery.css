@@ -1,0 +1,134 @@
+.gallery {
+  display: grid;
+  grid-template-columns: 244px minmax(0, 1fr);
+  height: 100dvh;
+  color: var(--ink);
+  background: var(--panel);
+}
+.gallery-index {
+  padding: 24px 16px;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+}
+.gallery-index h1 {
+  font:
+    800 18px/1.4 'Manrope',
+    sans-serif;
+  letter-spacing: -0.02em;
+}
+.gallery-index p,
+.gallery-main header p {
+  color: var(--meta);
+  font:
+    400 10px/1.6 'Geist Mono',
+    monospace;
+}
+.gallery-index nav {
+  display: grid;
+  gap: 3px;
+  margin-top: 20px;
+}
+.gallery-index button {
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--secondary);
+  padding: 7px 8px;
+  text-align: left;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.gallery-index button[aria-current] {
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+.gallery-main {
+  display: block;
+  overflow: auto;
+  padding: 24px;
+}
+.gallery-main h2 {
+  font-size: 18px;
+}
+.gallery-pair {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  gap: 24px;
+  margin-top: 24px;
+  width: max-content;
+}
+.gallery-pair h3 {
+  margin: 0 0 12px;
+  color: var(--meta);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+.gallery-pair iframe {
+  display: block;
+  border: 0;
+  outline: 1px solid var(--border);
+}
+html:has(#gallery-frame),
+body:has(#gallery-frame),
+#gallery-frame {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  margin: 0;
+}
+.gallery-frame {
+  width: 100%;
+  height: 100%;
+  color: var(--ink);
+  background: var(--canvas);
+}
+.gallery-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+.gallery-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px;
+}
+.gallery-caption {
+  color: var(--meta);
+  font-size: 11px;
+  margin: 0;
+}
+.gallery-frame .xt-topbar {
+  width: 100%;
+}
+body:has(#gallery-frame) .xt-modal {
+  width: min(380px, calc(100% - 32px));
+}
+body:has(#gallery-frame) .xt-modal input {
+  display: block;
+  width: 100%;
+  margin: 4px 0 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--ink);
+}
+body:has(#gallery-frame) .xt-popover.gallery-popover {
+  width: 240px;
+  padding: 16px;
+}
+body:has(#gallery-frame) .xt-popover.gallery-popover p,
+body:has(#gallery-frame) .xt-modal p {
+  margin: 0 0 16px;
+}
