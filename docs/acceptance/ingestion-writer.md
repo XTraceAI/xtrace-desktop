@@ -5,7 +5,7 @@ coverage and receipt acknowledgement through one storage transaction. The tests 
 
 ## Setup, action and expected result
 
-`cargo test -p xt-ingest --test writer --locked --offline` runs fourteen tests using
+`cargo test -p xt-ingest --test writer --locked --offline` runs sixteen tests using
 synthetic records and shared disposable fixture databases.
 
 | Case                    | Setup and action                                                                                                                              | Expected result                                                                                                                                                                                                                                                  |
@@ -50,6 +50,12 @@ rolls back session changes, conflict flags and cursor advancement.
 Reordering the identical set succeeds and acknowledges the last
 accepted UUID in that request's order. Concurrency is covered with two independent
 store connections delivering one exact receipt simultaneously.
+
+Two event regressions warm receipt inputs, then replay different retained text
+or tool input with an identical measurement projection, and replay missing or
+conflicting surface metadata. Content conflicts invalidate even with zero new or
+enriched records; event surfaces match the committed session, while receipt
+identity continues to describe the submitted source facts.
 
 ## Scope
 

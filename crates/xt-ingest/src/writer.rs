@@ -217,11 +217,14 @@ pub fn write_batch(store: &mut Store, request: &WriteBatch<'_>) -> Result<BatchO
     let invalidate = saved.session_changed
         || records_new > 0
         || records_enriched > 0
-        || saved.records.iter().any(|row| row.conflict_fields != 0);
+        || saved
+            .records
+            .iter()
+            .any(|row| row.conflict_fields != 0 || row.stored_has_conflict == Some(true));
     let mut events = vec![ChangeEvent {
         conversation_id: session.session_id.clone(),
         source,
-        surface: session.surface,
+        surface: saved.session_surface,
         records_new,
         records_enriched,
         invalidate_measurements: invalidate || saved.receipt_committed,
