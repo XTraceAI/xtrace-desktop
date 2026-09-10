@@ -1,12 +1,12 @@
 # Canonical SQLite storage acceptance
 
-This contract covers the `xt-store` library. The desktop app does not open the
-store or import data yet. Every PR changing this boundary records the tested
+This contract covers the `xt-store` library. The desktop app opens the store on startup;
+automatic capture ingestion remains separate. Every PR changing this boundary records the tested
 source/base, commands, actual test counts and remaining checks.
 
 | Case                         | Setup and action                                                                                                                                               | Expected result                                                                                                                                                                                                                       |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Connection settings          | Open a temporary file database and an isolated in-memory database; inspect connection pragmas.                                                                 | File mode uses WAL, foreign keys, NORMAL synchronous mode and a five-second busy timeout. Memory mode uses MEMORY journal.                                                                                                            |
+| Connection settings          | Open a temporary file database and an isolated in-memory database; inspect connection pragmas, then reopen a second connection to the same file.               | Every file connection uses WAL, FULL synchronous mode, foreign keys and a five-second busy timeout; macOS also enables fullfsync. Memory mode retains MEMORY journal and NORMAL synchronous mode.                                     |
 | Migration and reopen         | Open/migrate a fresh file twice, persist rows and reopen it; force a migration failure and add an unknown version to the history.                              | Version 1 applies once. Reopening preserves rows. A failed migration rolls back, and incompatible history is rejected. Migration source filenames do not change stored numeric versions.                                              |
 | Readers and writers          | Use independent file connections; hold a read snapshot while another writer commits; run concurrent writes.                                                    | Readers see a consistent committed snapshot, writers serialize and committed rows persist. Assertions use file-backed WAL rather than in-memory substitutes.                                                                          |
 | Replay and enrichment        | Import a batch twice in both source arrival orders, then fill missing fields and replay poorer/conflicting input.                                              | Each UUID inserts once. Null values remain unknown until measured; known values do not disappear. Conflicts keep the first known value and set a structural flag.                                                                     |
@@ -21,3 +21,6 @@ source/base, commands, actual test counts and remaining checks.
 Run `cargo test -p xt-store --locked` for focused cases and follow
 [CI.md](../CI.md) for full workspace, browser, native and supply-chain validation.
 Tests use synthetic records and disposable databases.
+
+Connection tests verify SQLite configuration, and existing file/reopen tests verify
+committed rows remain readable. They do not simulate hardware power loss.

@@ -5,10 +5,12 @@ native application opens the store on startup; capture adapters do not yet inges
 
 ## API
 
-- `Store::open(path)` opens a file with WAL, foreign keys, NORMAL synchronous
+- `Store::open(path)` opens a file with WAL, foreign keys, FULL synchronous
   mode and a five-second busy timeout, then applies embedded migrations.
   The parent directory must exist. `Store::open_in_memory()` is for isolated
-  single-connection tests and uses SQLite's MEMORY journal.
+  single-connection tests and uses SQLite's MEMORY journal with NORMAL synchronous mode.
+  File connections also enable `fullfsync` on macOS, requesting a storage barrier.
+  These connection settings are applied on every open before migrations or writes.
 - `upsert_session(&SessionMeta, keep_content)` creates the canonical conversation
   ID unchanged or fills missing session metadata.
   `SessionMeta::new(id, raw_platform, source)` maps `claude`, `codex` and `cursor` to known hosts;
@@ -35,6 +37,14 @@ Text length counts Unicode scalar values in text blocks, excluding tool output.
 Both camel-case wire keys (`gitBranch`, `requestId`, `isMeta`, `isSidechain`) and
 canonical `git_branch`/`request_id` aliases are supported. Meta/sidechain flags
 have the canonical default `false` and remain unchanged on conflicting replay.
+
+In WAL mode, FULL synchronizes the WAL at each transaction commit. NORMAL can
+lose a committed transaction after an OS crash or power failure; a capture client
+could then have advanced beyond records that were not saved. File-backed writes
+therefore use FULL before returning a successful result. Batching amortizes this
+extra synchronization across an import. See SQLite's
+[synchronous](https://www.sqlite.org/pragma.html#pragma_synchronous) and
+[fullfsync](https://www.sqlite.org/pragma.html#pragma_fullfsync) documentation.
 
 ## Retention and replay
 
