@@ -8,9 +8,9 @@ type Props = Omit<ComponentProps<'input'>, 'type' | 'value' | 'onChange' | 'aria
   shortcut?: string;
 };
 
-export function Search({ label, value, onValueChange, shortcut, className = '', ...props }: Props) {
+export function Search({ label, value, onValueChange, shortcut, ...props }: Props) {
   return (
-    <label className={`xt-search ${className}`}>
+    <label className="xt-search">
       <svg
         aria-hidden="true"
         viewBox="0 0 24 24"
