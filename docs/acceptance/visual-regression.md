@@ -14,6 +14,11 @@ themes. The map fixes CSS dimensions at 228×900, 1200×44 and 300×52 respectiv
 PNG dimensions are twice those sizes. The normal gallery smoke, complete local
 gallery sweep and production-exclusion checks retain their existing contracts.
 
+The metric geometry browser check also exercises a long label with a measured
+value, unit and delta at 300px. The label may truncate; ordinary metric values
+must remain fully visible in both themes and browser engines. Gallery deltas
+use ratios so the illustrative changes display as 4% and -8%.
+
 The PR records the exact source and candidate review identity, actual macOS and
 WebKit versions, reproducibility results and deliberate-regression evidence.
 Initial candidate generation alone does not satisfy acceptance: the visual review

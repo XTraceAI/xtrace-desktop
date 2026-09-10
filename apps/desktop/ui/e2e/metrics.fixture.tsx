@@ -35,7 +35,7 @@ function Fixture() {
       </p>
       <div className="metrics-preview-grid">
         <StatTile
-          label="Parallelism"
+          label="Example concurrent agent sessions"
           ruleId="M-06"
           icon="lanes"
           value={1.8}
