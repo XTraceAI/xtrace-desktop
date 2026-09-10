@@ -104,6 +104,43 @@ structural events. Existing IDs, block indexes, names and inputs are preserved.
 Other tables use additive changes. The store connection remains private; adapters
 use these typed methods instead of issuing independent SQL writes.
 
+## Atomic ingestion batches
+
+`Store::apply_ingest_batch(&xt_store::batch::IngestBatch)` commits a session,
+canonical records, supplied source observations, an optional supplied receipt and
+an optional source cursor in one immediate transaction. `IngestBatch::new` takes
+an explicit `keep_content` value for both session and record writes. The existing
+merger and bounded record prefetch are shared with `upsert_records`. Every failure,
+including final commit failure, rolls back all participating facts and returns
+an error; the API exposes no connection, callback, event hook or acknowledgement.
+
+Successful results contain one `RecordOutcome` per input with its input index,
+UUID, disposition and sticky row conflict state immediately after that input.
+Indices distinguish repeated UUIDs. `Inserted`, `Enriched` and `Duplicate` accept
+the identity, even when known values conflict. `RejectedOwnership`, `RejectedType`
+and `DroppedMissingUuid` do not. A later occurrence can add a conflict, so these
+flags are neither the final batch state nor a per-field provenance mask. The
+included `WriteStats` retains legacy per-input counters; `ignored` includes
+identity/type rejections, and session metadata filling can count as enrichment.
+
+Session observations and receipt parents must match the batch's canonical session.
+Record observations and receipt coverage may reference only submitted UUIDs with
+no rejected occurrence anywhere in the batch. This restriction avoids assigning
+UUID-level evidence to an ambiguous accepted/rejected duplicate. Supplied masks
+and digests remain the caller's observation; the store never computes them from
+enriched canonical data. Reusing a sealed receipt ID fails atomically, including
+an identical replay. Idempotent delivery, receipt arbitration and plugin
+acknowledgements belong to the subsequent ingestion writer work.
+
+`source_cursor(source, key)` returns `None` for an unobserved source/key.
+`SourceCursor` positions are nonnegative and cannot regress; an equal-position
+retry is allowed and cannot lower `updated_at`. Different sources and keys are
+independent. A truncated or replaced source generation needs a distinct key;
+this API does not reset cursors. Empty batches may update session metadata and
+cursors, but cannot manufacture receipt coverage. Retention remains caller-supplied
+and future-only; persisted policy, purge and post-commit product events remain
+separate work.
+
 ## Verification
 
 Run `cargo test -p xt-store` and
@@ -122,3 +159,9 @@ two reopens, row/column/FK preservation and rollback on invalid legacy relations
 F18/F20 named schema snapshots exercise receipt immutability, submitted masks,
 discovery without capture and metadata-only writes through the shared fixture
 harness. These table-level checks do not mark either product fixture populated.
+
+`cargo test -p xt-store --test ingest_transaction` checks composed commits, all late
+failure points including final commit, source/receipt eligibility, per-input
+outcomes, cursor monotonicity and content retention. The existing 10,000-record
+query-count regression also exercises the composed batch under SQLite's lowered
+999-variable limit. See `docs/acceptance/atomic-ingestion.md` for setup and expected results.

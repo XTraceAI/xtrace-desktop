@@ -1,6 +1,9 @@
 use crate::{
     CanonicalRecord, Error, Host, Result, SessionMeta, Store, StoredRecord, StoredSession,
-    StoredToolUse, SurfaceEvidence, Usage, WriteStats, model::CacheCreation, read, timestamp,
+    StoredToolUse, SurfaceEvidence, Usage, WriteStats,
+    batch::{IngestBatchOutcome, RecordDisposition, RecordOutcome},
+    model::CacheCreation,
+    read, timestamp,
 };
 use rusqlite::{Connection, TransactionBehavior, params};
 use serde_json::Value;
@@ -34,25 +37,7 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let stored = match read::session(&transaction, &meta.session_id)? {
-            Some(mut stored) => {
-                merge_session(&mut stored, meta, keep_content);
-                stored
-            }
-            None => {
-                let mut meta = meta.clone();
-                if !keep_content {
-                    meta.title = None;
-                }
-                StoredSession {
-                    meta,
-                    first_ts: None,
-                    last_ts: None,
-                    has_conflict: false,
-                }
-            }
-        };
-        save_session(&transaction, &stored)?;
+        upsert_session(&transaction, meta, keep_content)?;
         transaction.commit()?;
         Ok(())
     }
@@ -70,85 +55,154 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut session = read::session(&transaction, session_id)?.ok_or(Error::InvalidInput(
-            "session must be created before writing records",
-        ))?;
-        let mut existing_records = read::records_by_uuid(
-            &transaction,
-            records
-                .iter()
-                .filter_map(|record| record.uuid.as_deref().filter(|id| !id.trim().is_empty())),
-        )?;
-        let mut stats = WriteStats::default();
-        for input in records {
-            let Some(uuid) = input.uuid.as_deref().filter(|id| !id.trim().is_empty()) else {
-                stats.dropped_no_uuid += 1;
-                continue;
-            };
-            let incoming = prepare(input, uuid, session_id, keep_content)?;
-            let metadata = SessionMeta {
-                session_id: session_id.to_owned(),
-                host: input
-                    .source_platform
-                    .as_deref()
-                    .map(Host::from_platform)
-                    .unwrap_or(session.meta.host),
-                source_platform: input.source_platform.clone(),
-                source: session.meta.source,
-                cwd: input.cwd.clone(),
-                git_branch: input.git_branch.clone(),
-                title: None,
-                surface: input.source_surface.clone(),
-                surface_evidence: input.surface_evidence.clone(),
-                native_session_id: input.native_session_id.clone(),
-                started_at_ms: None,
-            };
-            // Conflicting ownership/type cannot exempt nonblank inputs from validation.
-            validate_session(&metadata)?;
-            let mut existing = existing_records.get_mut(uuid);
-            if let Some(stored) = existing.as_mut()
-                && (stored.session_id != session_id || stored.record_type != incoming.record_type)
-            {
-                stored.has_conflict = true;
-                transaction.execute("UPDATE records SET has_conflict=1 WHERE uuid=?1", [uuid])?;
-                stats.ignored += 1;
-                continue;
-            }
-            let session_enriched = merge_session(&mut session, &metadata, false);
-            match existing {
-                None => {
-                    save_record(&transaction, &incoming)?;
-                    existing_records.insert(uuid.to_owned(), incoming);
-                    stats.inserted += 1;
-                }
-                Some(stored) => {
-                    let before = stored.clone();
-                    let enriched = merge_record(stored, &incoming) || session_enriched;
-                    if before != *stored {
-                        save_record(&transaction, stored)?;
-                    }
-                    if enriched {
-                        stats.enriched += 1;
-                    } else {
-                        stats.ignored += 1;
-                    }
-                }
-            }
-        }
-        // Compare native instants, not lexically different RFC3339 offsets.
-        // A native started_at_ms is never inferred from this imported range.
-        (session.first_ts, session.last_ts) = read::timestamp_range(&transaction, session_id)?;
-        save_session(&transaction, &session)?;
-        transaction.execute(
-            "UPDATE sessions SET record_count=record_count+?1 WHERE session_id=?2",
-            params![stats.inserted as i64, session_id],
-        )?;
+        let result = upsert_records(&transaction, session_id, records, keep_content)?;
         transaction.commit()?;
-        Ok(stats)
+        Ok(result.stats)
     }
 }
 
-fn validate_session(meta: &SessionMeta) -> Result<()> {
+// The public entry points validate the session before acquiring the write lock.
+pub(crate) fn upsert_session(
+    connection: &Connection,
+    meta: &SessionMeta,
+    keep_content: bool,
+) -> Result<()> {
+    let stored = match read::session(connection, &meta.session_id)? {
+        Some(mut stored) => {
+            merge_session(&mut stored, meta, keep_content);
+            stored
+        }
+        None => {
+            let mut meta = meta.clone();
+            if !keep_content {
+                meta.title = None;
+            }
+            StoredSession {
+                meta,
+                first_ts: None,
+                last_ts: None,
+                has_conflict: false,
+            }
+        }
+    };
+    save_session(connection, &stored)?;
+    Ok(())
+}
+
+pub(crate) fn upsert_records(
+    connection: &Connection,
+    session_id: &str,
+    records: &[CanonicalRecord],
+    keep_content: bool,
+) -> Result<IngestBatchOutcome> {
+    let mut session = read::session(connection, session_id)?.ok_or(Error::InvalidInput(
+        "session must be created before writing records",
+    ))?;
+    let mut existing_records = read::records_by_uuid(
+        connection,
+        records
+            .iter()
+            .filter_map(|record| record.uuid.as_deref().filter(|id| !id.trim().is_empty())),
+    )?;
+    let mut stats = WriteStats::default();
+    let mut outcomes = Vec::with_capacity(records.len());
+    for (input_index, input) in records.iter().enumerate() {
+        let Some(uuid) = input.uuid.as_deref().filter(|id| !id.trim().is_empty()) else {
+            stats.dropped_no_uuid += 1;
+            outcomes.push(RecordOutcome {
+                input_index,
+                uuid: None,
+                disposition: RecordDisposition::DroppedMissingUuid,
+                stored_has_conflict: None,
+            });
+            continue;
+        };
+        let incoming = prepare(input, uuid, session_id, keep_content)?;
+        let metadata = SessionMeta {
+            session_id: session_id.to_owned(),
+            host: input
+                .source_platform
+                .as_deref()
+                .map(Host::from_platform)
+                .unwrap_or(session.meta.host),
+            source_platform: input.source_platform.clone(),
+            source: session.meta.source,
+            cwd: input.cwd.clone(),
+            git_branch: input.git_branch.clone(),
+            title: None,
+            surface: input.source_surface.clone(),
+            surface_evidence: input.surface_evidence.clone(),
+            native_session_id: input.native_session_id.clone(),
+            started_at_ms: None,
+        };
+        validate_session(&metadata)?;
+        // Ownership/type conflicts do not exempt nonblank input from validation.
+        let mut existing = existing_records.get_mut(uuid);
+        if let Some(stored) = existing.as_mut()
+            && (stored.session_id != session_id || stored.record_type != incoming.record_type)
+        {
+            stored.has_conflict = true;
+            connection.execute("UPDATE records SET has_conflict=1 WHERE uuid=?1", [uuid])?;
+            stats.ignored += 1;
+            outcomes.push(RecordOutcome {
+                input_index,
+                uuid: Some(uuid.to_owned()),
+                disposition: if stored.session_id != session_id {
+                    RecordDisposition::RejectedOwnership
+                } else {
+                    RecordDisposition::RejectedType
+                },
+                stored_has_conflict: Some(true),
+            });
+            continue;
+        }
+        let session_enriched = merge_session(&mut session, &metadata, false);
+        let (disposition, stored_has_conflict) = match existing {
+            None => {
+                save_record(connection, &incoming)?;
+                let conflict = incoming.has_conflict;
+                existing_records.insert(uuid.to_owned(), incoming);
+                stats.inserted += 1;
+                (RecordDisposition::Inserted, conflict)
+            }
+            Some(stored) => {
+                let before = stored.clone();
+                let enriched = merge_record(stored, &incoming) || session_enriched;
+                if before != *stored {
+                    save_record(connection, stored)?;
+                }
+                let disposition = if enriched {
+                    stats.enriched += 1;
+                    RecordDisposition::Enriched
+                } else {
+                    stats.ignored += 1;
+                    RecordDisposition::Duplicate
+                };
+                (disposition, stored.has_conflict)
+            }
+        };
+        outcomes.push(RecordOutcome {
+            input_index,
+            uuid: Some(uuid.to_owned()),
+            disposition,
+            stored_has_conflict: Some(stored_has_conflict),
+        });
+    }
+    // Compare native instants, not lexically different RFC3339 offsets.
+    // A native started_at_ms is never inferred from this imported range.
+    (session.first_ts, session.last_ts) = read::timestamp_range(connection, session_id)?;
+    save_session(connection, &session)?;
+    connection.execute(
+        "UPDATE sessions SET record_count=record_count+?1 WHERE session_id=?2",
+        params![stats.inserted as i64, session_id],
+    )?;
+    Ok(IngestBatchOutcome {
+        stats,
+        records: outcomes,
+    })
+}
+
+pub(crate) fn validate_session(meta: &SessionMeta) -> Result<()> {
     if meta.session_id.trim().is_empty() {
         return Err(Error::InvalidInput("session ID is empty"));
     }

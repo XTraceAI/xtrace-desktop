@@ -1,3 +1,6 @@
 //! Transcript parsing, discovery, backfill, watching, and capture receipts.
 //!
-//! Foundation scaffold: no product API is implemented yet.
+//! The canonical parser performs no I/O. Persistence and capture delivery are
+//! implemented separately from native-line classification.
+
+pub mod canonical;

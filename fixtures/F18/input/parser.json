@@ -1,0 +1,86 @@
+{
+  "scope": "parser-only",
+  "cases": [
+    {
+      "name": "minimal-user",
+      "line": {
+        "uuid": "02000000-0000-4000-8000-000000000006",
+        "type": "user"
+      },
+      "expected_variant": "record"
+    },
+    {
+      "name": "cursor-unknown-measurements",
+      "line": {
+        "uuid": "02000000-0000-4000-8000-000000000007",
+        "type": "user",
+        "timestamp": null,
+        "source_platform": "cursor",
+        "native_session_id": "native-cursor",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Synthetic user prompt."
+            }
+          ],
+          "usage": null,
+          "model": null
+        }
+      },
+      "expected_variant": "record"
+    },
+    {
+      "name": "codex-canonical-usage",
+      "line": {
+        "uuid": "02000000-0000-4000-8000-000000000008",
+        "type": "assistant",
+        "timestamp": "2026-09-07T12:00:04+00:00",
+        "source_platform": "codex",
+        "native_session_id": "native-codex",
+        "message": {
+          "role": "assistant",
+          "content": [],
+          "usage": {
+            "input_tokens": 30,
+            "output_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "reasoning_output_tokens": 4
+          }
+        }
+      },
+      "expected_variant": "record"
+    },
+    {
+      "name": "missing-uuid",
+      "line": {
+        "type": "user",
+        "timestamp": "invalid-but-unidentified",
+        "message": false
+      },
+      "expected_variant": "dropped"
+    },
+    {
+      "name": "blank-uuid",
+      "line": {
+        "type": "assistant",
+        "uuid": "  "
+      },
+      "expected_variant": "dropped"
+    },
+    {
+      "name": "native-string-content",
+      "line": {
+        "uuid": "02000000-0000-4000-8000-000000000009",
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Synthetic native string."
+        }
+      },
+      "expected_variant": "record"
+    }
+  ]
+}
