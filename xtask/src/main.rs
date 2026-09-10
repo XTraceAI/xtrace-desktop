@@ -4,11 +4,12 @@ use xt_fixtures::{Fixture, FixtureId, FixtureStatus};
 const HELP: &str = "XTrace development tasks:
   cargo xtask fixture-validate [--catalog PATH]
   cargo xtask fixture-db F1 --out PATH [--catalog PATH]
-  cargo xtask fixture-export ID [--out PATH] [--catalog PATH]
+  cargo xtask fixture-export ID [--shell] [--out PATH] [--catalog PATH]
+  cargo xtask dto-export [--out DIRECTORY]
 
 Validation reports skeletons as unimplemented, not accepted rules.
 Database output requires a populated fixture and never overwrites files.
-Exports use canonical fixture records; IPC DTO generation is a later boundary.";
+Canonical exports remain available; --shell exports the shared app IPC structs.";
 
 fn main() -> ExitCode {
     match run(env::args().skip(1).collect()) {
@@ -29,6 +30,16 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         println!("{HELP}");
         return Ok(());
     }
+    if task == "dto-export" {
+        let directory = match &args[1..] {
+            [] => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../apps/desktop/ui/src/data/generated"),
+            [option, directory] if option == "--out" => PathBuf::from(directory),
+            _ => return Err("dto-export accepts only --out DIRECTORY".into()),
+        };
+        xtrace_desktop::dto::export_types(directory)?;
+        return Ok(());
+    }
     if !matches!(task, "fixture-validate" | "fixture-db" | "fixture-export") {
         return Err(format!("unknown task {task}; run cargo xtask help").into());
     }
@@ -42,7 +53,12 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     };
     let mut catalog = None;
     let mut output = None;
+    let mut shell = false;
     while let Some(option) = rest.next() {
+        if option == "--shell" && task == "fixture-export" && !shell {
+            shell = true;
+            continue;
+        }
         let target = match option.as_str() {
             "--catalog" => &mut catalog,
             "--out" if task != "fixture-validate" => &mut output,
@@ -98,14 +114,30 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             path.display()
         );
     } else {
-        let json = serde_json::to_string_pretty(&fixture.export())? + "\n";
+        let json = if shell {
+            let database = fixture.build_db(true)?;
+            let export = xtrace_desktop::dto::FixtureExport {
+                app_info: xtrace_desktop::dto::AppInfo {
+                    name: "XTrace Desktop".into(),
+                    version: env!("CARGO_PKG_VERSION").into(),
+                    data_dir: format!("fixture://{id}"),
+                    fixture: Some(id.to_string()),
+                    schema_version: database.store().schema_version()?,
+                    listening: false,
+                },
+                db_counts: database.store().counts()?.try_into()?,
+            };
+            serde_json::to_string_pretty(&export)?
+        } else {
+            serde_json::to_string_pretty(&fixture.export())?
+        } + "\n";
         if let Some(path) = output {
             let mut file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(&path)?;
             file.write_all(json.as_bytes())?;
-            println!("{id}: wrote canonical fixture export to {}", path.display());
+            println!("{id}: wrote fixture export to {}", path.display());
         } else {
             print!("{json}");
         }

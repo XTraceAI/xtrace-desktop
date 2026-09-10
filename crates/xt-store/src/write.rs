@@ -118,6 +118,25 @@ pub(crate) fn upsert_records(
             continue;
         };
         let incoming = prepare(input, uuid, session_id, keep_content)?;
+        let metadata = SessionMeta {
+            session_id: session_id.to_owned(),
+            host: input
+                .source_platform
+                .as_deref()
+                .map(Host::from_platform)
+                .unwrap_or(session.meta.host),
+            source_platform: input.source_platform.clone(),
+            source: session.meta.source,
+            cwd: input.cwd.clone(),
+            git_branch: input.git_branch.clone(),
+            title: None,
+            surface: input.source_surface.clone(),
+            surface_evidence: input.surface_evidence.clone(),
+            native_session_id: input.native_session_id.clone(),
+            started_at_ms: None,
+        };
+        validate_session(&metadata)?;
+        // Ownership/type conflicts do not exempt nonblank input from validation.
         let mut existing = existing_records.get_mut(uuid);
         if let Some(stored) = existing.as_mut()
             && (stored.session_id != session_id || stored.record_type != incoming.record_type)
@@ -137,24 +156,6 @@ pub(crate) fn upsert_records(
             });
             continue;
         }
-        let metadata = SessionMeta {
-            session_id: session_id.to_owned(),
-            host: input
-                .source_platform
-                .as_deref()
-                .map(Host::from_platform)
-                .unwrap_or(session.meta.host),
-            source_platform: input.source_platform.clone(),
-            source: session.meta.source,
-            cwd: input.cwd.clone(),
-            git_branch: input.git_branch.clone(),
-            title: None,
-            surface: input.source_surface.clone(),
-            surface_evidence: input.surface_evidence.clone(),
-            native_session_id: input.native_session_id.clone(),
-            started_at_ms: None,
-        };
-        validate_session(&metadata)?;
         let session_enriched = merge_session(&mut session, &metadata, false);
         let (disposition, stored_has_conflict) = match existing {
             None => {

@@ -18,7 +18,7 @@ Run from the workspace:
 cargo test -p xt-fixtures
 cargo test -p xtask
 cargo xtask fixture-validate
-cargo xtask fixture-db F1 --out /tmp/xtrace-fnd04-F1.sqlite
+cargo xtask fixture-db F1 --out /tmp/xtrace-F1.sqlite
 cargo xtask fixture-export F1
 cargo xtask fixture-export F16 --out /tmp/xtrace-F16.json
 ```
@@ -93,6 +93,8 @@ input. No input glob is used. For example, a session may point to
 `expected.json` maps defined rule IDs to JSON values. The registry includes
 M-01…M-19, M-11a, M-12a, C-01…C-08, O-01…O-13, P-01/P-02, R-01…R-08 and
 U-01…U-08: 60 keys. Unknown keys fail in either `proves` or expectations.
+Duplicate object keys are rejected throughout `expected.json`, including nested
+objects and objects inside arrays. Escaped spellings of the same key also conflict.
 
 For populated inputs, expected keys must exactly match `proves`. A JSON `null`
 means an unmeasured value and differs from `0`. Skeletons have empty canonical
@@ -129,7 +131,9 @@ These checks exercise F1's baseline shapes for M-02/M-03/M-04/M-05/M-10. They do
 not implement the production metric engine or establish whole-rule coverage.
 Prices, unknown counters, tie-breaking by native sequence, other host adapters,
 window boundaries and other edge cases require their owning fixtures and product
-tests. The bounded reference checker rejects unsupported F1 shapes.
+tests. The bounded reference checker rejects unsupported F1 shapes. It checks the
+persisted session host and conflict flag as well as record flags: contradictory
+platform, surface or native session identity cannot pass reference acceptance.
 
 ## Ownership and test loop
 
@@ -181,6 +185,10 @@ against the owning product API, implement the behavior, then run its tests and
 catalog validation. Add executable reference dispatch before marking another
 entry populated for `fixture-validate`; fail honestly while that dispatch is
 missing. Never copy live-machine transcripts or totals into a fixture.
+
+The [fixture acceptance contract](acceptance/fixtures.md) lists setup, actions
+and expected outcomes for the loader, database owner, exports and reference
+assertions. Follow [CI.md](CI.md) for combined-source validation.
 
 | ID  | Current status                | Planned input responsibility                                    |
 | --- | ----------------------------- | --------------------------------------------------------------- |

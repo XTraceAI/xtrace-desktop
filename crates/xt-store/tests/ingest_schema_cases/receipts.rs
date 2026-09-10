@@ -101,6 +101,8 @@ fn invalid_or_duplicate_coverage_rolls_back_the_whole_receipt() {
         "digest-short",
         "digest-upper",
         "digest-character",
+        "digest-nul-suffix",
+        "digest-nul-inside",
         "version",
         "mask",
     ] {
@@ -111,6 +113,10 @@ fn invalid_or_duplicate_coverage_rolls_back_the_whole_receipt() {
             "digest-short" => item.measurement_revision = "a".repeat(63),
             "digest-upper" => item.measurement_revision = "A".repeat(64),
             "digest-character" => item.measurement_revision = "z".repeat(64),
+            "digest-nul-suffix" => {
+                item.measurement_revision = format!("{}\0hidden", "a".repeat(64))
+            }
+            "digest-nul-inside" => item.measurement_revision = format!("{}\0", "a".repeat(63)),
             "version" => item.digest_schema_version = 0,
             "mask" => item.metric_field_mask = -1,
             _ => unreachable!(),

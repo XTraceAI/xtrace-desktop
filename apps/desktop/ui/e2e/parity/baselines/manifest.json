@@ -1,0 +1,331 @@
+{
+  "version": 1,
+  "sourceCommit": "08d64e540ad2f986ec0460ea9ea2cd0fa1c0970b",
+  "inputs": {
+    "comparisons": [
+      {
+        "id": "sidebar-active-dashboard-dark",
+        "story": "sidebar/active-dashboard",
+        "theme": "dark",
+        "size": [228, 900]
+      },
+      {
+        "id": "sidebar-active-dashboard-light",
+        "story": "sidebar/active-dashboard",
+        "theme": "light",
+        "size": [228, 900]
+      },
+      {
+        "id": "sidebar-active-sessions-dark",
+        "story": "sidebar/active-sessions",
+        "theme": "dark",
+        "size": [228, 900]
+      },
+      {
+        "id": "sidebar-active-sessions-light",
+        "story": "sidebar/active-sessions",
+        "theme": "light",
+        "size": [228, 900]
+      },
+      {
+        "id": "sidebar-active-prs-dark",
+        "story": "sidebar/active-prs",
+        "theme": "dark",
+        "size": [228, 900]
+      },
+      {
+        "id": "sidebar-active-prs-light",
+        "story": "sidebar/active-prs",
+        "theme": "light",
+        "size": [228, 900]
+      },
+      {
+        "id": "sidebar-active-rulebook-dark",
+        "story": "sidebar/active-rulebook",
+        "theme": "dark",
+        "size": [228, 900]
+      },
+      {
+        "id": "sidebar-active-rulebook-light",
+        "story": "sidebar/active-rulebook",
+        "theme": "light",
+        "size": [228, 900]
+      },
+      {
+        "id": "topbar-default-dark",
+        "story": "topbar/default",
+        "theme": "dark",
+        "size": [1200, 44]
+      },
+      {
+        "id": "topbar-default-light",
+        "story": "topbar/default",
+        "theme": "light",
+        "size": [1200, 44]
+      },
+      {
+        "id": "topbar-no-range-dark",
+        "story": "topbar/no-range",
+        "theme": "dark",
+        "size": [1200, 44]
+      },
+      {
+        "id": "topbar-no-range-light",
+        "story": "topbar/no-range",
+        "theme": "light",
+        "size": [1200, 44]
+      },
+      {
+        "id": "topbar-scan-dark",
+        "story": "topbar/scan",
+        "theme": "dark",
+        "size": [1200, 44]
+      },
+      {
+        "id": "topbar-scan-light",
+        "story": "topbar/scan",
+        "theme": "light",
+        "size": [1200, 44]
+      },
+      {
+        "id": "topbar-copy-dark",
+        "story": "topbar/copy",
+        "theme": "dark",
+        "size": [1200, 44]
+      },
+      {
+        "id": "topbar-copy-light",
+        "story": "topbar/copy",
+        "theme": "light",
+        "size": [1200, 44]
+      },
+      {
+        "id": "topbar-sub-crumb-dark",
+        "story": "topbar/sub-crumb",
+        "theme": "dark",
+        "size": [1200, 44]
+      },
+      {
+        "id": "topbar-sub-crumb-light",
+        "story": "topbar/sub-crumb",
+        "theme": "light",
+        "size": [1200, 44]
+      },
+      {
+        "id": "topbar-no-action-dark",
+        "story": "topbar/no-action",
+        "theme": "dark",
+        "size": [1200, 44]
+      },
+      {
+        "id": "topbar-no-action-light",
+        "story": "topbar/no-action",
+        "theme": "light",
+        "size": [1200, 44]
+      },
+      {
+        "id": "stattile-lanes-dark",
+        "story": "stattile/lanes",
+        "theme": "dark",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-lanes-light",
+        "story": "stattile/lanes",
+        "theme": "light",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-merge-dark",
+        "story": "stattile/merge",
+        "theme": "dark",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-merge-light",
+        "story": "stattile/merge",
+        "theme": "light",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-clock-dark",
+        "story": "stattile/clock",
+        "theme": "dark",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-clock-light",
+        "story": "stattile/clock",
+        "theme": "light",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-bolt-dark",
+        "story": "stattile/bolt",
+        "theme": "dark",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-bolt-light",
+        "story": "stattile/bolt",
+        "theme": "light",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-msg-dark",
+        "story": "stattile/msg",
+        "theme": "dark",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-msg-light",
+        "story": "stattile/msg",
+        "theme": "light",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-token-dark",
+        "story": "stattile/token",
+        "theme": "dark",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-token-light",
+        "story": "stattile/token",
+        "theme": "light",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-shield-dark",
+        "story": "stattile/shield",
+        "theme": "dark",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-shield-light",
+        "story": "stattile/shield",
+        "theme": "light",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-unmeasured-dark",
+        "story": "stattile/unmeasured",
+        "theme": "dark",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-unmeasured-light",
+        "story": "stattile/unmeasured",
+        "theme": "light",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-delta-bad-dark",
+        "story": "stattile/delta-bad",
+        "theme": "dark",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-delta-bad-light",
+        "story": "stattile/delta-bad",
+        "theme": "light",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-zero-and-long-aside-dark",
+        "story": "stattile/zero-and-long-aside",
+        "theme": "dark",
+        "size": [300, 52]
+      },
+      {
+        "id": "stattile-zero-and-long-aside-light",
+        "story": "stattile/zero-and-long-aside",
+        "theme": "light",
+        "size": [300, 52]
+      }
+    ],
+    "inventory": "f2792cb33a694b5f0322f84eb7243c8b241c1e3518cfeb24154b523d631162fb",
+    "fonts": {
+      "geist-mono-400.ttf": "341cdaf235d2cdcfa85ff4eed9628381a89422bd3439710c80e45b725db70b2c",
+      "geist-mono-400.woff2": "0c85db998acf4511b6e4f65ae2248b5977c241308c64f2dbcdc2cc8a55d6c408",
+      "geist-mono-500.ttf": "3fc64e39b238a4d4370a35b5226103ab34d04fe741d93bbd59929cab8bbe3500",
+      "geist-mono-500.woff2": "d3a194b7b06b589d6fa43291c67567b82fd824dd0003a62875fcc726a8f8f551",
+      "geist-mono-600.ttf": "da295c0d1de3ada53531b0722db5e2d6ebb1a40c5653dbc267a8ea75f72be51a",
+      "geist-mono-600.woff2": "5433dd8bede1279b32b790d1ba89abeb52efaace2c236bc9f0e820a011061b3f",
+      "manrope-400.ttf": "7444846ec6be4a0d80b36f24cecc98a5ca853261df939595f68ac7f2772bbb7b",
+      "manrope-400.woff2": "f927c9f4c9bec8386b4a263fc60db17ce859a9fa5973d71de03e43ae210c4444",
+      "manrope-500.ttf": "70d3c5f22f95acce039d4580fd8f0da9bda37e0da26d1749f30355dab351bb25",
+      "manrope-500.woff2": "bd9f262d54079fe6146680d757ec85a40fb9f72d9015f283d4b0e9ab722c037c",
+      "manrope-600.ttf": "6e9631fe841ba6fbea5bcf02a3587f48823841e9d21a2cf76167ad5c9632f1e1",
+      "manrope-600.woff2": "e96207570599fb03087e8ba3fa49489d5165255dec5be154ede29bedf1a45ea9",
+      "manrope-700.ttf": "a197c1400c09e826abfe28888b6516f74e9059a8074b70cdc91675ccf9306122",
+      "manrope-700.woff2": "894a9b2dd1e81547453d21e28f69325a8a5782b82082b2800fd722ebee2266fe",
+      "manrope-800.ttf": "bf84c50d740b0e350bb4d3b22400528edbcea6450d7c5323434dc481b4f0fff4",
+      "manrope-800.woff2": "d4d29372ac49d56f75f8c29bae3827d9c2b65c77d1a26d0f44e800e407710234"
+    }
+  },
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "macOS": "26.5.2",
+    "playwright": "1.58.2",
+    "webkit": "26.0",
+    "revision": "2248",
+    "viewport": {
+      "width": 2880,
+      "height": 1120
+    },
+    "deviceScaleFactor": 2,
+    "locale": "en-US",
+    "timezoneId": "UTC",
+    "colorScheme": "light",
+    "reducedMotion": "reduce",
+    "maxDiffPixelRatio": 0.002,
+    "threshold": 0.1
+  },
+  "images": {
+    "sidebar-active-dashboard-dark.png": "sha256:64fe0de2e88bdc286f6b70832fe2cb228ed3bfd6adf7fbff435b9a3ea3a2028e",
+    "sidebar-active-dashboard-light.png": "sha256:bbf8923a3d9abe3f29b7a2a139278ed70303ba0347269c15e3a21705f462a202",
+    "sidebar-active-sessions-dark.png": "sha256:f95749c5e7ad0b30d92f525c5144641aaee8bb0574b072c3e64172846cba57ef",
+    "sidebar-active-sessions-light.png": "sha256:e4b2e63b430d8aae3fb0ac63a9436ef5d736d3a7183e755a818a68a1d3fae74f",
+    "sidebar-active-prs-dark.png": "sha256:d2fc23bb7fc93b69ea3ad45931648fbc943a221d0dfbb4ac4bd3130b4415abf9",
+    "sidebar-active-prs-light.png": "sha256:88b277473e41f403cd251d2a8a528c9de219c10affa203d5478d3619aa8d3eb6",
+    "sidebar-active-rulebook-dark.png": "sha256:74d0dba7754302f0b9bee468f37959ff220d95564ec95a562ebd0cdcfff92aeb",
+    "sidebar-active-rulebook-light.png": "sha256:47ebc7d0b53679ba7e985ae9f534bddbb4909eb09d5a07eb83da92d536f4c78a",
+    "topbar-default-dark.png": "sha256:bbb54155b786a1dc26cfb57519d818e717c15ff5219cf44c32e8b239e61540ec",
+    "topbar-default-light.png": "sha256:1d7d9ee107267befc75885c2b940ef7853c23257494d48937e9f805c1bb2f1c9",
+    "topbar-no-range-dark.png": "sha256:f77c56b4f24e4d51b686d1d97e28c8d9836861401a1a32587dc3d55820c19fe5",
+    "topbar-no-range-light.png": "sha256:f12fc1b6b2775d0eaabc1b5c471ced77f1efbcc4f1d2714f07def8ff0c202eac",
+    "topbar-scan-dark.png": "sha256:59ad18ad053d5920ed10275cad8c6a0a1b21fbbd2d2a73fd0b95c5112f869781",
+    "topbar-scan-light.png": "sha256:cee1380a7ff3bf34cb301dfd225556aa7b1a63fcec6de942019b6076b63261a6",
+    "topbar-copy-dark.png": "sha256:d533e92a47d9d0c8f90c484fc9af02d33d94d810e35760b314a76d4f592bfdee",
+    "topbar-copy-light.png": "sha256:b818bd4e41d3813ada7f2cf0e4c6a80f2b91d96bae90397f9a36251d15952a37",
+    "topbar-sub-crumb-dark.png": "sha256:e34f7942d3c443e8577d235b6ef9ecf73325234bf5b1f4173efc12d28387797b",
+    "topbar-sub-crumb-light.png": "sha256:cff27523bbdb50090919f1e2d6a6db9213e64b2433d7e7baabd288560d2ff4ee",
+    "topbar-no-action-dark.png": "sha256:6ad1815b4c41a72291e6561bf90c737f74bbf3340e383dc85a9e320618b4f5ab",
+    "topbar-no-action-light.png": "sha256:3e3d5f6bd86dc17b1555d5fa7c1446f3765e0f77e8d38ff078935997ec33528f",
+    "stattile-lanes-dark.png": "sha256:3ebef49c0cacd3d0b70d598b3f37e3ae9ae50ca7f5ecdf05c537f3d42cb18fb9",
+    "stattile-lanes-light.png": "sha256:da3d78210a1950b2306eae02d6d9f91cf26546be485ecf1f27bdefc8bd136091",
+    "stattile-merge-dark.png": "sha256:bb26801b1a0b8bbda750974de26e4ce526c7f503a98406347987dc225bb621ce",
+    "stattile-merge-light.png": "sha256:71bd49c7d9ec58ed8b550061987dad24f655e6819747870119f2c53475fb9cb9",
+    "stattile-clock-dark.png": "sha256:f6746a707cc4aac334e646a31662a22d09b3348a9fbb5a10c6e650565af757aa",
+    "stattile-clock-light.png": "sha256:1c88c02937a37c1e9dccf94cf6b31e0a48078b94deaf9e173f9f72c8e8cf013e",
+    "stattile-bolt-dark.png": "sha256:45e0b72d525b1a8e1ca5c96ee4fe101632e679a3ef467045624f1c7a570865ee",
+    "stattile-bolt-light.png": "sha256:9eeb3f0ee74508947f422dd2267863d5f70733555709a6e2595aec9e02d352c6",
+    "stattile-msg-dark.png": "sha256:61e40a7a9041e5cc0b3d5a9113f3fb19622e4666ccb5b422b23a4d32df895b3c",
+    "stattile-msg-light.png": "sha256:3006e2ffa9f54e94721cde8a968e2de2396fc1746cfb432b036c5c03bcddc025",
+    "stattile-token-dark.png": "sha256:320e2af052b69a2aef1e9b507aaf1bdddd7955be96db18b3fd18138a28d36b6e",
+    "stattile-token-light.png": "sha256:a8bdb728cbf1b028735b13e08cba2e539ee796d09ee4dbcbbc9c7d5d1e708933",
+    "stattile-shield-dark.png": "sha256:d4329ba6d8218834429935cb9bc4e8b7c227721856366d28182f5ae2fe470c5f",
+    "stattile-shield-light.png": "sha256:fbb387fd5785b1bd239a1bcf472020e2c0733c16e0aa7390ebc53e666858ec1d",
+    "stattile-unmeasured-dark.png": "sha256:7b060e5c42c1295a53c0c1b4d5964f78deba13259ef6694c0626073de7279114",
+    "stattile-unmeasured-light.png": "sha256:8f47c34a16fb98cfe18bed9b1209ea4f5ad9736cb4ef077dfc963d584f13cb96",
+    "stattile-delta-bad-dark.png": "sha256:a9d1e078527fdf7833fff17fbbf03fb12d3250d3aae77a46afd1f1d841563e6c",
+    "stattile-delta-bad-light.png": "sha256:f436e344c96aabd0a1f43ddda4712f2d0c1f7484ceed8f026f48dca053a9d38a",
+    "stattile-zero-and-long-aside-dark.png": "sha256:16279939b67755c1f10796e89aa6ecc1629901349f3e78ea207b8b23ec07d9d6",
+    "stattile-zero-and-long-aside-light.png": "sha256:f7cb7e9eba05812b7268ce1c7ac8e6d45c5746a69739e9d87f60c5d8cfd5e6ce"
+  },
+  "review": {
+    "digest": "5616d526477b35c443e6848afdb755d5503850b1db0c03051f034444087eb511"
+  }
+}

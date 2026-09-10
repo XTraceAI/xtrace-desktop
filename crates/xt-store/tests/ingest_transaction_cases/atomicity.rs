@@ -307,3 +307,48 @@ fn supplied_evidence_must_match_the_session_and_accepted_submission() {
     assert!(db.store_mut().apply_ingest_batch(&batch).is_err());
     assert_eq!(snapshot(&sql(&db)), before);
 }
+
+#[test]
+fn malformed_rejected_records_roll_back_the_entire_composed_batch() {
+    for owner in ["target", "foreign"] {
+        for invalid_field in ["platform", "evidence", "timestamp", "usage"] {
+            let mut db = TempDb::empty().unwrap();
+            db.store_mut()
+                .apply_ingest_batch(&IngestBatch::new(
+                    &session(owner),
+                    &[rich("existing")],
+                    true,
+                ))
+                .unwrap();
+            let before = snapshot(&sql(&db));
+            let mut metadata = session("target");
+            metadata.title = Some("synthetic batch title".into());
+            let mut rejected = rich("existing");
+            if owner == "target" {
+                rejected.record_type = RecordType::User;
+            }
+            match invalid_field {
+                "platform" => rejected.source_platform = Some(" ".into()),
+                "evidence" => {
+                    rejected.surface_evidence = Some(
+                        serde_json::from_value(serde_json::json!({"source":"invalid label"}))
+                            .unwrap(),
+                    );
+                }
+                "timestamp" => rejected.timestamp = Some("invalid date".into()),
+                "usage" => rejected.message.usage.as_mut().unwrap().input_tokens = Some(-1),
+                _ => unreachable!(),
+            }
+            let rows = [rich("new"), rejected];
+            let next = cursor(SessionSource::Fixture, "tail", 20);
+            let mut batch = IngestBatch::new(&metadata, &rows, true);
+            batch.cursor = Some(&next);
+            assert!(
+                db.store_mut().apply_ingest_batch(&batch).is_err(),
+                "{owner}/{invalid_field}"
+            );
+            assert_eq!(snapshot(&sql(&db)), before, "{owner}/{invalid_field}");
+            assert_eq!(db.store().source_cursor(next.source, "tail").unwrap(), None);
+        }
+    }
+}
