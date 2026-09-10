@@ -207,6 +207,9 @@ fn cursor_scope_monotonicity_and_empty_batches_are_explicit() {
 #[test]
 fn explicit_retention_applies_to_fresh_and_enriched_batch_content() {
     let mut db = TempDb::empty().unwrap();
+    db.store_mut()
+        .set_retention_mode(xt_store::retention::RetentionMode::FullContent)
+        .unwrap();
     let mut metadata = session("target");
     metadata.title = Some("synthetic retained title".into());
     db.store_mut()
