@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredSession {
+    pub namespace: Option<String>,
     pub meta: SessionMeta,
     pub first_ts: Option<String>,
     pub last_ts: Option<String>,
@@ -153,7 +154,7 @@ pub(crate) fn session(connection: &Connection, id: &str) -> Result<Option<Stored
         .query_row(
             "SELECT session_id, host, source_platform, source, cwd, git_branch, title,
                 surface, surface_evidence_json, native_session_id, started_at_ms,
-                first_ts, last_ts, has_conflict FROM sessions WHERE session_id=?1",
+                first_ts, last_ts, has_conflict, namespace FROM sessions WHERE session_id=?1",
             [id],
             |row| {
                 Ok(StoredSession {
@@ -173,6 +174,7 @@ pub(crate) fn session(connection: &Connection, id: &str) -> Result<Option<Stored
                     first_ts: row.get(11)?,
                     last_ts: row.get(12)?,
                     has_conflict: row.get(13)?,
+                    namespace: row.get(14)?,
                 })
             },
         )

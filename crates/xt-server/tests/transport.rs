@@ -241,7 +241,7 @@ async fn loopback_bind_refuses_external_addresses_and_port_conflicts() {
 }
 
 #[tokio::test]
-async fn mcp_transport_preserves_ids_sse_errors_notifications_and_honest_stub() {
+async fn mcp_transport_preserves_ids_sse_errors_notifications_and_import_validation() {
     let server = server().await;
     let headers = format!(
         "Host: localhost:{}\r\nContent-Type: application/json\r\n",
@@ -275,6 +275,19 @@ async fn mcp_transport_preserves_ids_sse_errors_notifications_and_honest_stub() 
     .await;
     assert_eq!(status(&response), 202);
     assert_eq!(response.split("\r\n\r\n").nth(1), Some(""));
+    let notification = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"import_conversation","arguments":{"conversation_id":"notification","source_platform":"claude","messages":[{"uuid":"notification-row","type":"assistant"}]}}}"#;
+    assert_eq!(
+        status(&request(&server, "POST", "/mcp-server/mcp", &headers, notification).await),
+        202
+    );
+    assert_eq!(
+        Store::open(server._dir.path().join("synthetic.db"))
+            .unwrap()
+            .counts()
+            .unwrap()
+            .sessions,
+        0
+    );
     for (method, code) in [("unknown", -32601), ("tools/call", -32602)] {
         let result = rpc(&request(
             &server,
@@ -297,8 +310,8 @@ async fn mcp_transport_preserves_ids_sse_errors_notifications_and_honest_stub() 
     assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 1);
     assert_eq!(result["result"]["tools"][0]["name"], "import_conversation");
     let result=rpc(&request(&server,"POST","/mcp-server/mcp",&headers,r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"import_conversation","arguments":{}}}"#).await);
-    assert_eq!(result["result"]["isError"], true);
-    assert!(result["result"].get("ack_through").is_none());
+    assert_eq!(result["error"]["code"], -32602);
+    assert!(result.get("result").is_none());
     for (body, code) in [
         ("{", -32700),
         ("[]", -32600),
@@ -309,9 +322,23 @@ async fn mcp_transport_preserves_ids_sse_errors_notifications_and_honest_stub() 
             code
         );
     }
-    let huge = serde_json::json!({"payload":"x".repeat(65*1024)}).to_string();
+    let huge = serde_json::json!({"payload":"x".repeat(xt_server::MAX_MCP_BYTES)}).to_string();
     assert_eq!(
         status(&request(&server, "POST", "/mcp-server/mcp", &headers, &huge).await),
+        413
+    );
+    let token_body = serde_json::json!({"label":"x".repeat(65*1024),"scopes":[]}).to_string();
+    assert_eq!(
+        status(
+            &request(
+                &server,
+                "POST",
+                "/v1/developer/access-tokens",
+                &headers,
+                &token_body
+            )
+            .await
+        ),
         413
     );
 }

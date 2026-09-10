@@ -44,6 +44,7 @@ fn request<'a>(
     receipt: Option<&'a CaptureReceipt>,
 ) -> WriteBatch<'a> {
     WriteBatch {
+        namespace: None,
         context,
         declared_host: None,
         records,

@@ -54,9 +54,17 @@ jobs:
         with:
           path: ~/.cache/xtrace-ci-tools
           key: supply-tools-macos-14-arm64-syft-1.51.1-about-0.9.2
+      - name: Check out the pinned capture producer
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: XTraceAI/agent-plugins
+          ref: fae871a5c3385d14e55ea64f6bda7421c52ebebb
+          path: artifacts/private/plugin-conformance
+          persist-credentials: false
       - name: Validate the native release candidate
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          AGENT_PLUGINS_DIR: ${{ github.workspace }}/artifacts/private/plugin-conformance/plugins/memhub
         run: |
           REVIEWED_BASE_SHA="$(git rev-parse "$CANDIDATE_SHA^1")"
           pnpm check:native --base "$REVIEWED_BASE_SHA" --release

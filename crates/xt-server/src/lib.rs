@@ -1,5 +1,7 @@
-//! Guarded local transport scaffold. No cloud identity or import acceptance.
+//! Guarded local transport with durable canonical imports. No cloud identity.
 mod guard;
+mod import;
+mod json;
 mod transport;
 
 use axum::{
@@ -20,12 +22,13 @@ use tokio::net::TcpListener;
 use xt_store::Store;
 
 pub const DEFAULT_PORT: u16 = 47421;
+pub const MAX_MCP_BYTES: usize = 16 * 1024 * 1024;
 #[derive(Clone)]
 struct AppState {
     port: u16,
+    events: Option<tokio::sync::broadcast::Sender<xt_ingest::writer::ChangeEvent>>,
     db_path: Arc<PathBuf>,
-    // One owner, reserved for the subsequent canonical import adapter.
-    _store: Arc<Mutex<Store>>,
+    store: Arc<Mutex<Store>>,
 }
 
 /// Binding validates the requested literal address before opening a listener.
@@ -50,6 +53,18 @@ pub async fn serve(
     db_path: PathBuf,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> io::Result<()> {
+    serve_with_events(listener, store, db_path, None, shutdown).await
+}
+
+/// Native adapters may subscribe to committed changes; a missing/lagging listener
+/// never changes the durability or acknowledgement of an import.
+pub async fn serve_with_events(
+    listener: TcpListener,
+    store: Store,
+    db_path: PathBuf,
+    events: Option<tokio::sync::broadcast::Sender<xt_ingest::writer::ChangeEvent>>,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> io::Result<()> {
     let address = listener.local_addr()?;
     if !matches!(address.ip(), std::net::IpAddr::V4(ip) if ip == std::net::Ipv4Addr::LOCALHOST)
         && !matches!(address.ip(), std::net::IpAddr::V6(ip) if ip == std::net::Ipv6Addr::LOCALHOST)
@@ -62,11 +77,15 @@ pub async fn serve(
     let state = AppState {
         port: address.port(),
         db_path: Arc::new(db_path),
-        _store: Arc::new(Mutex::new(store)),
+        store: Arc::new(Mutex::new(store)),
+        events,
     };
     let app = Router::new()
         .route("/health", get(health))
-        .route("/mcp-server/mcp", post(transport::mcp))
+        .route(
+            "/mcp-server/mcp",
+            post(transport::mcp).layer(DefaultBodyLimit::max(MAX_MCP_BYTES)),
+        )
         .route(
             "/v1/developer/access-tokens",
             post(transport::mint).get(transport::tokens),

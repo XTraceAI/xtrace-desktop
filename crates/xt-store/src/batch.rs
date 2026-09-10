@@ -20,6 +20,7 @@ pub struct IngestBatch<'a> {
     pub session: &'a SessionMeta,
     pub records: &'a [CanonicalRecord],
     pub keep_content: bool,
+    pub namespace: Option<&'a str>,
     /// Empty means unknown; otherwise exactly one native identity per input.
     pub identities: &'a [crate::model::RecordIdentity],
     pub session_sources: &'a [SessionSourceObservation],
@@ -42,6 +43,7 @@ impl<'a> IngestBatch<'a> {
             session,
             records,
             keep_content,
+            namespace: None,
             identities: &[],
             session_sources: &[],
             record_sources: &[],
@@ -164,7 +166,15 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let keep_content = crate::retention::allows_content(&transaction, batch.keep_content)?;
-        let session_changed = write::upsert_session(&transaction, batch.session, keep_content)?;
+        // Receipt-bearing writer batches may reject every record. Keep their
+        // destination writes provisional while still recording original-owner conflicts.
+        let provisional =
+            batch.receipt.is_some() && batch.evidence_policy == EvidencePolicy::AcceptedOnly;
+        if provisional {
+            transaction.execute_batch("SAVEPOINT destination_import")?;
+        }
+        let session_changed =
+            write::upsert_session(&transaction, batch.session, keep_content, batch.namespace)?;
         let mut outcome = write::upsert_records(
             &transaction,
             &batch.session.session_id,
@@ -242,6 +252,49 @@ impl Store {
                 batch.receipt_replay == ReceiptReplay::MatchExact,
                 batch.evidence_policy == EvidencePolicy::AcceptedOnly,
             )?;
+        }
+        if provisional {
+            if !outcome
+                .records
+                .iter()
+                .any(|row| row.disposition.is_accepted())
+            {
+                transaction
+                    .execute_batch("ROLLBACK TO destination_import; RELEASE destination_import")?;
+                for row in &outcome.records {
+                    if matches!(
+                        row.disposition,
+                        RecordDisposition::RejectedOwnership | RecordDisposition::RejectedType
+                    ) {
+                        transaction.execute(
+                            "UPDATE records SET has_conflict=1 WHERE uuid=?1",
+                            [&row.uuid],
+                        )?;
+                    }
+                }
+                outcome.session_changed = false;
+                outcome.session_surface = transaction
+                    .query_row(
+                        "SELECT surface FROM sessions WHERE session_id=?1",
+                        [&batch.session.session_id],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .optional()?
+                    .flatten();
+                if outcome
+                    .records
+                    .iter()
+                    .any(|row| row.disposition == RecordDisposition::RejectedType)
+                {
+                    outcome.affected_owners.push(AffectedSession {
+                        session_id: batch.session.session_id.clone(),
+                        surface: outcome.session_surface.clone(),
+                    });
+                }
+                transaction.commit()?;
+                return Ok(outcome);
+            }
+            transaction.execute_batch("RELEASE destination_import")?;
         }
         if let Some(cursor) = batch.cursor {
             advance_cursor(&transaction, cursor)?;

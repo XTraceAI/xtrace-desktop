@@ -58,8 +58,8 @@ def main():
             assert len(pak.list_keys(base, "synthetic")) == 1
             pak.revoke(base, "synthetic", "local")
             assert len(pak.list_keys(base, "synthetic")) == 1
-            stub = mcp.call_tool(endpoint, "local", "import_conversation", {"conversation_id": "synthetic", "messages": [], "source_platform": "claude"})
-            assert stub.isError and "not implemented" in stub.content[0].text
+            empty = mcp.call_tool(endpoint, "local", "import_conversation", {"conversation_id": "synthetic", "messages": [], "source_platform": "claude"})
+            assert empty.isError and "between 1 and 2000" in empty.content[0].text
             notification = urllib.request.Request(endpoint, data=json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}).encode(), headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(notification, timeout=5) as result:
                 assert result.status == 202 and not result.read()
@@ -70,7 +70,7 @@ def main():
                     raise AssertionError("Unexpected debug route success")
                 except urllib.error.HTTPError as error:
                     assert error.code == expected
-            print("Pinned real plugin transport passed: initialize, SSE tools/list, token mint/list/delete, notification, honest import stub.")
+            print("Pinned real plugin transport passed: initialize, SSE tools/list, token mint/list/delete, notification, empty import rejection.")
             print("Plugin revision: " + actual)
         finally:
             child.terminate()

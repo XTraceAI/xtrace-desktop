@@ -7,13 +7,17 @@ and typed reads. Its [API contract](../crates/xt-store/README.md) and
 `xt-fixtures` and `xtask` provide a shared synthetic catalog, disposable SQLite
 databases and fixture validation/export commands. Their [acceptance cases](acceptance/fixtures.md)
 distinguish the populated baseline from unimplemented skeletons.
-The other subsystem libraries remain scaffolds validated by compilation.
-The app exposes only `app_info`; storage is not connected to the desktop UI,
-ingestion pipeline or host integrations yet.
+`xt-ingest` provides canonical parsing, identity resolution and the transactional
+writer used by `xt-server` for durable local imports. The server acknowledges
+only committed records and receipt evidence; see the [server guide](SERVER.md)
+and [import contract](wire-contract.md). Metrics and indexing are the default,
+with full-content archival available only through a saved opt-in.
+The native app exposes `app_info` and `db_counts`, but does not start the capture
+server automatically. Production metric calculation, product data queries,
+host watchers/backfill and the remaining subsystem behavior are separate work.
 
-The following subsystem boundaries describe the scaffold directories. Empty
-libraries reserve these responsibilities; compilation does not establish
-implemented behavior.
+The following table names each subsystem's responsibility. A reserved directory
+or compiling placeholder does not establish implemented behavior.
 
 | Path                      | Subsystem responsibility                                                                             |
 | ------------------------- | ---------------------------------------------------------------------------------------------------- |
@@ -33,8 +37,9 @@ All renderer code lives under the UI path above. Native lifecycle and window
 behavior belong to the Tauri application.
 
 The intended flow is source observations → canonical ingestion/storage → shared
-Rust metrics → native commands and renderer. The future loopback capture adapter
-feeds the same canonical writer. JavaScript consumes metric DTOs rather than
+Rust metrics → native commands and renderer. The loopback import adapter
+already feeds the shared canonical writer; the metric and renderer integration
+remain separate work. JavaScript consumes metric DTOs rather than
 reimplementing calculations. The fixture harness uses the canonical storage API;
 its bounded baseline reference assertions do not implement the production metric
 engine or establish whole-rule coverage.
@@ -45,4 +50,4 @@ validation and its limits.
 
 The monorepo directory layout uses [Cap](https://github.com/CapSoftware/Cap)
 as a structural reference only.
-No code or assets from that project are included by this scaffold.
+No code or assets from that project are included in this workspace.
