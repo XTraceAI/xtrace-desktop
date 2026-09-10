@@ -126,6 +126,8 @@ pub struct AffectedSession {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IngestBatchOutcome {
+    /// Surface from the committed session merge, not the sparse request.
+    pub session_surface: Option<String>,
     pub affected_owners: Vec<AffectedSession>,
     pub receipt_committed: bool,
     pub session_changed: bool,
