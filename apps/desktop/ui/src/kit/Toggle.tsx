@@ -1,3 +1,4 @@
+import { Switch } from '@base-ui/react/switch';
 import type { ReactNode } from 'react';
 import '../styles/controls.css';
 
@@ -15,21 +16,21 @@ export function Toggle({
   trailing?: ReactNode;
 }) {
   return (
-    <button
-      type="button"
+    <Switch.Root
+      nativeButton
+      render={<button type="button" />}
       tabIndex={0}
-      role="switch"
-      aria-checked={checked}
+      checked={checked}
+      onCheckedChange={(checked) => onChange(checked)}
       aria-label={label}
       disabled={disabled}
       className="xt-toggle"
-      onClick={() => onChange(!checked)}
     >
       <span className="xt-toggle-track" aria-hidden="true">
-        <span />
+        <Switch.Thumb />
       </span>
       {label}
       {trailing}
-    </button>
+    </Switch.Root>
   );
 }
