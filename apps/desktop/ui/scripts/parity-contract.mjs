@@ -74,7 +74,7 @@ export function imageRecords(directory, comparisons) {
       );
       assert.equal(bytes.readUInt32BE(16), entry.size[0] * 2, 'Wrong baseline pixel width');
       assert.equal(bytes.readUInt32BE(20), entry.size[1] * 2, 'Wrong baseline pixel height');
-      return [name, sha256(bytes)];
+      return [name, `sha256:${sha256(bytes)}`];
     }),
   );
 }
