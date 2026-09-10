@@ -31,6 +31,8 @@ local font hashes, macOS version/architecture, Playwright/WebKit versions and
 revision, viewport, DPR, locale, timezone and comparison thresholds. Reviewers
 must inspect component layout, text, icons, colors and intentional differences
 from the design reference. Generating candidates does not approve their pixels.
+The capture commit remains a provenance record after a squash merge; normal
+comparison does not require the original feature branch or commit in a fresh clone.
 
 When approved baselines already exist, capture preserves their images under
 `previous/` and emits comparison results under `changes/`. Inspect each changed

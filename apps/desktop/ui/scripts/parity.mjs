@@ -82,10 +82,6 @@ function run(directory, outputDirectory, capture = false, probe = false) {
   return result.status;
 }
 
-function sourceExists(manifest) {
-  git('merge-base', '--is-ancestor', manifest.sourceCommit, 'HEAD');
-}
-
 if (mode === 'capture') {
   cleanHead();
   fs.mkdirSync(path.join(output, 'images'));
@@ -123,11 +119,13 @@ if (mode === 'capture') {
   const directory = candidate ? path.resolve(candidate) : approvedRoot;
   assert.ok(!['review', 'accept'].includes(mode) || candidate, 'Supply a candidate directory');
   const manifest = validateManifest(directory, inputs, environment, mode === 'compare');
-  sourceExists(manifest);
   if (mode === 'accept') {
     cleanHead();
     assert.equal(manifest.review, null, 'Supply an unapproved candidate set');
     assert.equal(expectedDigest, digest(manifest), 'Review digest does not match these candidates');
+    // Capture provenance remains valid after a squash merge. Only promotion
+    // needs the original commit locally to verify unchanged rendering inputs;
+    // normal comparison uses the committed manifest and PNGs independently.
     git(
       'diff',
       '--exit-code',
