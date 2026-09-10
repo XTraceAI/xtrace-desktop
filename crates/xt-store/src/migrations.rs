@@ -5,7 +5,10 @@
 use crate::{Error, Result, Store};
 use rusqlite::TransactionBehavior;
 
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../migrations/0001_canonical.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("../migrations/0001_canonical.sql")),
+    (2, include_str!("../migrations/0002_ingest.sql")),
+];
 
 impl Store {
     /// Highest applied migration after opening this store.

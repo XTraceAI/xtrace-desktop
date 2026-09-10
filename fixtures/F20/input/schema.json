@@ -1,0 +1,49 @@
+{
+  "scope": "schema-storage-only",
+  "discovery": [
+    {
+      "host": "cursor",
+      "native_session_id": "fixture-cli",
+      "conversation_id": null,
+      "surface": "cli",
+      "started_at_ms": 1788782400000,
+      "last_observed_at": 1788783000000,
+      "discovery_complete": true
+    },
+    {
+      "host": "cursor",
+      "native_session_id": "fixture-desktop",
+      "conversation_id": "not-yet-imported",
+      "surface": "desktop",
+      "started_at_ms": 1788782500000,
+      "last_observed_at": 1788783000000,
+      "discovery_complete": true
+    },
+    {
+      "host": "cursor",
+      "native_session_id": "fixture-future",
+      "conversation_id": null,
+      "surface": "future.surface.v2",
+      "started_at_ms": 1788782600000,
+      "last_observed_at": 1788783000000,
+      "discovery_complete": true
+    },
+    {
+      "host": "cursor",
+      "native_session_id": "fixture-unknown",
+      "conversation_id": null,
+      "surface": null,
+      "started_at_ms": null,
+      "last_observed_at": 1788783000000,
+      "discovery_complete": false
+    }
+  ],
+  "expected": {
+    "discoveries": 4,
+    "sessions": 0,
+    "records": 0,
+    "receipts": 0,
+    "unknown_start": 1,
+    "incomplete": 1
+  }
+}

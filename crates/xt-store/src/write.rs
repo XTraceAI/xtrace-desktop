@@ -139,6 +139,10 @@ impl Store {
         // A native started_at_ms is never inferred from this imported range.
         (session.first_ts, session.last_ts) = read::timestamp_range(&transaction, session_id)?;
         save_session(&transaction, &session)?;
+        transaction.execute(
+            "UPDATE sessions SET record_count=record_count+?1 WHERE session_id=?2",
+            params![stats.inserted as i64, session_id],
+        )?;
         transaction.commit()?;
         Ok(stats)
     }
@@ -486,9 +490,9 @@ fn save_record(connection: &Connection, record: &StoredRecord) -> Result<()> {
             .map(serde_json::to_string)
             .transpose()?;
         connection.execute(
-            "INSERT INTO tool_uses(uuid,block_index,name,input_json) VALUES (?1,?2,?3,?4)
+            "INSERT INTO tool_uses(uuid,session_id,block_index,name,input_json) VALUES (?1,?2,?3,?4,?5)
              ON CONFLICT(uuid,block_index) DO UPDATE SET input_json=excluded.input_json",
-            params![r.uuid, tool.block_index, tool.name, input],
+            params![r.uuid, r.session_id, tool.block_index, tool.name, input],
         )?;
     }
     Ok(())
