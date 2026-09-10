@@ -261,7 +261,7 @@ async fn import_conversation_preserves_unknown_identity_namespace_and_local_rout
     assert_eq!(session.meta.surface.as_deref(), Some("Future Desktop"));
     assert_eq!(session.meta.native_session_id.as_deref(), Some("native-id"));
     assert_eq!(session.namespace.as_deref(), Some("synthetic-namespace"));
-    assert_eq!(session.meta.title.as_deref(), Some("Synthetic title"));
+    assert!(session.meta.title.is_none());
     assert_eq!(server.changed().await.surface, session.meta.surface);
     let mut sparse = args("novel-session", vec![poor("novel")]);
     sparse["source_platform"] = json!("future-host");
@@ -312,14 +312,18 @@ async fn import_conversation_preserves_unknown_identity_namespace_and_local_rout
 #[tokio::test]
 async fn import_conversation_metadata_policy_applies_to_http_writes_and_retries() {
     let server = Server::new().await;
-    server
-        .store()
-        .set_retention_mode(RetentionMode::MetadataOnly)
-        .unwrap();
-    let mut input = args("metadata", vec![rich("metadata-row")]);
+    assert_eq!(
+        server.store().retention_mode().unwrap(),
+        RetentionMode::MetadataOnly
+    );
+    let mut input = args("metadata", vec![poor("metadata-row")]);
     input["title"] = json!("Do not retain this title");
     input["namespace"] = json!("synthetic-metadata");
     success(&server.import(input.clone()).await);
+    input["messages"] = json!([rich("metadata-row")]);
+    let enriched = server.import(input.clone()).await;
+    assert_eq!(success(&enriched)["records_new"], 0);
+    assert_eq!(success(&enriched)["records_enriched"], 1);
     success(&server.import(input).await);
     let store = server.store();
     let record = &store.records("metadata").unwrap()[0];
@@ -349,7 +353,58 @@ async fn import_conversation_metadata_policy_applies_to_http_writes_and_retries(
             .as_deref(),
         Some("synthetic-metadata")
     );
-    assert_eq!(count(&server.sql(), "capture_receipts"), 2);
+    assert_eq!(record.text_len, Some(14));
+    assert_eq!(record.tool_use_count, Some(1));
+    assert_eq!(count(&server.sql(), "capture_receipts"), 3);
+    for query in [
+        "SELECT count(*) FROM sessions WHERE title IS NOT NULL",
+        "SELECT count(*) FROM records WHERE content_json IS NOT NULL",
+        "SELECT count(*) FROM tool_uses WHERE input_json IS NOT NULL",
+        "SELECT count(*) FROM settings WHERE key='content_retention'",
+    ] {
+        assert_eq!(
+            server
+                .sql()
+                .query_row(query, [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+    // The server's already-opened connection observes an explicit opt-in.
+    server
+        .store()
+        .set_retention_mode(RetentionMode::FullContent)
+        .unwrap();
+    let mut archive = args("archive", vec![rich("archived-row")]);
+    archive["title"] = json!("Explicitly archived title");
+    success(&server.import(archive.clone()).await);
+    let retained = server.store().records("archive").unwrap().remove(0);
+    assert!(retained.content_json.is_some());
+    assert!(retained.tool_uses[0].input_json.is_some());
+    assert_eq!(
+        server
+            .store()
+            .session("archive")
+            .unwrap()
+            .unwrap()
+            .meta
+            .title
+            .as_deref(),
+        Some("Explicitly archived title")
+    );
+    server
+        .store()
+        .set_retention_mode(RetentionMode::MetadataOnly)
+        .unwrap();
+    archive["messages"] = json!([rich("archived-row"), rich("new-metadata-row")]);
+    success(&server.import(archive).await);
+    let rows = server.store().records("archive").unwrap();
+    assert_eq!(
+        rows.iter().find(|r| r.uuid == "archived-row").unwrap(),
+        &retained
+    );
+    let fresh = rows.iter().find(|r| r.uuid == "new-metadata-row").unwrap();
+    assert!(fresh.content_json.is_none() && fresh.tool_uses[0].input_json.is_none());
 }
 
 #[tokio::test]

@@ -66,7 +66,7 @@ def stop_server(child):
 def record(uuid, rich=False):
     message = {"role": "assistant"}
     if rich:
-        message.update(model="synthetic-model", content=[{"type": "text", "text": "Synthetic result"}], usage={"input_tokens": 7, "output_tokens": 3})
+        message.update(model="synthetic-model", content=[{"type": "text", "text": "Synthetic result"}, {"type": "tool_use", "name": "Read", "input": {"path": "synthetic.txt"}}, {"type": "tool_result", "content": "Synthetic output"}], usage={"input_tokens": 7, "output_tokens": 3})
     return {"uuid": uuid, "type": "assistant", "message": message}
 
 
@@ -121,6 +121,12 @@ def exercise(binary, root, pin, directory, route):
     def received(sql):
         return sql.execute("SELECT count(*) FROM capture_receipts").fetchone()[0]
 
+    def assert_metadata_default(sql):
+        for table, column in [("sessions", "title"), ("records", "content_json"), ("tool_uses", "input_json")]:
+            assert sql.execute(f"SELECT count(*) FROM {table} WHERE {column} IS NOT NULL").fetchone()[0] == 0, "Default imports cannot retain transcript content"
+        assert sql.execute("SELECT count(*) FROM settings WHERE key='content_retention'").fetchone()[0] == 0, "Conformance must exercise the absent setting"
+
+
     try:
         with sqlite3.connect(database) as sql:
             evidence = []
@@ -136,11 +142,14 @@ def exercise(binary, root, pin, directory, route):
             assert enriched["offset"] == transcript.stat().st_size and enriched["offset"] > first["offset"]
             assert "new=0" in log, "Enrichment cannot count as a new UUID"
             assert sql.execute("SELECT output_tokens FROM usage").fetchone()[0] == 3 and received(sql) == 2
+            assert_metadata_default(sql)
+            assert sql.execute("SELECT text_len,tool_use_count FROM records").fetchone() == (16, 1)
             evidence.append({"case": "enriched", "before": first["offset"], "after": enriched["offset"], "receipts": 2})
             append(transcript, [record("first", rich=True)])
             log = flush()
             duplicate = cursor(home)
             assert "new=0" in log and duplicate["offset"] == transcript.stat().st_size and received(sql) == 3
+            assert_metadata_default(sql)
             evidence.append({"case": "duplicate", "before": enriched["offset"], "after": duplicate["offset"], "receipts": 3})
             sql.executescript("CREATE TABLE test_commit(parent TEXT REFERENCES sessions(session_id) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER test_commit_failure AFTER INSERT ON capture_receipts BEGIN INSERT INTO test_commit VALUES('missing-parent'); END;")
             append(transcript, [record("retry", rich=True)])
@@ -160,9 +169,11 @@ def exercise(binary, root, pin, directory, route):
             assert sql.execute("SELECT session_id FROM sessions").fetchone()[0] == "synthetic-session"
             assert sql.execute("SELECT surface FROM capture_receipts LIMIT 1").fetchone()[0] is None
             assert sql.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+            assert_metadata_default(sql)
+            assert sql.execute("SELECT count(*) FROM tool_uses").fetchone()[0] == 2
             rows = sql.execute("SELECT r.uuid,r.type,r.role,r.model,u.input_tokens,u.output_tokens FROM records r LEFT JOIN usage u ON u.uuid=r.uuid ORDER BY r.uuid").fetchall()
         assert all((plugin / path).read_bytes() == content for path, content in source_before.items()), "Pinned Python source must remain unchanged"
-        print(json.dumps({"route": route, "pin": pin, "cursor_evidence": evidence}))
+        print(json.dumps({"route": route, "pin": pin, "cursor_evidence": evidence, "storage": "metadata_only_default"}))
         return rows
     finally:
         stop_server(child)

@@ -69,7 +69,10 @@ committed owner invalidation is still delivered. Notifications have no request I
 and receive HTTP 202 without invoking an import. Invalid JSON/RPC arguments use
 JSON-RPC errors; oversized bodies receive HTTP 413.
 
-The saved metadata-only policy prevents new transcript content, tool input and
+An absent retention setting defaults to metrics and indexing (metadata-only).
+Full-content archival requires an explicitly saved opt-in; transport arguments
+cannot enable it. Existing content and saved preferences remain unchanged.
+The metadata-only policy prevents new transcript content, tool input and
 titles from being retained, including on enrichment and retry. Namespaces,
 structural measurements and content-free receipt evidence remain available.
 Change events are published by the commit worker, so a disconnected HTTP caller

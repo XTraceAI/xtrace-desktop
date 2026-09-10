@@ -96,6 +96,7 @@ pub(crate) fn apply(store: &mut Store, args: ImportArgs) -> Result<ImportOutcome
         records: &records,
         title: args.title.as_deref(),
         namespace: args.namespace.as_deref(),
+        // Only the persisted policy can opt into archival; an absent setting is metadata-only.
         keep_content: true,
         observed_at,
         receipt: None,
