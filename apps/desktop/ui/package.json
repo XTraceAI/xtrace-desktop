@@ -11,7 +11,9 @@
     "lint": "eslint . --max-warnings 0 && pnpm lint:hex",
     "tauri": "cd ../src-tauri && tauri",
     "lint:hex": "node scripts/lint-hex.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:gallery": "playwright test --config playwright.gallery.config.ts --grep @full",
+    "test:e2e:gallery:smoke": "playwright test --config playwright.gallery.config.ts --grep @smoke"
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
