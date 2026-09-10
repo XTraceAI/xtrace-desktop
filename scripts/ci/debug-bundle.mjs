@@ -4,6 +4,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+export function smokeEnvironment(directory, inherited = process.env) {
+  const env = { ...inherited, GITHUB_TOKEN: '', GH_TOKEN: '', XTRACE_TELEMETRY: '0' };
+  delete env.XTRACE_FIXTURE;
+  env.XTRACE_DATA_DIR = join(directory, 'data');
+  return env;
+}
+
 async function main() {
   if (process.platform !== 'darwin' || process.argv.length !== 3) throw new Error();
   const bundle = resolve(process.argv[2]);
@@ -28,7 +35,7 @@ async function main() {
     if (compile.error || compile.status !== 0) throw new Error();
     child = spawn(join(bundle, 'Contents/MacOS', executable), [], {
       stdio: 'ignore',
-      env: { ...process.env, GITHUB_TOKEN: '', GH_TOKEN: '', XTRACE_TELEMETRY: '0' },
+      env: smokeEnvironment(temporary),
     });
     await new Promise((resolve, reject) => {
       child.once('spawn', resolve);
@@ -58,7 +65,9 @@ async function main() {
     await rm(temporary, { recursive: true, force: true });
   }
 }
-main().catch(() => {
-  console.error('Debug bundle smoke failed; native launch evidence is unavailable.');
-  process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch(() => {
+    console.error('Debug bundle smoke failed; native launch evidence is unavailable.');
+    process.exitCode = 1;
+  });
+}

@@ -28,7 +28,9 @@
     "secrets:check": "node scripts/security/scan-secrets.mjs",
     "publication:check": "node scripts/publication/check.mjs",
     "publication:test": "node --test scripts/publication/*.test.mjs scripts/security/*.test.mjs",
-    "check:native": "node scripts/ci/native-check.mjs"
+    "check:native": "node scripts/ci/native-check.mjs",
+    "fixtures:export": "bash scripts/fixtures/export.sh",
+    "e2e:production": "pnpm --dir apps/desktop/ui exec playwright test --config playwright.production.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

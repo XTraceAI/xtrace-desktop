@@ -59,6 +59,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme]);
 
   useEffect(() => {
+    if (isTauri()) {
+      // Native sidebar material must use the same appearance as the web content.
+      void getCurrentWindow()
+        .setTheme(preference === 'system' ? null : preference)
+        .catch(() => {});
+    }
+  }, [preference]);
+
+  useEffect(() => {
     let active = true;
     let unlisten: (() => void) | undefined;
     const sync = () => {

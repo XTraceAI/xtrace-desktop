@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "Allow the main window to move using its native drag regions.",
+  "description": "Allow native window dragging and synchronize the selected appearance.",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-start-dragging"]
+  "permissions": ["core:default", "core:window:allow-start-dragging", "core:window:allow-set-theme"]
 }
