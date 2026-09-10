@@ -1,8 +1,8 @@
 # Tables, host filters and activity primitives
 
-These components render supplied data. It does not fetch inventory, compute metrics or sort/paginate source rows.
+These components render supplied data. They do not fetch inventory, compute metrics or sort/paginate source rows.
 
-`DataTable<Row>` requires an accessible `label`, typed `columns`, `rows` and `getRowKey`. Each column supplies a stable key, header, CSS grid width, optional alignment and a row renderer. Header and body share one template and 12px column gaps. Flexible columns truncate within the available width; pass `minWidth` for an intentionally wide table. Its focusable scroll region contains horizontal overflow. `maxHeight` bounds vertical scrolling and `stickyHeader` keeps the header inside that region.
+`DataTable<Row>` requires an accessible `label`, typed `columns`, `rows` and `getRowKey`. Each column supplies a stable key, header, CSS grid width, optional alignment and a row renderer. Header and body share one template and 12px column gaps. Use the text cell helpers to truncate within flexible columns; cells themselves allow nested controls' focus outlines to remain visible. Pass `minWidth` for an intentionally wide table. Its focusable scroll region contains horizontal overflow. `maxHeight` bounds vertical scrolling and `stickyHeader` keeps the header inside that region.
 
 Row heights are 22, 24, 32, 40 (default) or 44px. Use single-line renderers at compact heights. `hover` selects subtle or track color. Optional `rowOpacity(row)` is clamped to 0–1, with nonfinite values treated as opaque. The cell renderer must communicate why a row is excluded; opacity alone carries no accessible meaning.
 

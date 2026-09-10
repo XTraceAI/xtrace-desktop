@@ -64,6 +64,43 @@ for (const theme of ['dark', 'light'] as const) {
       page.getByRole('table', { name: 'Rules', exact: true }).getByRole('row').nth(1),
     ).toHaveCSS('height', '44px');
     await expect(first).toHaveCSS('height', '40px');
+    const review = page
+      .getByRole('table', { name: 'Rules', exact: true })
+      .getByRole('button', { name: 'Review', exact: true })
+      .first();
+    await review.focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    await expect(review).toBeFocused();
+    const focus = await review.evaluate((button) => {
+      const style = getComputedStyle(button);
+      const outset = Math.max(0, parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset));
+      const ring = button.getBoundingClientRect();
+      const clippedBy: string[] = [];
+      for (let parent = button.parentElement; parent; parent = parent.parentElement) {
+        const css = getComputedStyle(parent);
+        const box = parent.getBoundingClientRect();
+        const left = box.left + parent.clientLeft;
+        const top = box.top + parent.clientTop;
+        if (
+          (css.overflowX !== 'visible' &&
+            (ring.left - outset < left - 0.5 ||
+              ring.right + outset > left + parent.clientWidth + 0.5)) ||
+          (css.overflowY !== 'visible' &&
+            (ring.top - outset < top - 0.5 ||
+              ring.bottom + outset > top + parent.clientHeight + 0.5))
+        )
+          clippedBy.push(parent.getAttribute('role') ?? parent.tagName);
+      }
+      return {
+        visible: button.matches(':focus-visible'),
+        outline: style.outlineStyle,
+        width: parseFloat(style.outlineWidth),
+        clippedBy,
+      };
+    });
+    expect(focus).toEqual({ visible: true, outline: 'solid', width: 2, clippedBy: [] });
+    await page.screenshot({ path: info.outputPath(`focus-${theme}.png`), fullPage: true });
     await expect(page.getByRole('img', { name: 'Day 1, agent: 0' })).toHaveCSS('opacity', '0.25');
     await expect(page.getByRole('img', { name: 'Day 4, agent: unmeasured' })).toHaveCSS(
       'border-style',

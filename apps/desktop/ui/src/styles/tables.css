@@ -17,8 +17,6 @@
 .xt-grid-row > [role='cell'],
 .xt-grid-row > [role='columnheader'] {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .xt-table-head {
   padding: 8px 14px 6px;
@@ -38,6 +36,10 @@
   z-index: 1;
 }
 .xt-table-head button {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font: inherit;
   color: inherit;
   text-transform: inherit;
@@ -106,6 +108,10 @@
     monospace;
 }
 .xt-mono-cell {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--secondary);
   font:
     400 10.5px 'Geist Mono',
