@@ -57,7 +57,7 @@
 .xt-data-row[data-hover='track']:hover {
   background: var(--track);
 }
-.xt-data-row[tabindex] {
+.xt-data-row[data-actionable='true'] {
   cursor: pointer;
 }
 .xt-table-block {
@@ -66,7 +66,8 @@
 .xt-table-block:last-child {
   border-bottom: 0;
 }
-.xt-expand-row {
+.xt-expand-row,
+.xt-row-action {
   display: grid;
   place-items: center;
   width: 22px;
@@ -334,9 +335,9 @@
   font-weight: 400;
 }
 .xt-table-scroll:focus-visible,
-.xt-data-row:focus-visible,
 .xt-table-head button:focus-visible,
 .xt-expand-row:focus-visible,
+.xt-row-action:focus-visible,
 .xt-filter-trigger:focus-visible,
 .xt-filter-option input:focus-visible {
   outline: 2px solid var(--accent);

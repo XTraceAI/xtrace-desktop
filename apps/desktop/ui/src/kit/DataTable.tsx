@@ -22,6 +22,7 @@ export interface DataTableProps<Row> {
   getRowKey: (row: Row) => string;
   rowHeight?: 22 | 24 | 32 | 40 | 44;
   onRowClick?: (row: Row) => void;
+  getRowActionLabel?: (row: Row) => string;
   hover?: 'subtle' | 'track';
   rowOpacity?: (row: Row) => number;
   sort?: SortOrder;
@@ -41,7 +42,7 @@ const interactive = (target: EventTarget | null, row: HTMLElement) => {
   const control = target.closest(
     'button, a, input, select, textarea, label, summary, [role="button"], [role="checkbox"], [role="switch"], [role="radio"], [contenteditable="true"], [tabindex]',
   );
-  return control !== null && control !== row;
+  return control !== null && control !== row && row.contains(control);
 };
 
 export function DataTable<Row>({
@@ -51,6 +52,7 @@ export function DataTable<Row>({
   getRowKey,
   rowHeight = 40,
   onRowClick,
+  getRowActionLabel,
   hover = 'subtle',
   rowOpacity,
   sort,
@@ -66,10 +68,12 @@ export function DataTable<Row>({
 }: DataTableProps<Row>) {
   const id = useId();
   const expandable = !!renderExpanded;
-  const template = [...(expandable ? ['28px'] : []), ...columns.map((column) => column.width)].join(
-    ' ',
-  );
-  const totalColumns = columns.length + Number(expandable);
+  const template = [
+    ...(expandable ? ['28px'] : []),
+    ...columns.map((column) => column.width),
+    ...(onRowClick ? ['28px'] : []),
+  ].join(' ');
+  const totalColumns = columns.length + Number(expandable) + Number(!!onRowClick);
   return (
     <div
       className="xt-table-scroll"
@@ -127,6 +131,11 @@ export function DataTable<Row>({
                 )}
               </div>
             ))}
+            {onRowClick && (
+              <div role="columnheader">
+                <span className="sr-only">Open row</span>
+              </div>
+            )}
           </div>
         </div>
         {loading ? (
@@ -164,19 +173,9 @@ export function DataTable<Row>({
                         ? 1
                         : Math.max(0, Math.min(1, opacity)),
                   }}
-                  tabIndex={onRowClick ? 0 : undefined}
+                  data-actionable={!!onRowClick || undefined}
                   onClick={(event) => {
                     if (!interactive(event.target, event.currentTarget)) onRowClick?.(row);
-                  }}
-                  onKeyDown={(event) => {
-                    if (
-                      onRowClick &&
-                      event.target === event.currentTarget &&
-                      ['Enter', ' '].includes(event.key)
-                    ) {
-                      event.preventDefault();
-                      onRowClick(row);
-                    }
                   }}
                 >
                   {expandable && (
@@ -206,6 +205,19 @@ export function DataTable<Row>({
                       {column.render(row)}
                     </div>
                   ))}
+                  {onRowClick && (
+                    <div role="cell">
+                      <button
+                        className="xt-row-action"
+                        type="button"
+                        tabIndex={0}
+                        aria-label={getRowActionLabel?.(row) ?? `Open row ${key}`}
+                        onClick={() => onRowClick(row)}
+                      >
+                        <span aria-hidden="true">↗</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
                 {expanded && renderExpanded && (
                   <div role="row" id={detailsId} className="xt-expanded-row">

@@ -39,8 +39,14 @@ for (const theme of ['dark', 'light'] as const) {
     const longTitle = flexible.locator('.xt-title-cell > span');
     expect(await longTitle.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
     const first = table.getByRole('row').nth(1);
-    await first.focus();
+    await expect(first).not.toHaveAttribute('tabindex');
+    await table.getByRole('button', { name: 'Open Add session filters' }).focus();
     await page.keyboard.press('Enter');
+    await expect(page.getByRole('status', { name: 'Row activations' })).toHaveText('1');
+    await page.keyboard.press('Space');
+    await expect(page.getByRole('status', { name: 'Row activations' })).toHaveText('2');
+    await table.getByText('Add session filters', { exact: true }).click();
+    await expect(page.getByRole('status', { name: 'Row activations' })).toHaveText('3');
     await expect(page.getByRole('status', { name: 'Clicked row' })).toHaveText('sample-1');
     const toggle = table.getByRole('button', { name: 'Collapse sample-1' });
     await toggle.click();

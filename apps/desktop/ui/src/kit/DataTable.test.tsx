@@ -45,7 +45,7 @@ it('renders a typed table with aligned numeric headers, unknown versus zero and 
     expect(screen.getAllByRole('row')[1].style.height).toBe(`${height}px`);
   }
 });
-it('emits actual row through pointer and keyboard while nested actions and expansion remain independent', () => {
+it('emits actual row through text and a named native action while nested actions and expansion remain independent', () => {
   const onRowClick = vi.fn(),
     action = vi.fn(),
     expand = vi.fn();
@@ -65,6 +65,7 @@ it('emits actual row through pointer and keyboard while nested actions and expan
       rows={[rows[0]]}
       getRowKey={key}
       onRowClick={onRowClick}
+      getRowActionLabel={(row) => `Open ${row.name}`}
       renderExpanded={(r) => <p>Details for {r.name}</p>}
       expandedKeys={[]}
       onExpandedChange={expand}
@@ -73,13 +74,16 @@ it('emits actual row through pointer and keyboard while nested actions and expan
   fireEvent.click(screen.getByText('First session'));
   expect(onRowClick).toHaveBeenLastCalledWith(rows[0]);
   const row = screen.getAllByRole('row')[1];
-  fireEvent.keyDown(row, { key: 'Enter' });
-  fireEvent.keyDown(row, { key: ' ' });
-  expect(onRowClick).toHaveBeenCalledTimes(3);
+  expect(row.hasAttribute('tabindex')).toBe(false);
+  const primaryAction = screen.getByRole('button', { name: 'Open First session' });
+  expect(primaryAction.closest('[role="cell"]')).toBeTruthy();
+  fireEvent.click(primaryAction);
+  expect(onRowClick).toHaveBeenCalledTimes(2);
+  expect(onRowClick).toHaveBeenLastCalledWith(rows[0]);
   fireEvent.click(screen.getByRole('button', { name: 'Open' }));
   fireEvent.click(screen.getByRole('button', { name: 'Expand one' }));
   expect(action).toHaveBeenCalledOnce();
-  expect(onRowClick).toHaveBeenCalledTimes(3);
+  expect(onRowClick).toHaveBeenCalledTimes(2);
   expect(expand).toHaveBeenCalledExactlyOnceWith(['one']);
   expect(screen.queryByText('Details for First session')).toBeNull();
   view.rerender(

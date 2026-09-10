@@ -83,6 +83,7 @@ function Fixture() {
   const [expanded, setExpanded] = useState<string[]>(['sample-1']);
   const [sort, setSort] = useState<SortOrder>({ key: 'tokens', direction: 'desc' });
   const [clicked, setClicked] = useState('none');
+  const [activations, setActivations] = useState(0);
   const sorted = [...sample].sort((a, b) => {
     if (sort.key === 'tokens') {
       if (a.tokens === null) return b.tokens === null ? 0 : 1;
@@ -128,7 +129,11 @@ function Fixture() {
           rowHeight={40}
           sort={sort}
           onSort={setSort}
-          onRowClick={(row) => setClicked(row.id)}
+          onRowClick={(row) => {
+            setClicked(row.id);
+            setActivations((count) => count + 1);
+          }}
+          getRowActionLabel={(row) => `Open ${row.title}`}
           rowOpacity={(row) => (row.state === 'excluded' ? 0.45 : 1)}
           expandedKeys={expanded}
           onExpandedChange={setExpanded}
@@ -137,7 +142,10 @@ function Fixture() {
           maxHeight={160}
         />
       </SectionCard>
-      <output aria-label="Clicked row">{clicked}</output>
+      <div className="fixture-actions">
+        <output aria-label="Clicked row">{clicked}</output>
+        <output aria-label="Row activations">{activations}</output>
+      </div>
       <div data-testid="flexible-table" style={{ width: 600, maxWidth: '100%' }}>
         <DataTable
           label="Flexible title"
