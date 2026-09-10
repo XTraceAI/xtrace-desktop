@@ -1,6 +1,6 @@
 import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { TopBar, type TimeRange } from '../src/kit/TopBar';
+import { TopBar, type SelectedRange } from '../src/kit/TopBar';
 import { HostGlyph } from '../src/kit/HostGlyph';
 import { Icon, type IconName } from '../src/kit/icons';
 import { ThemeProvider } from '../src/theme/ThemeProvider';
@@ -18,12 +18,13 @@ const iconNames: IconName[] = [
   'share',
   'scan',
   'copy',
+  'calendar',
 ];
 const longCrumb =
   'A deliberately long workspace breadcrumb that must remain inside the available content area';
 
 function Fixture() {
-  const [range, setRange] = useState<TimeRange>('7d');
+  const [range, setRange] = useState<SelectedRange>('7d');
   const [action, setAction] = useState('No action');
   return (
     <div
@@ -41,6 +42,7 @@ function Fixture() {
           subcrumb="Overview"
           range={range}
           onRange={setRange}
+          onCustomRange={() => setAction('custom picker requested')}
           actionLabel="Share"
           onAction={() => setAction('share')}
         />
@@ -103,6 +105,11 @@ function Fixture() {
             </span>
           ))}
         </div>
+      </div>
+      <div style={{ padding: '0 20px' }}>
+        <button type="button" tabIndex={0} onClick={() => setRange('custom')}>
+          Confirm custom range
+        </button>
       </div>
       <p role="status" style={{ padding: '0 20px' }}>
         {action}

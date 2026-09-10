@@ -1,6 +1,6 @@
 import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ThemeProvider, ThemeScope } from '../src/theme/ThemeProvider';
+import { ThemeProvider, useTheme } from '../src/theme/ThemeProvider';
 import { KindBadge, EvidenceDot, StatePill } from '../src/kit/Badge';
 import { Toggle } from '../src/kit/Toggle';
 import { Button } from '../src/kit/Button';
@@ -8,18 +8,23 @@ import { Segmented } from '../src/kit/Segmented';
 import { ProgressBar } from '../src/kit/ProgressBar';
 import { Search } from '../src/kit/Search';
 import '../src/index.css';
+import './controls.css';
 
 function Controls() {
+  const { theme, setPreference } = useTheme();
   const [checked, setChecked] = useState(false);
   const [mode, setMode] = useState('advise');
   const [search, setSearch] = useState('');
   const [saved, setSaved] = useState(0);
+  const [disableChoice, setDisableChoice] = useState(false);
+  const [removeChoice, setRemoveChoice] = useState(false);
   const row = { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' as const };
   return (
     <section
       aria-label="Control samples"
       style={{
         width: 680,
+        maxWidth: '100%',
         padding: 24,
         display: 'flex',
         flexDirection: 'column',
@@ -28,8 +33,13 @@ function Controls() {
         color: 'var(--ink)',
       }}
     >
-      <h1 style={{ fontSize: 22, letterSpacing: '-0.4px' }}>Shared controls</h1>
-      <p>Synthetic component states</p>
+      <div style={{ ...row, justifyContent: 'space-between' }}>
+        <h1 style={{ fontSize: 22, letterSpacing: '-0.4px', margin: 0 }}>Controls preview</h1>
+        <button onClick={() => setPreference(theme === 'dark' ? 'light' : 'dark')}>
+          Switch to {theme === 'dark' ? 'light' : 'dark'} theme
+        </button>
+      </div>
+      <p style={{ margin: 0 }}>Synthetic examples · Try the controls with your mouse or keyboard</p>
       <Search
         label="Search sessions"
         placeholder="Search sessions"
@@ -102,16 +112,47 @@ function Controls() {
           ]}
         />
       </div>
+      <details>
+        <summary>Keyboard edge cases</summary>
+        <div style={{ display: 'grid', gap: 12, paddingTop: 12 }}>
+          <p style={{ margin: 0 }}>Selection held at First to demonstrate controlled state.</p>
+          <div style={row}>
+            <Button variant="outline" onClick={() => setDisableChoice(!disableChoice)}>
+              {disableChoice ? 'Enable' : 'Disable'} First
+            </Button>
+            <Button variant="outline" onClick={() => setRemoveChoice(!removeChoice)}>
+              {removeChoice ? 'Restore' : 'Remove'} First
+            </Button>
+          </div>
+          <Segmented
+            label="Held selection"
+            options={[
+              ...(removeChoice
+                ? []
+                : [{ value: 'first', label: 'First', disabled: disableChoice }]),
+              { value: 'second', label: 'Second' },
+              { value: 'third', label: 'Third', disabled: true },
+            ]}
+            value="first"
+            onChange={() => setSaved((count) => count + 1)}
+          />
+          <Segmented
+            label="Disabled group"
+            disabled
+            options={[{ value: 'locked', label: 'Locked choice' }]}
+            value="locked"
+            onChange={() => setSaved(100)}
+          />
+          <Button variant="outline">After groups</Button>
+        </div>
+      </details>
     </section>
   );
 }
-const theme = new URLSearchParams(location.search).get('theme') === 'light' ? 'light' : 'dark';
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>
-      <ThemeScope theme={theme}>
-        <Controls />
-      </ThemeScope>
+      <Controls />
     </ThemeProvider>
   </StrictMode>,
 );

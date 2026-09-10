@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { Radio } from '@base-ui/react/radio';
+import { RadioGroup } from '@base-ui/react/radio-group';
 import type { ControlTone } from './control-tone';
 import '../styles/controls.css';
 
@@ -22,66 +23,37 @@ export function Segmented<T extends string>({
   onChange: (value: T) => void;
   disabled?: boolean;
 }) {
-  const [focused, setFocused] = useState<T | null>(null);
-  const buttons = useRef(new Map<T, HTMLButtonElement>());
-  const enabled = disabled ? [] : options.filter((option) => !option.disabled);
-  const tabValue =
-    enabled.find((option) => option.value === focused)?.value ??
-    enabled.find((option) => option.value === value)?.value ??
-    enabled[0]?.value;
+  // Invalid or disabled selections must not strand the group's Tab entry.
+  // Rebuild Base UI's item registry only when the available choices change.
+  const selected = options.some((option) => option.value === value && !option.disabled)
+    ? value
+    : null;
+  const choicesKey = JSON.stringify(options.map((option) => [option.value, !!option.disabled]));
   return (
-    <div
-      role="radiogroup"
+    <RadioGroup<T | null>
+      key={choicesKey}
       aria-label={label}
-      aria-disabled={disabled || undefined}
-      className="xt-segmented"
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setFocused(null);
+      aria-orientation="horizontal"
+      disabled={disabled}
+      value={selected}
+      onValueChange={(value) => {
+        if (value !== null) onChange(value);
       }}
+      className="xt-segmented"
     >
       {options.map((option) => (
-        <button
+        <Radio.Root
           key={option.value}
-          ref={(node) => {
-            if (node) buttons.current.set(option.value, node);
-            else buttons.current.delete(option.value);
-          }}
-          type="button"
-          role="radio"
-          aria-checked={option.value === value}
-          disabled={disabled || option.disabled}
-          tabIndex={option.value === tabValue ? 0 : -1}
+          value={option.value}
+          nativeButton
+          render={<button type="button" />}
+          disabled={option.disabled}
           className="xt-segment xt-control-tone"
           data-tone={option.tone ?? 'meta'}
-          onFocus={() => setFocused(option.value)}
-          onClick={() => onChange(option.value)}
-          onKeyDown={(event) => {
-            const index = enabled.findIndex((item) => item.value === option.value);
-            if (
-              index < 0 ||
-              !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(
-                event.key,
-              )
-            )
-              return;
-            event.preventDefault();
-            const next =
-              event.key === 'Home'
-                ? 0
-                : event.key === 'End'
-                  ? enabled.length - 1
-                  : (index +
-                      (['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1) +
-                      enabled.length) %
-                    enabled.length;
-            const selected = enabled[next].value;
-            buttons.current.get(selected)?.focus();
-            onChange(selected);
-          }}
         >
           {option.label}
-        </button>
+        </Radio.Root>
       ))}
-    </div>
+    </RadioGroup>
   );
 }

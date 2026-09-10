@@ -40,6 +40,14 @@ interface ThemeContextValue {
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
+const SurfaceThemeContext = createContext<Theme | undefined>(undefined);
+
+/** Carry a scoped palette through React portals without copying DOM styles. */
+export function useSurfaceTheme(): Theme | undefined {
+  const scope = useContext(SurfaceThemeContext);
+  const app = useContext(ThemeContext);
+  return scope ?? app?.theme;
+}
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [preference, updatePreference] = useState(readPreference);
@@ -108,5 +116,9 @@ export function useTheme(): ThemeContextValue {
 }
 
 export function ThemeScope({ theme, ...props }: HTMLAttributes<HTMLDivElement> & { theme: Theme }) {
-  return <div {...props} data-theme={theme} />;
+  return (
+    <SurfaceThemeContext.Provider value={theme}>
+      <div {...props} data-theme={theme} />
+    </SurfaceThemeContext.Provider>
+  );
 }

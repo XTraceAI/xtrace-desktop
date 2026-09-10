@@ -1,0 +1,16 @@
+{
+  "id": "F15",
+  "status": "skeleton",
+  "author": "XTrace fixture maintainers",
+  "shape": "A rule whose proposed enforcement cannot remain silent.",
+  "proves": ["R-04"],
+  "now": "2026-09-08T00:00:00Z",
+  "window_days": 7,
+  "sessions": [
+    {
+      "file": "input/sessions/session.jsonl",
+      "session_id": "00000000-0000-4000-8000-000000000015",
+      "host": "claude"
+    }
+  ]
+}

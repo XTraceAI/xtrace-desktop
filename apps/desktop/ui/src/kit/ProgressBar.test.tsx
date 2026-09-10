@@ -49,6 +49,23 @@ it('normalizes oversized segments proportionally without overflowing finite inpu
     />,
   );
   expect(widths()).toEqual(['50%', '50%']);
+  view.rerender(
+    <ProgressBar
+      label="Backtest"
+      segments={[
+        { label: 'A', tone: 'success', value: -5 },
+        { label: 'B', tone: 'danger', value: 0 },
+      ]}
+    />,
+  );
+  expect(widths()).toEqual(['0%', '0%']);
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('0');
+  for (const segments of [[], [{ label: 'A', tone: 'success' as const, value: NaN }]]) {
+    view.rerender(<ProgressBar label="Backtest" segments={segments} />);
+    expect(widths()).toEqual([]);
+    expect(screen.getByRole('progressbar').hasAttribute('aria-valuenow')).toBe(false);
+    expect(screen.getByRole('progressbar').getAttribute('aria-valuetext')).toBe('Unmeasured');
+  }
 });
 
 it('announces distinct equal-total compositions', () => {

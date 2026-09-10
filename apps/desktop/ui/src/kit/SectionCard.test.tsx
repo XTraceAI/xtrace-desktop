@@ -1,14 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react';
-import type { ReactNode } from 'react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it } from 'vitest';
 import { SectionCard } from './SectionCard';
-vi.mock('./Popover', () => ({
-  Popover: ({ id, open, children }: { id: string; open: boolean; children: ReactNode }) => (
-    <div id={id} role="tooltip" hidden={!open}>
-      {children}
-    </div>
-  ),
-}));
 afterEach(cleanup);
 
 it('renders named section, definition, metadata and caller slots with 36/40px headers', () => {

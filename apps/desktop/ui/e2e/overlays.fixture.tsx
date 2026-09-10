@@ -1,8 +1,8 @@
 import { StrictMode, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ThemeProvider, ThemeScope, useTheme } from '../src/theme/ThemeProvider';
-import { Popover } from '../src/kit/Popover';
-import { Modal } from '../src/kit/Modal';
+import { createPopoverHandle, Popover, PopoverClose, PopoverTrigger } from '../src/kit/Popover';
+import { Modal, ModalClose } from '../src/kit/Modal';
 import '../src/index.css';
 
 function Fixture() {
@@ -10,7 +10,7 @@ function Fixture() {
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [mounted, setMounted] = useState(true);
-  const anchor = useRef<HTMLButtonElement>(null);
+  const [handle] = useState(createPopoverHandle);
   const modalTrigger = useRef<HTMLButtonElement>(null);
   return (
     <main
@@ -43,15 +43,15 @@ function Fixture() {
         >
           0123456789
         </p>
+        <PopoverTrigger className="refresh-button" handle={handle} tabIndex={0}>
+          Open popover
+        </PopoverTrigger>
         <button
           className="refresh-button"
-          ref={anchor}
-          popoverTarget="details"
-          aria-expanded={popoverOpen}
+          tabIndex={0}
+          ref={modalTrigger}
+          onClick={() => setModalOpen(true)}
         >
-          Open popover
-        </button>
-        <button className="refresh-button" ref={modalTrigger} onClick={() => setModalOpen(true)}>
           Open modal
         </button>
         {mounted && (
@@ -60,21 +60,16 @@ function Fixture() {
               id="details"
               open={popoverOpen}
               onOpenChange={setPopoverOpen}
-              anchorRef={anchor}
+              handle={handle}
               offset={14}
               aria-label="Details"
               style={{ width: 264 }}
             >
               <h2>Popover details</h2>
-              <p>Native top layer, inherited light theme.</p>
-              <button
-                className="refresh-button"
-                popoverTarget="details"
-                popoverTargetAction="hide"
-                tabIndex={0}
-              >
+              <p>Portalled panel with a scoped light theme.</p>
+              <PopoverClose className="refresh-button" tabIndex={0}>
                 Close popover
-              </button>
+              </PopoverClose>
             </Popover>
             <Modal
               open={modalOpen}
@@ -89,9 +84,9 @@ function Fixture() {
                 Name{' '}
                 <input className="border border-border bg-canvas rounded-panel p-2" name="name" />
               </label>
-              <button className="refresh-button" onClick={() => setModalOpen(false)}>
+              <ModalClose className="refresh-button" tabIndex={0}>
                 Close modal
-              </button>
+              </ModalClose>
             </Modal>
           </>
         )}
@@ -105,10 +100,96 @@ function Fixture() {
     </main>
   );
 }
+function MovingAnchorFixture() {
+  const [handle] = useState(createPopoverHandle);
+  const [open, setOpen] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const [positionAnchor, setPositionAnchor] = useState<HTMLSpanElement | null>(null);
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const separateAnchor = new URLSearchParams(location.search).has('position');
+  return (
+    <ThemeScope theme={theme}>
+      <div
+        style={{ transform: 'translate(90px, 90px)', overflow: 'hidden', width: 500, height: 65 }}
+      >
+        <PopoverTrigger
+          id="moving-trigger"
+          key={separateAnchor ? 'trigger' : revision}
+          handle={handle}
+          style={{ marginLeft: revision * 40 }}
+        >
+          Moving details
+        </PopoverTrigger>
+        {separateAnchor && (
+          <span
+            key={revision}
+            ref={setPositionAnchor}
+            data-testid="position-anchor"
+            style={{ display: 'inline-block', width: 16, height: 16, marginLeft: revision * 30 }}
+          />
+        )}
+        <Popover
+          handle={handle}
+          id="moving-details"
+          open={open}
+          onOpenChange={setOpen}
+          positionAnchor={separateAnchor ? positionAnchor : undefined}
+          aria-label="Moving details"
+          style={{ width: 264 }}
+        >
+          <button onClick={() => setRevision(revision + 1)}>Replace anchor</button>
+          <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
+            Change scope theme
+          </button>
+          <PopoverClose>Close moving details</PopoverClose>
+        </Popover>
+      </div>
+      <button style={{ marginTop: 300 }} onClick={() => setRevision(revision + 1)}>
+        Outside state change
+      </button>
+    </ThemeScope>
+  );
+}
+
+function NestedModalFixture() {
+  const [open, setOpen] = useState(false);
+  const [childOpen, setChildOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const childTrigger = useRef<HTMLButtonElement>(null);
+  return (
+    <ThemeScope theme="light">
+      <button ref={trigger} onClick={() => setOpen(true)}>
+        Open parent
+      </button>
+      <Modal open={open} onOpenChange={setOpen} returnFocusRef={trigger} aria-label="Parent dialog">
+        <button ref={childTrigger} onClick={() => setChildOpen(true)}>
+          Open child
+        </button>
+        <ModalClose>Close parent</ModalClose>
+        <Modal
+          open={childOpen}
+          onOpenChange={setChildOpen}
+          returnFocusRef={childTrigger}
+          aria-label="Child dialog"
+        >
+          <input aria-label="Child name" />
+          <ModalClose>Close child</ModalClose>
+        </Modal>
+      </Modal>
+    </ThemeScope>
+  );
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>
-      <Fixture />
+      {location.search.includes('anchors') ? (
+        <MovingAnchorFixture />
+      ) : location.search.includes('nested') ? (
+        <NestedModalFixture />
+      ) : (
+        <Fixture />
+      )}
     </ThemeProvider>
   </StrictMode>,
 );

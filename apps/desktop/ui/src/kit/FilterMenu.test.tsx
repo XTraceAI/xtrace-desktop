@@ -1,13 +1,8 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { ReactNode } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { FilterMenu } from './FilterMenu';
-vi.mock('./Popover', () => ({
-  Popover: ({ open, children }: { open: boolean; children: ReactNode }) =>
-    open ? <div>{children}</div> : null,
-}));
 afterEach(cleanup);
-it('emits controlled selection without losing unknown hosts and keeps absent counts distinct from zero', () => {
+it('emits controlled selection without losing unknown hosts and keeps absent counts distinct from zero', async () => {
   const onChange = vi.fn();
   const options = [
     { id: 'claude', label: 'Claude', count: 0 },
@@ -16,6 +11,7 @@ it('emits controlled selection without losing unknown hosts and keeps absent cou
   const view = render(<FilterMenu options={options} selected={['future']} onChange={onChange} />);
   expect(screen.getByTitle('Unknown host: future')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Filter hosts' }));
+  await screen.findByRole('dialog', { name: 'Filter hosts' });
   expect(screen.getByText('0')).toBeTruthy();
   expect(screen.getByText('—')).toBeTruthy();
   fireEvent.click(screen.getByRole('checkbox', { name: 'Claude 0' }));

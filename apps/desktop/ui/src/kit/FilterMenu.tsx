@@ -1,6 +1,6 @@
-import { useId, useRef, useState } from 'react';
+import { useId, useState } from 'react';
 import { HostGlyph } from './HostGlyph';
-import { Popover } from './Popover';
+import { createPopoverHandle, Popover, PopoverTrigger } from './Popover';
 import '../styles/tables.css';
 
 export interface HostOption {
@@ -20,33 +20,42 @@ export function FilterMenu({
   label?: string;
 }) {
   const id = useId();
-  const anchor = useRef<HTMLButtonElement>(null);
+  const [handle] = useState(createPopoverHandle);
   const [open, setOpen] = useState(false);
   return (
     <span className="xt-filter-anchor">
-      <button
-        ref={anchor}
+      <PopoverTrigger
+        handle={handle}
         className="xt-filter-trigger"
         type="button"
         tabIndex={0}
         aria-label={label}
-        aria-expanded={open}
-        aria-controls={open ? id : undefined}
-        onClick={() => setOpen(!open)}
       >
         <span className="xt-filter-glyphs" aria-hidden="true">
           {selected.map((host) => (
             <HostGlyph key={host} host={host} size={18} stacked />
           ))}
         </span>
-        <span>{selected.length ? `${selected.length} selected` : 'All hosts'}</span>
-        <span aria-hidden="true">⌄</span>
-      </button>
+        {selected.length === 0 && <span>All hosts</span>}
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </PopoverTrigger>
       <Popover
         id={id}
         open={open}
         onOpenChange={setOpen}
-        anchorRef={anchor}
+        handle={handle}
+        aria-label={label}
         align="end"
         offset={6}
         className="xt-filter-menu"
