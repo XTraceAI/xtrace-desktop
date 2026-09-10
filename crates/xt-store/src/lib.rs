@@ -6,6 +6,7 @@
 //! content retention affects future writes; it does not purge saved content.
 //! The connection is private so consumers cannot bypass the canonical writer.
 
+pub mod batch;
 pub mod ingest;
 mod migrations;
 pub mod model;
