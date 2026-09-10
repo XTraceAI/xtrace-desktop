@@ -3,6 +3,7 @@ node_modules/
 /apps/desktop/ui/dist/
 /apps/desktop/src-tauri/gen/
 /artifacts/private/
+/artifacts/parity/
 /artifacts/sbom.cdx.json
 *.sqlite
 *.sqlite-shm

@@ -4,7 +4,7 @@ const port = Number(process.env.E2E_PORT ?? 5174);
 
 export default defineConfig({
   testDir: './e2e',
-  testIgnore: ['*-production.spec.ts', 'gallery.spec.ts'],
+  testIgnore: ['*-production.spec.ts', 'gallery.spec.ts', '**/parity/**'],
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],
