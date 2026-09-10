@@ -4,6 +4,7 @@ const port = Number(process.env.E2E_PORT ?? 5174);
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: 'shell-production.spec.ts',
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],
@@ -16,5 +17,6 @@ export default defineConfig({
     command: `pnpm dev --port ${port}`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: false,
+    env: { VITE_XTRACE_FIXTURE: 'F1' },
   },
 });

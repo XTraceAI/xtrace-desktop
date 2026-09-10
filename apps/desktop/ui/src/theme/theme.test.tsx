@@ -100,6 +100,7 @@ it('uses native events only as media nudges and disposes late StrictMode subscri
   const completions: ((stop: () => void) => void)[] = [];
   const nudges: (() => void)[] = [];
   vi.mocked(getCurrentWindow).mockReturnValue({
+    setTheme: vi.fn().mockResolvedValue(undefined),
     theme: vi.fn().mockResolvedValue('light'),
     onThemeChanged: vi.fn((nudge: () => void) => {
       nudges.push(nudge);
@@ -131,6 +132,7 @@ it('uses native events only as media nudges and disposes late StrictMode subscri
 it('continues with media when native theme access rejects', async () => {
   vi.mocked(isTauri).mockReturnValue(true);
   vi.mocked(getCurrentWindow).mockReturnValue({
+    setTheme: () => Promise.reject(new Error('unavailable')),
     theme: () => Promise.reject(new Error('unavailable')),
     onThemeChanged: () => Promise.reject(new Error('unavailable')),
   } as unknown as ReturnType<typeof getCurrentWindow>);
@@ -139,4 +141,20 @@ it('continues with media when native theme access rejects', async () => {
   });
   changeSystem(false);
   expect(screen.getByText('system:light')).toBeTruthy();
+});
+
+it('synchronizes native material overrides and restores system appearance', async () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  const setTheme = vi.fn().mockResolvedValue(undefined);
+  vi.mocked(getCurrentWindow).mockReturnValue({
+    setTheme,
+    theme: vi.fn().mockResolvedValue('dark'),
+    onThemeChanged: vi.fn().mockResolvedValue(() => {}),
+  } as unknown as ReturnType<typeof getCurrentWindow>);
+  await act(async () => {
+    mount();
+  });
+  fireEvent.click(screen.getByText('Light'));
+  fireEvent.click(screen.getByText('System'));
+  expect(setTheme.mock.calls).toEqual([[null], ['light'], [null]]);
 });

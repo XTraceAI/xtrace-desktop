@@ -1,5 +1,6 @@
 import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
+import type { ReactNode } from 'react';
 import { Icon } from './icons';
 import '../styles/topbar.css';
 
@@ -17,6 +18,8 @@ export type TopBarProps = RangeProps & {
   onAction?: () => void;
   /** Opens the caller-owned date picker; range changes only after caller confirmation. */
   onCustomRange?: () => void;
+  right?: ReactNode;
+  nativeDrag?: boolean;
 };
 
 const ranges: TimeRange[] = ['7d', '14d', '30d'];
@@ -31,9 +34,11 @@ export function TopBar({
   actionIcon = 'share',
   onAction,
   onCustomRange,
+  right,
+  nativeDrag = false,
 }: TopBarProps) {
   return (
-    <header className="xt-topbar">
+    <header className="xt-topbar" data-tauri-drag-region={nativeDrag ? 'deep' : undefined}>
       <nav className="xt-topbar-breadcrumb" aria-label="Breadcrumb">
         <span className="xt-topbar-home">~</span>
         <span aria-hidden="true">/</span>
@@ -53,8 +58,8 @@ export function TopBar({
           </>
         )}
       </nav>
-      {(showRange || actionLabel?.trim()) && (
-        <div className="xt-topbar-tools">
+      {(showRange || actionLabel?.trim() || right) && (
+        <div className="xt-topbar-tools" data-tauri-drag-region={nativeDrag ? 'false' : undefined}>
           {showRange && (
             <div className="xt-range">
               <RadioGroup<SelectedRange>
@@ -105,6 +110,7 @@ export function TopBar({
               <span>{actionLabel}</span>
             </button>
           )}
+          {right}
         </div>
       )}
     </header>

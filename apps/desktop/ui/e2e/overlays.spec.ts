@@ -9,7 +9,7 @@ test.beforeEach(async ({ page }) => {
 test('appearance follows emulated system, persists overrides, and renders both themes', async ({
   page,
 }, info) => {
-  await page.goto('/');
+  await page.goto('/settings');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(22, 21, 25)');
   const tokenValues = async () =>
@@ -33,15 +33,15 @@ test('appearance follows emulated system, persists overrides, and renders both t
   await page.screenshot({ path: info.outputPath('dark.png') });
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-  await page.getByLabel('Appearance').selectOption('dark');
+  await page.getByRole('combobox', { name: 'Appearance' }).selectOption('dark');
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await page.getByLabel('Appearance').selectOption('light');
+  await page.getByRole('combobox', { name: 'Appearance' }).selectOption('light');
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(241, 241, 245)');
   expect(await tokenValues()).toEqual(normalized(contract.light));
   await page.screenshot({ path: info.outputPath('light.png') });
-  await page.getByLabel('Appearance').selectOption('system');
+  await page.getByRole('combobox', { name: 'Appearance' }).selectOption('system');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
@@ -63,7 +63,7 @@ test('local fonts load with external network denied and remain usable offline', 
       await route.continue();
     }
   });
-  await page.goto('/');
+  await page.goto('/settings');
   const loaded = await page.evaluate(async () => {
     const results = [];
     for (const [family, weights] of [
@@ -81,7 +81,7 @@ test('local fonts load with external network denied and remain usable offline', 
   expect(new Set(fontRequests).size).toBe(8);
   expect(external).toEqual([]);
   await context.setOffline(true);
-  await page.getByLabel('Appearance').selectOption('light');
+  await page.getByRole('combobox', { name: 'Appearance' }).selectOption('light');
   expect(
     await page.evaluate(
       () =>
@@ -107,8 +107,8 @@ test('denied storage does not break an appearance change', async ({ page }) => {
         },
       });
   });
-  await page.goto('/');
-  await page.getByLabel('Appearance').selectOption('light');
+  await page.goto('/settings');
+  await page.getByRole('combobox', { name: 'Appearance' }).selectOption('light');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
 });
 

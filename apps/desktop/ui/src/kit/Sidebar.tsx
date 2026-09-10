@@ -24,7 +24,7 @@ export interface SurfaceStatus {
   reason?: string;
 }
 export interface SidebarProps {
-  activeKey: SidebarKey;
+  activeKey?: SidebarKey;
   onNavigate: (key: SidebarKey) => void;
   rulebookCount?: number;
   leaderboardEnabled?: boolean;
@@ -43,6 +43,7 @@ export interface SidebarProps {
   onSettings?: () => void;
   /** Total top padding. Native shells can reserve their traffic-light region. */
   topInset?: number;
+  nativeChrome?: boolean;
   icons?: Partial<Record<SidebarIcon, ReactNode>>;
 }
 
@@ -79,6 +80,7 @@ export function Sidebar({
   onToggleTheme,
   onSettings,
   topInset = 16,
+  nativeChrome = false,
   icons = {},
 }: SidebarProps) {
   const hubId = useId();
@@ -120,7 +122,10 @@ export function Sidebar({
       aria-label="Workspace"
       style={{ paddingTop: Number.isFinite(topInset) ? Math.max(16, topInset) : 16 }}
     >
-      <div className="xt-sidebar-brand">
+      {nativeChrome && (
+        <div className="xt-window-chrome" data-tauri-drag-region="deep" aria-hidden="true" />
+      )}
+      <div className="xt-sidebar-brand" data-tauri-drag-region={nativeChrome ? 'deep' : undefined}>
         <BrandMark size={22} />
       </div>
       <nav aria-label="Main navigation">

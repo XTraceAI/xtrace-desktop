@@ -41,7 +41,7 @@ comments, attachments and prior edits that those local scans cannot evaluate.
 
 ## Running
 
-`pnpm tauri dev` starts Vite and the native shell. `pnpm dev` alone is a browser preview at `http://127.0.0.1:5173`; it labels native app information as unavailable in the browser. The native build calls Rust directly and starts no local HTTP listener. Close another XTrace instance before testing this checkout, since the second launch intentionally focuses the existing app.
+`pnpm tauri dev` starts Vite and the native shell. `pnpm dev` alone is a browser preview at `http://127.0.0.1:5173`; it labels native app information as unavailable in the browser. The native build calls Rust directly, opens its SQLite store and starts no local HTTP listener. To use synthetic data without opening the normal data folder, run `XTRACE_FIXTURE=F1 pnpm tauri dev --features fixtures`; for the browser, run `VITE_XTRACE_FIXTURE=F1 pnpm dev`. See [app data and routing](docs/DATA-SOURCE.md) for generated exports, fixture isolation and production restrictions. Close another XTrace instance before testing this checkout, since the second launch intentionally focuses the existing app.
 
 The debug bundle can be opened with:
 
