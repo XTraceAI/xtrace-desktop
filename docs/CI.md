@@ -190,6 +190,9 @@ Actions use pinned commits. Rust, pnpm, Playwright and pinned supply-chain tools
 have caches. Automated dependency-update PRs are deferred until their generated commits and metadata meet
 the sign-off, verification and disclosure requirements; no Dependabot schedule is installed by
 this change. Dependency updates use the normal reviewed PR process. Cache timing and manual combined-result validation need recorded run evidence.
+The release-only workflow checks out the pinned production plugin under an ignored
+private artifact directory and supplies its plugin root to the mandatory native
+conformance hook. Its pin must match the conformance test. This adds no PR job.
 The first hosted release dispatch remains pending until release preparation. Live queue evidence
 is required before queue activation, rather than during private manual merging.
 

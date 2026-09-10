@@ -76,6 +76,33 @@ test('routine CI is Linux-only and native work is explicit release preparation',
   assert.match(jobs.ui, /playwright install --with-deps webkit chromium/);
 });
 
+test('release validation provisions the producer required by native conformance', async () => {
+  const conformance = await readFile(
+    new URL('../../crates/xt-server/tests/conformance.rs', import.meta.url),
+    'utf8',
+  );
+  const pin = conformance.match(/"--expected-commit",\s*"([a-f0-9]{40})"/)[1];
+  const steps = release.split(/\n {6}- /);
+  const producer = steps.findIndex((step) => step.includes('repository: XTraceAI/agent-plugins'));
+  const validation = steps.findIndex((step) => step.includes('pnpm check:native'));
+  assert.ok(producer > 0 && validation > producer, 'producer must exist before the mandatory gate');
+  assert.equal(steps[producer].match(/\n {10}ref: ([a-f0-9]{40})\n/)[1], pin);
+  assert.match(steps[producer], /persist-credentials: false/);
+  const path = steps[producer].match(/\n {10}path: (.+)\n/)[1];
+  assert.ok(
+    steps[validation].includes(
+      'AGENT_PLUGINS_DIR: ${{ github.workspace }}/' + path + '/plugins/memhub',
+    ),
+  );
+  const ignored = await readFile(new URL('../../.gitignore', import.meta.url), 'utf8');
+  assert.ok(
+    ignored
+      .split('\n')
+      .some((line) => line.startsWith('/') && line.endsWith('/') && path.startsWith(line.slice(1))),
+    'nested producer must not dirty the candidate checkout',
+  );
+});
+
 test('credentialed contribution checks run only reviewed source', () => {
   for (const job of [jobs.policy, editedJobs.policy]) {
     assert.equal(job.match(/actions\/checkout@/g).length, 1);
