@@ -967,6 +967,9 @@ fn capture_receipts_empty_retry_cannot_commit_metadata_conflicts_or_cursor() {
 fn writer_retained_content_conflict_invalidates_cached_receipt_without_new_measurements() {
     for tool_input in [false, true] {
         let mut db = TempDb::empty().unwrap();
+        db.store_mut()
+            .set_retention_mode(xt_store::retention::RetentionMode::FullContent)
+            .unwrap();
         let plugin = context(SessionSource::Plugin);
         let native = context(SessionSource::ReadersCli);
         let receipt = receipt("retained");

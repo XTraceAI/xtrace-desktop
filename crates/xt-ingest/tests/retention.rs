@@ -86,12 +86,122 @@ fn structural_snapshot(
 }
 
 #[test]
+fn unconfigured_storage_defaults_to_metrics_for_every_write_entrypoint() {
+    let mut db = TempDb::empty().unwrap();
+    assert_eq!(
+        db.store().retention_mode().unwrap(),
+        RetentionMode::MetadataOnly
+    );
+    assert_eq!(
+        Store::open_in_memory().unwrap().retention_mode().unwrap(),
+        RetentionMode::MetadataOnly
+    );
+    let context = context();
+    let mut initial = row("saved");
+    initial.canonical.message.usage = None;
+    write_batch(db.store_mut(), &batch(&context, &[initial])).unwrap();
+    let result = write_batch(db.store_mut(), &batch(&context, &[row("saved")])).unwrap();
+    assert_eq!((result.records_new, result.records_enriched), (0, 1));
+    let sql = Connection::open(db.path()).unwrap();
+    assert_eq!(content(&sql), (None, None, None));
+    let saved = db.store().records("retained").unwrap().remove(0);
+    assert_eq!(
+        saved.text_len,
+        Some("Synthetic transcript".chars().count() as i64)
+    );
+    assert_eq!(saved.tool_use_count, Some(1));
+    assert_eq!(saved.usage.unwrap().output_tokens, Some(3));
+    let mut legacy = SessionMeta::new("legacy", "claude", SessionSource::Transcript);
+    legacy.title = Some("Synthetic title that must not persist".into());
+    db.store_mut().upsert_session(&legacy, true).unwrap();
+    db.store_mut()
+        .upsert_records("legacy", &[row("legacy").canonical], true)
+        .unwrap();
+    let reopened = Store::open(db.path()).unwrap();
+    assert_eq!(
+        reopened.retention_mode().unwrap(),
+        RetentionMode::MetadataOnly
+    );
+    assert!(
+        reopened
+            .session("legacy")
+            .unwrap()
+            .unwrap()
+            .meta
+            .title
+            .is_none()
+    );
+    let legacy = reopened.records("legacy").unwrap().remove(0);
+    assert!(legacy.content_json.is_none());
+    assert!(
+        legacy
+            .tool_uses
+            .iter()
+            .all(|tool| tool.input_json.is_none())
+    );
+    assert_eq!(
+        sql.query_row(
+            "SELECT count(*) FROM settings WHERE key='content_retention'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn absent_policy_on_an_existing_database_preserves_old_content_without_acquiring_more() {
+    let mut db = TempDb::empty().unwrap();
+    db.store_mut()
+        .set_retention_mode(RetentionMode::FullContent)
+        .unwrap();
+    let context = context();
+    write_batch(db.store_mut(), &batch(&context, &[row("saved")])).unwrap();
+    let sql = Connection::open(db.path()).unwrap();
+    let previous = content(&sql);
+    assert!(previous.0.is_some() && previous.1.is_some() && previous.2.is_some());
+    // Represents a database written before the persisted policy existed.
+    sql.execute("DELETE FROM settings WHERE key='content_retention'", [])
+        .unwrap();
+    let mut reopened = Store::open(db.path()).unwrap();
+    assert_eq!(
+        reopened.retention_mode().unwrap(),
+        RetentionMode::MetadataOnly
+    );
+    for store in [db.store_mut(), &mut reopened] {
+        write_batch(store, &batch(&context, &[row("fresh")])).unwrap();
+    }
+    assert_eq!(content(&sql), previous);
+    assert!(
+        reopened
+            .records("retained")
+            .unwrap()
+            .iter()
+            .find(|row| row.uuid == "fresh")
+            .unwrap()
+            .content_json
+            .is_none()
+    );
+    reopened
+        .set_retention_mode(RetentionMode::FullContent)
+        .unwrap();
+    assert_eq!(
+        Store::open(db.path()).unwrap().retention_mode().unwrap(),
+        RetentionMode::FullContent
+    );
+}
+
+#[test]
 fn retention_policy_is_persisted_and_restricts_every_write_entrypoint() {
     let mut db = TempDb::empty().unwrap();
     assert_eq!(
         db.store().retention_mode().unwrap(),
-        RetentionMode::FullContent
+        RetentionMode::MetadataOnly
     );
+    db.store_mut()
+        .set_retention_mode(RetentionMode::FullContent)
+        .unwrap();
     let context = context();
     let rows = [row("saved")];
     write_batch(db.store_mut(), &batch(&context, &rows)).unwrap();
@@ -177,6 +287,9 @@ fn register_owners(sql: &Connection) -> ContentRegistry {
 #[test]
 fn purge_content_preserves_measurements_receipts_and_original_host_files() {
     let mut db = TempDb::empty().unwrap();
+    db.store_mut()
+        .set_retention_mode(RetentionMode::FullContent)
+        .unwrap();
     let native = context();
     let rows = [row("saved")];
     write_batch(db.store_mut(), &batch(&native, &rows)).unwrap();
@@ -276,6 +389,9 @@ fn purge_content_preserves_measurements_receipts_and_original_host_files() {
 fn purge_content_hook_and_final_commit_failure_roll_back_all_owners() {
     for final_commit in [false, true] {
         let mut db = TempDb::empty().unwrap();
+        db.store_mut()
+            .set_retention_mode(RetentionMode::FullContent)
+            .unwrap();
         let context = context();
         write_batch(db.store_mut(), &batch(&context, &[row("saved")])).unwrap();
         let sql = Connection::open(db.path()).unwrap();
@@ -323,6 +439,9 @@ fn purge_content_hook_and_final_commit_failure_roll_back_all_owners() {
 #[test]
 fn retention_invalid_setting_and_purge_inventory_fail_closed() {
     let mut db = TempDb::empty().unwrap();
+    db.store_mut()
+        .set_retention_mode(RetentionMode::FullContent)
+        .unwrap();
     let context = context();
     write_batch(db.store_mut(), &batch(&context, &[row("saved")])).unwrap();
     let sql = Connection::open(db.path()).unwrap();

@@ -11,8 +11,8 @@ const SETTING: &str = "content_retention";
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RetentionMode {
-    #[default]
     FullContent,
+    #[default]
     MetadataOnly,
 }
 

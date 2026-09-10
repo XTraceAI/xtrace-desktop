@@ -340,6 +340,9 @@ mod tests {
     fn large_session_reads_use_bounded_queries_and_keep_children_with_their_record() {
         let mut store = Store::open_in_memory().unwrap();
         store
+            .set_retention_mode(crate::retention::RetentionMode::FullContent)
+            .unwrap();
+        store
             .upsert_session(
                 &SessionMeta::new("large", "claude", SessionSource::Fixture),
                 true,

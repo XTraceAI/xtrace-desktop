@@ -29,6 +29,10 @@ pub(super) fn session(id: &str) -> SessionMeta {
 
 pub(super) fn memory_store() -> Store {
     let mut store = Store::open_in_memory().unwrap();
+    // Replay fixtures exercise retained observations as an explicit opt-in.
+    store
+        .set_retention_mode(xt_store::retention::RetentionMode::FullContent)
+        .unwrap();
     store
         .upsert_session(&session("codex-native-synthetic"), true)
         .unwrap();
