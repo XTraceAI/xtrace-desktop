@@ -3,3 +3,4 @@ xtask = "run --package xtask --"
 
 [env]
 MACOSX_DEPLOYMENT_TARGET = { value = "14.0", force = true }
+TS_RS_EXPORT_DIR = { value = "apps/desktop/ui/src/data/generated", relative = true }

@@ -1,0 +1,462 @@
+[
+  {
+    "id": "brand/sizes-and-labels",
+    "components": ["BrandMark"],
+    "size": [500, 90]
+  },
+  {
+    "id": "icons/all",
+    "components": ["Icon"],
+    "size": [620, 220]
+  },
+  {
+    "id": "host-glyph/known-unknown-sizes-stacked",
+    "components": ["HostGlyph"],
+    "size": [460, 320]
+  },
+  {
+    "id": "sidebar/active-dashboard",
+    "components": ["Sidebar"],
+    "size": [228, 900]
+  },
+  {
+    "id": "sidebar/active-sessions",
+    "components": ["Sidebar"],
+    "size": [228, 900]
+  },
+  {
+    "id": "sidebar/active-prs",
+    "components": ["Sidebar"],
+    "size": [228, 900]
+  },
+  {
+    "id": "sidebar/active-rulebook",
+    "components": ["Sidebar"],
+    "size": [228, 900]
+  },
+  {
+    "id": "sidebar/active-leaderboard",
+    "components": ["Sidebar"],
+    "size": [228, 900]
+  },
+  {
+    "id": "sidebar/plugin-off",
+    "components": ["Sidebar"],
+    "size": [228, 900]
+  },
+  {
+    "id": "sidebar/cursor-unmeasured",
+    "components": ["Sidebar"],
+    "size": [228, 900]
+  },
+  {
+    "id": "sidebar/unknown",
+    "components": ["Sidebar"],
+    "size": [228, 900]
+  },
+  {
+    "id": "sidebar/disabled",
+    "components": ["Sidebar"],
+    "size": [228, 900]
+  },
+  {
+    "id": "sidebar/team",
+    "components": ["Sidebar"],
+    "size": [228, 900]
+  },
+  {
+    "id": "sidebar/native-inset",
+    "components": ["Sidebar"],
+    "size": [228, 900]
+  },
+  {
+    "id": "sidebar/hub-popover-open",
+    "components": ["Sidebar"],
+    "size": [530, 900]
+  },
+  {
+    "id": "topbar/default",
+    "components": ["TopBar"],
+    "size": [1200, 44]
+  },
+  {
+    "id": "topbar/no-range",
+    "components": ["TopBar"],
+    "size": [1200, 44]
+  },
+  {
+    "id": "topbar/scan",
+    "components": ["TopBar"],
+    "size": [1200, 44]
+  },
+  {
+    "id": "topbar/copy",
+    "components": ["TopBar"],
+    "size": [1200, 44]
+  },
+  {
+    "id": "topbar/sub-crumb",
+    "components": ["TopBar"],
+    "size": [1200, 44]
+  },
+  {
+    "id": "topbar/no-action",
+    "components": ["TopBar"],
+    "size": [1200, 44]
+  },
+  {
+    "id": "topbar/custom-range",
+    "components": ["TopBar"],
+    "size": [1200, 44]
+  },
+  {
+    "id": "stattile/lanes",
+    "components": ["StatTile"],
+    "size": [300, 52]
+  },
+  {
+    "id": "stattile/merge",
+    "components": ["StatTile"],
+    "size": [300, 52]
+  },
+  {
+    "id": "stattile/clock",
+    "components": ["StatTile"],
+    "size": [300, 52]
+  },
+  {
+    "id": "stattile/bolt",
+    "components": ["StatTile"],
+    "size": [300, 52]
+  },
+  {
+    "id": "stattile/msg",
+    "components": ["StatTile"],
+    "size": [300, 52]
+  },
+  {
+    "id": "stattile/token",
+    "components": ["StatTile"],
+    "size": [300, 52]
+  },
+  {
+    "id": "stattile/shield",
+    "components": ["StatTile"],
+    "size": [300, 52]
+  },
+  {
+    "id": "stattile/unmeasured",
+    "components": ["StatTile"],
+    "size": [300, 52]
+  },
+  {
+    "id": "stattile/delta-bad",
+    "components": ["StatTile"],
+    "size": [300, 52]
+  },
+  {
+    "id": "stattile/zero-and-long-aside",
+    "components": ["StatTile"],
+    "size": [300, 52]
+  },
+  {
+    "id": "metric-cell/known-zero-unknown-formats",
+    "components": ["MetricCell", "Unmeasured"],
+    "size": [500, 160]
+  },
+  {
+    "id": "metric-cell/sizes-and-alignment",
+    "components": ["MetricCell"],
+    "size": [560, 150]
+  },
+  {
+    "id": "metric-icon/tones",
+    "components": ["MetricIcon"],
+    "size": [400, 240]
+  },
+  {
+    "id": "sectioncard/default",
+    "components": ["SectionCard"],
+    "size": [600, 190]
+  },
+  {
+    "id": "sectioncard/36-header",
+    "components": ["SectionCard"],
+    "size": [600, 190]
+  },
+  {
+    "id": "sectioncard/footer",
+    "components": ["SectionCard"],
+    "size": [600, 190]
+  },
+  {
+    "id": "sectioncard/slots",
+    "components": ["SectionCard"],
+    "size": [600, 190]
+  },
+  {
+    "id": "rulechip/sizes",
+    "components": ["RuleChip"],
+    "size": [260, 100]
+  },
+  {
+    "id": "rulepopover/open-context",
+    "components": ["RulePopover"],
+    "size": [560, 240]
+  },
+  {
+    "id": "badges/kind-all",
+    "components": ["KindBadge"],
+    "size": [700, 90]
+  },
+  {
+    "id": "badges/evidence-all",
+    "components": ["EvidenceDot"],
+    "size": [400, 90]
+  },
+  {
+    "id": "badges/statepill-tones",
+    "components": ["StatePill"],
+    "size": [600, 90]
+  },
+  {
+    "id": "badges/statepill-size-outline-live",
+    "components": ["StatePill"],
+    "size": [600, 130]
+  },
+  {
+    "id": "toggle/off",
+    "components": ["Toggle"],
+    "size": [330, 100]
+  },
+  {
+    "id": "toggle/off-disabled",
+    "components": ["Toggle"],
+    "size": [330, 100]
+  },
+  {
+    "id": "toggle/on",
+    "components": ["Toggle"],
+    "size": [330, 100]
+  },
+  {
+    "id": "toggle/on-disabled",
+    "components": ["Toggle"],
+    "size": [330, 100]
+  },
+  {
+    "id": "segmented/range",
+    "components": ["Segmented"],
+    "size": [360, 100]
+  },
+  {
+    "id": "segmented/mode-gate",
+    "components": ["Segmented"],
+    "size": [360, 100]
+  },
+  {
+    "id": "segmented/disabled",
+    "components": ["Segmented"],
+    "size": [360, 100]
+  },
+  {
+    "id": "button/variants-heights-disabled-icons",
+    "components": ["Button"],
+    "size": [680, 230]
+  },
+  {
+    "id": "progress/3",
+    "components": ["ProgressBar"],
+    "size": [430, 90]
+  },
+  {
+    "id": "progress/4",
+    "components": ["ProgressBar"],
+    "size": [430, 90]
+  },
+  {
+    "id": "progress/6",
+    "components": ["ProgressBar"],
+    "size": [430, 90]
+  },
+  {
+    "id": "progress/zero-unknown-clamped",
+    "components": ["ProgressBar"],
+    "size": [430, 150]
+  },
+  {
+    "id": "progress/segmented",
+    "components": ["ProgressBar"],
+    "size": [430, 90]
+  },
+  {
+    "id": "search/empty",
+    "components": ["Search"],
+    "size": [410, 110]
+  },
+  {
+    "id": "search/filled",
+    "components": ["Search"],
+    "size": [410, 110]
+  },
+  {
+    "id": "search/disabled",
+    "components": ["Search"],
+    "size": [410, 110]
+  },
+  {
+    "id": "search/shortcut",
+    "components": ["Search"],
+    "size": [410, 110]
+  },
+  {
+    "id": "datatable/prs-40",
+    "components": ["DataTable", "TitleCell", "NumCell", "MonoCell"],
+    "size": [1000, 260]
+  },
+  {
+    "id": "datatable/rulebook-44-expanded",
+    "components": ["DataTable", "TitleCell", "NumCell", "MonoCell"],
+    "size": [1000, 260]
+  },
+  {
+    "id": "datatable/lanes-22",
+    "components": ["DataTable", "TitleCell", "NumCell", "MonoCell"],
+    "size": [1000, 260]
+  },
+  {
+    "id": "datatable/env-24",
+    "components": ["DataTable", "TitleCell", "NumCell", "MonoCell"],
+    "size": [1000, 260]
+  },
+  {
+    "id": "datatable/tray-32",
+    "components": ["DataTable", "TitleCell", "NumCell", "MonoCell"],
+    "size": [1000, 260]
+  },
+  {
+    "id": "datatable/empty",
+    "components": ["DataTable"],
+    "size": [1000, 240]
+  },
+  {
+    "id": "datatable/loading",
+    "components": ["DataTable"],
+    "size": [1000, 240]
+  },
+  {
+    "id": "datatable/muted",
+    "components": ["DataTable"],
+    "size": [1000, 240]
+  },
+  {
+    "id": "datatable/sticky",
+    "components": ["DataTable"],
+    "size": [1000, 240]
+  },
+  {
+    "id": "cells/title-ellipsis-and-numbers",
+    "components": ["TitleCell", "NumCell", "MonoCell"],
+    "size": [390, 160]
+  },
+  {
+    "id": "empty/message",
+    "components": ["EmptyState"],
+    "size": [460, 130]
+  },
+  {
+    "id": "empty/action",
+    "components": ["EmptyState"],
+    "size": [460, 170]
+  },
+  {
+    "id": "loading/rows",
+    "components": ["LoadingRows"],
+    "size": [460, 220]
+  },
+  {
+    "id": "filtermenu/closed",
+    "components": ["FilterMenu"],
+    "size": [350, 290]
+  },
+  {
+    "id": "filtermenu/open",
+    "components": ["FilterMenu"],
+    "size": [350, 290]
+  },
+  {
+    "id": "filtermenu/all",
+    "components": ["FilterMenu"],
+    "size": [350, 290]
+  },
+  {
+    "id": "filtermenu/empty",
+    "components": ["FilterMenu"],
+    "size": [350, 290]
+  },
+  {
+    "id": "sparkbars/hours",
+    "components": ["SparkBars"],
+    "size": [440, 110]
+  },
+  {
+    "id": "sparkbars/fires",
+    "components": ["SparkBars"],
+    "size": [440, 110]
+  },
+  {
+    "id": "sparkbars/share",
+    "components": ["SparkBars"],
+    "size": [440, 110]
+  },
+  {
+    "id": "sparkbars/unknown-and-zero",
+    "components": ["SparkBars"],
+    "size": [360, 110]
+  },
+  {
+    "id": "daystrip/thresholds-zero-unknown",
+    "components": ["DayStrip"],
+    "size": [380, 80]
+  },
+  {
+    "id": "legend/swatches",
+    "components": ["Legend"],
+    "size": [440, 100]
+  },
+  {
+    "id": "legend/dots",
+    "components": ["Legend"],
+    "size": [440, 100]
+  },
+  {
+    "id": "popover/closed",
+    "components": ["Popover"],
+    "size": [600, 340]
+  },
+  {
+    "id": "popover/open",
+    "components": ["Popover"],
+    "size": [600, 340]
+  },
+  {
+    "id": "modal/closed",
+    "components": ["Modal"],
+    "size": [600, 340]
+  },
+  {
+    "id": "modal/open",
+    "components": ["Modal"],
+    "size": [600, 340]
+  },
+  {
+    "id": "hub/disconnected",
+    "components": ["HubPopover"],
+    "size": [620, 400]
+  },
+  {
+    "id": "hub/connected",
+    "components": ["HubPopover"],
+    "size": [620, 400]
+  }
+]
