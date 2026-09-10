@@ -294,28 +294,32 @@ pub(crate) fn insert_or_match_receipt(
     receipt: &CaptureReceipt,
     submitted: &[RecordCoverage],
     allow_exact: bool,
-) -> Result<()> {
-    if allow_exact {
-        let saved = connection.query_row(
-            "SELECT session_id,surface,received_at,coverage_sealed FROM capture_receipts WHERE receipt_id=?1",
-            [&receipt.receipt_id], |row| Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,i64>(2)?,row.get::<_,bool>(3)?)),
-        ).optional()?;
-        if let Some((session, surface, received, sealed)) = saved {
-            let mut expected = submitted.to_vec();
-            expected.sort_by(|a, b| a.record_uuid.cmp(&b.record_uuid));
-            if !sealed
-                || expected.is_empty()
-                || session != receipt.session_id
-                || surface != receipt.surface
-                || received != receipt.received_at
-                || coverage(connection, &receipt.receipt_id)? != expected
-            {
-                return Err(Error::InvalidInput(
-                    "receipt retry does not match immutable submitted facts",
-                ));
-            }
-            return Ok(());
+    ignore_new_empty: bool,
+) -> Result<bool> {
+    let saved = connection.query_row(
+        "SELECT session_id,surface,received_at,coverage_sealed FROM capture_receipts WHERE receipt_id=?1",
+        [&receipt.receipt_id], |row| Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,i64>(2)?,row.get::<_,bool>(3)?)),
+    ).optional()?;
+    if let Some((session, surface, received, sealed)) = saved {
+        let mut expected = submitted.to_vec();
+        expected.sort_by(|a, b| a.record_uuid.cmp(&b.record_uuid));
+        if !allow_exact
+            || !sealed
+            || expected.is_empty()
+            || session != receipt.session_id
+            || surface != receipt.surface
+            || received != receipt.received_at
+            || coverage(connection, &receipt.receipt_id)? != expected
+        {
+            return Err(Error::InvalidInput(
+                "receipt retry does not match immutable submitted facts",
+            ));
         }
+        return Ok(true);
     }
-    insert_receipt(connection, receipt, submitted)
+    if ignore_new_empty && submitted.is_empty() {
+        return Ok(false);
+    }
+    insert_receipt(connection, receipt, submitted)?;
+    Ok(true)
 }

@@ -807,3 +807,67 @@ fn capture_receipts_retry_binds_parent_and_complete_unordered_set() {
         assert!(db.store().session("cursor-elsewhere").unwrap().is_none());
     }
 }
+
+#[test]
+fn capture_receipts_empty_retry_cannot_commit_metadata_conflicts_or_cursor() {
+    for variant in ["empty", "missing", "rejected"] {
+        let mut db = TempDb::empty().unwrap();
+        let context = context(SessionSource::Plugin);
+        let receipt = receipt("sealed");
+        let rows = [poor("saved")];
+        let cursor = SourceCursor {
+            source: SessionSource::Plugin,
+            cursor_key: "delivery".into(),
+            position: 1,
+            updated_at: 100,
+        };
+        let mut initial = request(&context, &rows, Some(&receipt));
+        initial.cursor = Some(&cursor);
+        write_batch(db.store_mut(), &initial).unwrap();
+        let before_session = db.store().session("cursor-native").unwrap();
+        let before_rows = db.store().records("cursor-native").unwrap();
+        let before_sources = db.store().session_sources("cursor-native").unwrap();
+        let before_coverage = db.store().capture_coverage("sealed").unwrap();
+        let rows = match variant {
+            "empty" => vec![],
+            "missing" => {
+                let mut missing = poor("missing");
+                missing.canonical.uuid = None;
+                vec![missing]
+            }
+            "rejected" => {
+                let mut rejected = poor("saved");
+                rejected.canonical.record_type = xt_store::model::RecordType::User;
+                vec![rejected]
+            }
+            _ => unreachable!(),
+        };
+        let next = SourceCursor {
+            position: 2,
+            updated_at: 200,
+            ..cursor.clone()
+        };
+        let mut retry = request(&context, &rows, Some(&receipt));
+        retry.cursor = Some(&next);
+        retry.keep_content = true;
+        retry.title = Some("Must roll back");
+        retry.observed_at = 200;
+        assert!(write_batch(db.store_mut(), &retry).is_err(), "{variant}");
+        assert_eq!(db.store().session("cursor-native").unwrap(), before_session);
+        assert_eq!(db.store().records("cursor-native").unwrap(), before_rows);
+        assert_eq!(
+            db.store().session_sources("cursor-native").unwrap(),
+            before_sources
+        );
+        assert_eq!(
+            db.store().capture_coverage("sealed").unwrap(),
+            before_coverage
+        );
+        assert_eq!(
+            db.store()
+                .source_cursor(cursor.source, &cursor.cursor_key)
+                .unwrap(),
+            Some(cursor)
+        );
+    }
+}
