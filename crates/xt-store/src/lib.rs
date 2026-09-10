@@ -12,6 +12,7 @@ pub mod measurement;
 mod migrations;
 pub mod model;
 mod read;
+mod server_settings;
 pub mod timestamp;
 mod write;
 
@@ -71,7 +72,17 @@ impl Store {
                 return Err(Error::InvalidInput("file database did not enable WAL"));
             }
         }
-        connection.pragma_update(None, "synchronous", "NORMAL")?;
+        // WAL NORMAL can lose acknowledged commits after an OS crash. A file
+        // writer must sync the WAL before reporting a successful transaction.
+        connection.pragma_update(
+            None,
+            "synchronous",
+            if file_backed { "FULL" } else { "NORMAL" },
+        )?;
+        #[cfg(target_os = "macos")]
+        if file_backed {
+            connection.pragma_update(None, "fullfsync", "ON")?;
+        }
         let mut store = Self { connection };
         store.migrate()?;
         Ok(store)
@@ -87,10 +98,15 @@ mod tests {
         let directory = tempfile::TempDir::new().unwrap();
         let file = Store::open(directory.path().join("settings.sqlite")).unwrap();
         let memory = Store::open_in_memory().unwrap();
-        for (store, journal) in [(&file, "wal"), (&memory, "memory")] {
+        let reopened = Store::open(directory.path().join("settings.sqlite")).unwrap();
+        for (store, journal, synchronous) in [
+            (&file, "wal", 2),
+            (&reopened, "wal", 2),
+            (&memory, "memory", 1),
+        ] {
             for (pragma, expected) in [
                 ("foreign_keys", 1),
-                ("synchronous", 1),
+                ("synchronous", synchronous),
                 ("busy_timeout", 5000),
             ] {
                 let value: i64 = store
@@ -104,6 +120,14 @@ mod tests {
                 .pragma_query_value(None, "journal_mode", |row| row.get(0))
                 .unwrap();
             assert_eq!(mode, journal);
+            #[cfg(target_os = "macos")]
+            {
+                let fullfsync: i64 = store
+                    .connection
+                    .pragma_query_value(None, "fullfsync", |row| row.get(0))
+                    .unwrap();
+                assert_eq!(fullfsync, i64::from(journal == "wal"));
+            }
         }
     }
 }
