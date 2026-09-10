@@ -54,7 +54,10 @@ IDs, names and usage remain available. Enrichment cannot acquire content while
 this mode is active. Previously saved content remains unchanged.
 
 `retention_mode()` and `set_retention_mode()` share the persisted `content_retention`
-setting. An absent setting defaults to full content. Metadata-only mode restricts
+setting. An absent setting defaults to metadata-only storage for metrics and indexing.
+Full-content storage requires an explicitly saved opt-in. Older databases without
+a saved mode also use metadata-only for future writes; their existing content is
+left in place. An explicitly saved full-content preference is preserved. Metadata-only mode restricts
 all canonical write entry points even if a caller requests content; explicit
 `keep_content=false` remains restrictive in full-content mode. Each transaction
 reads the policy after obtaining its write lock, so earlier-opened connections

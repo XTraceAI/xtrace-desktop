@@ -24,6 +24,9 @@ fn record(uuid: &str, number: usize) -> CanonicalRecord {
 
 fn session(store: &mut Store, id: &str) {
     store
+        .set_retention_mode(crate::retention::RetentionMode::FullContent)
+        .unwrap();
+    store
         .upsert_session(
             &SessionMeta::new(id, "claude", SessionSource::Fixture),
             true,
@@ -114,8 +117,8 @@ fn large_replay_prefetches_only_requested_records_in_bounded_queries() {
         // Unrequested records/children must never be materialized by a full-table read.
         // The composed boundary additionally reads session metadata once before
         // the shared record writer. Every transaction reads the retention setting
-        // once (absent here); advancing the cursor adds no SELECT.
-        assert_eq!(ROWS_READ.get(), 30_001 + usize::from(composed));
+        // once (one explicit full-content policy row); advancing the cursor adds no SELECT.
+        assert_eq!(ROWS_READ.get(), 30_002 + usize::from(composed));
         let queries = SELECTS.get();
         let maximum = 63 + usize::from(composed);
         assert!(

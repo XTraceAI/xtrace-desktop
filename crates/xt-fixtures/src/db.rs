@@ -25,6 +25,10 @@ impl TempDb {
         let directory = TempDir::new()?;
         let path = directory.path().join("fixture.sqlite");
         let mut store = Store::open(&path)?;
+        if keep_content {
+            // Content fixtures explicitly opt in; empty databases retain the production default.
+            store.set_retention_mode(xt_store::retention::RetentionMode::FullContent)?;
+        }
         for session in sessions {
             store.upsert_session(&session.metadata, keep_content)?;
             store.upsert_records(&session.metadata.session_id, &session.records, keep_content)?;
