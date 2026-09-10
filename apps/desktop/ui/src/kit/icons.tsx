@@ -5,6 +5,7 @@ const navigation = {
   dashboard: sidebarIcons.dashboard,
   sessions: sidebarIcons.sessions,
   prs: sidebarIcons.prs,
+  merge: sidebarIcons.prs,
   rulebook: sidebarIcons.rulebook,
   leaderboard: sidebarIcons.leaderboard,
   cloud: sidebarIcons.hub,
@@ -12,6 +13,28 @@ const navigation = {
   gear: sidebarIcons.settings,
 };
 const drawings = {
+  lanes: (
+    <g fill="currentColor" stroke="none">
+      <rect x="3" y="5" width="18" height="3" rx="1.5" />
+      <rect x="3" y="10.5" width="12" height="3" rx="1.5" />
+      <rect x="3" y="16" width="15" height="3" rx="1.5" />
+    </g>
+  ),
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </>
+  ),
+  bolt: <path d="M13 2L4 14h7l-1 8 9-12h-7z" />,
+  msg: <path d="M4 5h16v11H9l-5 4z" />,
+  token: (
+    <>
+      <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" />
+      <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
+    </>
+  ),
+  shield: <path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z" />,
   share: (
     <>
       <path d="M12 3v12M8 7l4-4 4 4M5 13v6h14v-6" />
