@@ -37,7 +37,8 @@ export interface DataTableProps<Row> {
   emptyMessage?: string;
 }
 
-const interactive = (target: EventTarget | null, row: HTMLElement) => {
+const ignoreRowClick = (target: EventTarget | null, row: HTMLElement) => {
+  if (!(target instanceof Node) || !row.contains(target)) return true;
   if (!(target instanceof Element) || target === row) return false;
   const control = target.closest(
     'button, a, input, select, textarea, label, summary, [role="button"], [role="checkbox"], [role="switch"], [role="radio"], [contenteditable="true"], [tabindex]',
@@ -175,7 +176,7 @@ export function DataTable<Row>({
                   }}
                   data-actionable={!!onRowClick || undefined}
                   onClick={(event) => {
-                    if (!interactive(event.target, event.currentTarget)) onRowClick?.(row);
+                    if (!ignoreRowClick(event.target, event.currentTarget)) onRowClick?.(row);
                   }}
                 >
                   {expandable && (

@@ -1,4 +1,4 @@
-import { StrictMode, useState } from 'react';
+import { StrictMode, useId, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ThemeProvider, useTheme } from '../src/theme/ThemeProvider';
 import {
@@ -20,6 +20,7 @@ import './table-overflow.css';
 import { Button } from '../src/kit/Button';
 import { KindBadge } from '../src/kit/Badge';
 import { ProgressBar } from '../src/kit/ProgressBar';
+import { createPopoverHandle, Popover, PopoverTrigger } from '../src/kit/Popover';
 
 type Sample = { id: string; title: string; tokens: number | null; state: string };
 const sample: Sample[] = [
@@ -76,6 +77,26 @@ const columns: Column<Sample>[] = [
     ),
   },
 ];
+function RowMenu({ onAction }: { onAction: () => void }) {
+  const [handle] = useState(createPopoverHandle);
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <>
+      <PopoverTrigger handle={handle}>Row menu</PopoverTrigger>
+      <Popover
+        handle={handle}
+        id={id}
+        open={open}
+        onOpenChange={setOpen}
+        aria-label="Row menu popup"
+      >
+        <Button onClick={onAction}>Run cell action</Button>
+        <p>Popup help text</p>
+      </Popover>
+    </>
+  );
+}
 function Fixture() {
   const { theme, toggle } = useTheme();
   const [ruleExpanded, setRuleExpanded] = useState<string[]>(['sample-2']);
@@ -84,6 +105,7 @@ function Fixture() {
   const [sort, setSort] = useState<SortOrder>({ key: 'tokens', direction: 'desc' });
   const [clicked, setClicked] = useState('none');
   const [activations, setActivations] = useState(0);
+  const [popupActions, setPopupActions] = useState(0);
   const sorted = [...sample].sort((a, b) => {
     if (sort.key === 'tokens') {
       if (a.tokens === null) return b.tokens === null ? 0 : 1;
@@ -286,6 +308,31 @@ function Fixture() {
           <LoadingRows rows={3} />
         </SectionCard>
       </div>
+      <details>
+        <summary>Portaled row action</summary>
+        <DataTable
+          label="Portaled actions"
+          rows={sample.slice(0, 1)}
+          getRowKey={(row) => row.id}
+          onRowClick={() => setActivations((count) => count + 1)}
+          getRowActionLabel={() => 'Open portaled row'}
+          columns={[
+            {
+              key: 'title',
+              header: 'Title',
+              width: 'minmax(0,1fr)',
+              render: () => <TitleCell title="Row with popup" />,
+            },
+            {
+              key: 'menu',
+              header: 'Menu',
+              width: '100px',
+              render: () => <RowMenu onAction={() => setPopupActions((count) => count + 1)} />,
+            },
+          ]}
+        />
+        <output aria-label="Popup actions">{popupActions}</output>
+      </details>
     </main>
   );
 }

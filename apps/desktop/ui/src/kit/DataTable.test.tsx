@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
+import { createPortal } from 'react-dom';
 import { DataTable, TitleCell, NumCell, type Column } from './DataTable';
 afterEach(cleanup);
 const rows = [
@@ -145,4 +146,39 @@ it('empty and busy states are explicit and mutually exclusive', () => {
   expect(screen.getByRole('table').getAttribute('aria-busy')).toBe('true');
   expect(screen.queryByText('First session')).toBeNull();
   expect(screen.queryByText('No sessions')).toBeNull();
+});
+
+it('ignores React portal events while preserving popup actions and ordinary row clicks', () => {
+  const onRowClick = vi.fn(),
+    popupAction = vi.fn();
+  render(
+    <DataTable
+      label="Portal table"
+      rows={[rows[0]]}
+      getRowKey={key}
+      onRowClick={onRowClick}
+      columns={[
+        ...columns,
+        {
+          key: 'menu',
+          header: 'Menu',
+          width: '80px',
+          render: () =>
+            createPortal(
+              <div>
+                <button onClick={popupAction}>Popup action</button>
+                <span>Popup help text</span>
+              </div>,
+              document.body,
+            ),
+        },
+      ]}
+    />,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Popup action' }));
+  fireEvent.click(screen.getByText('Popup help text'));
+  expect(popupAction).toHaveBeenCalledOnce();
+  expect(onRowClick).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByText('First session'));
+  expect(onRowClick).toHaveBeenCalledExactlyOnceWith(rows[0]);
 });
