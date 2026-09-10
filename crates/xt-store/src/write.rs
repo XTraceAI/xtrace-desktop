@@ -442,7 +442,11 @@ fn merge_record(old: &mut StoredRecord, incoming: &StoredRecord) -> bool {
     );
     change.fill(&mut old.identity.agent_id, &incoming.identity.agent_id);
     change.fill(&mut old.identity.subtype, &incoming.identity.subtype);
-    if old.identity.first_seen_at.is_none() && incoming.identity.first_seen_at.is_some() {
+    if incoming
+        .identity
+        .first_seen_at
+        .is_some_and(|time| old.identity.first_seen_at.is_none_or(|old| time < old))
+    {
         old.identity.first_seen_at = incoming.identity.first_seen_at;
         change.enriched = true;
     }
