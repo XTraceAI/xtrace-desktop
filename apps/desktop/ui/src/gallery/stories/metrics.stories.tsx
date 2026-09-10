@@ -32,14 +32,14 @@ const metrics: {
 export const metricStories = [
   ...metrics.map((props) =>
     story(`stattile/${props.icon}`, ['StatTile'], [300, 52], () => (
-      <StatTile {...props} delta={4} />
+      <StatTile {...props} delta={0.04} />
     )),
   ),
   story('stattile/unmeasured', ['StatTile'], [300, 52], () => (
-    <StatTile {...metrics[5]} value={null} reason="Illustrative missing observation" delta={4} />
+    <StatTile {...metrics[5]} value={null} reason="Illustrative missing observation" delta={0.04} />
   )),
   story('stattile/delta-bad', ['StatTile'], [300, 52], () => (
-    <StatTile {...metrics[1]} delta={-8} deltaTone="bad" />
+    <StatTile {...metrics[1]} delta={-0.08} deltaTone="bad" />
   )),
   story('stattile/zero-and-long-aside', ['StatTile'], [300, 52], () => (
     <StatTile

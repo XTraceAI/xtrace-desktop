@@ -113,5 +113,7 @@ Review state coverage, layout and interactions here in both themes. Versioned
 visual regression baselines require a separate review of the source SHA, story
 inventory, theme, viewport, DPR, local fonts and pinned browser/runner. Baseline
 updates must include before/after/diff images; failing comparisons must not
-automatically rewrite expected images. This PR supplies review captures, not
-approved regression baselines or independent design-export parity.
+automatically rewrite expected images. Gallery acceptance captures help reviewers
+inspect component states. The [local visual regression workflow](VISUAL_TESTS.md)
+compares selected states against separately reviewed, versioned baselines.
+Neither check certifies completed product pages or independent design-export parity.

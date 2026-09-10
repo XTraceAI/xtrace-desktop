@@ -22,9 +22,20 @@ for (const theme of ['dark', 'light'] as const) {
       expect(await tile.locator('button').count()).toBe(0);
       const label = await tile.locator('.xt-stat-label').boundingBox();
       const value = await tile.locator('.xt-metric-cell').boundingBox();
+      expect(
+        await tile
+          .locator('.xt-metric-cell')
+          .evaluate((element) => element.scrollWidth <= element.clientWidth),
+      ).toBe(true);
       expect(value!.x).toBeGreaterThan(label!.x + label!.width);
       expect(Math.abs(label!.y + label!.height / 2 - value!.y - value!.height / 2)).toBeLessThan(3);
     }
+    expect(
+      await tiles
+        .first()
+        .locator('.xt-stat-label')
+        .evaluate((element) => element.scrollWidth > element.clientWidth),
+    ).toBe(true);
     await expect(page.getByRole('button', { name: /Unmeasured tokens/ })).toContainText(
       'Unmeasured: Cursor Agent CLI usage is absent',
     );
