@@ -17,6 +17,11 @@ dependency notices, local evidence or disclosure approval. Maintainers review
 those results separately before merging. Browser tests install their Linux system
 dependencies even with cached binaries and do not certify native WKWebView behavior.
 
+The UI job runs a small gallery smoke suite and production-exclusion checks.
+The full 92-story gallery sweep runs locally before merging gallery, shared UI,
+theme, font or brand-asset changes. Record its source SHA and results in the PR;
+hosted success does not certify the full gallery. See [gallery checks](GALLERY.md#add-or-update-a-story).
+
 `PR metadata` handles title/body edits with the same reviewed policy validator.
 A target-branch edit calls the full Linux CI against the new base. Separate
 concurrency groups prevent a text edit from cancelling base-change validation.

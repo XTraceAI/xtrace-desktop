@@ -31,7 +31,8 @@
     "check:native": "node scripts/ci/native-check.mjs",
     "fixtures:export": "bash scripts/fixtures/export.sh",
     "e2e:production": "pnpm --dir apps/desktop/ui exec playwright test --config playwright.production.config.ts",
-    "e2e:gallery": "pnpm --dir apps/desktop/ui test:e2e:gallery"
+    "e2e:gallery": "pnpm --dir apps/desktop/ui test:e2e:gallery",
+    "e2e:gallery:smoke": "pnpm --dir apps/desktop/ui test:e2e:gallery:smoke"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

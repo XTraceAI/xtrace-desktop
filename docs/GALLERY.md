@@ -66,6 +66,7 @@ Run checks from the repository root:
 ```sh
 pnpm check
 pnpm e2e
+pnpm e2e:gallery:smoke
 pnpm e2e:gallery
 pnpm e2e:production
 ```
@@ -73,10 +74,22 @@ pnpm e2e:production
 The gallery suite owns port 5183. The shared production suite owns port 5194
 (overridable with `E2E_PRODUCTION_PORT`) and builds once for both shell and
 gallery exclusion checks. Commands start and stop their own servers. Run browser
-suites sequentially because they share the build and test-output directories. The positive suite traverses every declared story in Chromium
-and WebKit and writes paired review captures into ignored `test-results`. It
-also exercises index navigation, independent controls, modal dismissal and
-state reset. The production command builds with both development flags set,
+suites sequentially because they share the build and test-output directories.
+
+Routine Ubuntu CI runs `pnpm e2e:gallery:smoke`: four representative stories
+(Sidebar with open Hub, TopBar, Button variants and expanded DataTable) in both
+themes and browsers, plus index navigation, independent controls, modal dismissal
+and state reset. It checks the same frame and popup bounds as the full sweep,
+without generating review screenshots.
+
+Run the full `pnpm e2e:gallery` sweep locally before merging changes to the
+gallery, shared components, theme styles, fonts or brand assets. It traverses
+every declared story in Chromium and WebKit, includes the interaction checks,
+and writes paired review captures into ignored `test-results`. Record the tested
+source SHA and results in the PR; green hosted smoke checks do not certify all
+92 stories. The full sweep is not part of routine GitHub Actions.
+
+The production command remains in CI. It builds with both development flags set,
 inspects the actual output, then opens `/gallery` in both browsers and expects
 the ordinary not-found page. The default browser suite verifies that the route
 is unavailable when the development gallery flag is absent.

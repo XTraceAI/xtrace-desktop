@@ -84,7 +84,7 @@ jobs:
       - run: pnpm e2e
         env:
           E2E_PORT: '5174'
-      - run: pnpm e2e:gallery
+      - run: pnpm e2e:gallery:smoke
       - run: pnpm e2e:production
 
   security:
