@@ -14,6 +14,7 @@ mod migrations;
 pub mod model;
 mod read;
 pub mod retention;
+mod server_settings;
 mod timestamp;
 mod write;
 
