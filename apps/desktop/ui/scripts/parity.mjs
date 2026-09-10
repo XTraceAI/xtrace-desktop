@@ -7,8 +7,10 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { webkit } from '@playwright/test';
 import {
   approvedRoot,
+  captureOptions,
   currentInputs,
   digest,
+  diffOptions,
   imageRecords,
   readJson,
   repoRoot,
@@ -54,14 +56,8 @@ const environment = {
   playwright: require('@playwright/test/package.json').version,
   webkit: browser.version(),
   revision: webkit.executablePath().match(/webkit-(\d+)/)?.[1],
-  viewport: { width: 2880, height: 1120 },
-  deviceScaleFactor: 2,
-  locale: 'en-US',
-  timezoneId: 'UTC',
-  colorScheme: 'light',
-  reducedMotion: 'reduce',
-  maxDiffPixelRatio: 0.002,
-  threshold: 0.1,
+  ...captureOptions,
+  ...diffOptions,
 };
 await browser.close();
 assert.ok(environment.revision, 'Could not identify the pinned WebKit revision');
@@ -146,18 +142,22 @@ if (mode === 'capture') {
       'apps/desktop/ui/scripts/parity-contract.mjs',
       'pnpm-lock.yaml',
     );
-    if (fs.existsSync(approvedRoot))
-      fs.cpSync(approvedRoot, path.join(output, 'previous'), { recursive: true });
-    fs.mkdirSync(path.join(approvedRoot, 'images'), { recursive: true });
+    const prepared = path.join(output, 'approved');
+    const previous = path.join(output, 'previous');
+    fs.mkdirSync(path.join(prepared, 'images'), { recursive: true });
     for (const name of Object.keys(manifest.images))
-      fs.copyFileSync(
-        path.join(directory, 'images', name),
-        path.join(approvedRoot, 'images', name),
-      );
-    writeJson(path.join(approvedRoot, 'manifest.json'), {
+      fs.copyFileSync(path.join(directory, 'images', name), path.join(prepared, 'images', name));
+    writeJson(path.join(prepared, 'manifest.json'), {
       ...manifest,
       review: { digest: expectedDigest },
     });
+    if (fs.existsSync(approvedRoot)) fs.renameSync(approvedRoot, previous);
+    try {
+      fs.renameSync(prepared, approvedRoot);
+    } catch (error) {
+      if (fs.existsSync(previous)) fs.renameSync(previous, approvedRoot);
+      throw error;
+    }
     console.log(
       'Reviewed baselines installed in the working tree. Inspect the diff and commit them.',
     );

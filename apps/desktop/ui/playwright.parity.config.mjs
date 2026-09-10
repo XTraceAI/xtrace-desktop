@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { defineConfig } from '@playwright/test';
+import { captureOptions, diffOptions } from './scripts/parity-contract.mjs';
 
 if (!['capture', 'compare'].includes(process.env.XTRACE_PARITY_MODE))
   throw new Error('Use pnpm parity or pnpm parity:baselines to validate the snapshot contract.');
@@ -20,8 +21,7 @@ export default defineConfig({
   ],
   expect: {
     toHaveScreenshot: {
-      maxDiffPixelRatio: 0.002,
-      threshold: 0.1,
+      ...diffOptions,
       animations: 'disabled',
       caret: 'hide',
       scale: 'device',
@@ -29,12 +29,7 @@ export default defineConfig({
   },
   use: {
     browserName: 'webkit',
-    viewport: { width: 2880, height: 1120 },
-    deviceScaleFactor: 2,
-    locale: 'en-US',
-    timezoneId: 'UTC',
-    colorScheme: 'light',
-    reducedMotion: 'reduce',
+    ...captureOptions,
     baseURL: 'http://127.0.0.1:5184',
   },
   webServer: {

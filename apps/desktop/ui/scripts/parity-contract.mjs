@@ -7,6 +7,15 @@ import { fileURLToPath } from 'node:url';
 export const uiRoot = fileURLToPath(new URL('../', import.meta.url));
 export const repoRoot = path.resolve(uiRoot, '../../..');
 export const approvedRoot = path.join(uiRoot, 'e2e/parity/baselines');
+export const captureOptions = {
+  viewport: { width: 2880, height: 1120 },
+  deviceScaleFactor: 2,
+  locale: 'en-US',
+  timezoneId: 'UTC',
+  colorScheme: 'light',
+  reducedMotion: 'reduce',
+};
+export const diffOptions = { maxDiffPixelRatio: 0.002, threshold: 0.1 };
 export const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
 export const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 export const writeJson = (file, value) =>
