@@ -113,10 +113,11 @@ fn large_replay_prefetches_only_requested_records_in_bounded_queries() {
         // 10k records + 10k usage rows + 10k tools + the target session.
         // Unrequested records/children must never be materialized by a full-table read.
         // The composed boundary additionally reads session metadata once before
-        // the shared record writer. Advancing the cursor adds no SELECT.
+        // the shared record writer. Every transaction reads the retention setting
+        // once (absent here); advancing the cursor adds no SELECT.
         assert_eq!(ROWS_READ.get(), 30_001 + usize::from(composed));
         let queries = SELECTS.get();
-        let maximum = 62 + usize::from(composed);
+        let maximum = 63 + usize::from(composed);
         assert!(
             (1..=maximum).contains(&queries),
             "10k replay must need at most {maximum} SELECTs, observed {queries}"

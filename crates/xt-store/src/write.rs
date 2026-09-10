@@ -37,6 +37,7 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let keep_content = crate::retention::allows_content(&transaction, keep_content)?;
         upsert_session(&transaction, meta, keep_content)?;
         transaction.commit()?;
         Ok(())
@@ -55,6 +56,7 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let keep_content = crate::retention::allows_content(&transaction, keep_content)?;
         let result = upsert_records(&transaction, session_id, records, keep_content, &[])?;
         transaction.commit()?;
         Ok(result.stats)

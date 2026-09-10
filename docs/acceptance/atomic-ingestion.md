@@ -29,10 +29,10 @@ ownership conflicts. Every attempt returns an error; all participating tables
 and the old cursor remain unchanged. Conflict rejection cannot bypass validation.
 
 The existing 10,000-record write regression additionally runs the composed batch
-with SQLite's variable limit lowered to 999. It checks at most 63 SELECTs and
+with SQLite's variable limit lowered to 999. It checks at most 64 SELECTs and
 exactly 30,002 rows read for the composed replay, including the session metadata
 read, while an unrelated stored record stays outside the prefetch. The legacy
-paths retain their 62-query bound. This validates batching without a timing gate.
+paths use at most 63 queries. Each transaction reads the retention policy once. This validates batching without a timing gate.
 
 ## Verification
 
