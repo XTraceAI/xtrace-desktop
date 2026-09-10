@@ -9,6 +9,12 @@ pub(crate) struct InstantKey {
     fraction: String,
 }
 
+impl InstantKey {
+    pub(crate) fn components(self) -> (i64, bool, String) {
+        (self.second, self.leap_second, self.fraction)
+    }
+}
+
 /// Chrono validates the RFC3339 spelling and normalizes the UTC second. Preserve
 /// the original decimal fraction because Chrono truncates digits beyond nanos.
 /// Trailing zeroes do not change an instant; remaining decimal strings compare

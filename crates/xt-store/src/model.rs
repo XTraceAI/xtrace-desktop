@@ -181,3 +181,21 @@ pub struct WriteStats {
     pub ignored: usize,
     pub dropped_no_uuid: usize,
 }
+
+/// Native ancestry supplied beside a canonical record, never a second record model.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecordIdentity {
+    pub parent_uuid: Option<String>,
+    pub agent_id: Option<String>,
+    pub subtype: Option<String>,
+    pub first_seen_at: Option<i64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RecordClassification {
+    pub is_human: Option<bool>,
+    pub is_command: Option<bool>,
+    pub is_interrupted: Option<bool>,
+    pub is_system_reminder: Option<bool>,
+}

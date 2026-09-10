@@ -8,6 +8,7 @@
 
 pub mod batch;
 pub mod ingest;
+pub mod measurement;
 mod migrations;
 pub mod model;
 mod read;

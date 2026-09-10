@@ -20,9 +20,15 @@ pub struct IngestBatch<'a> {
     pub session: &'a SessionMeta,
     pub records: &'a [CanonicalRecord],
     pub keep_content: bool,
+    /// Empty means unknown; otherwise exactly one native identity per input.
+    pub identities: &'a [crate::model::RecordIdentity],
     pub session_sources: &'a [SessionSourceObservation],
     pub record_sources: &'a [RecordSourceObservation],
     pub receipt: Option<SubmittedReceipt<'a>>,
+    /// Exact retry matching happens under this batch's write transaction.
+    pub receipt_replay: ReceiptReplay,
+    /// Writer mode: rejected identities contribute no source or receipt evidence.
+    pub evidence_policy: EvidencePolicy,
     pub cursor: Option<&'a SourceCursor>,
 }
 
@@ -36,9 +42,12 @@ impl<'a> IngestBatch<'a> {
             session,
             records,
             keep_content,
+            identities: &[],
             session_sources: &[],
             record_sources: &[],
             receipt: None,
+            receipt_replay: ReceiptReplay::Reject,
+            evidence_policy: EvidencePolicy::RequireAll,
             cursor: None,
         }
     }
@@ -49,6 +58,21 @@ impl<'a> IngestBatch<'a> {
 pub struct SubmittedReceipt<'a> {
     pub receipt: &'a CaptureReceipt,
     pub coverage: &'a [RecordCoverage],
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReceiptReplay {
+    #[default]
+    Reject,
+    /// Parent facts and the complete unordered coverage set must match exactly.
+    MatchExact,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EvidencePolicy {
+    #[default]
+    RequireAll,
+    AcceptedOnly,
 }
 
 /// Positions are monotonically nondecreasing within a source/key. A reader that
@@ -86,13 +110,25 @@ pub struct RecordOutcome {
     /// None for missing/blank UUIDs; accepted/rejected valid identities are exact.
     pub uuid: Option<String>,
     pub disposition: RecordDisposition,
+    /// Conflicting known measurement fields from this input under the write lock.
+    pub conflict_fields: i64,
     /// Sticky row conflict state immediately after this input. A later input of
     /// the same UUID can add a conflict; this is not a per-field provenance mask.
     pub stored_has_conflict: Option<bool>,
 }
 
+/// A different session whose owned record was marked conflicted by this batch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AffectedSession {
+    pub session_id: String,
+    pub surface: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IngestBatchOutcome {
+    pub affected_owners: Vec<AffectedSession>,
+    pub receipt_committed: bool,
+    pub session_changed: bool,
     /// Legacy per-input counters: `ignored` also includes ownership/type rejects.
     pub stats: WriteStats,
     pub records: Vec<RecordOutcome>,
@@ -104,6 +140,11 @@ impl Store {
     /// participating facts. There is no callback, nested commit or event hook.
     pub fn apply_ingest_batch(&mut self, batch: &IngestBatch<'_>) -> Result<IngestBatchOutcome> {
         write::validate_session(batch.session)?;
+        if !batch.identities.is_empty() && batch.identities.len() != batch.records.len() {
+            return Err(Error::InvalidInput(
+                "native identities must align with batch inputs",
+            ));
+        }
         if batch
             .session_sources
             .iter()
@@ -120,13 +161,16 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        write::upsert_session(&transaction, batch.session, batch.keep_content)?;
-        let outcome = write::upsert_records(
+        let session_changed =
+            write::upsert_session(&transaction, batch.session, batch.keep_content)?;
+        let mut outcome = write::upsert_records(
             &transaction,
             &batch.session.session_id,
             batch.records,
             batch.keep_content,
+            batch.identities,
         )?;
+        outcome.session_changed |= session_changed;
         let rejected = outcome
             .records
             .iter()
@@ -144,16 +188,17 @@ impl Store {
         // not acquire this batch's source/receipt evidence just because it exists.
         // Any rejected occurrence makes UUID-level evidence ambiguous, even if
         // another occurrence was accepted. Known-field conflicts remain accepted.
-        if batch
-            .record_sources
-            .iter()
-            .any(|observation| !accepted.contains(observation.uuid.as_str()))
-            || batch.receipt.as_ref().is_some_and(|submitted| {
-                submitted
-                    .coverage
-                    .iter()
-                    .any(|coverage| !accepted.contains(coverage.record_uuid.as_str()))
-            })
+        if batch.evidence_policy == EvidencePolicy::RequireAll
+            && (batch
+                .record_sources
+                .iter()
+                .any(|observation| !accepted.contains(observation.uuid.as_str()))
+                || batch.receipt.as_ref().is_some_and(|submitted| {
+                    submitted
+                        .coverage
+                        .iter()
+                        .any(|coverage| !accepted.contains(coverage.record_uuid.as_str()))
+                }))
         {
             return Err(Error::InvalidInput(
                 "record facts require a submitted UUID with no rejected occurrences",
@@ -162,11 +207,41 @@ impl Store {
         for observation in batch.session_sources {
             ingest::observe_session_source(&transaction, observation)?;
         }
-        for observation in batch.record_sources {
-            ingest::observe_record_source(&transaction, observation)?;
+        let mut conflicts = std::collections::BTreeMap::new();
+        for record in &outcome.records {
+            if let Some(uuid) = record.uuid.as_deref() {
+                *conflicts.entry(uuid).or_insert(0) |= record.conflict_fields;
+            }
+        }
+        for observation in batch
+            .record_sources
+            .iter()
+            .filter(|observation| accepted.contains(observation.uuid.as_str()))
+        {
+            let mut observation = observation.clone();
+            observation.conflict_flags |= conflicts
+                .get(observation.uuid.as_str())
+                .copied()
+                .unwrap_or(0)
+                & observation.field_presence;
+            ingest::observe_record_source(&transaction, &observation)?;
         }
         if let Some(submitted) = &batch.receipt {
-            ingest::insert_receipt(&transaction, submitted.receipt, submitted.coverage)?;
+            let coverage = submitted
+                .coverage
+                .iter()
+                .filter(|item| accepted.contains(item.record_uuid.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !coverage.is_empty() || batch.evidence_policy == EvidencePolicy::RequireAll {
+                ingest::insert_or_match_receipt(
+                    &transaction,
+                    submitted.receipt,
+                    &coverage,
+                    batch.receipt_replay == ReceiptReplay::MatchExact,
+                )?;
+                outcome.receipt_committed = true;
+            }
         }
         if let Some(cursor) = batch.cursor {
             advance_cursor(&transaction, cursor)?;

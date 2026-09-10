@@ -4,3 +4,5 @@
 //! implemented separately from native-line classification.
 
 pub mod canonical;
+
+pub mod writer;
