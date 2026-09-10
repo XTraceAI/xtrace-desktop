@@ -64,8 +64,9 @@ request; it cannot borrow omitted history or richer stored measurements.
 
 A failed transaction returns `isError: true`, no structured acknowledgement and
 no change events. A wholly rejected ownership collision can commit a conflict on
-the original owner: it returns a tool error with no acknowledgement, while the
-committed owner invalidation is still delivered. Notifications have no request ID
+the original owner: it returns a tool error with no acknowledgement and creates
+or enriches no destination session/source metadata, while committed original-owner
+invalidation is still delivered. Type-only rejections preserve that same boundary. Notifications have no request ID
 and receive HTTP 202 without invoking an import. Invalid JSON/RPC arguments use
 JSON-RPC errors; oversized bodies receive HTTP 413.
 

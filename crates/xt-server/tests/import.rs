@@ -453,18 +453,76 @@ async fn import_conversation_validation_and_final_commit_failure_cannot_ack_or_p
 #[tokio::test]
 async fn import_conversation_rejected_owner_conflict_still_publishes_committed_invalidation() {
     let mut server = Server::new().await;
-    success(&server.import(args("owner", vec![poor("owned")])).await);
-    server.changed().await;
-    failure(&server.import(args("other", vec![poor("owned")])).await);
+    server
+        .store()
+        .set_retention_mode(RetentionMode::FullContent)
+        .unwrap();
+    for (id, uuid) in [("owner", "owned"), ("existing", "existing-row")] {
+        let mut input = args(id, vec![poor(uuid)]);
+        input["source_surface"] = json!("original");
+        input["namespace"] = json!("original-namespace");
+        input["title"] = json!("Original title");
+        success(&server.import(input).await);
+        server.changed().await;
+    }
+    let existing = server.store().session("existing").unwrap();
+    let sources = server.store().session_sources("existing").unwrap();
+    for destination in ["other", "existing", "owner"] {
+        let mut row = poor("owned");
+        if destination == "owner" {
+            row["type"] = json!("user");
+        }
+        let mut input = args(destination, vec![row]);
+        input["source_surface"] = json!("rejected-surface");
+        input["namespace"] = json!("rejected-namespace");
+        input["title"] = json!("Rejected title");
+        failure(&server.import(input).await);
+        let event = server.changed().await;
+        assert_eq!(event.conversation_id, "owner");
+        assert_eq!(event.surface.as_deref(), Some("original"));
+        assert!(event.invalidate_measurements && event.invalidate_cost);
+        assert!(server.events.try_recv().is_err());
+        assert!(server.store().session("other").unwrap().is_none());
+        assert!(server.store().session_sources("other").unwrap().is_empty());
+        assert_eq!(server.store().session("existing").unwrap(), existing);
+        assert_eq!(server.store().session_sources("existing").unwrap(), sources);
+        assert!(server.store().records("owner").unwrap()[0].has_conflict);
+        assert_eq!(count(&server.sql(), "capture_receipts"), 2);
+        assert_eq!(
+            server
+                .store()
+                .session("owner")
+                .unwrap()
+                .unwrap()
+                .meta
+                .title
+                .as_deref(),
+            Some("Original title")
+        );
+    }
+    // A partly accepted import still commits its destination and acknowledges only accepted rows.
+    let result = server
+        .import(args("other", vec![poor("owned"), poor("fresh")]))
+        .await;
+    assert_eq!(success(&result)["ack_through"], "fresh");
+    assert_eq!(success(&result)["records_new"], 1);
+    assert!(server.store().session("other").unwrap().is_some());
     let events = [server.changed().await, server.changed().await];
-    assert!(
-        events
-            .iter()
-            .any(|e| e.conversation_id == "owner" && e.invalidate_measurements)
+    assert!(events.iter().any(|e| e.conversation_id == "other"));
+    assert!(events.iter().any(|e| e.conversation_id == "owner"));
+    assert_eq!(count(&server.sql(), "capture_receipts"), 3);
+    let sql = server.sql();
+    let before = snapshot(&sql);
+    // The conflict-only path still has to commit before publishing its event.
+    sql.execute_batch("CREATE TABLE conflict_commit(parent TEXT REFERENCES sessions(session_id) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER conflict_commit_failure AFTER UPDATE OF has_conflict ON records BEGIN INSERT INTO conflict_commit VALUES('absent'); END;").unwrap();
+    failure(
+        &server
+            .import(args("failed-destination", vec![poor("fresh")]))
+            .await,
     );
-    assert!(server.store().records("owner").unwrap()[0].has_conflict);
-    assert!(server.store().records("other").unwrap().is_empty());
-    assert_eq!(count(&server.sql(), "capture_receipts"), 1);
+    assert_eq!(snapshot(&sql), before);
+    assert_eq!(count(&sql, "conflict_commit"), 0);
+    assert!(server.events.try_recv().is_err());
 }
 
 #[tokio::test]

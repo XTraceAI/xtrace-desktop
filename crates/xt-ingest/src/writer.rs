@@ -223,19 +223,27 @@ pub fn write_batch(store: &mut Store, request: &WriteBatch<'_>) -> Result<BatchO
             .records
             .iter()
             .any(|row| row.conflict_fields != 0 || row.stored_has_conflict == Some(true));
-    let mut events = vec![ChangeEvent {
-        conversation_id: session.session_id.clone(),
-        source,
-        surface: saved.session_surface,
-        records_new,
-        records_enriched,
-        invalidate_measurements: invalidate || saved.receipt_committed,
-        invalidate_cost: invalidate,
-        backfill_position: request
-            .cursor
-            .filter(|_| source != SessionSource::Plugin)
-            .map(|cursor| cursor.position),
-    }];
+    let mut events = Vec::new();
+    if source != SessionSource::Plugin
+        || saved
+            .records
+            .iter()
+            .any(|row| row.disposition.is_accepted())
+    {
+        events.push(ChangeEvent {
+            conversation_id: session.session_id.clone(),
+            source,
+            surface: saved.session_surface,
+            records_new,
+            records_enriched,
+            invalidate_measurements: invalidate || saved.receipt_committed,
+            invalidate_cost: invalidate,
+            backfill_position: request
+                .cursor
+                .filter(|_| source != SessionSource::Plugin)
+                .map(|cursor| cursor.position),
+        });
+    }
     events.extend(saved.affected_owners.into_iter().map(|owner| ChangeEvent {
         conversation_id: owner.session_id,
         source,
