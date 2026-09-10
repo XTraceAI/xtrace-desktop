@@ -5,7 +5,7 @@ coverage and receipt acknowledgement through one storage transaction. The tests 
 
 ## Setup, action and expected result
 
-`cargo test -p xt-ingest --test writer --locked --offline` runs seventeen tests using
+`cargo test -p xt-ingest --test writer --locked --offline` runs eighteen tests using
 synthetic records and shared disposable fixture databases.
 
 | Case                    | Setup and action                                                                                                                              | Expected result                                                                                                                                                                                                                                                  |
@@ -56,8 +56,8 @@ or tool input with an identical measurement projection, and replay missing or
 conflicting surface metadata. Content conflicts invalidate even with zero new or
 enriched records; event surfaces match the committed session, while receipt
 identity continues to describe the submitted source facts.
-Start identity compares precise instants: equivalent offsets and fractional zero
-tails agree, while different fractional tails and invalid timestamps reject the batch.
+Start identity compares precise instants; equivalent offsets/fractional zero tails agree.
+First-seen time takes the earliest observation in either order; failed writes roll it back.
 
 ## Scope
 

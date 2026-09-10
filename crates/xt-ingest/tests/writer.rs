@@ -408,6 +408,55 @@ fn writer_start_identity_compares_precise_instants_not_rfc3339_spelling() {
 }
 
 #[test]
+fn writer_first_seen_is_earliest_observation_regardless_of_arrival_order() {
+    for order in [[200, 100], [100, 200]] {
+        let mut db = TempDb::empty().unwrap();
+        let native = context(SessionSource::Transcript);
+        let records = [poor("observed")];
+        for observed_at in order {
+            let mut batch = request(&native, &records, None);
+            batch.observed_at = observed_at;
+            write_batch(db.store_mut(), &batch).unwrap();
+        }
+        let before = db.store().records("cursor-native").unwrap();
+        assert_eq!(before[0].identity.first_seen_at, Some(100));
+        assert!(!before[0].has_conflict);
+        let sql = rusqlite::Connection::open(db.path()).unwrap();
+        assert_eq!(
+            sql.query_row(
+                "SELECT first_seen_at,last_seen_at FROM session_sources",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            )
+            .unwrap(),
+            (100, 200)
+        );
+        sql.execute_batch("CREATE TRIGGER injected BEFORE INSERT ON source_cursors BEGIN SELECT RAISE(ABORT, 'synthetic cursor failure'); END;").unwrap();
+        let cursor = SourceCursor {
+            source: SessionSource::Transcript,
+            cursor_key: "synthetic".into(),
+            position: 1,
+            updated_at: 50,
+        };
+        let mut batch = request(&native, &records, None);
+        batch.observed_at = 50;
+        batch.cursor = Some(&cursor);
+        assert!(write_batch(db.store_mut(), &batch).is_err());
+        assert_eq!(db.store().records("cursor-native").unwrap(), before);
+        sql.execute_batch("DROP TRIGGER injected").unwrap();
+        let outcome = write_batch(db.store_mut(), &batch).unwrap();
+        assert_eq!((outcome.records_new, outcome.records_enriched), (0, 1));
+        assert!(outcome.events[0].invalidate_measurements);
+        assert_eq!(
+            db.store().records("cursor-native").unwrap()[0]
+                .identity
+                .first_seen_at,
+            Some(50)
+        );
+    }
+}
+
+#[test]
 fn writer_identity_unknowns_limits_and_native_cursor_progress_are_explicit() {
     let mut db = TempDb::empty().unwrap();
     let mut context = context(SessionSource::ReadersCli);
