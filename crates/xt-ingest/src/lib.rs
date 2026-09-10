@@ -1,6 +1,6 @@
 //! Transcript parsing, discovery, backfill, watching, and capture receipts.
 //!
-//! The canonical parser performs no I/O. Writers, watching and capture delivery
-//! are introduced by their owning ingestion stages.
+//! The canonical parser performs no I/O. Persistence and capture delivery are
+//! implemented separately from native-line classification.
 
 pub mod canonical;

@@ -160,6 +160,49 @@ fn f1_independent_arithmetic_and_two_logical_builds_agree() {
 }
 
 #[test]
+fn f1_reference_checks_persisted_session_identity_and_conflicts() {
+    for (field, matching, conflicting) in [
+        ("source_platform", "claude", "codex"),
+        ("source_surface", "cli", "desktop"),
+        (
+            "native_session_id",
+            "00000000-0000-4000-8000-000000000001",
+            "00000000-0000-4000-8000-000000000002",
+        ),
+    ] {
+        for conflict in [false, true] {
+            let directory = editable("F1");
+            edit_record(directory.path(), 0, |record| {
+                record[field] = json!(if conflict { conflicting } else { matching });
+            });
+            let fixture = Fixture::load(directory.path()).unwrap();
+            let database = fixture.build_db(true).unwrap();
+            let session_id = &fixture.sessions()[0].metadata.session_id;
+            let stored = database.store().session(session_id).unwrap().unwrap();
+            assert_eq!(stored.has_conflict, conflict, "{field}");
+            assert!(
+                database
+                    .store()
+                    .records(session_id)
+                    .unwrap()
+                    .iter()
+                    .all(|r| !r.has_conflict),
+                "{field} conflict belongs to the session, not its records"
+            );
+            if conflict {
+                let error = fixture.assert_reference().unwrap_err().to_string();
+                assert!(
+                    error.contains("session") && error.contains("conflicts"),
+                    "{error}"
+                );
+            } else {
+                fixture.assert_reference().unwrap();
+            }
+        }
+    }
+}
+
+#[test]
 fn wal_reader_snapshot_survives_a_writer_and_owner_cleans_up() {
     let fixture = f1();
     let mut owner = fixture.build_db(true).unwrap();
@@ -417,6 +460,46 @@ fn duplicate_golden_keys_fail_before_identical_or_conflicting_values_are_lost() 
 }
 
 #[test]
+fn nested_duplicate_golden_fields_fail_before_assertions() {
+    for repeated in [
+        r#""total_tokens": 1775, "total_tokens": 1100"#,
+        r#""total_tokens": 1100, "total_tokens": 1100"#,
+        r#""total_\u0074okens": 1775, "total_tokens": 1100"#,
+        r#""total_tokens": {"nested": {"count": 1, "count": 2}}"#,
+        r#""total_tokens": [{"nested": [{"count": 1, "count": 2}]}]"#,
+    ] {
+        let directory = editable("F1");
+        let path = directory.path().join("expected.json");
+        let original = fs::read_to_string(&path).unwrap();
+        assert!(original.contains(r#""total_tokens": 1100"#));
+        fs::write(path, original.replace(r#""total_tokens": 1100"#, repeated)).unwrap();
+        let error = load_error(directory.path());
+        assert!(
+            error.contains("expected.json:") && error.contains("duplicate golden field"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn recursive_goldens_preserve_json_types_and_separate_object_keys() {
+    let directory = editable("F1");
+    let value = json!({
+        "values": [null, true, false, -7, u64::MAX, 1.25, "synthetic", [], {}],
+        "objects": [{"count": 1}, {"count": 2}],
+        "nested": {"count": {"count": 3}}
+    });
+    edit_json(&directory.path().join("expected.json"), |expected| {
+        expected["M-04"] = value.clone();
+    });
+    let fixture = Fixture::load(directory.path()).unwrap();
+    assert_eq!(
+        serde_json::to_value(fixture.export()).unwrap()["expected"]["M-04"],
+        value
+    );
+}
+
+#[test]
 fn missing_inputs_and_invalid_uuid_or_timestamp_identify_source_location() {
     let directory = editable("F1");
     fs::remove_file(directory.path().join("input/sessions/session.jsonl")).unwrap();
@@ -626,26 +709,34 @@ fn absent_raw_platform_stays_unknown_independently_of_declared_host() {
 #[test]
 fn skeleton_rejects_records_in_any_declared_session() {
     let canonical = fs::read_to_string(catalog().join("F1/input/sessions/session.jsonl")).unwrap();
-    for second_session in [false, true] {
+    for populated in [[true, false], [false, true], [true, true]] {
         let directory = editable("F2");
-        let relative = if second_session {
-            edit_json(&directory.path().join("manifest.json"), |manifest| {
-                let mut second = manifest["sessions"][0].clone();
-                second["session_id"] = json!("00000000-0000-4000-8000-000000000099");
-                second["file"] = json!("input/sessions/second.jsonl");
-                manifest["sessions"].as_array_mut().unwrap().push(second);
-            });
-            "input/sessions/second.jsonl"
-        } else {
-            "input/sessions/session.jsonl"
-        };
-        let path = directory.path().join(relative);
-        fs::write(&path, " \n\n").unwrap();
+        edit_json(&directory.path().join("manifest.json"), |manifest| {
+            let mut second = manifest["sessions"][0].clone();
+            second["session_id"] = json!("00000000-0000-4000-8000-000000000099");
+            second["file"] = json!("input/sessions/second.jsonl");
+            manifest["sessions"].as_array_mut().unwrap().push(second);
+        });
+        let paths = [
+            "input/sessions/session.jsonl",
+            "input/sessions/second.jsonl",
+        ];
+        for path in paths {
+            fs::write(directory.path().join(path), " \n\n").unwrap();
+        }
         assert_eq!(
             Fixture::load(directory.path()).unwrap().manifest().status,
             FixtureStatus::Skeleton
         );
-        fs::write(&path, canonical.lines().next().unwrap()).unwrap();
+        for (path, has_records) in paths.into_iter().zip(populated) {
+            if has_records {
+                fs::write(
+                    directory.path().join(path),
+                    canonical.lines().next().unwrap(),
+                )
+                .unwrap();
+            }
+        }
         let error = load_error(directory.path());
         assert!(error.contains("manifest.json"));
         assert!(error.contains("skeleton canonical inputs must be empty"));

@@ -8,17 +8,23 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "lint": "eslint . --max-warnings 0",
-    "tauri": "cd ../src-tauri && tauri"
+    "lint": "eslint . --max-warnings 0 && pnpm lint:hex",
+    "tauri": "cd ../src-tauri && tauri",
+    "lint:hex": "node scripts/lint-hex.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:gallery": "playwright test --config playwright.gallery.config.ts --grep @full",
+    "test:e2e:gallery:smoke": "playwright test --config playwright.gallery.config.ts --grep @smoke"
   },
   "dependencies": {
-    "@fontsource/geist-mono": "5.3.0",
-    "@fontsource/manrope": "5.3.0",
+    "@base-ui/react": "1.8.0",
     "@tauri-apps/api": "2.11.1",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "@tanstack/react-query": "5.102.8",
+    "react-router": "7.18.3"
   },
   "devDependencies": {
+    "@playwright/test": "1.58.2",
     "@tailwindcss/vite": "4.3.3",
     "@tauri-apps/cli": "2.11.4",
     "@testing-library/react": "16.3.3",

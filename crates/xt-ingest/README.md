@@ -40,4 +40,4 @@ PR-link consumer's responsibilities.
 Run `cargo test -p xt-ingest canonical` and the explicit release performance gate
 `cargo test -p xt-ingest --release canonical_parse_50k -- --nocapture`.
 Producer provenance, input variants, exact dataset hashes and measured evidence
-are recorded in `docs/acceptance/ING-02.md`.
+are recorded in `docs/acceptance/canonical-parser.md`.

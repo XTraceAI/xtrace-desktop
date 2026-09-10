@@ -1,0 +1,45 @@
+.xt-popover,
+.xt-modal {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--menu);
+  font: inherit;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+}
+.xt-popover-positioner {
+  z-index: 50;
+}
+.xt-popover {
+  margin: 0;
+}
+.xt-modal {
+  position: fixed;
+  z-index: 50;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+.xt-modal-backdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  background: rgb(0 0 0 / 0.45);
+}
+.appearance {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.appearance select {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  padding: 6px;
+  font: inherit;
+}
