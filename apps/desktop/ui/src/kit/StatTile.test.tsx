@@ -1,19 +1,11 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { ReactNode } from 'react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it } from 'vitest';
 import { StatTile } from './StatTile';
 import type { MetricIconName } from './metric-icons';
 import { rules } from './rules';
-vi.mock('./Popover', () => ({
-  Popover: ({ id, open, children }: { id: string; open: boolean; children: ReactNode }) => (
-    <div id={id} role="tooltip" hidden={!open}>
-      {children}
-    </div>
-  ),
-}));
 afterEach(cleanup);
 
-it('renders measured values, units, caller-supplied delta tone, aside and current definition', () => {
+it('renders measured values, units, caller-supplied delta tone, aside and current definition', async () => {
   const view = render(
     <StatTile
       label="Agent hours"
@@ -33,7 +25,7 @@ it('renders measured values, units, caller-supplied delta tone, aside and curren
   const trigger = screen.getByRole('button');
   expect(trigger.querySelector('button')).toBeNull();
   fireEvent.focus(trigger);
-  expect(screen.getByRole('tooltip').textContent).toBe(`M-05 · ${rules['M-05']}`);
+  expect((await screen.findByRole('tooltip')).textContent).toBe(`M-05 · ${rules['M-05']}`);
   view.rerender(
     <StatTile
       label="Tokens"
@@ -50,7 +42,7 @@ it('renders measured values, units, caller-supplied delta tone, aside and curren
   expect(screen.getByText('0')).toBeTruthy();
 });
 
-it('supports seven metric icon tones and an explicit override without a shared controls dependency', () => {
+it('supports seven metric icon tones and an explicit override using the shared artwork', () => {
   const names: MetricIconName[] = ['lanes', 'merge', 'clock', 'bolt', 'msg', 'token', 'shield'];
   const view = render(
     <>

@@ -1,55 +1,50 @@
-# Metric presentation components
+# Metric cards and definitions
 
-Plan slot: FND-07a. These components render caller-provided values and current technical definitions. They do not compute metrics, decide capture verification, select windows, convert durations, or decide whether a delta has enough samples to display.
+These React components display supplied values and explain their meaning. The browser preview at `/e2e/metrics.html` uses synthetic inputs; screen integration and metric computation are separate work.
 
-| Component     | Inputs and expected states                                                                                                                                                                                                                                                                                        |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MetricCell`  | `value` is a number, string, null, or undefined. Finite numbers use optional `format` (default `String`); nonempty strings remain verbatim. Missing, blank, NaN, and infinite values render `Unmeasured`. Sizes: 10.5, 11 (default), 18, 24, 30 px. Alignment: left (default) or right within the allocated cell. |
-| `Unmeasured`  | Visible em dash plus screen-reader text `Unmeasured: <reason>` and a native title. Default reason: `This value was not measured`. Callers should provide the source-specific reason when known. A measured zero always remains zero.                                                                              |
-| `StatTile`    | Required `label`, `ruleId`, `icon`; optional `value`, `format`, `reason`, `unit`, `delta`, `deltaTone`, `aside`, `tip`, `iconTone`. A 52 px surface card fills its container. The whole tile is a focusable definition button. Label and aside truncate independently; the aside retains its native title.        |
-| `SectionCard` | Required `title` and `children`; optional `ruleId`, `meta`, `right`, `footer`. Header height 40 px by default or 36 px. Inner padding defaults to `12px 14px 10px` and accepts a CSS padding value. The section has a unique accessible heading association. The optional right slot remains caller-controlled.   |
-| `RuleChip`    | Required typed `ruleId`; `size` is `normal` (default) or `sm`. A native button named `Definition <id>` exposes the definition through `aria-describedby`. Do not nest it inside another button. StatTile uses a decorative badge inside its own trigger.                                                          |
-| `RulePopover` | Required `ruleId` and render-function `children`; optional `context` and wrapper `className`. The render function receives `aria-describedby` and `onClick`; apply both to one focusable native trigger. Context is an additional caller-supplied explanation, separate from the registry definition.             |
-
-Example of an unknown value with a precise explanation:
+| Component     | Contract                                                                                                                                                                                                                                                                                                                                                                |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MetricCell`  | `value` accepts a number, string, null, or undefined. Finite numbers use optional `format` (default `String`); nonempty strings remain verbatim. Missing, blank, NaN, and infinite values render `Unmeasured`. Sizes: 10.5, 11 (default), 18, 24, 30 px. `align="right"` fills the allocated cell and aligns its contents right.                                        |
+| `Unmeasured`  | Visible em dash, screen-reader text `Unmeasured: <reason>`, and a native title. Default reason: `This value was not measured`. Supply a specific reason when known. A measured zero remains zero.                                                                                                                                                                       |
+| `StatTile`    | Required `label`, `ruleId`, and `icon`; optional `value`, `format`, `reason`, `unit`, `delta`, `deltaTone`, `aside`, `tip`, and `iconTone`. A 52 px card fills its container. Icon and label sit left; value, unit, delta, and aside sit right. The whole tile is a definition button. Long labels and asides truncate visually while preserving their accessible text. |
+| `SectionCard` | Required `title` and `children`; optional `ruleId`, `meta`, `right`, and `footer`. Header height defaults to 40 px, with a 36 px variant. Panel padding defaults to `12px 14px 10px`; `padding` accepts a CSS value. Each section has a unique accessible heading association. The caller owns slot contents and actions.                                               |
+| `RuleChip`    | Required typed `ruleId`; `size` is `normal` (default) or `sm`. A button named `Definition <id>` exposes the definition through `aria-describedby`. Do not nest inside another button.                                                                                                                                                                                   |
+| `RulePopover` | Required `ruleId` and a single native button element as `children`; optional `context` adds a caller-supplied explanation. Composes Base UI Tooltip for hover, focus, Escape, and positioning.                                                                                                                                                                          |
 
 ```tsx
-<MetricCell
+<StatTile
+  label="Tokens"
+  ruleId="M-04"
+  icon="token"
   value={null}
   reason="Cursor Agent CLI usage is absent; token totals were not measured."
 />
 ```
 
-`StatTile` shows a finite supplied delta only when its main value is measured. Positive changes use ▲, negative changes use ▼, and zero uses `0%`. `deltaTone="good"` uses success color; `bad` uses warning color. Direction does not choose the tone. The caller owns sample-count eligibility and metric-specific interpretation.
+`StatTile` shows a finite supplied delta only when its main value is measured. Positive changes use ▲, negative changes use ▼, and zero uses `0%`. `deltaTone="good"` uses success color; `bad` uses warning color. Direction does not choose the tone. The caller owns sample eligibility, unit conversion, and metric interpretation.
 
-The seven original inline SVG symbols are `lanes` (info), `merge` (accent), `clock` (success), `bolt` (danger), `msg` (warning), `token` (info), and `shield` (success). `iconTone` can override the default with info, accent, success, danger, warning, or meta. They are decorative; the adjacent label supplies the meaning. This small metric icon module has no dependency on a sibling component kit.
+The shared `Icon` module supplies the reviewed artwork: `lanes` (info), `merge` (accent), `clock` (success), `bolt` (danger), `msg` (warning), `token` (info), and `shield` (success). `MetricIcon` adds the 28 px icon box and default tone. `iconTone` can override it with info, accent, success, danger, warning, or meta. Icons are decorative; the adjacent label supplies their meaning.
 
-## Formatting contract
+## Formatting
 
-Formatters use the explicit `en-US` locale. They accept numeric inputs only; null, undefined, NaN, and infinities return an em dash. Negative zero is normalized. Finite negative inputs retain their sign. Validating a metric's domain belongs to its producer.
+Formatters use `en-US`, accept numeric inputs only, and return an em dash for null, undefined, NaN, or infinity. Negative zero is normalized. Finite negative inputs retain their sign; domain validation belongs to the producer.
 
-| Helper             | Input unit                         | Presentation                                                                                                                                                                |
-| ------------------ | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tokens`           | Tokens                             | Below 1,000: plain; from 1,000: K; from 100,000: M; from 1,000,000,000: B. At most two decimals. Examples: 15,100,000 → `15.1M`, 3,720,000,000 → `3.72B`, 400,000 → `0.4M`. |
-| `count`            | Count                              | Grouped integer; 4,639 → `4,639`.                                                                                                                                           |
-| `hours`, `minutes` | Already-converted hours or minutes | At most one decimal; 62.3 → `62.3`. No duration conversion or unit suffix.                                                                                                  |
-| `percent`          | Fraction                           | At most one decimal; 0.18 → `18%`.                                                                                                                                          |
-| `delta`            | Signed fractional change           | 0.18 → `▲18%`, -0.09 → `▼9%`, 0 → `0%`.                                                                                                                                     |
+| Helper             | Input                                                                                                    | Example                                                         |
+| ------------------ | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `tokens`           | Token count; plain below 1,000, K from 1,000, M from 100,000, B from 1,000,000,000; at most two decimals | 15,100,000 → `15.1M`; 400,000 → `0.4M`; 3,720,000,000 → `3.72B` |
+| `count`            | Count, rounded to an integer with grouping                                                               | 4,639 → `4,639`                                                 |
+| `hours`, `minutes` | Already-converted duration, at most one decimal; no conversion or suffix                                 | 62.3 → `62.3`                                                   |
+| `percent`          | Fraction, at most one decimal                                                                            | 0.18 → `18%`                                                    |
+| `delta`            | Signed fractional change                                                                                 | 0.18 → `▲18%`; -0.09 → `▼9%`; 0 → `0%`                          |
 
-The examples are formatter inputs, not product metric results.
+## Definitions and accessibility
 
-## Definition source and tooltip behavior
+[The reviewed definition catalog](../design/rule-contract.json) contains 30 technical definitions. `rules.ts` imports it directly and exposes typed IDs. These definitions specify product behavior; displaying them does not implement or verify the metric, privacy, or capture behavior they describe.
 
-[rule-contract.json](../design/rule-contract.json) contains 30 selected normative definitions from the current XTrace Desktop SPEC. The typed runtime registry imports that file directly. It includes M-01–M-19, amendments M-11a/M-12a, and the consumed receipt, privacy, coverage, and provenance definitions C-08, O-11/O-12, P-01/P-02, R-05/R-08, U-03/U-08.
+The [coverage report](acceptance/metrics/rule-coverage.json) records the approved-source comparison using only IDs and SHA-256 hashes. Ordinary tests check the expected ID set, important amended clauses, and catalog/report parity. The report records a completed comparison; it is not an independent approval mechanism. Definition changes require source review and an updated report.
 
-Markdown emphasis and code markers are removed. Supporting observations, historical samples, and anecdotes are omitted from M-01/M-02/M-03 and O-11/O-12; their selected normative wording is preserved. This is an excerpt contract, not a copy of the whole SPEC. To verify an approved source after editing a definition:
+Hover or keyboard focus opens the exact definition and optional context. The trigger is explicitly tabbable, and the popup has `role="tooltip"` with a matching `aria-describedby` association. Escape dismisses while retaining trigger focus; Tab leaves normally. The popup contains passive text and does not intercept pointer clicks or move keyboard focus. Body portals preserve the nearest `ThemeScope` and escape ancestor clipping.
 
-```sh
-pnpm --dir apps/desktop/ui exec node scripts/check-rules.mjs --spec APPROVED_SPEC.md
-```
+The longest usage and coverage definitions are tested at 1120×720. The component follows the app's supported desktop size; it does not promise that long definitions fit arbitrarily small windows. Native title tooltips are reserved for unmeasured reasons and truncated asides, avoiding a second full-definition tooltip over the Base UI popup.
 
-The comparison checks every selected string, fails on changed or missing definitions and changed selection boundaries, and writes only rule IDs and SHA-256 hashes to [the coverage report](acceptance/FND-07a-rule-coverage.json). Failure leaves the previous report intact and reports IDs or a controlled generic error. The command needs the approved source; ordinary repository tests validate contract/report parity without that external document. A matching hash report is evidence of that comparison, not independent approval of the definition.
-
-Hover or keyboard focus opens a native Popover with `role="tooltip"`. It stays open while its trigger remains hovered or focused, closes when both leave, and supports native Escape dismissal. The tooltip has no interactive descendants and `pointer-events: none`, so it never traps keyboard focus or intercepts clicks. Full definitions remain available through `aria-describedby` and the trigger's native title. At the supported 1120×720 minimum, the tested longest usage and coverage definitions fit without scrolling.
-
-The shared Popover's new `restoreFocus` prop defaults to `true` for existing menus. RulePopover passes `false`: closing a hover explanation must not move focus to its trigger. Native menus and modal behavior retain their existing tests.
+See [acceptance evidence](acceptance/metrics.md) for checks, screenshots, and preview instructions.

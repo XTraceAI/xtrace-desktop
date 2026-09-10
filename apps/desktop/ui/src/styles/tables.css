@@ -1,4 +1,5 @@
 .xt-table-scroll {
+  position: relative;
   min-width: 0;
   max-width: 100%;
   overflow: auto;
@@ -16,8 +17,6 @@
 .xt-grid-row > [role='cell'],
 .xt-grid-row > [role='columnheader'] {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .xt-table-head {
   padding: 8px 14px 6px;
@@ -37,6 +36,10 @@
   z-index: 1;
 }
 .xt-table-head button {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font: inherit;
   color: inherit;
   text-transform: inherit;
@@ -56,7 +59,7 @@
 .xt-data-row[data-hover='track']:hover {
   background: var(--track);
 }
-.xt-data-row[tabindex] {
+.xt-data-row[data-actionable='true'] {
   cursor: pointer;
 }
 .xt-table-block {
@@ -65,7 +68,8 @@
 .xt-table-block:last-child {
   border-bottom: 0;
 }
-.xt-expand-row {
+.xt-expand-row,
+.xt-row-action {
   display: grid;
   place-items: center;
   width: 22px;
@@ -104,6 +108,10 @@
     monospace;
 }
 .xt-mono-cell {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--secondary);
   font:
     400 10.5px 'Geist Mono',
@@ -150,7 +158,7 @@
   gap: 8px;
   max-width: 100%;
   height: 30px;
-  padding: 0 9px;
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
@@ -178,6 +186,8 @@
   box-shadow: var(--menu);
 }
 .xt-filter-menu fieldset {
+  display: grid;
+  gap: 2px;
   border: 0;
   margin: 0;
   padding: 0;
@@ -185,9 +195,9 @@
 .xt-filter-option {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   height: 30px;
-  padding: 0 6px;
+  padding: 0 8px;
   border-radius: 6px;
   color: var(--ink);
   font-size: 12px;
@@ -204,7 +214,7 @@
   height: 14px;
   margin: 0;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 4px;
   display: grid;
   place-content: center;
   background: var(--surface);
@@ -331,9 +341,9 @@
   font-weight: 400;
 }
 .xt-table-scroll:focus-visible,
-.xt-data-row:focus-visible,
 .xt-table-head button:focus-visible,
 .xt-expand-row:focus-visible,
+.xt-row-action:focus-visible,
 .xt-filter-trigger:focus-visible,
 .xt-filter-option input:focus-visible {
   outline: 2px solid var(--accent);

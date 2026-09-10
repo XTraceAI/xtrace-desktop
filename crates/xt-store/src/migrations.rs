@@ -1,12 +1,11 @@
 //! Embedded migrations are registered in lexical filename order, one transaction
-//! per version. Reserved prefixes: FND 0001, ING 0002–0009, MET 0010–0019,
-//! RBK 0020–0029, SCB 0030–0039, REL 0040–0049. Extend this chain; never modify an
-//! applied migration or reuse a version. Unknown or non-prefix histories fail.
+//! per version. Extend this chain; never modify an applied migration or reuse a
+//! version. Unknown or non-prefix histories fail.
 
 use crate::{Error, Result, Store};
 use rusqlite::TransactionBehavior;
 
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../migrations/0001_FND-03_canonical.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../migrations/0001_canonical.sql"))];
 
 impl Store {
     /// Highest applied migration after opening this store.

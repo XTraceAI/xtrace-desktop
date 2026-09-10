@@ -1,26 +1,28 @@
-import { useLayoutEffect, useRef, type HTMLAttributes, type RefObject } from 'react';
+import { Popover as Primitive } from '@base-ui/react/popover';
+import type { HTMLAttributes } from 'react';
+import { useSurfaceTheme } from '../theme/ThemeProvider';
 
-export interface PopoverProps extends Omit<HTMLAttributes<HTMLDivElement>, 'onToggle'> {
+export const createPopoverHandle = Primitive.createHandle;
+export const PopoverTrigger = Primitive.Trigger;
+export const PopoverClose = Primitive.Close;
+
+export interface PopoverProps extends HTMLAttributes<HTMLDivElement> {
   id: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  anchorRef: RefObject<HTMLElement | null>;
-  /** Noninteractive hover tooltips must not move keyboard focus on dismissal. */
-  restoreFocus?: boolean;
-  /** Optional geometry target; the invoker remains the focus-return target. */
-  positionRef?: RefObject<HTMLElement | null>;
+  handle: Primitive.Handle<unknown>;
+  /** Optional geometry target; the registered trigger still owns focus return. */
+  positionAnchor?: HTMLElement | null;
   side?: 'bottom' | 'right';
   align?: 'start' | 'end';
   offset?: number;
 }
 
-/** Keep this beside its trigger in the DOM: the native top layer preserves ancestry. */
 export function Popover({
   open,
   onOpenChange,
-  anchorRef,
-  restoreFocus = true,
-  positionRef,
+  handle,
+  positionAnchor,
   side = 'bottom',
   align = 'start',
   offset = 8,
@@ -28,89 +30,24 @@ export function Popover({
   children,
   ...props
 }: PopoverProps) {
-  const ref = useRef<HTMLDivElement>(null);
-  const notify = useRef(onOpenChange);
-  useLayoutEffect(() => {
-    notify.current = onOpenChange;
-  });
-
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    function toggled(event: Event) {
-      const visible = (event as ToggleEvent).newState === 'open';
-      notify.current(visible);
-      if (
-        restoreFocus &&
-        !visible &&
-        (document.activeElement === document.body || element?.contains(document.activeElement))
-      ) {
-        anchorRef.current?.focus({ preventScroll: true });
-      }
-    }
-    element.addEventListener('toggle', toggled);
-    return () => element.removeEventListener('toggle', toggled);
-  }, [anchorRef, restoreFocus]);
-
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    // Refs can detach without changing their identity or the controlled open prop.
-    if (
-      !open ||
-      !anchorRef.current?.isConnected ||
-      (positionRef && !positionRef.current?.isConnected)
-    ) {
-      if (element.matches(':popover-open')) element.hidePopover();
-      if (open) notify.current(false);
-    }
-  });
-
-  useLayoutEffect(() => {
-    const element = ref.current;
-    const invoker = anchorRef.current;
-    const anchor = positionRef ? positionRef.current : invoker;
-    if (!open || !element || !invoker?.isConnected || !anchor?.isConnected) return;
-    function position() {
-      if (!element || !anchor) return;
-      if (!anchor.isConnected || !invoker?.isConnected) {
-        if (element.matches(':popover-open')) element.hidePopover();
-        return;
-      }
-      const rect = anchor.getBoundingClientRect();
-      const x =
-        side === 'right'
-          ? rect.right + offset
-          : align === 'end'
-            ? rect.right - element.offsetWidth
-            : rect.left;
-      const y =
-        side === 'bottom'
-          ? rect.bottom + offset
-          : align === 'end'
-            ? rect.bottom - element.offsetHeight
-            : rect.top;
-      element.style.left = `${Math.max(8, Math.min(x, innerWidth - element.offsetWidth - 8))}px`;
-      element.style.top = `${Math.max(8, Math.min(y, innerHeight - element.offsetHeight - 8))}px`;
-    }
-    if (!element.matches(':popover-open')) element.showPopover();
-    position();
-    const observer = new ResizeObserver(position);
-    observer.observe(anchor);
-    if (invoker !== anchor) observer.observe(invoker);
-    observer.observe(element);
-    window.addEventListener('resize', position);
-    window.addEventListener('scroll', position, true);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', position);
-      window.removeEventListener('scroll', position, true);
-    };
-  }, [open, anchorRef, positionRef, side, align, offset]);
-
+  const theme = useSurfaceTheme();
   return (
-    <div {...props} ref={ref} popover="auto" className={`xt-popover ${className}`}>
-      {children}
-    </div>
+    <Primitive.Root handle={handle} open={open} onOpenChange={onOpenChange}>
+      <Primitive.Portal data-theme={theme}>
+        <Primitive.Positioner
+          className="xt-popover-positioner"
+          anchor={positionAnchor}
+          positionMethod="fixed"
+          side={side}
+          align={align}
+          sideOffset={offset}
+          collisionPadding={8}
+        >
+          <Primitive.Popup {...props} className={`xt-popover ${className}`}>
+            {children}
+          </Primitive.Popup>
+        </Primitive.Positioner>
+      </Primitive.Portal>
+    </Primitive.Root>
   );
 }

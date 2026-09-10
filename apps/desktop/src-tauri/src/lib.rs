@@ -40,6 +40,13 @@ pub fn run() {
         })
         .on_window_event(window_controls::on_window_event)
         .invoke_handler(tauri::generate_handler![app_info, db_counts])
-        .run(tauri::generate_context!())
-        .expect("Could not start XTrace Desktop");
+        .build(tauri::generate_context!())
+        .expect("Could not start XTrace Desktop")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit)
+                && let Some(state) = app.try_state::<state::AppState>()
+            {
+                state.shutdown();
+            }
+        });
 }

@@ -40,6 +40,14 @@ interface ThemeContextValue {
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
+const SurfaceThemeContext = createContext<Theme | undefined>(undefined);
+
+/** Carry a scoped palette through React portals without copying DOM styles. */
+export function useSurfaceTheme(): Theme | undefined {
+  const scope = useContext(SurfaceThemeContext);
+  const app = useContext(ThemeContext);
+  return scope ?? app?.theme;
+}
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [preference, updatePreference] = useState(readPreference);
@@ -49,6 +57,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    if (isTauri()) {
+      // Native sidebar material must use the same appearance as the web content.
+      void getCurrentWindow()
+        .setTheme(preference === 'system' ? null : preference)
+        .catch(() => {});
+    }
+  }, [preference]);
 
   useEffect(() => {
     let active = true;
@@ -108,5 +125,9 @@ export function useTheme(): ThemeContextValue {
 }
 
 export function ThemeScope({ theme, ...props }: HTMLAttributes<HTMLDivElement> & { theme: Theme }) {
-  return <div {...props} data-theme={theme} />;
+  return (
+    <SurfaceThemeContext.Provider value={theme}>
+      <div {...props} data-theme={theme} />
+    </SurfaceThemeContext.Provider>
+  );
 }

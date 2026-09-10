@@ -26,7 +26,10 @@ export function MetricCell({
   align = 'left',
 }: MetricCellProps) {
   return (
-    <span className="xt-metric-cell" style={{ fontSize: size, textAlign: align }}>
+    <span
+      className="xt-metric-cell"
+      style={{ fontSize: size, textAlign: align, width: align === 'right' ? '100%' : undefined }}
+    >
       {isMeasured(value) ? (
         typeof value === 'number' ? (
           format(value)

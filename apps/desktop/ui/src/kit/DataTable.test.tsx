@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
+import { createPortal } from 'react-dom';
 import { DataTable, TitleCell, NumCell, type Column } from './DataTable';
 afterEach(cleanup);
 const rows = [
@@ -45,7 +46,7 @@ it('renders a typed table with aligned numeric headers, unknown versus zero and 
     expect(screen.getAllByRole('row')[1].style.height).toBe(`${height}px`);
   }
 });
-it('emits actual row through pointer and keyboard while nested actions and expansion remain independent', () => {
+it('emits actual row through text and a named native action while nested actions and expansion remain independent', () => {
   const onRowClick = vi.fn(),
     action = vi.fn(),
     expand = vi.fn();
@@ -65,6 +66,7 @@ it('emits actual row through pointer and keyboard while nested actions and expan
       rows={[rows[0]]}
       getRowKey={key}
       onRowClick={onRowClick}
+      getRowActionLabel={(row) => `Open ${row.name}`}
       renderExpanded={(r) => <p>Details for {r.name}</p>}
       expandedKeys={[]}
       onExpandedChange={expand}
@@ -73,13 +75,16 @@ it('emits actual row through pointer and keyboard while nested actions and expan
   fireEvent.click(screen.getByText('First session'));
   expect(onRowClick).toHaveBeenLastCalledWith(rows[0]);
   const row = screen.getAllByRole('row')[1];
-  fireEvent.keyDown(row, { key: 'Enter' });
-  fireEvent.keyDown(row, { key: ' ' });
-  expect(onRowClick).toHaveBeenCalledTimes(3);
+  expect(row.hasAttribute('tabindex')).toBe(false);
+  const primaryAction = screen.getByRole('button', { name: 'Open First session' });
+  expect(primaryAction.closest('[role="cell"]')).toBeTruthy();
+  fireEvent.click(primaryAction);
+  expect(onRowClick).toHaveBeenCalledTimes(2);
+  expect(onRowClick).toHaveBeenLastCalledWith(rows[0]);
   fireEvent.click(screen.getByRole('button', { name: 'Open' }));
   fireEvent.click(screen.getByRole('button', { name: 'Expand one' }));
   expect(action).toHaveBeenCalledOnce();
-  expect(onRowClick).toHaveBeenCalledTimes(3);
+  expect(onRowClick).toHaveBeenCalledTimes(2);
   expect(expand).toHaveBeenCalledExactlyOnceWith(['one']);
   expect(screen.queryByText('Details for First session')).toBeNull();
   view.rerender(
@@ -141,4 +146,39 @@ it('empty and busy states are explicit and mutually exclusive', () => {
   expect(screen.getByRole('table').getAttribute('aria-busy')).toBe('true');
   expect(screen.queryByText('First session')).toBeNull();
   expect(screen.queryByText('No sessions')).toBeNull();
+});
+
+it('ignores React portal events while preserving popup actions and ordinary row clicks', () => {
+  const onRowClick = vi.fn(),
+    popupAction = vi.fn();
+  render(
+    <DataTable
+      label="Portal table"
+      rows={[rows[0]]}
+      getRowKey={key}
+      onRowClick={onRowClick}
+      columns={[
+        ...columns,
+        {
+          key: 'menu',
+          header: 'Menu',
+          width: '80px',
+          render: () =>
+            createPortal(
+              <div>
+                <button onClick={popupAction}>Popup action</button>
+                <span>Popup help text</span>
+              </div>,
+              document.body,
+            ),
+        },
+      ]}
+    />,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Popup action' }));
+  fireEvent.click(screen.getByText('Popup help text'));
+  expect(popupAction).toHaveBeenCalledOnce();
+  expect(onRowClick).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByText('First session'));
+  expect(onRowClick).toHaveBeenCalledExactlyOnceWith(rows[0]);
 });

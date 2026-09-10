@@ -1,55 +1,47 @@
-import { useId, useRef, useState, type ReactNode } from 'react';
-import { Popover } from './Popover';
+import { Tooltip } from '@base-ui/react/tooltip';
+import { useId, type ReactElement } from 'react';
+import { useSurfaceTheme } from '../theme/ThemeProvider';
 import { ruleText, type RuleId } from './rules';
 import '../styles/metrics.css';
 
+/** Passive definition text. Base UI owns hover, focus, Escape, and positioning. */
 export function RulePopover({
   ruleId,
   context,
-  className = '',
   children,
 }: {
   ruleId: RuleId;
   context?: string;
-  className?: string;
-  children: (props: { 'aria-describedby': string; onClick: () => void }) => ReactNode;
+  children: ReactElement;
 }) {
   const id = useId();
-  const anchor = useRef<HTMLSpanElement>(null);
-  const hovering = useRef(false);
-  const [open, setOpen] = useState(false);
+  const theme = useSurfaceTheme();
   return (
-    <span
-      ref={anchor}
-      className={`xt-rule-anchor ${className}`}
-      onPointerEnter={() => {
-        hovering.current = true;
-        setOpen(true);
-      }}
-      onPointerLeave={(event) => {
-        hovering.current = false;
-        if (!event.currentTarget.contains(document.activeElement)) setOpen(false);
-      }}
-      onFocus={() => setOpen(true)}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget) && !hovering.current) setOpen(false);
-      }}
-    >
-      {children({ 'aria-describedby': id, onClick: () => setOpen(true) })}
-      <Popover
-        id={id}
-        open={open}
-        onOpenChange={setOpen}
-        anchorRef={anchor}
-        restoreFocus={false}
-        role="tooltip"
-        className="xt-rule-popover"
-      >
-        <span>
-          {ruleId} · {ruleText(ruleId)}
-        </span>
-        {context && <span className="xt-rule-context">{context}</span>}
-      </Popover>
-    </span>
+    <Tooltip.Root disableHoverablePopup>
+      <Tooltip.Trigger
+        render={children}
+        tabIndex={0}
+        aria-describedby={id}
+        delay={0}
+        closeOnClick={false}
+      />
+      <Tooltip.Portal data-theme={theme}>
+        <Tooltip.Positioner
+          className="xt-rule-positioner"
+          positionMethod="fixed"
+          side="bottom"
+          align="start"
+          sideOffset={8}
+          collisionPadding={8}
+        >
+          <Tooltip.Popup id={id} role="tooltip" className="xt-rule-popover">
+            <span>
+              {ruleId} · {ruleText(ruleId)}
+            </span>
+            {context && <span className="xt-rule-context">{context}</span>}
+          </Tooltip.Popup>
+        </Tooltip.Positioner>
+      </Tooltip.Portal>
+    </Tooltip.Root>
   );
 }

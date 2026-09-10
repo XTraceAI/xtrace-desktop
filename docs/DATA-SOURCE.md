@@ -56,19 +56,22 @@ The root route redirects to Dashboard. Unrecognized routes show a page-not-found
 
 Cmd+, opens Settings. Cmd+K focuses an enabled page Search if one is present; placeholder screens do not add an unwired search field. Appearance follows the existing system/light/dark preference and persistence behavior. A fixture badge uses `app_info.fixture`, so it also identifies native fixture runs. Missing host and capture data remain explicitly unknown rather than becoming fabricated zeros.
 
+On macOS, the platform-specific Tauri configuration uses its built-in `sidebar` window material with a transparent webview. Only the sidebar background is translucent; the content pane, text and controls remain opaque. The native material follows window focus, the selected appearance is also applied to the native window, and Reduce Transparency uses the system opaque material plus a CSS fallback. Other platforms and browser previews retain an opaque sidebar.
+
 On native macOS only, the sidebar reserves 74px above its brand for the existing system window controls. The empty chrome region, brand, and TopBar provide native drag regions; interactive controls exclude dragging. No HTML traffic lights are drawn.
 
 ## Verification
 
-Run the two browser suites sequentially; each owns port 5181 and starts/stops its own server:
+Run the browser suites sequentially; they start and stop their own servers:
 
 ```sh
 pnpm check
 pnpm e2e
-pnpm --dir apps/desktop/ui test:e2e:shell
-pnpm --dir apps/desktop/ui test:e2e:production
+pnpm e2e:production
 ```
 
-The shell suite runs Chromium and WebKit with a 1120×720 viewport and F1 selected. The production suite builds with the fixture flag set, inspects emitted assets, then opens that actual production build in both browsers and checks the unavailable preview. Neither suite emulates Tauri IPC. Browser evidence does not establish native window behavior or an actual Safari 17 platform-floor run.
+The default suite includes the shell and all component tests on port 5174 (`E2E_PORT` overrides it). The production suite uses port 5194 (`E2E_PRODUCTION_PORT`). Both share a test-results directory, so run them sequentially. The shell cases run Chromium and WebKit with a 1120×720 viewport and F1 selected. The production suite builds with the fixture flag set, inspects emitted assets, then opens that actual production build in both browsers and checks the unavailable preview. Neither suite emulates Tauri IPC. Browser evidence does not establish native window behavior or an actual Safari 17 platform-floor run.
+
+Rust-dependent DTO generation, fixture parity, license notices and native builds run through the local macOS checkpoint described in [CI](CI.md). The default `pnpm test` and hosted UI job do not require a native toolchain.
 
 The implementation follows the pinned library APIs for [React Router declarative routing](https://reactrouter.com/start/declarative/routing), [TanStack Query invalidation](https://tanstack.com/query/v5/docs/framework/react/guides/query-invalidation), and [query cancellation](https://tanstack.com/query/v5/docs/framework/react/guides/query-cancellation).

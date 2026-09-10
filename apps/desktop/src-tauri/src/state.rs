@@ -17,6 +17,8 @@ pub enum StateError {
     InvalidOption,
     #[error("application database is unavailable")]
     Poisoned,
+    #[error("application database is closed")]
+    Closed,
     #[error("database count exceeds the exact JSON integer range")]
     CountRange,
 }
@@ -66,8 +68,12 @@ impl StartupOptions {
 }
 
 pub struct AppState {
-    store: Mutex<Store>,
+    database: Mutex<Option<Database>>,
     info: AppInfo,
+}
+
+struct Database {
+    store: Store,
     // Declared last: SQLite closes before the temporary directory is removed.
     _fixture_directory: Option<tempfile::TempDir>,
 }
@@ -105,9 +111,11 @@ impl AppState {
             listening: false,
         };
         Ok(Self {
-            store: Mutex::new(store),
+            database: Mutex::new(Some(Database {
+                store,
+                _fixture_directory: directory,
+            })),
             info,
-            _fixture_directory: directory,
         })
     }
     #[cfg(all(debug_assertions, feature = "fixtures"))]
@@ -147,11 +155,23 @@ impl AppState {
         self.info.clone()
     }
     pub fn db_counts(&self) -> Result<DbCounts, StateError> {
-        self.store
+        self.database
             .lock()
             .map_err(|_| StateError::Poisoned)?
+            .as_ref()
+            .ok_or(StateError::Closed)?
+            .store
             .counts()?
             .try_into()
             .map_err(|_| StateError::CountRange)
+    }
+
+    /// Tauri exits the process without dropping managed state. Close resources
+    /// explicitly on its Exit event, serialized with any in-flight database read.
+    pub fn shutdown(&self) {
+        self.database
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
     }
 }

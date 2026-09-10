@@ -2,7 +2,7 @@ import { MetricCell, type MetricCellProps } from './MetricCell';
 import { delta as formatDelta, isMeasured } from './format';
 import { MetricIcon, type MetricIconName, type MetricTone } from './metric-icons';
 import { RulePopover } from './RulePopover';
-import { ruleText, type RuleId } from './rules';
+import type { RuleId } from './rules';
 
 export interface StatTileProps extends Pick<MetricCellProps, 'value' | 'format' | 'reason'> {
   label: string;
@@ -31,40 +31,29 @@ export function StatTile({
   tip,
 }: StatTileProps) {
   return (
-    <RulePopover ruleId={ruleId} context={tip} className="xt-stat-anchor">
-      {(trigger) => (
-        <button
-          {...trigger}
-          type="button"
-          tabIndex={0}
-          className="xt-stat-tile"
-          title={`${ruleId} · ${ruleText(ruleId)}${tip ? `\n${tip}` : ''}`}
-        >
+    <RulePopover ruleId={ruleId} context={tip}>
+      <button type="button" className="xt-stat-tile">
+        <span className="xt-stat-label-group">
           <MetricIcon name={icon} tone={iconTone} />
-          <span className="xt-stat-content">
-            <span className="xt-stat-label">
-              <span className="xt-stat-label-text">{label}</span>
-              <span className="xt-rule-chip" data-size="sm" aria-hidden="true">
-                {ruleId}
+          <span className="xt-stat-label">{label}</span>
+        </span>
+        <span className="xt-stat-row">
+          <span className="xt-stat-value">
+            <MetricCell value={value} format={format} reason={reason} size={18} />
+            {unit && <span className="xt-stat-unit">{unit}</span>}
+            {isMeasured(value) && typeof delta === 'number' && Number.isFinite(delta) && (
+              <span className="xt-stat-delta" data-tone={deltaTone}>
+                {formatDelta(delta)}
               </span>
-            </span>
-            <span className="xt-stat-row">
-              <MetricCell value={value} format={format} reason={reason} size={18} />
-              {unit && <span className="xt-stat-unit">{unit}</span>}
-              {isMeasured(value) && typeof delta === 'number' && Number.isFinite(delta) && (
-                <span className="xt-stat-delta" data-tone={deltaTone}>
-                  {formatDelta(delta)}
-                </span>
-              )}
-            </span>
+            )}
           </span>
           {aside && (
             <span className="xt-stat-aside" title={aside}>
               {aside}
             </span>
           )}
-        </button>
-      )}
+        </span>
+      </button>
     </RulePopover>
   );
 }

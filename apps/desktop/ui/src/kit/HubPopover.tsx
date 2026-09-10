@@ -1,9 +1,9 @@
-import { Popover, type PopoverProps } from './Popover';
+import { Popover, PopoverClose, type PopoverProps } from './Popover';
 import '../styles/sidebar.css';
 
 export interface HubPopoverProps extends Pick<
   PopoverProps,
-  'id' | 'open' | 'onOpenChange' | 'anchorRef' | 'positionRef'
+  'id' | 'open' | 'onOpenChange' | 'handle' | 'positionAnchor'
 > {
   connected?: boolean;
   teamLabel?: string;
@@ -29,15 +29,9 @@ export function HubPopover({
       <div className="xt-hub-content">
         <div className="xt-hub-heading">
           <span>XTrace Hub</span>
-          <button
-            type="button"
-            tabIndex={0}
-            popoverTarget={popover.id}
-            popoverTargetAction="hide"
-            aria-label="Close XTrace Hub"
-          >
+          <PopoverClose type="button" tabIndex={0} aria-label="Close XTrace Hub">
             esc
-          </button>
+          </PopoverClose>
         </div>
         <h2 id={`${popover.id}-title`}>
           {connected
@@ -46,16 +40,16 @@ export function HubPopover({
         </h2>
         <ul>
           <li>
-            <strong>Shared context</strong>
-            <span>Bring your team's development context together.</span>
+            <strong>Team sharing</strong>
+            <span>Weekly cards, sessions and PR costs visible to your team.</span>
           </li>
           <li>
-            <strong>Shared rules</strong>
-            <span>Keep team guidance close to your work.</span>
+            <strong>Team governance</strong>
+            <span>One rulebook per repo, review roles, manager view.</span>
           </li>
           <li>
-            <strong>Your local workspace</strong>
-            <span>Keep using the desktop while working offline.</span>
+            <strong>Team rule enforcement</strong>
+            <span>Rules fire inside every teammate's agent, with a shared fires ledger.</span>
           </li>
         </ul>
         {!connected && (

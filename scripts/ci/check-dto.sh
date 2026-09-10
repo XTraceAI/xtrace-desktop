@@ -45,3 +45,7 @@ except ValueError as error:
     sys.exit(str(error))
 print('Generated DTO parity passed.')
 PY
+
+if [[ $# == 0 ]]; then
+  node --test scripts/ci/native/dto.test.mjs
+fi

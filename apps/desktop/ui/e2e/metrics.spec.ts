@@ -1,11 +1,10 @@
 import { expect, test } from '@playwright/test';
-
 import { rules } from '../src/kit/rules';
 
 test.use({ viewport: { width: 1120, height: 720 } });
 
 for (const theme of ['dark', 'light'] as const) {
-  test(`metric geometry, unknown values, and native rule tooltips in ${theme}`, async ({
+  test(`metric geometry, unknown values, and passive rule tooltips in ${theme}`, async ({
     page,
   }, info) => {
     const errors: string[] = [];
@@ -21,6 +20,10 @@ for (const theme of ['dark', 'light'] as const) {
       expect(box!.width).toBe(300);
       expect(box!.height).toBe(52);
       expect(await tile.locator('button').count()).toBe(0);
+      const label = await tile.locator('.xt-stat-label').boundingBox();
+      const value = await tile.locator('.xt-metric-cell').boundingBox();
+      expect(value!.x).toBeGreaterThan(label!.x + label!.width);
+      expect(Math.abs(label!.y + label!.height / 2 - value!.y - value!.height / 2)).toBeLessThan(3);
     }
     await expect(page.getByRole('button', { name: /Unmeasured tokens/ })).toContainText(
       'Unmeasured: Cursor Agent CLI usage is absent',
@@ -95,6 +98,7 @@ for (const theme of ['dark', 'light'] as const) {
       if (ruleId === 'M-04')
         await page.screenshot({ path: info.outputPath(`definition-${theme}.png`) });
       await page.keyboard.press('Escape');
+      await expect(tooltip).toBeHidden();
     }
 
     // Keep the trigger focused while the pointer clicks a control beneath the top-layer text.
@@ -112,3 +116,38 @@ for (const theme of ['dark', 'light'] as const) {
     expect(errors).toEqual([]);
   });
 }
+
+test('rule tooltip follows its theme scope and escapes clipping', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/e2e/metrics.html');
+  const scope = page.getByTestId('theme-scope');
+  const trigger = page.getByTestId('scope-rule').getByRole('button');
+  const tooltip = page.getByRole('tooltip');
+  await trigger.hover();
+  await expect(tooltip).toBeVisible();
+  const canvas = await scope.evaluate((element) =>
+    getComputedStyle(element).getPropertyValue('--canvas').trim(),
+  );
+  expect(
+    await tooltip.evaluate((element) =>
+      getComputedStyle(element).getPropertyValue('--canvas').trim(),
+    ),
+  ).toBe(canvas);
+  expect(
+    await tooltip.evaluate((element) => element.closest('[data-testid="theme-scope"]')),
+  ).toBeNull();
+  await page.getByRole('button', { name: 'Switch scoped theme' }).click();
+  await expect(tooltip).toBeHidden();
+  await trigger.hover();
+  await expect(tooltip).toBeVisible();
+  await expect(scope).toHaveAttribute('data-theme', 'dark');
+  const darkCanvas = await scope.evaluate((element) =>
+    getComputedStyle(element).getPropertyValue('--canvas').trim(),
+  );
+  expect(darkCanvas).not.toBe(canvas);
+  expect(
+    await tooltip.evaluate((element) =>
+      getComputedStyle(element).getPropertyValue('--canvas').trim(),
+    ),
+  ).toBe(darkCanvas);
+});

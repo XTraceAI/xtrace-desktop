@@ -26,7 +26,7 @@ test('navigates real shell routes with canonical F1 counts, shortcuts and both t
   await expect(
     page.getByRole('status', { name: '' }).filter({ hasText: 'fixture F1' }),
   ).toBeVisible();
-  await expect(page.locator('.xt-brand-mark img')).toHaveAttribute('src', '/mark.png');
+  await expect(page.locator('.xt-brand-mark img')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toHaveAttribute(
     'aria-current',
     'page',
@@ -56,8 +56,11 @@ test('navigates real shell routes with canonical F1 counts, shortcuts and both t
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled();
   await expect(page.locator('aside [aria-current="page"]')).toHaveCount(0);
-  await page.getByLabel('Appearance', { exact: true }).selectOption('light');
+  await page.getByRole('combobox', { name: 'Appearance' }).selectOption('light');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Dashboard');
+  await page.mouse.move(600, 300);
   await assertFits(page);
   await page.screenshot({ path: info.outputPath('shell-light.png') });
   expect(errors).toEqual([]);
@@ -72,7 +75,7 @@ test('reloads every placeholder route and preserves canonical PR query context',
     ['/sessions', 'Sessions'],
     ['/prs', 'Pull requests'],
     ['/rulebook', 'Rulebook'],
-    ['/rulebook/R-05', 'Rule detail'],
+    ['/rulebook/sample-rule', 'Rule detail'],
     ['/rulebook/fires', 'Rule fires'],
     ['/settings', 'Settings'],
     ['/leaderboard', 'Leaderboard'],
@@ -106,7 +109,7 @@ test('renders bundled fonts and remains navigable with external network denied',
   const fonts = new Set<string>();
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url());
-    if (url.origin !== 'http://127.0.0.1:5181') {
+    if (!['127.0.0.1', 'localhost'].includes(url.hostname)) {
       external.push(url.origin);
       await route.abort();
     } else {

@@ -5,18 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { ATTESTATION } from '../publication/metadata.mjs';
-import { checkSourcePolicy, planSlot, sourceCommits } from './check-pr.mjs';
+import { checkSourcePolicy, validateDescription, sourceCommits } from './check-pr.mjs';
 
 const repository = 'example/project';
 const base = 'a'.repeat(40);
 const synthetic = 'b'.repeat(40);
-const policy = {
-  version: 1,
-  slots: { 'FND-02': { stage: 1 }, 'FND-12': { stage: 3 } },
-  maintenance: { 'publication-checks': { stage: 1, branch: 'feat/publication-checks' } },
-};
-const body = (control = 'Plan slot: FND-02') =>
-  `${control}\n\n## Change\n\nAdd a synthetic capability.\n\n## Verification\n\nRun the synthetic case; expect success.\n\n- [x] ${ATTESTATION}\n`;
+const body = () =>
+  `## Change\n\nAdd a synthetic capability.\n\n## Verification\n\nRun the synthetic case; expect success.\n\n- [x] ${ATTESTATION}\n`;
 
 function fixture(commits) {
   const head = commits.at(-1).sha;
@@ -29,7 +24,7 @@ function fixture(commits) {
       title: 'Synthetic change',
       body: body(),
       base: { sha: base, ref: 'main', repo: { full_name: repository } },
-      head: { sha: head, ref: 'feat/fnd-02-ci' },
+      head: { sha: head, ref: 'feat/desktop-ci' },
     },
     commits,
   };
@@ -37,13 +32,6 @@ function fixture(commits) {
     const root = '/repos/' + repository;
     if (path === root) return { default_branch: 'main' };
     if (path === root + '/commits/main') return { sha: base };
-    if (path === root + '/contents/scripts/ci/stages.json?ref=' + base)
-      return {
-        type: 'file',
-        encoding: 'base64',
-        size: 500,
-        content: Buffer.from(JSON.stringify(policy)).toString('base64'),
-      };
     if (path === root + '/pulls/3') {
       state.reads++;
       return structuredClone(state.pr);
@@ -89,38 +77,24 @@ const execute = (state, eventName = 'pull_request', extra = {}) =>
     ...extra,
   });
 
-test('classification is an explicit real paragraph bound to a curated branch, with acceptance sections', () => {
-  assert.equal(planSlot(body(), 'feat/fnd-02-ci', policy).stage, 1);
-  assert.equal(
-    planSlot(body('Maintenance: publication-checks'), 'feat/publication-checks', policy).stage,
-    1,
-  );
+test('public PR descriptions require substantive change and verification sections', () => {
+  assert.doesNotThrow(() => validateDescription(body()));
   for (const verification of [
     '- Run `pnpm check`; expect all checks to pass.\n- Actual result: passed.',
     '| Case | Result |\n| --- | --- |\n| Synthetic check | Passed |',
   ])
-    assert.equal(
-      planSlot(
-        body().replace('Run the synthetic case; expect success.', verification),
-        'feat/fnd-02-ci',
-        policy,
-      ).stage,
-      1,
+    assert.doesNotThrow(() =>
+      validateDescription(body().replace('Run the synthetic case; expect success.', verification)),
     );
   for (const text of [
-    body('Plan slot: UNKNOWN'),
-    body('`Plan slot: FND-02`'),
-    body('```\nPlan slot: FND-02\n```'),
-    body('<!-- Plan slot: FND-02 -->'),
-    body('Plan slot: FND-02\n\nPlan slot: FND-12'),
+    '',
     body().replace('## Verification', '## Missing'),
     body().replace('Run the synthetic case; expect success.', '- Describe each acceptance case.'),
+    body().replace('Add a synthetic capability.', 'Describe the problem and resulting behavior.'),
+    '```md\n' + body() + '\n```',
+    body().replace('Run the synthetic case; expect success.', '<!-- Test results -->'),
   ])
-    assert.throws(() => planSlot(text, 'feat/fnd-02-ci', policy));
-  assert.throws(() => planSlot(body(), 'feat/fnd-12-other', policy));
-  assert.throws(() =>
-    planSlot(body('Maintenance: publication-checks'), 'feat/fnd-12-other', policy),
-  );
+    assert.throws(() => validateDescription(text), /Change and Verification/);
 });
 
 test('real Git source commits drive DCO on PR and queue; unsigned bootstrap/synthetic commits are not substituted', async () => {
@@ -159,6 +133,28 @@ test('real Git source commits drive DCO on PR and queue; unsigned bootstrap/synt
       assert.equal(await execute(fixture([signed]), event), 1);
       await assert.rejects(execute(fixture([signed, unsigned]), event), /DCO sign-off/);
     }
+    git(
+      'commit',
+      '--allow-empty',
+      '--author=Test Maintainer <maintainer@example.com>',
+      '-m',
+      'Squashed contribution\n\nSigned-off-by: Test Contributor <contributor@example.com>',
+    );
+    const squash = object();
+    // The same author/trailer mismatch must fail as a contributed PR commit,
+    // while the post-merge build must not treat it as a new contribution.
+    await assert.rejects(execute(fixture([squash])), /DCO sign-off/);
+    assert.equal(
+      await execute(fixture([squash]), 'push', {
+        event: {
+          repository: { full_name: repository, default_branch: 'main' },
+          ref: 'refs/heads/main',
+          before: signed.sha,
+          after: squash.sha,
+        },
+      }),
+      null,
+    );
     const state = fixture([signed]);
     state.pr.commits = 251;
     await assert.rejects(sourceCommits(state.api, repository, state.pr), /pagination/);
@@ -170,7 +166,27 @@ test('real Git source commits drive DCO on PR and queue; unsigned bootstrap/synt
   }
 });
 
-test('dependent stage fails without approval while producer foundations pass without configured checkpoints', async () => {
+test('post-merge policy only accepts the expected default-branch push and valid source identities', async () => {
+  const event = {
+    repository: { full_name: repository, default_branch: 'main' },
+    ref: 'refs/heads/main',
+    before: base,
+    after: synthetic,
+  };
+  const api = async () => assert.fail('Post-merge policy must not resolve mutable source PRs.');
+  const run = (value) => checkSourcePolicy({ api, repository, eventName: 'push', event: value });
+  assert.equal(await run(event), null);
+  for (const value of [
+    { ...event, repository: { ...event.repository, full_name: 'other/project' } },
+    { ...event, ref: 'refs/heads/feature' },
+    { ...event, repository: { full_name: repository }, ref: 'refs/heads/undefined' },
+    { ...event, before: 'invalid' },
+    { ...event, after: 'invalid' },
+  ])
+    await assert.rejects(run(value));
+});
+
+test('signed contributions pass on ordinary contributor branches', async () => {
   const source = {
     sha: 'c'.repeat(40),
     commit: {
@@ -178,12 +194,12 @@ test('dependent stage fails without approval while producer foundations pass wit
       author: { name: 'Test Contributor', email: 'contributor@example.com' },
     },
   };
-  const state = fixture([source]);
-  assert.equal(await execute(state), 1);
-  state.pr.body = body('Plan slot: FND-12');
-  state.pr.head.ref = 'feat/fnd-12-next';
-  for (const event of ['pull_request', 'merge_group'])
-    await assert.rejects(execute(state, event), /approvers/);
+  for (const branch of ['feat/desktop-ci', 'fix/startup', 'contributor/topic']) {
+    const state = fixture([source]);
+    state.pr.head.ref = branch;
+    for (const event of ['pull_request', 'merge_group'])
+      assert.equal(await execute(state, event), 1);
+  }
 });
 
 test('source metadata changes and queue API failure cannot leave a successful policy result', async () => {
@@ -256,59 +272,4 @@ test('a multi-PR merge group validates every constituent source commit', async (
   await assert.rejects(execute(state, 'merge_group'), /DCO sign-off/);
   next.commits[0].commit.message = signed.commit.message;
   assert.equal(await execute(state, 'merge_group'), 2);
-});
-
-test('PR and queue require linked current checkpoint approval and reread its identity', async () => {
-  const signed = {
-    sha: 'c'.repeat(40),
-    commit: {
-      message: 'Change\n\nSigned-off-by: Test Contributor <contributor@example.com>',
-      author: { name: 'Test Contributor', email: 'contributor@example.com' },
-    },
-  };
-  const state = fixture([signed]);
-  state.pr.body = body('Plan slot: FND-12') + '\nCheckpoint evidence: #17\n';
-  state.pr.head.ref = 'feat/fnd-12-next';
-  const evidence = { checkpoint: 'CP1', source: base, artifacts: [], decisions: 'f'.repeat(64) };
-  const issue = { state: 'open', body: JSON.stringify(evidence) };
-  const comments = [
-    {
-      id: 20,
-      user: { type: 'User', login: 'maintainer' },
-      body: JSON.stringify({ ...evidence, status: 'approved' }),
-    },
-  ];
-  const original = state.api;
-  let issueReads = 0;
-  let race = false;
-  state.api = async (path, ...args) => {
-    if (path === '/repos/' + repository + '/issues/3/comments?per_page=100&page=1') return [];
-    if (path === '/repos/' + repository + '/issues/17') {
-      issueReads++;
-      return {
-        ...issue,
-        body:
-          race && issueReads > 1
-            ? JSON.stringify({ ...evidence, source: 'd'.repeat(40) })
-            : issue.body,
-      };
-    }
-    if (path === '/repos/' + repository + '/issues/17/comments?per_page=100&page=1')
-      return structuredClone(comments);
-    if (path === '/repos/' + repository + '/compare/' + base + '...' + base)
-      return { status: 'identical' };
-    return original(path, ...args);
-  };
-  const config = { checkpoints: { approvers: ['maintainer'], issues: { CP1: 17 } } };
-  for (const event of ['pull_request', 'merge_group'])
-    assert.equal(await execute(state, event, config), 1);
-  state.pr.body = body('Plan slot: FND-12');
-  await assert.rejects(execute(state, 'pull_request', config), /must link/);
-  state.pr.body += '\nCheckpoint evidence: #17\n';
-  comments[0].body = JSON.stringify({ ...evidence, status: 'revoked' });
-  await assert.rejects(execute(state, 'merge_group', config), /missing or stale/);
-  comments[0].body = JSON.stringify({ ...evidence, status: 'approved' });
-  race = true;
-  issueReads = 0;
-  await assert.rejects(execute(state, 'merge_group', config), /evidence changed/);
 });

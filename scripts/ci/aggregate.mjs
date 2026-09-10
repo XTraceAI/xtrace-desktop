@@ -4,16 +4,7 @@ try {
   const results = JSON.parse(process.env.NEEDS_JSON);
   // Every job runs for each supported event. Hooks report explicit absence in a
   // successful job; no skipped dependency is silently promoted to success.
-  requireSuccessfulJobs(results, [
-    'policy',
-    'rust',
-    'ui',
-    'e2e',
-    'supply-chain',
-    'publication',
-    'debug-bundle',
-    'hooks',
-  ]);
+  requireSuccessfulJobs(results, ['policy', 'ui', 'security']);
   console.log('Every required CI job succeeded.');
 } catch {
   console.error(

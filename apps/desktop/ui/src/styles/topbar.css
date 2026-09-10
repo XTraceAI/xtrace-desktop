@@ -13,7 +13,7 @@
 .xt-topbar-breadcrumb {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex: 1;
   min-width: 0;
   font:
@@ -51,6 +51,10 @@
   border-radius: 8px;
   background: var(--track);
 }
+.xt-range-presets {
+  display: flex;
+  gap: 2px;
+}
 .xt-range button {
   height: 24px;
   padding: 0 10px;
@@ -64,14 +68,21 @@
     monospace;
   cursor: pointer;
 }
+.xt-range button[aria-checked='true'],
 .xt-range button[aria-pressed='true'] {
   color: var(--ink);
   background: var(--surface);
   font-weight: 600;
   box-shadow: var(--segment-shadow);
 }
-.xt-range button:hover:not(:disabled):not([aria-pressed='true']) {
+.xt-range button:hover:not(:disabled):not([aria-pressed='true']):not([aria-checked='true']) {
   color: var(--secondary);
+}
+.xt-range button.xt-range-custom {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  padding: 0;
 }
 .xt-topbar-action {
   display: inline-flex;
@@ -110,18 +121,25 @@
   width: 16px;
   height: 16px;
   border-radius: 4px;
-  color: var(--host-glyph-ink);
-  background: var(--host-codex);
   font:
     600 8px/1 'Geist Mono',
     Menlo,
     monospace;
 }
-.xt-host-glyph-mark[data-host='claude'] {
-  background: var(--host-claude);
+.xt-host-glyph-mark img,
+.xt-host-glyph > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 1px;
 }
-.xt-host-glyph-mark[data-host='cursor'] {
-  background: var(--host-cursor);
+.xt-host-glyph-mark[data-host='cursor'] img,
+.xt-host-cursor .xt-host-glyph > img {
+  background: var(--host-logo-light-surface);
 }
 .xt-host-glyph-mark[data-host='unknown'] {
   color: var(--meta);

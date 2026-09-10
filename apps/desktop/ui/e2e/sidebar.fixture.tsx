@@ -18,14 +18,17 @@ function Fixture() {
         <Sidebar
           activeKey={activeKey}
           onNavigate={setActiveKey}
-          rulebookCount={3}
+          rulebookCount={5}
           hosts={[
-            { host: 'claude', tokens: 120000, fillPercent: 75 },
-            { host: 'codex', tokens: 0, fillPercent: 0 },
+            { host: 'claude', tokens: 5500000, fillPercent: 100 },
+            { host: 'codex', tokens: 400000, fillPercent: 7 },
             { host: 'cursor', tokens: null, fillPercent: 60 },
           ]}
           listener={{ status: 'listening', port: 47421 }}
-          version="0.2.3"
+          version="0.1.0"
+          tokensCaption="since reset · Wed"
+          updateLabel="up to date"
+          onSettings={() => {}}
           theme={theme}
           onToggleTheme={toggle}
           surfaces={[

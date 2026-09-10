@@ -86,15 +86,6 @@ impl Store {
                 continue;
             };
             let incoming = prepare(input, uuid, session_id, keep_content)?;
-            let mut existing = existing_records.get_mut(uuid);
-            if let Some(stored) = existing.as_mut()
-                && (stored.session_id != session_id || stored.record_type != incoming.record_type)
-            {
-                stored.has_conflict = true;
-                transaction.execute("UPDATE records SET has_conflict=1 WHERE uuid=?1", [uuid])?;
-                stats.ignored += 1;
-                continue;
-            }
             let metadata = SessionMeta {
                 session_id: session_id.to_owned(),
                 host: input
@@ -112,7 +103,17 @@ impl Store {
                 native_session_id: input.native_session_id.clone(),
                 started_at_ms: None,
             };
+            // Conflicting ownership/type cannot exempt nonblank inputs from validation.
             validate_session(&metadata)?;
+            let mut existing = existing_records.get_mut(uuid);
+            if let Some(stored) = existing.as_mut()
+                && (stored.session_id != session_id || stored.record_type != incoming.record_type)
+            {
+                stored.has_conflict = true;
+                transaction.execute("UPDATE records SET has_conflict=1 WHERE uuid=?1", [uuid])?;
+                stats.ignored += 1;
+                continue;
+            }
             let session_enriched = merge_session(&mut session, &metadata, false);
             match existing {
                 None => {

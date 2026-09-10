@@ -128,6 +128,7 @@
 }
 .xt-toggle {
   height: 30px;
+  padding: 0 10px;
   font-size: 11px;
 }
 .xt-toggle-track {
@@ -216,6 +217,7 @@
   outline-offset: 2px;
 }
 .xt-search > svg {
+  color: var(--meta);
   width: 13px;
   height: 13px;
   flex-shrink: 0;

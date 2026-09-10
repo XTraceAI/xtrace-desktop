@@ -12,9 +12,14 @@ it('labels each known host explicitly with its own identity', () => {
       <HostGlyph host="cursor" />
     </>,
   );
-  for (const label of ['Claude', 'Codex', 'Cursor']) {
+  for (const [label, file] of [
+    ['Claude', 'claude.svg'],
+    ['Codex', 'codex.webp'],
+    ['Cursor', 'cursor.png'],
+  ]) {
     const glyph = screen.getByRole('img', { name: label });
     expect(glyph.title).toBe(label);
+    expect(glyph.querySelector('img')?.getAttribute('src')).toBe(`/hosts/${file}`);
     expect(glyph.getAttribute('data-host')).toBe(label.toLowerCase());
   }
 });

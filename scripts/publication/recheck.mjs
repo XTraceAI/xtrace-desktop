@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,21 +10,11 @@ import { withCandidateSource } from './source.mjs';
 import {
   prNumber,
   PublicationError,
-  queueMembers,
   readQueue,
   repositoryName,
   requireValue,
   sha,
 } from './metadata.mjs';
-
-const events = new Set([
-  'pull_request_target',
-  'issues',
-  'issue_comment',
-  'schedule',
-  'workflow_run',
-  'workflow_dispatch',
-]);
 
 export async function scanText(repo, texts, source, sourceOptions) {
   const temporary = await mkdtemp(join(tmpdir(), 'publication-content-'));
@@ -53,65 +43,32 @@ export async function scanText(repo, texts, source, sourceOptions) {
 
 // This entrypoint only reads trusted default-branch code. PR data is never
 // checked out or executed; checks:write is used only for this named context.
-export async function recheckPublication({
-  api,
-  repository,
-  repo,
-  eventName,
-  event,
-  scan = scanText,
-}) {
+export async function preparePublication({ api, repository, eventName, event, runId }) {
   repositoryName(repository);
+  prNumber(runId);
   requireValue(
-    events.has(eventName) &&
-      (event.repository?.full_name === repository || eventName === 'schedule'),
-    'Unsupported publication content event.',
+    eventName === 'workflow_dispatch' && event.repository?.full_name === repository,
+    'Publication audits require an explicit workflow dispatch for this repository.',
   );
   const path = '/repos/' + repository;
-  if (eventName === 'workflow_run') {
-    prNumber(event.workflow_run?.id);
-    const run = await api(path + '/actions/runs/' + event.workflow_run.id);
-    const workflows = await Promise.all(
-      ['publication.yml', 'publication-review.yml'].map((file) =>
-        api(path + '/actions/workflows/' + file),
-      ),
-    );
-    requireValue(
-      workflows.every((workflow) => Number.isSafeInteger(workflow.id) && workflow.id > 0),
-      'Publication signal workflow identities are unavailable.',
-    );
-    const allowedEvents = [
-      ['pull_request', 'merge_group'],
-      ['pull_request_review', 'pull_request_review_comment'],
-    ];
-    requireValue(
-      run.repository?.full_name === repository &&
-        workflows.some(
-          (workflow, index) =>
-            run.workflow_id === workflow.id && allowedEvents[index].includes(run.event),
-        ) &&
-        run.status === 'completed',
-      'Publication signal does not belong to the expected repository workflow.',
-    );
-  }
-  // Invalidate existing queue results before any fallible sequential source scan.
-  // Later metadata/read failures then leave a blocking pending check in place.
+  // Write terminal failures before scheduling scans. Cancellation, setup failure or
+  // timeout cannot strand an in-progress check or preserve a previous success.
   const metadata = await api(path);
   requireValue(typeof metadata.default_branch === 'string', 'Default branch is unavailable.');
-  const base = sha(
-    (await api(path + '/commits/' + encodeURIComponent(metadata.default_branch))).sha,
-  );
   const queue = await readQueue(api, repository, metadata.default_branch, { allowMissing: true });
   const queuePending = [];
   for (const entry of queue) {
     const head = sha(entry.headCommit?.oid);
     const check = await api(path + '/check-runs', {
-      name: 'publication-content',
+      name: 'publication-content-advisory',
       head_sha: head,
-      status: 'in_progress',
+      status: 'completed',
+      conclusion: 'failure',
+      external_id: 'publication-content-advisory:' + runId,
       output: {
-        title: 'Queue disclosure review pending',
-        summary: 'Checking current source PR disclosure snapshots.',
+        title: 'Queue publication checks are not activated',
+        summary:
+          'Trusted combined-tree scanning and live queue acceptance are required before queue activation.',
       },
     });
     requireValue(Number.isSafeInteger(check.id), 'GitHub did not create the queue content check.');
@@ -126,131 +83,113 @@ export async function recheckPublication({
     requireValue(pr.state === 'open' && !seen.has(pr.number), 'Open PR pagination is incomplete.');
     seen.add(pr.number);
     const check = await api(path + '/check-runs', {
-      name: 'publication-content',
+      name: 'publication-content-advisory',
       head_sha: pr.head.sha,
-      status: 'in_progress',
+      status: 'completed',
+      conclusion: 'failure',
+      external_id: 'publication-content-advisory:' + runId,
       output: {
-        title: 'Disclosure review pending',
-        summary: 'Checking the current public content snapshot.',
+        title: 'Disclosure scan has not completed',
+        summary:
+          'Advisory scan incomplete. Retry incomplete runs; a maintainer must perform current disclosure review.',
       },
     });
     requireValue(Number.isSafeInteger(check.id), 'GitHub did not create the content check.');
     pending.push({ number: pr.number, head: pr.head.sha, check: check.id });
   }
-  let failures = 0;
-  const outcomes = new Map();
-  for (const member of pending) {
-    let conclusion = 'failure';
-    let verifiedDigest;
-    let verifiedBase;
-    let summary = 'Content check could not complete; publication remains blocked.';
-    try {
-      const before = await readPublicContent(api, repository, member.number);
-      requireValue(before.pr.head.sha === member.head, 'Source PR changed; rerun content checks.');
-      requireDisclosure(before);
-      await scan(repo, before.texts, {
-        repository,
-        number: member.number,
-        head: member.head,
-        base: before.pr.base.sha,
-      });
-      const after = await readPublicContent(api, repository, member.number);
-      requireDisclosure(after);
-      requireValue(
-        after.pr.head.sha === member.head &&
-          after.pr.base.sha === before.pr.base.sha &&
-          after.digest === before.digest,
-        'Public content changed during the check; repeat disclosure review.',
-      );
-      // Read the exact current base and head immediately before writing success.
-      const current = await api(path + '/pulls/' + member.number);
-      requireValue(
-        current.state === 'open' &&
-          current.head?.sha === member.head &&
-          current.base?.sha === before.pr.base.sha &&
-          current.body === after.pr.body,
-        'Source PR changed before the result was written; rerun content checks.',
-      );
-      conclusion = 'success';
-      verifiedDigest = before.digest;
-      verifiedBase = before.pr.base.sha;
-      summary =
-        'Trusted scanning found no detected secret in candidate source or current disclosure content. The snapshot is current; semantic review remains the reviewer’s responsibility.';
-    } catch (error) {
-      failures++;
-      if (error instanceof PublicationError) summary = error.message;
-    }
-    await api(
-      path + '/check-runs/' + member.check,
-      {
-        status: 'completed',
-        conclusion,
-        output: {
-          title:
-            conclusion === 'success' ? 'Disclosure snapshot current' : 'Disclosure review required',
-          summary,
-        },
-      },
-      'PATCH',
-    );
-    outcomes.set(member.number, {
+  requireValue(
+    pending.length <= 256,
+    'More than 256 open PRs exceed the supported scan matrix; all created checks remain failed.',
+  );
+  return { pending, queue: queuePending };
+}
+
+export async function checkPublication({
+  api,
+  repository,
+  repo,
+  member,
+  runId,
+  trustedHead,
+  scan = scanText,
+}) {
+  repositoryName(repository);
+  prNumber(runId);
+  sha(trustedHead);
+  prNumber(member?.number);
+  sha(member?.head);
+  prNumber(member?.check);
+  const path = '/repos/' + repository;
+  const check = await api(path + '/check-runs/' + member.check);
+  requireValue(
+    check.name === 'publication-content-advisory' &&
+      check.head_sha === member.head &&
+      check.external_id === 'publication-content-advisory:' + runId &&
+      check.status === 'completed' &&
+      check.conclusion === 'failure',
+    'Content check does not belong to this run and source head.',
+  );
+  let conclusion = 'failure';
+  let summary = 'Advisory scan could not complete; maintainer disclosure review is required.';
+  try {
+    const before = await readPublicContent(api, repository, member.number);
+    requireValue(before.pr.head.sha === member.head, 'Source PR changed; rerun content checks.');
+    requireDisclosure(before);
+    await scan(repo, before.texts, {
+      repository,
+      number: member.number,
       head: member.head,
-      base: verifiedBase,
-      conclusion,
-      digest: verifiedDigest,
+      base: before.pr.base.sha,
+      retainedHeads: before.content.headRevisions.heads,
     });
-  }
-  for (const { head, check } of queuePending) {
-    let conclusion = 'failure';
-    try {
-      const members = queueMembers({ base_sha: base, head_sha: head }, queue);
-      requireValue(
-        members.every(
-          (member) =>
-            outcomes.get(member.number)?.head === member.head &&
-            outcomes.get(member.number)?.conclusion === 'success',
-        ),
-        'Queue member disclosure review has not passed.',
-      );
-      const currentQueue = await readQueue(api, repository, metadata.default_branch);
-      requireValue(
-        JSON.stringify(currentQueue) === JSON.stringify(queue) &&
-          (await api(path + '/commits/' + encodeURIComponent(metadata.default_branch))).sha ===
-            base,
-        'Merge queue changed during disclosure checks.',
-      );
-      // Refresh source content again immediately before certifying a queue head.
-      for (const member of members) {
-        const current = await readPublicContent(api, repository, member.number);
-        requireDisclosure(current);
-        requireValue(
-          current.pr.head.sha === member.head &&
-            current.pr.base.sha === outcomes.get(member.number)?.base &&
-            current.digest === outcomes.get(member.number)?.digest,
-          'Queue source content changed after scanning.',
-        );
-      }
-      conclusion = 'success';
-    } catch {
-      failures++;
-    }
-    await api(
-      path + '/check-runs/' + check,
-      {
-        status: 'completed',
-        conclusion,
-        output: {
-          title: 'Queue disclosure review',
-          summary:
-            conclusion === 'success'
-              ? 'All current source PR disclosure snapshots passed.'
-              : 'Queue metadata or a source PR disclosure snapshot is stale or incomplete.',
-        },
-      },
-      'PATCH',
+    const after = await readPublicContent(api, repository, member.number);
+    requireDisclosure(after);
+    requireValue(
+      after.pr.head.sha === member.head &&
+        after.pr.base.sha === before.pr.base.sha &&
+        after.digest === before.digest,
+      'Public content changed during the check; repeat disclosure review.',
     );
+    const metadata = await api(path);
+    requireValue(typeof metadata.default_branch === 'string', 'Default branch is unavailable.');
+    const trusted = await api(path + '/commits/' + encodeURIComponent(metadata.default_branch));
+    requireValue(
+      trusted.sha === trustedHead,
+      'Trusted default-branch code changed during scanning; rerun checks.',
+    );
+    // Refresh the complete disclosure after the trusted-code requests, with no
+    // intervening API work before writing the result. GitHub offers no atomic
+    // content-read/check-write operation; later edits still need reconciliation.
+    const current = await readPublicContent(api, repository, member.number);
+    requireDisclosure(current);
+    requireValue(
+      current.pr.head.sha === member.head &&
+        current.pr.base.sha === before.pr.base.sha &&
+        current.digest === before.digest,
+      'Public content changed before the result was written; repeat disclosure review.',
+    );
+    conclusion = 'success';
+    summary =
+      'Advisory scan found no detected secret in the observed source and disclosure snapshot. This check is not merge authorization; perform current local disclosure review.';
+  } catch (error) {
+    if (error instanceof PublicationError) summary = error.message;
   }
-  return { checked: pending.length + queue.length, failures };
+  await api(
+    path + '/check-runs/' + member.check,
+    {
+      status: 'completed',
+      conclusion,
+      output: {
+        title:
+          conclusion === 'success'
+            ? 'Advisory disclosure snapshot current'
+            : 'Disclosure review required',
+        summary,
+      },
+    },
+    'PATCH',
+  );
+  return { checked: 1, failures: conclusion === 'failure' ? 1 : 0 };
 }
 
 async function main() {
@@ -277,21 +216,46 @@ async function main() {
       actual === sha(expected.sha),
       'Content checks must execute the current trusted default branch.',
     );
-    const result = await recheckPublication({
-      api,
-      repository,
-      repo,
-      eventName: process.env.GITHUB_EVENT_NAME,
-      event,
-    });
-    console.log(
-      'Content checks completed for ' +
-        result.checked +
-        ' PR(s); blocked: ' +
-        result.failures +
-        '.',
+    const runId = prNumber(Number(process.env.GITHUB_RUN_ID));
+    const mode = process.argv[2];
+    requireValue(
+      ['prepare', 'check'].includes(mode) && process.argv.length === 3,
+      'Choose a supported publication content phase.',
     );
-    process.exitCode = result.failures ? 1 : 0;
+    if (mode === 'prepare') {
+      const result = await preparePublication({
+        api,
+        repository,
+        runId,
+        eventName: process.env.GITHUB_EVENT_NAME,
+        event,
+      });
+      requireValue(Boolean(process.env.GITHUB_OUTPUT), 'Workflow output is unavailable.');
+      await appendFile(
+        process.env.GITHUB_OUTPUT,
+        'matrix=' +
+          JSON.stringify({ include: result.pending }) +
+          '\n' +
+          'count=' +
+          result.pending.length +
+          '\n' +
+          'trusted=' +
+          actual +
+          '\n',
+      );
+      console.log('Scheduled ' + result.pending.length + ' independent content scans.');
+    } else {
+      const result = await checkPublication({
+        api,
+        repository,
+        repo,
+        runId,
+        member: JSON.parse(process.env.PUBLICATION_MEMBER),
+        trustedHead: actual,
+      });
+      console.log('Advisory scan completed; failures: ' + result.failures + '.');
+      process.exitCode = result.failures ? 1 : 0;
+    }
   } catch (error) {
     console.error(
       error instanceof PublicationError

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runHook } from './run-hook.mjs';
 
-test('pre-owner absence is explicit and actual installed failures are fatal', async () => {
+test('absence before installation is explicit and actual installed failures are fatal', async () => {
   const root = await mkdtemp(join(tmpdir(), 'xtrace-hook-test-'));
   try {
     await mkdir(join(root, 'scripts/ci'), { recursive: true });

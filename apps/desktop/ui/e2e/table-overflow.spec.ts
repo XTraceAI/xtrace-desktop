@@ -1,7 +1,9 @@
 import { expect, test } from '@playwright/test';
 test.use({ viewport: { width: 1120, height: 900 } });
 for (const theme of ['dark', 'light'] as const) {
-  test(`table containment, keyboard, host filters and charts in ${theme}`, async ({ page }) => {
+  test(`table containment, keyboard, host filters and charts in ${theme}`, async ({
+    page,
+  }, info) => {
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.emulateMedia({ colorScheme: theme });
@@ -24,8 +26,11 @@ for (const theme of ['dark', 'light'] as const) {
     await scroll.evaluate((el) => {
       el.scrollLeft = 0;
     });
+    await expect(table.locator('.xt-data-row').first()).toContainText('Improve activity layout');
     await head.getByRole('button').click();
     await expect(head).toHaveAttribute('aria-sort', 'ascending');
+    await expect(table.locator('.xt-data-row').first()).toContainText('Add session filters');
+    await expect(table.locator('.xt-data-row').last()).toContainText('Handle unknown measurements');
     await table.getByText('Select row', { exact: true }).first().click();
     await expect(table.getByRole('checkbox').first()).toBeChecked();
     await expect(page.getByRole('status', { name: 'Clicked row' })).toHaveText('none');
@@ -34,8 +39,14 @@ for (const theme of ['dark', 'light'] as const) {
     const longTitle = flexible.locator('.xt-title-cell > span');
     expect(await longTitle.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
     const first = table.getByRole('row').nth(1);
-    await first.focus();
+    await expect(first).not.toHaveAttribute('tabindex');
+    await table.getByRole('button', { name: 'Open Add session filters' }).focus();
     await page.keyboard.press('Enter');
+    await expect(page.getByRole('status', { name: 'Row activations' })).toHaveText('1');
+    await page.keyboard.press('Space');
+    await expect(page.getByRole('status', { name: 'Row activations' })).toHaveText('2');
+    await table.getByText('Add session filters', { exact: true }).click();
+    await expect(page.getByRole('status', { name: 'Row activations' })).toHaveText('3');
     await expect(page.getByRole('status', { name: 'Clicked row' })).toHaveText('sample-1');
     const toggle = table.getByRole('button', { name: 'Collapse sample-1' });
     await toggle.click();
@@ -53,6 +64,43 @@ for (const theme of ['dark', 'light'] as const) {
       page.getByRole('table', { name: 'Rules', exact: true }).getByRole('row').nth(1),
     ).toHaveCSS('height', '44px');
     await expect(first).toHaveCSS('height', '40px');
+    const review = page
+      .getByRole('table', { name: 'Rules', exact: true })
+      .getByRole('button', { name: 'Review', exact: true })
+      .first();
+    await review.focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    await expect(review).toBeFocused();
+    const focus = await review.evaluate((button) => {
+      const style = getComputedStyle(button);
+      const outset = Math.max(0, parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset));
+      const ring = button.getBoundingClientRect();
+      const clippedBy: string[] = [];
+      for (let parent = button.parentElement; parent; parent = parent.parentElement) {
+        const css = getComputedStyle(parent);
+        const box = parent.getBoundingClientRect();
+        const left = box.left + parent.clientLeft;
+        const top = box.top + parent.clientTop;
+        if (
+          (css.overflowX !== 'visible' &&
+            (ring.left - outset < left - 0.5 ||
+              ring.right + outset > left + parent.clientWidth + 0.5)) ||
+          (css.overflowY !== 'visible' &&
+            (ring.top - outset < top - 0.5 ||
+              ring.bottom + outset > top + parent.clientHeight + 0.5))
+        )
+          clippedBy.push(parent.getAttribute('role') ?? parent.tagName);
+      }
+      return {
+        visible: button.matches(':focus-visible'),
+        outline: style.outlineStyle,
+        width: parseFloat(style.outlineWidth),
+        clippedBy,
+      };
+    });
+    expect(focus).toEqual({ visible: true, outline: 'solid', width: 2, clippedBy: [] });
+    await page.screenshot({ path: info.outputPath(`focus-${theme}.png`), fullPage: true });
     await expect(page.getByRole('img', { name: 'Day 1, agent: 0' })).toHaveCSS('opacity', '0.25');
     await expect(page.getByRole('img', { name: 'Day 4, agent: unmeasured' })).toHaveCSS(
       'border-style',
@@ -68,28 +116,81 @@ for (const theme of ['dark', 'light'] as const) {
     await filter.focus();
     await page.keyboard.press('Enter');
     const claude = page.getByRole('checkbox', { name: 'Claude 12' });
-    await page.keyboard.press('Tab');
     await expect(claude).toBeFocused();
     await page.keyboard.press('Space');
     await expect(claude).not.toBeChecked();
     await expect(page.getByRole('status', { name: 'Selected hosts' })).toHaveText('codex');
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('checkbox', { name: 'Codex 0' })).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(claude).toBeHidden();
     await expect(filter).toBeFocused();
     await filter.click();
     await expect(claude).toBeVisible();
-    if (process.env.UPDATE_EVIDENCE === '1')
-      await page.screenshot({
-        path: `../../../docs/acceptance/FND-08/filter-${theme}.png`,
-        fullPage: true,
-      });
+    await page.screenshot({ path: info.outputPath(`filter-${theme}.png`), fullPage: true });
     await page.getByRole('button', { name: 'Outside control' }).click();
     await expect(claude).toBeHidden();
-    if (process.env.UPDATE_EVIDENCE === '1')
-      await page.screenshot({
-        path: `../../../docs/acceptance/FND-08/table-${theme}.png`,
-        fullPage: true,
-      });
+    await scroll.evaluate((el) => {
+      el.scrollLeft = 0;
+      el.scrollTop = 0;
+    });
+    await page.screenshot({ path: info.outputPath(`table-${theme}.png`), fullPage: true });
+    const headerY = (await head.boundingBox())!.y;
+    await scroll.evaluate((el) => {
+      el.scrollTop = 100;
+    });
+    expect(await scroll.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+    expect((await head.boundingBox())!.y).toBeCloseTo(headerY, 1);
+    await page.getByRole('button', { name: 'Detect again' }).click();
+    await expect(page.getByRole('status', { name: 'Clicked row' })).toHaveText('detect');
     expect(errors).toEqual([]);
   });
 }
+
+test('narrow preview keeps wide tables contained and filter uses the live theme', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 780 });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/e2e/table-overflow.html');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole('button', { name: 'Switch to dark theme' }).click();
+  await page.getByRole('button', { name: 'Filter hosts' }).click();
+  const popup = page.getByRole('dialog', { name: 'Filter hosts' });
+  await expect(popup.locator('xpath=ancestor::*[@data-theme][1]')).toHaveAttribute(
+    'data-theme',
+    'dark',
+  );
+  const box = (await popup.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(360);
+  const cursor = popup.getByRole('checkbox', { name: 'Cursor —' });
+  await cursor.check();
+  await expect(page.getByRole('status', { name: 'Selected hosts' })).toHaveText(
+    'claude, codex, cursor',
+  );
+  await page.keyboard.press('Escape');
+  await expect(popup).toBeHidden();
+  await page.getByRole('button', { name: 'Switch to light theme' }).click();
+  await page.getByRole('button', { name: 'Filter hosts' }).click();
+  await expect(
+    page.getByRole('dialog').locator('xpath=ancestor::*[@data-theme][1]'),
+  ).toHaveAttribute('data-theme', 'light');
+});
+
+test('portaled cell actions do not activate their owning row', async ({ page }) => {
+  await page.goto('/e2e/table-overflow.html');
+  await page.getByText('Portaled row action', { exact: true }).click();
+  const table = page.getByRole('table', { name: 'Portaled actions' });
+  await table.getByRole('button', { name: 'Row menu' }).click();
+  const popup = page.getByRole('dialog', { name: 'Row menu popup' });
+  await popup.getByRole('button', { name: 'Run cell action' }).click();
+  await popup.getByText('Popup help text').click();
+  await expect(page.getByRole('status', { name: 'Popup actions' })).toHaveText('1');
+  await expect(page.getByRole('status', { name: 'Row activations' })).toHaveText('0');
+  await page.keyboard.press('Escape');
+  await expect(popup).toBeHidden();
+  await table.getByText('Row with popup').click();
+  await expect(page.getByRole('status', { name: 'Row activations' })).toHaveText('1');
+});

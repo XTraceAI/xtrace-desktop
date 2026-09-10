@@ -1,18 +1,23 @@
-import { Icon } from './icons';
+import { Radio } from '@base-ui/react/radio';
+import { RadioGroup } from '@base-ui/react/radio-group';
 import type { ReactNode } from 'react';
+import { Icon } from './icons';
 import '../styles/topbar.css';
 
 export type TimeRange = '7d' | '14d' | '30d';
+export type SelectedRange = TimeRange | 'custom';
 export type TopBarAction = 'share' | 'scan' | 'copy';
 type RangeProps =
-  | { showRange?: true; range: TimeRange; onRange: (range: TimeRange) => void }
-  | { showRange: false; range?: TimeRange; onRange?: (range: TimeRange) => void };
+  | { showRange?: true; range: SelectedRange; onRange: (range: TimeRange) => void }
+  | { showRange: false; range?: SelectedRange; onRange?: (range: TimeRange) => void };
 export type TopBarProps = RangeProps & {
   crumb: string;
   subcrumb?: string;
   actionLabel?: string;
   actionIcon?: TopBarAction;
   onAction?: () => void;
+  /** Opens the caller-owned date picker; range changes only after caller confirmation. */
+  onCustomRange?: () => void;
   right?: ReactNode;
   nativeDrag?: boolean;
 };
@@ -28,6 +33,7 @@ export function TopBar({
   actionLabel,
   actionIcon = 'share',
   onAction,
+  onCustomRange,
   right,
   nativeDrag = false,
 }: TopBarProps) {
@@ -53,21 +59,42 @@ export function TopBar({
         )}
       </nav>
       {(showRange || actionLabel?.trim() || right) && (
-        <div className="xt-topbar-tools" data-tauri-drag-region="false">
+        <div className="xt-topbar-tools" data-tauri-drag-region={nativeDrag ? 'false' : undefined}>
           {showRange && (
-            <div className="xt-range" role="group" aria-label="Date range">
-              {ranges.map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  tabIndex={0}
-                  aria-pressed={range === value}
-                  disabled={!onRange}
-                  onClick={() => onRange?.(value)}
-                >
-                  {value}
-                </button>
-              ))}
+            <div className="xt-range">
+              <RadioGroup<SelectedRange>
+                className="xt-range-presets"
+                aria-label="Date range"
+                aria-orientation="horizontal"
+                value={range}
+                onValueChange={(value) => {
+                  if (value !== 'custom') onRange?.(value);
+                }}
+              >
+                {ranges.map((value) => (
+                  <Radio.Root
+                    key={value}
+                    value={value}
+                    nativeButton
+                    render={<button type="button" />}
+                    disabled={!onRange}
+                  >
+                    {value}
+                  </Radio.Root>
+                ))}
+              </RadioGroup>
+              <button
+                className="xt-range-custom"
+                type="button"
+                tabIndex={0}
+                aria-label="Custom range"
+                title="Custom range"
+                aria-pressed={range === 'custom'}
+                disabled={!onCustomRange}
+                onClick={onCustomRange}
+              >
+                <Icon name="calendar" size={12} />
+              </button>
             </div>
           )}
           {actionLabel?.trim() && (

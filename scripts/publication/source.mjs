@@ -15,12 +15,14 @@ export async function withCandidateSource(
   const number = prNumber(source?.number);
   const head = sha(source?.head);
   const base = sha(source?.base);
+  const retainedHeads = (source.retainedHeads ?? []).map(sha);
+  requireValue(retainedHeads.length <= 100, 'Too many retained source heads.');
   requireValue(
     typeof token === 'string' && token.length > 0,
     'Candidate source fetch requires a scoped read token.',
   );
   const ref = 'refs/publication-content/' + randomUUID();
-  const relayPath = '.github/workflows/publication-review.yml';
+  const refs = [ref];
   const git = (args, authenticate = false) => {
     const env = {
       ...cleanEnvironment(),
@@ -79,26 +81,38 @@ export async function withCandidateSource(
       git(['rev-parse', '--verify', ref]) === head,
       'Candidate source changed while its objects were fetched.',
     );
-    git(['cat-file', '-e', `${base}^{commit}`]);
-    const relay = (revision) => {
-      const entry = /^100644 blob ([a-f0-9]{40})\t(.+)$/.exec(
-        git(['ls-tree', revision, '--', relayPath]),
+    for (const retained of new Set(retainedHeads)) {
+      if (retained === head) continue;
+      const retainedRef = 'refs/publication-content/' + randomUUID();
+      refs.push(retainedRef);
+      git(
+        [
+          'fetch',
+          '--no-tags',
+          '--no-recurse-submodules',
+          '--no-write-fetch-head',
+          `https://github.com/${repository}.git`,
+          `+${retained}:${retainedRef}`,
+        ],
+        true,
       );
       requireValue(
-        entry?.[2] === relayPath,
-        'The trusted review relay must exist as a regular file in the base and source commits.',
+        git(['rev-parse', '--verify', retainedRef]) === retained,
+        'Retained source head could not be verified.',
       );
-      return entry[1];
-    };
-    const trustedRelay = relay('HEAD');
-    // Review events execute the merge-tree workflow: both inputs must preserve
-    // the trusted relay, including its jobs and conditions, byte for byte.
-    requireValue(
-      relay(base) === trustedRelay && relay(head) === trustedRelay,
-      'Source or base changed the trusted review relay; install an approved replacement before updating this gate.',
-    );
+      git(['cat-file', '-e', `${retained}^{commit}`]);
+    }
+    git(['cat-file', '-e', `${base}^{commit}`]);
     return await scan({ base, head });
   } finally {
-    git(['update-ref', '-d', ref]);
+    let failed = false;
+    for (const owned of refs) {
+      try {
+        git(['update-ref', '-d', owned]);
+      } catch {
+        failed = true;
+      }
+    }
+    requireValue(!failed, 'Temporary source refs could not be removed.');
   }
 }

@@ -14,9 +14,14 @@ it('labels the real input, supports focus and controlled text without a phantom 
       value=""
       onValueChange={onValueChange}
       placeholder="Find a session"
+      className="session-search-input"
+      style={{ caretColor: 'red' }}
     />,
   );
   const input = screen.getByRole('searchbox', { name: 'Search sessions' });
+  expect(input.className).toBe('session-search-input');
+  expect((input as HTMLInputElement).style.caretColor).toBe('red');
+  expect(input.closest('label')?.className).toBe('xt-search');
   ref.current?.focus();
   expect(document.activeElement).toBe(input);
   fireEvent.change(input, { target: { value: 'synthetic' } });

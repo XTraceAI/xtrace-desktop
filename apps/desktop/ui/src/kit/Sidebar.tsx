@@ -1,6 +1,9 @@
-import { useId, useRef, useState, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
+import { HostGlyph } from './HostGlyph';
 import { BrandMark } from './BrandMark';
 import { HubPopover } from './HubPopover';
+import { createPopoverHandle, Popover, PopoverTrigger } from './Popover';
+import { sidebarIcons } from './sidebar-icons';
 import type { Theme } from '../theme/ThemeProvider';
 import '../styles/sidebar.css';
 
@@ -44,22 +47,14 @@ export interface SidebarProps {
   icons?: Partial<Record<SidebarIcon, ReactNode>>;
 }
 
-const hostLabels = { claude: 'Claude', codex: 'Codex', cursor: 'Cursor' };
-const fallbackIcons: Record<SidebarIcon, string> = {
-  dashboard: '⌂',
-  sessions: '◷',
-  prs: '↗',
-  rulebook: '◇',
-  leaderboard: '☷',
-  team: '◎',
-  hub: '☁',
-  theme: '◐',
-  settings: '⚙',
-};
-const formatTokens = new Intl.NumberFormat('en-US', {
+const hostLabels = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
+const compactTokens = new Intl.NumberFormat('en-US', {
   notation: 'compact',
   maximumFractionDigits: 1,
 });
+const millionTokens = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
+const formatTokens = (tokens: number) =>
+  tokens >= 100000 ? `${millionTokens.format(tokens / 1000000)}M` : compactTokens.format(tokens);
 const surfaceLabels = {
   capturing: 'Capturing',
   'not-capturing': 'Not capturing',
@@ -89,20 +84,21 @@ export function Sidebar({
   icons = {},
 }: SidebarProps) {
   const hubId = useId();
-  const hubTrigger = useRef<HTMLButtonElement>(null);
-  const hubPosition = useRef<HTMLSpanElement>(null);
+  const [hubHandle] = useState(createPopoverHandle);
+  const [hubPosition, setHubPosition] = useState<HTMLSpanElement | null>(null);
   const [hubOpen, setHubOpen] = useState(false);
+  const captureId = useId();
+  const [captureHandle] = useState(createPopoverHandle);
+  const [captureOpen, setCaptureOpen] = useState(false);
   const listening = listener.status === 'listening';
   const icon = (key: SidebarIcon) => (
     <span className="xt-sidebar-icon" aria-hidden="true">
-      {icons[key] ?? fallbackIcons[key]}
+      {icons[key] ?? sidebarIcons[key]}
     </span>
   );
   const navItem = (key: SidebarKey, label: string, disabled = false) => (
     <button
       type="button"
-      tabIndex={0}
-      data-tauri-drag-region="false"
       className="xt-nav-item"
       key={key}
       disabled={disabled}
@@ -130,7 +126,7 @@ export function Sidebar({
         <div className="xt-window-chrome" data-tauri-drag-region="deep" aria-hidden="true" />
       )}
       <div className="xt-sidebar-brand" data-tauri-drag-region={nativeChrome ? 'deep' : undefined}>
-        <BrandMark />
+        <BrandMark size={22} />
       </div>
       <nav aria-label="Main navigation">
         <div className="xt-nav-group">
@@ -152,7 +148,7 @@ export function Sidebar({
       <div className="xt-sidebar-footer">
         <section className="xt-host-tokens" aria-label="Tokens by host">
           <div className="xt-token-heading">
-            <h2>Tokens by host</h2>
+            <h2>Usages</h2>
             {tokensCaption && <span>{tokensCaption}</span>}
           </div>
           {hosts.length === 0 && <p className="xt-sidebar-empty">No host measurements</p>}
@@ -165,7 +161,7 @@ export function Sidebar({
             return (
               <div className={`xt-host-row xt-host-${row.host}`} key={row.host}>
                 <span className="xt-host-glyph" aria-hidden="true">
-                  {row.glyph ?? <span className="xt-host-dot" />}
+                  {row.glyph ?? <HostGlyph host={row.host} />}
                 </span>
                 <span className="xt-host-name">
                   {hostLabels[row.host]}
@@ -177,13 +173,82 @@ export function Sidebar({
                   className="xt-host-value"
                   aria-label={`${hostLabels[row.host]} tokens: ${measured ? row.tokens : 'unmeasured'}`}
                 >
-                  {measured ? formatTokens.format(row.tokens!) : '—'}
+                  {measured ? formatTokens(row.tokens!) : '—'}
                 </span>
               </div>
             );
           })}
         </section>
-        <section className="xt-surface-status" aria-label="Capture by surface">
+        <PopoverTrigger
+          handle={hubHandle}
+          type="button"
+          className="xt-hub-button"
+          aria-label="XTrace Hub"
+        >
+          {icon('hub')}
+          <span>Cloud and Team</span>
+        </PopoverTrigger>
+        <div className="xt-sidebar-status">
+          <span ref={setHubPosition} className="xt-hub-position" aria-hidden="true" />
+          <div className="xt-version-status">
+            <PopoverTrigger
+              handle={captureHandle}
+              type="button"
+              className="xt-capture-trigger"
+              aria-label="Capture status"
+              title="View capture status by surface"
+            >
+              <i className={listening ? 'xt-status-live' : ''} aria-hidden="true" />
+              <span>
+                {listening ? `plugin · :${listener.port}` : `plugin · ${listener.status}`}
+              </span>
+            </PopoverTrigger>
+            <span title={`v${version}${updateLabel ? ` · ${updateLabel}` : ''}`}>
+              <i aria-hidden="true" />
+              <span>
+                v{version}
+                {updateLabel ? ` · ${updateLabel}` : ''}
+              </span>
+            </span>
+          </div>
+          <div className="xt-sidebar-actions">
+            <button
+              type="button"
+              className="xt-icon-button"
+              aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} appearance`}
+              onClick={onToggleTheme}
+            >
+              {icon('theme')}
+            </button>
+            <button
+              type="button"
+              className="xt-icon-button"
+              aria-label="Settings"
+              disabled={!onSettings}
+              onClick={onSettings}
+            >
+              {icon('settings')}
+            </button>
+          </div>
+        </div>
+      </div>
+      <Popover
+        id={captureId}
+        open={captureOpen}
+        onOpenChange={(open) => {
+          setCaptureOpen(open);
+          if (open) setHubOpen(false);
+        }}
+        handle={captureHandle}
+        positionAnchor={hubPosition}
+        side="right"
+        align="end"
+        offset={14}
+        className="xt-capture-popover"
+        role="dialog"
+        aria-label="Capture by surface"
+      >
+        <section className="xt-surface-status">
           <h2>Capture by surface</h2>
           {surfaces.length === 0 && <p className="xt-sidebar-empty">Capture status unknown</p>}
           {surfaces.map((surface) => (
@@ -198,62 +263,16 @@ export function Sidebar({
             </div>
           ))}
         </section>
-        <div className="xt-sidebar-status">
-          <span ref={hubPosition} className="xt-hub-position" aria-hidden="true" />
-          <button
-            ref={hubTrigger}
-            type="button"
-            tabIndex={0}
-            data-tauri-drag-region="false"
-            className="xt-icon-button"
-            aria-label="XTrace Hub"
-            aria-expanded={hubOpen}
-            popoverTarget={hubId}
-          >
-            {icon('hub')}
-          </button>
-          <div className="xt-version-status">
-            <span>
-              <i className={listening ? 'xt-status-live' : ''} aria-hidden="true" />
-              {listening ? `plugin · :${listener.port}` : `plugin · ${listener.status}`}
-            </span>
-            <span>
-              <i aria-hidden="true" />v{version}
-              {updateLabel ? ` · ${updateLabel}` : ''}
-            </span>
-          </div>
-        </div>
-        <div className="xt-sidebar-actions">
-          <span>{hubConnected ? (teamLabel ?? 'Hub connected') : 'Local workspace'}</span>
-          <button
-            type="button"
-            tabIndex={0}
-            data-tauri-drag-region="false"
-            className="xt-icon-button"
-            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} appearance`}
-            onClick={onToggleTheme}
-          >
-            {icon('theme')}
-          </button>
-          <button
-            type="button"
-            tabIndex={0}
-            data-tauri-drag-region="false"
-            className="xt-icon-button"
-            aria-label="Settings"
-            disabled={!onSettings}
-            onClick={onSettings}
-          >
-            {icon('settings')}
-          </button>
-        </div>
-      </div>
+      </Popover>
       <HubPopover
         id={hubId}
         open={hubOpen}
-        onOpenChange={setHubOpen}
-        anchorRef={hubTrigger}
-        positionRef={hubPosition}
+        onOpenChange={(open) => {
+          setHubOpen(open);
+          if (open) setCaptureOpen(false);
+        }}
+        handle={hubHandle}
+        positionAnchor={hubPosition}
         connected={hubConnected}
         teamLabel={teamLabel}
         onConnect={onConnectHub}

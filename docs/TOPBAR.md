@@ -1,87 +1,74 @@
 # TopBar, HostGlyph, and shared icons
 
-Plan slot: FND-06b
-
-These presentational primitives are an independent sibling to FND-06a. They
-import the FND-05 theme foundation directly and do not require Sidebar. The
-production application still renders its existing scaffold; consumers will
-supply navigation context, range state, and actions in later shell work.
+These reusable components follow the reviewed desktop design. The app shell
+will supply navigation context, range state and actions when it adopts the kit.
 
 ## TopBar
 
-| Prop             | Contract / expected state                                                                                                                                                 |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `crumb`          | Required primary breadcrumb text. It truncates visually and retains its complete title and accessible text.                                                               |
-| `subcrumb`       | Optional secondary breadcrumb. The final visible crumb has `aria-current="page"`. Breadcrumbs are text, without router links.                                             |
-| `showRange`      | Defaults to true. False removes the entire range group and requires neither `range` nor `onRange`.                                                                        |
-| `range`          | Required when the range is visible: `7d`, `14d`, or `30d`. Selection comes only from this prop.                                                                           |
-| `onRange(range)` | Required when the range is visible. Each click invokes the callback once; the caller supplies the next selected value.                                                    |
-| `actionLabel`    | Optional visible action text. Missing, empty, or whitespace-only text produces no action button. Long text truncates while preserving its full accessible name and title. |
-| `actionIcon`     | `share` (default), `scan`, or `copy`. The icon is decorative; the label names the action.                                                                                 |
-| `onAction()`     | Optional callback. A visible action stays disabled until supplied.                                                                                                        |
+| Prop                | Contract                                                                                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `crumb`, `subcrumb` | Primary and optional secondary breadcrumb. The final crumb has `aria-current="page"`. Long text truncates visually while retaining its full title and accessible text.                     |
+| `showRange`         | Defaults to true. False removes presets and the calendar button, and requires neither `range` nor `onRange`.                                                                               |
+| `range`             | Required when visible: `7d`, `14d`, `30d` or `custom`. Selection comes only from this prop.                                                                                                |
+| `onRange(range)`    | Required when visible. Requests a preset change; receives only `7d`, `14d` or `30d`. The caller supplies the next selected value.                                                          |
+| `onCustomRange()`   | Opens the caller's date picker. Disabled until supplied. Opening does not change selection; after confirmation the caller supplies `range="custom"`. Clicking again can reopen the picker. |
+| `actionLabel`       | Optional action text. Missing, empty or whitespace-only text omits the button. Long text truncates with its full title and accessible name preserved.                                      |
+| `actionIcon`        | `share` (default), `scan` or `copy`; decorative beside the action label.                                                                                                                   |
+| `onAction()`        | Callback; a visible action stays disabled until supplied.                                                                                                                                  |
 
-TopBar fills its parent, remains 44px tall, and uses 20px horizontal padding.
-The breadcrumb can shrink; the range and action controls retain their geometry.
-Range controls are ordinary pressed-state buttons in a labelled group, with
-24px segments. The 28px action has a bounded width. Buttons use explicit zero
-tab indices so ordinary Tab reaches them under WebKit's macOS keyboard
-preference; disabled buttons remain unfocusable. No keyboard listeners or
-global event handlers are added.
+TopBar fills its parent, stays 44px tall, and uses 20px horizontal padding.
+Breadcrumb spacing is 8px. The preset segments are 24px high; the calendar is
+26px wide and the primary action is 28px high. Breadcrumbs shrink to preserve
+controls at the 1120px minimum app width (892px after the 228px sidebar).
 
-Import `TopBar` and `TimeRange` from `apps/desktop/ui/src/kit/TopBar.tsx`. A caller
-can connect `onRange` to local state or its own data flow. This PR covers only
-the range dispatch part of U-02. Metric recomputation, rule popovers, deltas, and
-the sample-count suppression rule remain consumer responsibilities.
+Presets use the existing [Base UI Radio Group](https://base-ui.com/react/components/radio).
+One Tab stop enters the selected preset; arrow keys select and wrap between
+presets. Tab then reaches the calendar and action, skipping disabled controls.
+The calendar is a separate button because it opens a picker and must remain
+usable when a custom range is already selected. No date arithmetic, metric
+recomputation, picker implementation or global keyboard handlers live here.
+
+Import `TopBar`, `TimeRange` (presets) and `SelectedRange` (including custom) from
+`apps/desktop/ui/src/kit/TopBar.tsx`.
 
 ## HostGlyph
 
-| Prop      | Contract / expected state                                                                                                                                  |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `host`    | Canonical `claude`, `codex`, or `cursor`; any other string, `null`, or omission is unknown. Known keys are matched exactly, without guessing from aliases. |
-| `size`    | 16 (default), 18, 20, or 30px. Smaller variants use a 4px radius; 30px uses an 8px radius.                                                                 |
-| `stacked` | Defaults to false. True adds a 1.5px surface-colored border; adjacent stacked glyphs overlap by 4px.                                                       |
+| Prop      | Contract                                                                                 |
+| --------- | ---------------------------------------------------------------------------------------- |
+| `host`    | Exact `claude`, `codex` or `cursor`; other strings, null and omission render as unknown. |
+| `size`    | 16 (default), 18, 20 or 30px. Radius is 4px, or 8px at 30px.                             |
+| `stacked` | Adds a 1.5px surface border and overlaps adjacent stacked glyphs by 4px.                 |
 
-Known hosts use their `--host-*` color and explicit Claude/Codex/Cursor title and
-accessible image label. Missing hosts display `?` and “Unknown host”. Other
-strings retain the honest label “Unknown host: supplied value”, use neutral
-track/meta colors, and never take a known host's identity. Glyphs introduce no
-focusable element. When placing one inside an already labelled button, the
-caller may mark its decorative wrapper `aria-hidden`.
+Known hosts reuse the bundled logos from `public/hosts`, preserving aspect ratio
+and a 1px inset. Cursor has a fixed white backing in both themes. The sidebar
+now consumes this same component, retaining its layout and glyph override.
+Upstream sources and licenses remain in `public/hosts/LICENSES.txt`.
 
-The corrected font contract uses the actually bundled Geist Mono **600**,
-superseding the legacy 700 request. The A, triangle, and question mark exist in
-that font's glyph map. Its concentric-circle character is absent, so Codex uses
-two inline SVG circles at the requested glyph size instead of relying on an
-unbundled fallback font. These are compact host identifiers, not replacement
-XTrace brand artwork.
+Each glyph has a host title and accessible image name. Missing hosts display
+`?` with “Unknown host”; unfamiliar strings use “Unknown host: supplied value”.
+Glyphs are not focusable. A caller with an existing accessible label can place
+one in an `aria-hidden` wrapper, as the sidebar does.
 
-## Icons and tokens
+## Shared icons and tokens
 
-`Icon` from `src/kit/icons.tsx` accepts `name`, optional pixel `size` (default
-14), and optional `className`. Names are `dashboard`, `sessions`, `prs`,
-`rulebook`, `leaderboard`, `cloud`, `moon`, `gear`, `share`, `scan`, and `copy`.
-Each icon has a 24-unit viewBox, a 2-unit current-color stroke, and hidden,
-unfocusable SVG semantics. The containing control supplies its accessible name.
-Sidebar consumers can map cloud/moon/gear to its hub/theme/settings slots
-without requiring a Sidebar change in this PR.
+`Icon` accepts `name`, pixel `size` (default 14), and optional `className`.
+Names: `dashboard`, `sessions`, `prs`, `rulebook`, `leaderboard`, `cloud`, `moon`,
+`gear`, `share`, `scan`, `copy`, `calendar`. Navigation artwork reuses the existing
+sidebar SVGs; action and calendar paths come from the reviewed TopBar design.
+SVGs are decorative and unfocusable; their containing controls supply names.
 
-The drawings are new simple line art in source. No unavailable design export,
-external icon package, or pixel-for-pixel export provenance is claimed. All
-component colors come from tokens. Two shared technical tokens are added to
-both `design/token-contract.json` and `styles/tokens.css`: `--host-glyph-ink`
-for the specified fixed white host foreground, and `--segment-shadow` for the
-compact selected-range shadow. Existing token values and bundled assets remain
-unchanged; the inherited contract test checks the new entries too.
+Colors use existing theme tokens. `--segment-shadow` adds the designed compact
+selected-range shadow to both the CSS tokens and normative token contract.
+No dependency or new logo asset is added.
 
 ## Verification
 
 ```sh
-pnpm --dir apps/desktop/ui exec vitest run src/kit/TopBar.test.tsx src/kit/HostGlyph.test.tsx
-pnpm lint
-pnpm --dir apps/desktop/ui exec playwright test --config playwright.topbar.config.ts
+pnpm check
+pnpm e2e
+pnpm build
 ```
 
-The synthetic fixture uses port 5177. It renders design-width and minimum-app
-content-width TopBars, known/unknown glyphs at every size, a stacked group, and
-the icon set. It is outside the production entry point. Results and browser
-floor limitations are recorded in [FND-06b acceptance](acceptance/FND-06b.md).
+`e2e/topbar.html` provides synthetic design-width, minimum-width and host-size
+fixtures, outside the production entry point. See [acceptance](acceptance/topbar.md)
+for expected behavior, screenshots and native qualification limits.

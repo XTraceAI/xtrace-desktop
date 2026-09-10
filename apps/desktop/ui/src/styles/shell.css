@@ -99,3 +99,45 @@
   user-select: none;
   -webkit-user-select: none;
 }
+
+.xt-window-chrome {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 54px;
+}
+.native-mac > .xt-sidebar {
+  position: relative;
+}
+.xt-app-shell.native-mac {
+  background: transparent;
+}
+html:has(.native-mac),
+body:has(.native-mac) {
+  background: transparent;
+}
+.native-mac > .xt-sidebar {
+  background: color-mix(in srgb, var(--canvas) 28%, transparent);
+}
+@media (prefers-reduced-transparency: reduce) {
+  .native-mac > .xt-sidebar {
+    background: var(--canvas);
+  }
+}
+.refresh-button {
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--secondary);
+  background: var(--surface);
+  font-size: 11px;
+  cursor: pointer;
+}
+.refresh-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.refresh-button:focus-visible,
+.xt-appearance select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

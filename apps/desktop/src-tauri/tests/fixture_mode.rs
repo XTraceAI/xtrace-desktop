@@ -22,7 +22,9 @@ fn fixture_mode_data_dir_override_wins_and_live_store_persists() {
         serde_json::to_value(state.db_counts().unwrap()).unwrap(),
         serde_json::json!({"sessions":0,"records":0,"usage":0})
     );
-    drop(state);
+    state.shutdown();
+    state.shutdown();
+    assert!(matches!(state.db_counts(), Err(StateError::Closed)));
     assert!(path.join("xtrace.db").exists());
     AppState::build(StartupOptions::default(), || Ok(path)).unwrap();
 }
@@ -89,9 +91,14 @@ fn fixture_mode_builds_isolated_database_and_generated_export_parity() {
         exported["db_counts"],
         serde_json::json!({"sessions":1,"records":25,"usage":15})
     );
-    drop(first);
+    first.shutdown();
     assert!(!path.exists());
+    assert!(matches!(first.db_counts(), Err(StateError::Closed)));
+    first.shutdown();
     assert!(std::path::Path::new(&second.app_info().data_dir).exists());
+    let second_path = std::path::PathBuf::from(second.app_info().data_dir);
+    drop(second);
+    assert!(!second_path.exists());
 }
 
 #[cfg(all(debug_assertions, feature = "fixtures"))]

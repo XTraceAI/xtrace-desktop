@@ -59,9 +59,9 @@ it('preserves PR query context and resolves fires before dynamic rule details', 
   expect(screen.getByRole('heading', { name: 'Rule fires' })).toBeTruthy();
   expect(screen.getByText('fires')).toBeTruthy();
   fires.unmount();
-  mount('/rulebook/R-05');
+  mount('/rulebook/sample-rule');
   expect(screen.getByRole('heading', { name: 'Rule detail' })).toBeTruthy();
-  expect(screen.getByText('Rule: R-05')).toBeTruthy();
+  expect(screen.getByText('Rule: sample-rule')).toBeTruthy();
   await act(async () => {});
 });
 
@@ -88,7 +88,9 @@ it('shows native metadata failure safely, retries, and preserves native drag exc
   expect(view.container.querySelector('.xt-topbar')?.getAttribute('data-tauri-drag-region')).toBe(
     'deep',
   );
-  expect(refresh.getAttribute('data-tauri-drag-region')).toBe('false');
+  expect(
+    view.container.querySelector('.xt-topbar-tools')?.getAttribute('data-tauri-drag-region'),
+  ).toBe('false');
   expect(screen.getByRole('button', { name: 'Sessions' }).tabIndex).toBe(0);
 });
 

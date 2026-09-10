@@ -9,7 +9,7 @@ test.beforeEach(async ({ page }) => {
 test('appearance follows emulated system, persists overrides, and renders both themes', async ({
   page,
 }, info) => {
-  await page.goto('/');
+  await page.goto('/settings');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(22, 21, 25)');
   const tokenValues = async () =>
@@ -33,15 +33,15 @@ test('appearance follows emulated system, persists overrides, and renders both t
   await page.screenshot({ path: info.outputPath('dark.png') });
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-  await page.getByLabel('Appearance', { exact: true }).selectOption('dark');
+  await page.getByRole('combobox', { name: 'Appearance' }).selectOption('dark');
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await page.getByLabel('Appearance', { exact: true }).selectOption('light');
+  await page.getByRole('combobox', { name: 'Appearance' }).selectOption('light');
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(241, 241, 245)');
   expect(await tokenValues()).toEqual(normalized(contract.light));
   await page.screenshot({ path: info.outputPath('light.png') });
-  await page.getByLabel('Appearance', { exact: true }).selectOption('system');
+  await page.getByRole('combobox', { name: 'Appearance' }).selectOption('system');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
@@ -50,11 +50,12 @@ test('local fonts load with external network denied and remain usable offline', 
   context,
   baseURL,
 }, info) => {
+  const localOrigin = new URL(baseURL!).origin;
   const fontRequests: string[] = [];
   const external: string[] = [];
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url());
-    if (url.origin !== new URL(baseURL!).origin) {
+    if (url.origin !== localOrigin) {
       external.push(url.origin);
       await route.abort();
     } else {
@@ -62,7 +63,7 @@ test('local fonts load with external network denied and remain usable offline', 
       await route.continue();
     }
   });
-  await page.goto('/');
+  await page.goto('/settings');
   const loaded = await page.evaluate(async () => {
     const results = [];
     for (const [family, weights] of [
@@ -80,7 +81,7 @@ test('local fonts load with external network denied and remain usable offline', 
   expect(new Set(fontRequests).size).toBe(8);
   expect(external).toEqual([]);
   await context.setOffline(true);
-  await page.getByLabel('Appearance', { exact: true }).selectOption('light');
+  await page.getByRole('combobox', { name: 'Appearance' }).selectOption('light');
   expect(
     await page.evaluate(
       () =>
@@ -106,8 +107,8 @@ test('denied storage does not break an appearance change', async ({ page }) => {
         },
       });
   });
-  await page.goto('/');
-  await page.getByLabel('Appearance', { exact: true }).selectOption('light');
+  await page.goto('/settings');
+  await page.getByRole('combobox', { name: 'Appearance' }).selectOption('light');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
 });
 
@@ -142,7 +143,6 @@ test('popover keeps subtree tokens and fixed offsets, light-dismisses and restor
       return Math.round(b!.y - a!.y - a!.height);
     })
     .toBe(14);
-  await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Close popover' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(popover).toBeHidden();
@@ -161,7 +161,7 @@ test('popover keeps subtree tokens and fixed offsets, light-dismisses and restor
   }
 });
 
-test('modal contains Tab, rejects background focus, preserves theme and returns focus', async ({
+test('modal contains Tab, blocks background interaction, preserves theme and returns focus', async ({
   page,
 }, info) => {
   await page.goto('/e2e/overlays.html');
@@ -179,8 +179,20 @@ test('modal contains Tab, rejects background focus, preserves theme and returns 
     await page.keyboard.press('Shift+Tab');
     await expect(input).toBeFocused();
   }
-  await trigger.evaluate((element) => element.focus());
-  expect(await modal.evaluate((dialog) => dialog.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press('Shift+Tab');
+  await expect(close).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(input).toBeFocused();
+  // The library hides background controls from assistive technology and blocks
+  // pointer input with a backdrop. Programmatic .focus() is not a user action.
+  await expect(page.getByRole('button', { name: 'Open modal' })).toHaveCount(0);
+  const background = await page
+    .getByRole('button', { name: 'Toggle page theme', includeHidden: true })
+    .boundingBox();
+  await page.mouse.click(background!.x + 4, background!.y + 4);
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(modal).toBeVisible();
+  await input.focus();
   await page.screenshot({ path: info.outputPath('modal-light-subtree.png') });
   await page.keyboard.press('Escape');
   await expect(modal).toBeHidden();
@@ -197,4 +209,71 @@ test('modal contains Tab, rejects background focus, preserves theme and returns 
   await page.keyboard.press('Escape');
   await expect(modal).toBeHidden();
   await expect(trigger).toBeFocused();
+  await trigger.click();
+  await expect(modal).toBeVisible();
+  // A route/owner update may remove an open overlay independently of its state.
+  await page
+    .getByRole('button', { name: 'Mount overlays', includeHidden: true })
+    .evaluate((element) => (element as HTMLButtonElement).click());
+  await expect(modal).toBeHidden();
+  await expect(trigger).toBeFocused();
+});
+
+for (const target of ['trigger', 'position']) {
+  test(`popover tracks replacement ${target}, escapes clipping, and updates its scoped theme`, async ({
+    page,
+  }) => {
+    await page.goto(`/e2e/overlays.html?anchors&${target}`);
+    const trigger = page.getByRole('button', { name: 'Moving details', exact: true });
+    const popup = page.getByRole('dialog', { name: 'Moving details', exact: true });
+    const anchor = target === 'position' ? page.getByTestId('position-anchor') : trigger;
+    await trigger.click();
+    await expect(popup).toBeVisible();
+    await expect(popup).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    for (let i = 0; i < 2; i++) {
+      const oldX = (await anchor.boundingBox())!.x;
+      await popup.getByRole('button', { name: 'Replace anchor' }).click();
+      await expect.poll(async () => (await anchor.boundingBox())!.x).toBeGreaterThan(oldX);
+      await expect
+        .poll(async () =>
+          Math.abs((await popup.boundingBox())!.x - (await anchor.boundingBox())!.x),
+        )
+        .toBeLessThan(1);
+      // Clickable content beyond the clipped, transformed parent proves portal hit testing.
+      await popup.getByRole('button', { name: 'Change scope theme' }).click();
+      await expect(popup).toHaveCSS(
+        'background-color',
+        i === 0 ? 'rgb(35, 34, 39)' : 'rgb(255, 255, 255)',
+      );
+    }
+    await page.keyboard.press('Escape');
+    await expect(popup).toBeHidden();
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+    await page.getByRole('button', { name: 'Outside state change' }).click();
+    await expect(popup).toBeHidden();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await trigger.click();
+    await expect(popup).toBeVisible();
+  });
+}
+
+test('nested modal dismisses only the child and restores focus through both layers', async ({
+  page,
+}) => {
+  await page.goto('/e2e/overlays.html?nested');
+  const parentTrigger = page.getByRole('button', { name: 'Open parent' });
+  await parentTrigger.click();
+  const childTrigger = page.getByRole('button', { name: 'Open child' });
+  await childTrigger.click();
+  const child = page.getByRole('dialog', { name: 'Child dialog' });
+  await expect(child).toBeVisible();
+  await expect(child).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await page.keyboard.press('Escape');
+  await expect(child).toBeHidden();
+  await expect(page.getByRole('dialog', { name: 'Parent dialog' })).toBeVisible();
+  await expect(childTrigger).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Parent dialog' })).toBeHidden();
+  await expect(parentTrigger).toBeFocused();
 });

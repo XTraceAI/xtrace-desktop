@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 import { pages } from './api.mjs';
-import { disclosureControls } from './markdown.mjs';
+import { disclosureControls, normalizedBody } from './markdown.mjs';
+import { readHeadRevisions, readReviewRevisions, readSourceRevisions } from './revisions.mjs';
 import {
-  ATTESTATION,
   linkedIssues,
   prNumber,
   PublicationError,
   repositoryName,
   requireAttestation,
+  revisionTimestamp,
   requireValue,
   sha,
   validatePullRequest,
@@ -56,27 +57,6 @@ export async function closingIssues(api, repository, number) {
   throw new PublicationError('Too many linked issue relationships.');
 }
 
-function normalizedBody(body) {
-  const lines = body.split(/\r?\n/);
-  for (const control of disclosureControls(body)) {
-    if (control.snapshot) lines[control.lineNumber] = 'Disclosure snapshot: pending';
-    if (control.declaration?.[2] === ATTESTATION)
-      lines[control.lineNumber] = '- [ ] ' + ATTESTATION;
-  }
-  return lines.join('\n');
-}
-
-function revisionTimestamp(value) {
-  requireValue(
-    typeof value === 'string' &&
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) &&
-      Number.isFinite(Date.parse(value)) &&
-      new Date(value).toISOString() === (value.includes('.') ? value : value.replace('Z', '.000Z')),
-    'Public content revision timestamp is unavailable.',
-  );
-  return value;
-}
-
 function discussion(items, includeDiff = false) {
   const seen = new Set();
   return items
@@ -100,7 +80,8 @@ function discussion(items, includeDiff = false) {
         state: item.state ?? null,
         path: item.path ?? null,
         line: item.line ?? null,
-        updated: revisionTimestamp(item.updated_at ?? item.submitted_at),
+        updated: revisionTimestamp(item.updated_at),
+        ...(item.revisions ? { revisions: item.revisions } : {}),
         commit: item.commit_id ?? null,
       };
     })
@@ -113,7 +94,14 @@ async function conversations(api, repository, number, isPullRequest, repositoryC
     comments: discussion(await pages(api, path + '/issues/' + number + '/comments')),
   };
   if (isPullRequest) {
-    result.reviews = discussion(await pages(api, path + '/pulls/' + number + '/reviews'));
+    result.reviews = discussion(
+      await readReviewRevisions(
+        api,
+        repository,
+        number,
+        await pages(api, path + '/pulls/' + number + '/reviews'),
+      ),
+    );
     result.reviewComments = discussion(
       await pages(api, path + '/pulls/' + number + '/comments'),
       true,
@@ -129,6 +117,8 @@ async function conversations(api, repository, number, isPullRequest, repositoryC
         commits.length === ids.size,
       'Source commit pagination is incomplete.',
     );
+    result.headRevisions = await readHeadRevisions(api, repository, number);
+    for (const oid of result.headRevisions.commits) ids.add(oid);
     result.commitComments = discussion(
       repositoryComments.filter((comment) => ids.has(sha(comment.commit_id))),
     );
@@ -140,8 +130,17 @@ export async function readPublicContent(api, repository, number, candidateBody) 
   repositoryName(repository);
   prNumber(number);
   const pr = await api('/repos/' + repository + '/pulls/' + number);
-  if (candidateBody !== undefined) pr.body = candidateBody;
   validatePullRequest(pr, repository, pr.head?.sha, { attestation: false });
+  if (candidateBody !== undefined) {
+    requireValue(
+      typeof candidateBody === 'string' &&
+        typeof pr.body === 'string' &&
+        normalizedBody(candidateBody) === normalizedBody(pr.body),
+      'Publish the reviewed PR prose with a pending snapshot before preparing its revision-bound attestation.',
+    );
+  }
+  const revisions = await readSourceRevisions(api, repository, number, pr);
+  if (candidateBody !== undefined) pr.body = candidateBody;
   const repositoryComments = await pages(api, '/repos/' + repository + '/comments');
   // Detect duplicate pages even for comments outside this PR's commit set.
   discussion(repositoryComments);
@@ -155,7 +154,7 @@ export async function readPublicContent(api, repository, number, candidateBody) 
   }
   requireValue(references.size <= 100, 'Too many linked issues to review in one PR.');
   const linked = [];
-  const texts = [pr.title, pr.body, pr.base.ref, pr.head.ref];
+  const texts = [pr.title, pr.body, pr.base.ref, pr.head.ref, ...revisions.texts];
   for (const [key, reference] of [...references].sort(([a], [b]) => a.localeCompare(b))) {
     requireValue(
       reference.repository.toLowerCase() === repository.toLowerCase(),
@@ -182,7 +181,8 @@ export async function readPublicContent(api, repository, number, candidateBody) 
     });
   }
   const content = {
-    version: 1,
+    version: 2,
+    revisions: revisions.identity,
     repository: repository.toLowerCase(),
     number,
     head: pr.head.sha,
@@ -202,6 +202,8 @@ export async function readPublicContent(api, repository, number, candidateBody) 
     ])
       for (const comment of group) {
         texts.push(comment.body);
+        for (const edit of comment.revisions?.edits ?? [])
+          if (edit.body !== null) texts.push(edit.body);
         if (typeof comment.diff_hunk === 'string') texts.push(comment.diff_hunk);
       }
   texts.push(JSON.stringify(content));

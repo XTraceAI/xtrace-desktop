@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "pnpm --dir apps/desktop/ui dev",
     "build": "pnpm --dir apps/desktop/ui build",
-    "test": "node --test apps/desktop/ui/scripts/*.test.mjs scripts/ci/dto.test.mjs && pnpm --dir apps/desktop/ui test",
+    "test": "node --test apps/desktop/ui/scripts/*.test.mjs && pnpm --dir apps/desktop/ui test",
     "typecheck": "pnpm --dir apps/desktop/ui typecheck",
     "lint": "eslint . --max-warnings 0 && pnpm --dir apps/desktop/ui lint:hex",
     "format": "prettier --write .",
@@ -28,7 +28,9 @@
     "secrets:check": "node scripts/security/scan-secrets.mjs",
     "publication:check": "node scripts/publication/check.mjs",
     "publication:test": "node --test scripts/publication/*.test.mjs scripts/security/*.test.mjs",
-    "fixtures:export": "bash scripts/fixtures/export.sh"
+    "check:native": "node scripts/ci/native-check.mjs",
+    "fixtures:export": "bash scripts/fixtures/export.sh",
+    "e2e:production": "pnpm --dir apps/desktop/ui exec playwright test --config playwright.production.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
