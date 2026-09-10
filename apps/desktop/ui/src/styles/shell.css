@@ -1,0 +1,143 @@
+.xt-app-shell {
+  display: flex;
+  height: 100dvh;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--canvas);
+}
+.xt-app-shell > .xt-sidebar {
+  flex-shrink: 0;
+}
+.xt-shell-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+}
+.xt-shell-outlet {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 28px;
+}
+.xt-placeholder h1 {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.xt-page-subline,
+.xt-page-context {
+  color: var(--meta);
+  font:
+    400 10.5px/1.6 'Geist Mono',
+    Menlo,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.xt-page-context {
+  color: var(--secondary);
+}
+.xt-placeholder .xt-section-card {
+  max-width: 640px;
+  margin-top: 24px;
+}
+.xt-database-summary {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 12px;
+  margin: 0;
+  font-size: 12px;
+}
+.xt-database-summary dt {
+  color: var(--meta);
+}
+.xt-database-summary dd {
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.xt-appearance {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--meta);
+  font-size: 10px;
+}
+.xt-appearance select {
+  max-width: 80px;
+  color: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  padding: 3px;
+}
+.xt-fixture-badge {
+  flex-shrink: 0;
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  border-radius: 5px;
+  padding: 2px 5px;
+  font:
+    400 10px 'Geist Mono',
+    Menlo,
+    monospace;
+  white-space: nowrap;
+}
+.xt-shell-notice {
+  margin: 0 0 20px;
+  color: var(--meta);
+  font-size: 12px;
+}
+.xt-startup-status {
+  margin: 32px;
+  color: var(--secondary);
+}
+.native-mac [data-tauri-drag-region='deep'] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.xt-window-chrome {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 54px;
+}
+.native-mac > .xt-sidebar {
+  position: relative;
+}
+.xt-app-shell.native-mac {
+  background: transparent;
+}
+html:has(.native-mac),
+body:has(.native-mac) {
+  background: transparent;
+}
+.native-mac > .xt-sidebar {
+  background: color-mix(in srgb, var(--canvas) 28%, transparent);
+}
+@media (prefers-reduced-transparency: reduce) {
+  .native-mac > .xt-sidebar {
+    background: var(--canvas);
+  }
+}
+.refresh-button {
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--secondary);
+  background: var(--surface);
+  font-size: 11px;
+  cursor: pointer;
+}
+.refresh-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.refresh-button:focus-visible,
+.xt-appearance select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

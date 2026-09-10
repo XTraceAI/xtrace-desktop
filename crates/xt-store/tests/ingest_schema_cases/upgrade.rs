@@ -7,7 +7,7 @@ use xt_store::Store;
 fn legacy_database(path: &std::path::Path) -> Connection {
     let connection = connection(path);
     connection
-        .execute_batch(include_str!("../../migrations/0001_FND-03_canonical.sql"))
+        .execute_batch(include_str!("../../migrations/0001_canonical.sql"))
         .unwrap();
     connection
         .execute_batch(

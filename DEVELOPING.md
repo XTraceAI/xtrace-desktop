@@ -22,19 +22,26 @@ Run from the repository root:
 pnpm install --frozen-lockfile
 pnpm check
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
 pnpm tauri build --debug --bundles app
 git diff --exit-code -- Cargo.lock pnpm-lock.yaml
 ```
 
-`pnpm check` runs TypeScript, ESLint with zero warnings, formatting and Vitest. `pnpm test -- --run` also works. Workspace compilation validates the empty subsystem crates; their APIs and behavior tests arrive with their implementations. UI tests exercise the shell's application-info contract. CI, browser E2E and shared fixtures arrive in FND-02/FND-04; these commands do not claim those later gates have run.
+`pnpm check` runs TypeScript, ESLint with zero warnings, formatting and Vitest. `pnpm test -- --run` also works. Storage tests exercise file-backed migrations, replay, retention and reads. Fixture tests and CLI cases exercise synthetic catalog loading, deterministic database construction, exports and reference assertions; see [the fixture contract](docs/FIXTURES.md). Workspace compilation also validates the remaining empty subsystem crates. UI tests exercise the shell's application-info contract. The [CI procedure](docs/CI.md) adds browser E2E, contribution validation, secret scanning and supply-chain checks.
 
-`cargo xtask --help` describes the currently available helper. Future fixture commands must report unavailable until their owning implementation exists.
+Before sending repository content or a GitHub payload, follow
+[Publication checks](docs/PUBLICATION.md). Run `pnpm publication:test` for the
+synthetic gate tests and `pnpm security:scan` for reachable history and tracked
+working files. Add `--diff <base>..<head>` for the actual PR range and
+`--content <path>` for prepared outbound text. Public-content review also covers
+comments, attachments and prior edits that those local scans cannot evaluate.
+
+`cargo xtask --help` lists fixture validation, database and export commands. `cargo xtask fixture-validate` distinguishes populated assertions from unimplemented skeletons; skeleton database creation fails explicitly.
 
 ## Running
 
-`pnpm tauri dev` starts Vite and the native shell. `pnpm dev` alone is a browser preview at `http://127.0.0.1:5173`; it labels native app information as unavailable in the browser. The native build calls Rust directly and starts no local HTTP listener. Close another XTrace instance before testing this checkout, since the second launch intentionally focuses the existing app.
+`pnpm tauri dev` starts Vite and the native shell. `pnpm dev` alone is a browser preview at `http://127.0.0.1:5173`; it labels native app information as unavailable in the browser. The native build calls Rust directly, opens its SQLite store and starts no local HTTP listener. To use synthetic data without opening the normal data folder, run `XTRACE_FIXTURE=F1 pnpm tauri dev --features fixtures`; for the browser, run `VITE_XTRACE_FIXTURE=F1 pnpm dev`. See [app data and routing](docs/DATA-SOURCE.md) for generated exports, fixture isolation and production restrictions. Close another XTrace instance before testing this checkout, since the second launch intentionally focuses the existing app.
 
 The debug bundle can be opened with:
 
@@ -71,4 +78,4 @@ without a manual resize. The configured `{ x: 16, y: 26 }` accounts for AppKit's
 button frame offset; the visible frame should measure about 15 points from the
 left and 16 points from the top.
 
-This debug bundle is for local development. Signing, notarization, universal builds, oldest-supported macOS release QA and distribution belong to later release cards.
+This debug bundle is for local development. Signing, notarization, universal builds, oldest-supported macOS release QA and distribution require separate release acceptance.

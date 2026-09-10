@@ -1,7 +1,7 @@
 # Canonical storage
 
 `xt-store` owns the initial SQLite schema and the shared record writer. The
-native application does not ingest data or open this store yet.
+native application opens the store on startup; capture adapters do not yet ingest data into it.
 
 ## API
 
@@ -10,8 +10,8 @@ native application does not ingest data or open this store yet.
   The parent directory must exist. `Store::open_in_memory()` is for isolated
   single-connection tests and uses SQLite's MEMORY journal.
 - `upsert_session(&SessionMeta, keep_content)` creates the canonical conversation
-  ID unchanged or fills missing session metadata. `SessionMeta::new(id,
-raw_platform, source)` maps `claude`, `codex` and `cursor` to known hosts;
+  ID unchanged or fills missing session metadata.
+  `SessionMeta::new(id, raw_platform, source)` maps `claude`, `codex` and `cursor` to known hosts;
   every other platform maps to `other` and retains its original value.
 - `upsert_records(session_id, &[CanonicalRecord], keep_content)` commits one
   atomic batch. Its result partitions input rows into `inserted`, `enriched`,
@@ -62,7 +62,7 @@ unknown labels. Native `started_at_ms` is independent of the first imported even
 
 ## Structural ingestion storage
 
-Migration `0002_ING-01_ingest.sql` extends the actual 0001 schema. Sessions gain
+Migration `0002_ingest.sql` extends the actual 0001 schema. Sessions gain
 repository/namespace/branch-set metadata, a user/judge kind and a record count
 maintained by canonical batch writes. Records gain nullable hygiene, parent,
 agent, subtype and first-seen fields. Hosts, settings, source cursors and PR-link
@@ -111,6 +111,11 @@ Run `cargo test -p xt-store` and
 Tests use disposable file databases for WAL/readers/migrations/concurrent writes
 and isolated memory databases for wire, replay and nullable-field cases. They
 inspect each content-bearing column during metadata-only inserts and enrichment.
+
+The [storage acceptance contract](../../docs/acceptance/storage.md) specifies setup,
+actions and expected results, including migration/reopen behavior and the
+instrumented query-count regressions. Current PR verification records the tested
+source/base, commands and actual results.
 
 `cargo test -p xt-store ingest_schema` exercises an actual 0001 file upgrade,
 two reopens, row/column/FK preservation and rollback on invalid legacy relations.

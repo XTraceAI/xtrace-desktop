@@ -1,0 +1,32 @@
+{
+  "Manrope": {
+    "source": "https://raw.githubusercontent.com/google/fonts/fb629caaa15ad25c051089c98f09cf6c8e30a86b/ofl/manrope/Manrope%5Bwght%5D.ttf",
+    "sourceSha256": "d0639be45d0af36e798172419d7bd173c4bd4f29e2b76cbb69db1d11bf8b0a40",
+    "license": "OFL-1.1",
+    "files": {
+      "manrope-400.ttf": "7444846ec6be4a0d80b36f24cecc98a5ca853261df939595f68ac7f2772bbb7b",
+      "manrope-400.woff2": "f927c9f4c9bec8386b4a263fc60db17ce859a9fa5973d71de03e43ae210c4444",
+      "manrope-500.ttf": "70d3c5f22f95acce039d4580fd8f0da9bda37e0da26d1749f30355dab351bb25",
+      "manrope-500.woff2": "bd9f262d54079fe6146680d757ec85a40fb9f72d9015f283d4b0e9ab722c037c",
+      "manrope-600.ttf": "6e9631fe841ba6fbea5bcf02a3587f48823841e9d21a2cf76167ad5c9632f1e1",
+      "manrope-600.woff2": "e96207570599fb03087e8ba3fa49489d5165255dec5be154ede29bedf1a45ea9",
+      "manrope-700.ttf": "a197c1400c09e826abfe28888b6516f74e9059a8074b70cdc91675ccf9306122",
+      "manrope-700.woff2": "894a9b2dd1e81547453d21e28f69325a8a5782b82082b2800fd722ebee2266fe",
+      "manrope-800.ttf": "bf84c50d740b0e350bb4d3b22400528edbcea6450d7c5323434dc481b4f0fff4",
+      "manrope-800.woff2": "d4d29372ac49d56f75f8c29bae3827d9c2b65c77d1a26d0f44e800e407710234"
+    }
+  },
+  "GeistMono": {
+    "source": "https://raw.githubusercontent.com/google/fonts/9e25e2ba265e5298f70f6182dd4e8a3ebf1b9123/ofl/geistmono/GeistMono%5Bwght%5D.ttf",
+    "sourceSha256": "d00e590b8eb3a59acc329b2d044fd143ae935090b7da33199ebee27cc7de8196",
+    "license": "OFL-1.1",
+    "files": {
+      "geist-mono-400.ttf": "341cdaf235d2cdcfa85ff4eed9628381a89422bd3439710c80e45b725db70b2c",
+      "geist-mono-400.woff2": "0c85db998acf4511b6e4f65ae2248b5977c241308c64f2dbcdc2cc8a55d6c408",
+      "geist-mono-500.ttf": "3fc64e39b238a4d4370a35b5226103ab34d04fe741d93bbd59929cab8bbe3500",
+      "geist-mono-500.woff2": "d3a194b7b06b589d6fa43291c67567b82fd824dd0003a62875fcc726a8f8f551",
+      "geist-mono-600.ttf": "da295c0d1de3ada53531b0722db5e2d6ebb1a40c5653dbc267a8ea75f72be51a",
+      "geist-mono-600.woff2": "5433dd8bede1279b32b790d1ba89abeb52efaace2c236bc9f0e820a011061b3f"
+    }
+  }
+}

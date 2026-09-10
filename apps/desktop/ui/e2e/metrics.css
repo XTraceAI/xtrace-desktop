@@ -1,0 +1,15 @@
+/* Preview layout only; this entry is not part of the application bundle. */
+body {
+  min-width: 0;
+}
+.metrics-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 300px));
+  gap: 12px;
+}
+.metrics-section-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr));
+  gap: 16px;
+  margin: 24px 0;
+}
