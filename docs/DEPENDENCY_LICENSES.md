@@ -10,7 +10,9 @@ be allowed. Keep the Rust and npm policy lists synchronized.
 Run `pnpm notices` after dependency changes, then `pnpm notices:check`.
 The generated root `THIRD_PARTY_NOTICES.md` preserves upstream license and
 copyright texts from the locked Rust graph and production npm packages.
-Font notices remain alongside the bundled fonts.
+Font notices remain alongside the bundled fonts. Sidebar host logos are bundled
+locally with their pinned source locations and full Apache-2.0/MIT license texts in
+`apps/desktop/ui/public/hosts/LICENSES.txt`; Vite includes this file with the assets.
 
 ## MPL source access
 

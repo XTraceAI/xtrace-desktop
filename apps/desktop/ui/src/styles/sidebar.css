@@ -1,0 +1,473 @@
+.xt-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.xt-brand-mark img {
+  display: block;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.xt-sidebar {
+  width: 228px;
+  height: 100%;
+  min-height: 0;
+  padding: 16px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  color: var(--body);
+  background: transparent;
+  overflow-y: auto;
+}
+.xt-sidebar-brand {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  flex-shrink: 0;
+  padding: 6px 10px;
+}
+.xt-sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.xt-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.xt-nav-group h2,
+.xt-token-heading h2,
+.xt-surface-status h2 {
+  color: var(--meta);
+  font:
+    400 9.5px/1.45 'Geist Mono',
+    Menlo,
+    monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.xt-nav-group h2 {
+  padding: 0 10px 6px;
+}
+.xt-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--nav);
+  text-align: left;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.xt-nav-item > span:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-nav-item:hover:not(:disabled),
+.xt-icon-button:hover:not(:disabled) {
+  background: var(--subtle);
+}
+.xt-nav-item[aria-current='page'] {
+  background: var(--accent-tint);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.xt-nav-item:disabled {
+  color: var(--meta);
+  opacity: 0.7;
+  cursor: default;
+}
+.xt-sidebar-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1;
+}
+.xt-sidebar-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.xt-rulebook-count {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 20px;
+  background: var(--warning-tint);
+  color: var(--warning);
+  font:
+    600 10px/16px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-soon {
+  margin-left: auto;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font:
+    500 9.5px/1.45 'Geist Mono',
+    Menlo,
+    monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.xt-sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex-shrink: 0;
+  margin-top: auto;
+  padding-top: 14px;
+}
+.xt-host-tokens {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.xt-token-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.xt-token-heading > span {
+  color: var(--meta);
+  font:
+    400 9.5px/1.45 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-host-row {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+.xt-host-claude {
+  --host-tone: var(--host-claude);
+}
+.xt-host-codex {
+  --host-tone: var(--host-codex);
+}
+.xt-host-cursor {
+  --host-tone: var(--host-cursor);
+}
+.xt-host-glyph {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+}
+.xt-host-glyph img {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  object-fit: contain;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 1px;
+}
+.xt-host-cursor .xt-host-glyph img {
+  background: var(--host-logo-light-surface);
+}
+.xt-host-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--body);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.xt-host-track {
+  display: block;
+  height: 3px;
+  margin-top: 3px;
+  border-radius: 3px;
+  background: var(--track);
+  overflow: hidden;
+}
+.xt-host-track > span {
+  display: block;
+  height: 100%;
+  background: var(--host-tone);
+}
+.xt-host-value {
+  min-width: 40px;
+  color: var(--ink);
+  text-align: right;
+  font:
+    400 10.5px/1.45 'Geist Mono',
+    Menlo,
+    monospace;
+  font-variant-numeric: tabular-nums;
+}
+.xt-sidebar-empty {
+  margin: 0;
+  color: var(--meta);
+  font-size: 10.5px;
+}
+.xt-surface-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 4px;
+}
+.xt-surface-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 8px;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.xt-surface-row > span:first-child {
+  color: var(--secondary);
+}
+.xt-surface-row small {
+  width: 100%;
+  color: var(--meta);
+  font-size: 9.5px;
+}
+.xt-capture-capturing {
+  color: var(--success);
+}
+.xt-capture-not-capturing {
+  color: var(--warning);
+}
+.xt-capture-unknown {
+  color: var(--meta);
+}
+.xt-sidebar-status {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px;
+}
+.xt-hub-position {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+.xt-icon-button {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--secondary);
+  background: var(--surface);
+  cursor: pointer;
+}
+.xt-icon-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.xt-version-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  color: var(--meta);
+  font:
+    400 10.5px/1.45 'Geist Mono',
+    Menlo,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.xt-version-status > span,
+.xt-capture-trigger {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.xt-capture-trigger {
+  border: 0;
+  padding: 0;
+  text-align: left;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+}
+.xt-version-status > span > span,
+.xt-capture-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-version-status i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--meta);
+  flex-shrink: 0;
+}
+.xt-version-status i.xt-status-live {
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-tint);
+}
+.xt-sidebar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.xt-popover.xt-hub-popover {
+  width: 264px;
+  padding: 14px;
+  background: var(--canvas);
+  transform: translateY(6px);
+  overflow: visible;
+}
+.xt-hub-popover::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  bottom: 16px;
+  width: 10px;
+  height: 10px;
+  background: var(--canvas);
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  transform: rotate(45deg);
+}
+.xt-hub-content {
+  max-height: calc(100vh - 46px);
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.xt-hub-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  color: var(--accent-ink);
+  font:
+    400 10px/1.45 'Geist Mono',
+    Menlo,
+    monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.xt-hub-heading button {
+  padding: 0;
+  border: 0;
+  color: var(--meta);
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+}
+.xt-hub-popover h2 {
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+.xt-hub-popover ul {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 0;
+  list-style: none;
+}
+.xt-hub-popover li {
+  position: relative;
+  padding-left: 16px;
+}
+.xt-hub-popover li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.xt-hub-popover strong {
+  display: block;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+.xt-hub-popover li span {
+  line-height: 1.4;
+  display: block;
+  color: var(--secondary);
+  font-size: 11.5px;
+}
+.xt-hub-connect {
+  width: 100%;
+  min-height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--btn-ink-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.xt-hub-connect:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.xt-hub-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.xt-hub-button:hover {
+  background: var(--accent-tint);
+}
+.xt-hub-button .xt-sidebar-icon,
+.xt-hub-button svg {
+  width: 15px;
+  height: 15px;
+}
+.xt-sidebar-actions button:first-child svg {
+  width: 13px;
+  height: 13px;
+}
+.xt-popover.xt-capture-popover {
+  width: 264px;
+}
