@@ -23,6 +23,10 @@ pub struct WriteBatch<'a> {
     pub declared_host: Option<Host>,
     pub records: &'a [ParsedRecord],
     pub title: Option<&'a str>,
+    /// Session facts a source header states outside its records (a reader's
+    /// `cwd`/`git_branch`); merged with fill semantics, conflicts are flagged.
+    pub cwd: Option<&'a str>,
+    pub git_branch: Option<&'a str>,
     pub namespace: Option<&'a str>,
     pub keep_content: bool,
     pub observed_at: i64,
@@ -410,8 +414,8 @@ pub fn resolve_session(request: &WriteBatch<'_>) -> Result<SessionMeta> {
         host,
         source_platform: context.source_platform,
         source,
-        cwd: None,
-        git_branch: None,
+        cwd: request.cwd.map(str::to_owned),
+        git_branch: request.git_branch.map(str::to_owned),
         title: request.title.map(str::to_owned),
         surface: context.source_surface,
         surface_evidence: None,

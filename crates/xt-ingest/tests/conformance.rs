@@ -119,3 +119,140 @@ fn conformance_native_reader_stream() {
         "full exports must produce canonical records"
     );
 }
+
+/// The complete native import path with the exact pinned producer: F18's
+/// synthetic Codex and Cursor inputs are laid out under a disposable home, the
+/// pinned readers run with no plugin configuration, credentials or network,
+/// every session lands with its identity and counts, a second run adds nothing
+/// and the source bytes are unchanged.
+#[test]
+fn conformance_native_import() {
+    use std::collections::BTreeMap;
+    use xt_ingest::native::{HostStatus, ImportRequest, SessionOutcome, import_native};
+    use xt_store::{Host, Store};
+    let Some(plugin_root) = std::env::var_os("AGENT_PLUGINS_DIR") else {
+        println!("SKIP conformance_native_import: set AGENT_PLUGINS_DIR to the pinned plugin root");
+        return;
+    };
+    let python = std::env::var_os("PYTHON").unwrap_or_else(|| "python3".into());
+    if Command::new(&python).arg("--version").output().is_err() {
+        println!("SKIP conformance_native_import: Python 3 is unavailable");
+        return;
+    }
+    let root = repo_root();
+    let temp = std::env::temp_dir().join(format!("xtrace-native-import-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp);
+    let home = temp.join("home");
+    fs::create_dir_all(&home).unwrap();
+    let materialized = Command::new(&python)
+        .env_remove("PYTHONOPTIMIZE")
+        .arg(root.join("scripts/conformance/test-reader-stream.py"))
+        .args(["--plugin-root"])
+        .arg(&plugin_root)
+        .arg("--pin")
+        .arg(root.join(".plugin-pin"))
+        .arg("--fixtures")
+        .arg(root.join("fixtures"))
+        .arg("--materialize")
+        .arg(&home)
+        .args(["--only", "F18"])
+        .output()
+        .expect("materialize the fixture home");
+    assert!(
+        materialized.status.success(),
+        "{}",
+        String::from_utf8_lossy(&materialized.stderr)
+    );
+    fn hashes(dir: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                hashes(&path, out);
+            } else {
+                out.insert(path.clone(), fs::read(&path).unwrap());
+            }
+        }
+    }
+    let mut before = BTreeMap::new();
+    hashes(&home, &mut before);
+    let expected: Value = serde_json::from_str(
+        &fs::read_to_string(root.join("fixtures/F18/input/native/native.json")).unwrap(),
+    )
+    .unwrap();
+    let mut store = Store::open(temp.join("index.sqlite")).unwrap();
+    let request = ImportRequest {
+        home: &home,
+        hosts: &[Host::Codex, Host::Cursor],
+        pin: &root.join(".plugin-pin"),
+        plugin_root: Some(Path::new(&plugin_root)),
+        python: Some(&python),
+        observed_at: 1_788_782_400_000,
+    };
+    let report = import_native(&mut store, &request);
+    println!("{}", serde_json::to_string(&report).unwrap());
+    assert!(report.complete(), "{report:?}");
+    for host in &report.hosts {
+        assert_eq!(host.status, HostStatus::Complete);
+        assert!(host.detail.as_deref().unwrap().contains("pinned producer"));
+        let want = expected["expected_headers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["host"] == host.host.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(host.sessions.len(), want.len());
+        for (session, want) in host.sessions.iter().zip(want) {
+            assert_eq!(
+                session.native_session_id.as_deref(),
+                want["native_session_id"].as_str()
+            );
+            assert_eq!(
+                session.source_surface,
+                want["source_surface"].as_str().map(str::to_owned)
+            );
+            assert_eq!(
+                session.outcome,
+                SessionOutcome::Imported {
+                    records_new: want["records"].as_u64().unwrap() as usize,
+                    records_enriched: 0,
+                    records_dropped: 0
+                }
+            );
+            let stored = store
+                .session(session.conversation_id.as_deref().unwrap())
+                .unwrap()
+                .unwrap();
+            assert_eq!(stored.meta.title, None);
+            assert!(
+                store
+                    .records(&stored.meta.session_id)
+                    .unwrap()
+                    .iter()
+                    .all(|r| r.content_json.is_none())
+            );
+        }
+    }
+    let again = import_native(&mut store, &request);
+    assert!(again.complete());
+    assert!(
+        again
+            .hosts
+            .iter()
+            .flat_map(|h| &h.sessions)
+            .all(|s| matches!(
+                s.outcome,
+                SessionOutcome::Imported {
+                    records_new: 0,
+                    records_enriched: 0,
+                    ..
+                }
+            ))
+    );
+    let mut after = BTreeMap::new();
+    hashes(&home, &mut after);
+    assert_eq!(
+        after, before,
+        "native source bytes and file set are unchanged"
+    );
+    let _ = fs::remove_dir_all(&temp);
+}

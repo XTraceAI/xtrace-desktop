@@ -1,0 +1,251 @@
+//! Running the pinned shared readers. The producer is exactly the checkout named
+//! by `.plugin-pin`: HEAD and every listed reader source object are verified
+//! before the script runs. The readers see a disposable-looking environment
+//! rooted at the requested home, no inherited interpreter overrides, and their
+//! stdout is the shared stream; their stderr carries static diagnostic codes.
+
+use serde::{Deserialize, Serialize};
+use std::{
+    ffi::{OsStr, OsString},
+    path::{Path, PathBuf},
+    process::Command,
+};
+use xt_store::Host;
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Pin {
+    pub repository: String,
+    pub commit: String,
+    pub plugin_root: String,
+    pub plugin_version: String,
+    pub reader_sources: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PinnedProducer {
+    pub commit: String,
+    pub plugin_version: String,
+    pub script: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ReaderDiagnostic {
+    pub code: String,
+    pub path: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct ReaderRun {
+    pub lines: Vec<String>,
+    pub diagnostics: Vec<ReaderDiagnostic>,
+    /// The producer exits 0 for complete coverage and 2 for incomplete coverage
+    /// with partial successes still emitted.
+    pub complete: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReaderError {
+    MissingRuntime(String),
+    PinMismatch(String),
+    Failed(String),
+}
+
+impl std::fmt::Display for ReaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingRuntime(reason) => write!(f, "python runtime unavailable: {reason}"),
+            Self::PinMismatch(reason) => write!(f, "pinned producer unavailable: {reason}"),
+            Self::Failed(reason) => write!(f, "reader failed: {reason}"),
+        }
+    }
+}
+impl std::error::Error for ReaderError {}
+
+fn hex40(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+pub fn read_pin(path: &Path) -> Result<Pin, ReaderError> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|_| ReaderError::PinMismatch(".plugin-pin is unreadable".into()))?;
+    let pin: Pin = serde_json::from_str(&text)
+        .map_err(|_| ReaderError::PinMismatch(".plugin-pin is not the expected JSON".into()))?;
+    if !hex40(&pin.commit)
+        || pin.reader_sources.is_empty()
+        || pin.reader_sources.values().any(|id| !hex40(id))
+    {
+        return Err(ReaderError::PinMismatch(
+            ".plugin-pin must name a full commit and reader source objects".into(),
+        ));
+    }
+    Ok(pin)
+}
+
+fn git(repository: &Path, args: &[&str]) -> Result<String, ReaderError> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repository)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .map_err(|_| ReaderError::PinMismatch("git is unavailable to verify the pin".into()))?;
+    if !output.status.success() {
+        return Err(ReaderError::PinMismatch(format!(
+            "git {} failed in the plugin checkout",
+            args.first().copied().unwrap_or("")
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// Resolve the pinned reader script under `plugin_root`, which must be the pin's
+/// plugin root inside a clean checkout at the pinned commit with identical
+/// reader source objects.
+pub fn verify_pin(pin: &Pin, plugin_root: &Path) -> Result<PinnedProducer, ReaderError> {
+    let root = plugin_root
+        .canonicalize()
+        .map_err(|_| ReaderError::PinMismatch("plugin root does not exist".into()))?;
+    let toplevel = PathBuf::from(git(&root, &["rev-parse", "--show-toplevel"])?);
+    let toplevel = toplevel.canonicalize().unwrap_or(toplevel);
+    let relative = root
+        .strip_prefix(&toplevel)
+        .map_err(|_| ReaderError::PinMismatch("plugin root is outside its checkout".into()))?;
+    if relative.to_string_lossy().replace('\\', "/") != pin.plugin_root {
+        return Err(ReaderError::PinMismatch(
+            "plugin root is not the pinned plugin_root".into(),
+        ));
+    }
+    if git(&root, &["rev-parse", "HEAD"])? != pin.commit {
+        return Err(ReaderError::PinMismatch(
+            "plugin checkout is not at the pinned commit".into(),
+        ));
+    }
+    for (path, expected) in &pin.reader_sources {
+        let actual =
+            git(&root, &["rev-parse", "--verify", &format!("HEAD:{path}")]).map_err(|_| {
+                ReaderError::PinMismatch(format!("pinned reader source is absent: {path}"))
+            })?;
+        if &actual != expected {
+            return Err(ReaderError::PinMismatch(format!(
+                "pinned reader source differs: {path}"
+            )));
+        }
+    }
+    if !git(&root, &["status", "--porcelain"])?.is_empty() {
+        return Err(ReaderError::PinMismatch(
+            "plugin checkout has local modifications".into(),
+        ));
+    }
+    let script = root.join("scripts").join("readers_cli.py");
+    if !script.is_file() {
+        return Err(ReaderError::PinMismatch("readers_cli.py is absent".into()));
+    }
+    Ok(PinnedProducer {
+        commit: pin.commit.clone(),
+        plugin_version: pin.plugin_version.clone(),
+        script,
+    })
+}
+
+/// Select the interpreter: an explicit executable, else `PYTHON`, else `python3`.
+/// It must be 3.10+ and must not strip assertions.
+pub fn resolve_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError> {
+    let python = explicit
+        .map(OsStr::to_os_string)
+        .or_else(|| std::env::var_os("PYTHON").filter(|value| !value.is_empty()))
+        .unwrap_or_else(|| OsString::from("python3"));
+    let probe = Command::new(&python)
+        .env_remove("PYTHONOPTIMIZE")
+        .env_remove("PYTHONHOME")
+        .env_remove("PYTHONPATH")
+        .env_remove("PYTHONSTARTUP")
+        .args([
+            "-c",
+            "import sys; print(sys.version_info >= (3, 10) and sys.flags.optimize == 0)",
+        ])
+        .output()
+        .map_err(|_| ReaderError::MissingRuntime("python3 is not executable".into()))?;
+    if !probe.status.success() || String::from_utf8_lossy(&probe.stdout).trim() != "True" {
+        return Err(ReaderError::MissingRuntime(
+            "python3 must be 3.10 or newer with assertions enabled".into(),
+        ));
+    }
+    Ok(python)
+}
+
+/// Run the pinned reader for one host over `home`. Only the shared stream on
+/// stdout and static diagnostic codes on stderr are consumed; a crash surfaces
+/// as a bounded failure text, never as imported data.
+pub fn run_reader(
+    python: &OsStr,
+    producer: &PinnedProducer,
+    host: Host,
+    home: &Path,
+) -> Result<ReaderRun, ReaderError> {
+    let output = Command::new(python)
+        .arg(&producer.script)
+        .args(["--host", host.as_str()])
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("HOME", home)
+        .env("USERPROFILE", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("CODEX_HOME", home.join(".codex"))
+        .env("PYTHONNOUSERSITE", "1")
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .env("PYTHONUTF8", "1")
+        .env("NO_PROXY", "*")
+        .current_dir(home)
+        .output()
+        .map_err(|_| ReaderError::Failed("reader process could not start".into()))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut diagnostics = Vec::new();
+    let mut unexpected = None;
+    for line in stderr.lines().filter(|line| !line.trim().is_empty()) {
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(value)
+                if value.get("type").and_then(serde_json::Value::as_str) == Some("diagnostic") =>
+            {
+                diagnostics.push(ReaderDiagnostic {
+                    code: value
+                        .get("code")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_owned(),
+                    path: value
+                        .get("path")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned),
+                });
+            }
+            _ => unexpected = Some(line.chars().take(160).collect::<String>()),
+        }
+    }
+    let complete = match output.status.code() {
+        Some(0) => true,
+        Some(2) => false,
+        code => {
+            return Err(ReaderError::Failed(format!(
+                "reader exited with status {}: {}",
+                code.map_or("signal".to_owned(), |c| c.to_string()),
+                unexpected.unwrap_or_default()
+            )));
+        }
+    };
+    if let Some(text) = unexpected {
+        return Err(ReaderError::Failed(format!(
+            "reader wrote non-diagnostic output: {text}"
+        )));
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|_| ReaderError::Failed("reader stream is not UTF-8".into()))?;
+    Ok(ReaderRun {
+        lines: stdout.lines().map(str::to_owned).collect(),
+        diagnostics,
+        complete,
+    })
+}

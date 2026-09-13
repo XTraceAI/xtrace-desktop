@@ -95,6 +95,8 @@ pub(crate) fn apply(store: &mut Store, args: ImportArgs) -> Result<ImportOutcome
         declared_host: None,
         records: &records,
         title: args.title.as_deref(),
+        cwd: None,
+        git_branch: None,
         namespace: args.namespace.as_deref(),
         // Only the persisted policy can opt into archival; an absent setting is metadata-only.
         keep_content: true,
