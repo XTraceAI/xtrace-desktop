@@ -264,7 +264,7 @@ def exercise(plugin, fixtures, *, write_golden=False, output=None):
     return evidence
 
 
-def self_test(plugin, fixtures, pin):
+def self_test(plugin, fixtures, pin, repository):
     """An incompatible reader change and a differing pinned object must fail clearly."""
     with tempfile.TemporaryDirectory(prefix="xtrace-reader-mutant-") as directory:
         mutant = Path(directory) / "plugin"
@@ -282,12 +282,17 @@ def self_test(plugin, fixtures, pin):
             print(f"self-test: incompatible reader change fails clearly: {error}")
         else:
             raise Mismatch("self-test failed: an incompatible reader change was not detected")
+    # The real checkout, at the pinned commit, against a pin that names a different
+    # object for one reader source: only the specific identity mismatch may result.
     altered = dict(pin, reader_sources={**pin["reader_sources"], "plugins/memhub/scripts/readers_cli.py": "0" * 40})
     try:
-        verify_sources(Path(git(plugin, "rev-parse", "--show-toplevel")) if (plugin / ".git").exists() else None, altered)
-    except (Mismatch, TypeError, subprocess.CalledProcessError):
-        pass
-    print("self-test: pinned source identity is verified before any reader runs")
+        verify_sources(repository, altered)
+    except Mismatch as error:
+        if "differs from the pin" not in str(error):
+            raise Mismatch(f"self-test failed: unexpected source verification error: {error}") from None
+    else:
+        raise Mismatch("self-test failed: a differing pinned reader object was not detected")
+    print("self-test: a differing pinned reader object fails source verification")
 
 
 def main():
@@ -304,11 +309,12 @@ def main():
         with tempfile.TemporaryDirectory(prefix="xtrace-reader-plugin-") as directory:
             plugin = Path(directory) / "plugin"
             plugin.mkdir()
-            head = snapshot(args.plugin_root.resolve(), pin, plugin)
+            plugin_root = args.plugin_root.resolve()
+            head = snapshot(plugin_root, pin, plugin)
             evidence = exercise(plugin, args.fixtures.resolve(), write_golden=args.write_golden,
                                 output=args.output.resolve() if args.output else None)
             if args.self_test:
-                self_test(plugin, args.fixtures.resolve(), pin)
+                self_test(plugin, args.fixtures.resolve(), pin, Path(git(plugin_root, "rev-parse", "--show-toplevel")))
     except Mismatch as error:
         print(f"Pinned reader stream conformance failed: {error}", file=sys.stderr)
         return 1

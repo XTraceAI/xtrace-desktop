@@ -48,11 +48,14 @@ mkdir -p artifacts/private/conformance
 LOG="artifacts/private/conformance/cargo-test.log"
 : > "$LOG"
 # Both streams are captured: a SKIP printed to stderr must be as visible as one
-# on stdout. cargo's own status survives the tee pipeline through a status file.
+# on stdout. cargo's own status survives the tee pipeline through a status file
+# that is removed first and written by an errexit-safe construct, so a failed or
+# aborted cargo run can never inherit an earlier run's 0.
 STATUS="artifacts/private/conformance/cargo-test.status"
-{ cargo test --workspace --all-features --locked -- conformance --nocapture; echo "$?" > "$STATUS"; } 2>&1 | tee "$LOG"
-cargo_status="$(cat "$STATUS")"
-[ "$cargo_status" -eq 0 ] || echo "cargo test exited with status $cargo_status" >&2
+rm -f "$STATUS"
+{ cargo test --workspace --all-features --locked -- conformance --nocapture && echo 0 > "$STATUS" || echo "$?" > "$STATUS"; } 2>&1 | tee "$LOG"
+cargo_status="$(cat "$STATUS" 2>/dev/null || echo unknown)"
+[ "$cargo_status" = 0 ] || echo "cargo test exited with status $cargo_status" >&2
 sh scripts/ci/assert-no-skipped-conformance.sh "$LOG"
-[ "$cargo_status" -eq 0 ]
+[ "$cargo_status" = 0 ]
 echo "Pinned plugin conformance passed at $COMMIT."
