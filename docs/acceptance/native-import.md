@@ -15,9 +15,15 @@ xtrace-core import-native --db PATH --home DIR [--host claude|codex|cursor]... \
 ```
 
 The report is JSON on stdout. Exit 0 means every requested host imported every
-discovered session; exit 2 means a host or session was unavailable, unreadable,
-incomplete or malformed and says which; exit 1 means the command itself could
-not run. `--plugin-root` defaults to `AGENT_PLUGINS_DIR`, `--pin` to `.plugin-pin`.
+record of every discovered session; exit 2 means a host or session was
+unavailable, unreadable, incomplete, partial or malformed and says which; exit 1
+means the command itself could not run. A session whose identity and accepted
+records are stored but whose other records the writer rejected (a UUID owned by
+another session, a type conflict) or that lacked a UUID is reported as `partial`
+with each rejection named, and its host as `incomplete`. Reader output is
+consumed as a stream: each session imports as soon as its block completes, so a
+large history is never held in memory as a whole, and sessions read before a
+later reader failure stay imported and are listed under that failure.
 
 | Case                           | Setup/action                                                                                                                                                                            | Expected and observed result                                                                                                                                                                                                                                                                               |
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -27,6 +33,7 @@ not run. `--plugin-root` defaults to `AGENT_PLUGINS_DIR`, `--pin` to `.plugin-pi
 | Repeated import                | Run the same import twice.                                                                                                                                                              | The second run reports zero new records for every session and the row counts are unchanged.                                                                                                                                                                                                                |
 | Unchanged sources              | Hash every file under the home before and after both runs.                                                                                                                              | Every byte and the set of files are identical.                                                                                                                                                                                                                                                             |
 | Explicit gaps                  | Home without a host's directory; `--python` pointing at nothing; no plugin root; a checkout at another commit; a file whose records name another session; a malformed header or record. | `missing_source`, `missing_runtime`, `pin_mismatch` per host with a reason; `skipped` per session with the stream line; the remaining sessions still import and the process exits 2.                                                                                                                       |
+| Partial sessions               | A stream whose session reuses a UUID owned by another session and contains a record without a UUID.                                                                                     | The session's own records import; the outcome is `partial` naming `rejected_ownership` and `missing_uuid`; the host is `incomplete`; the report is never `complete`.                                                                                                                                       |
 | Pinned producer (native check) | `conformance_native_import` materializes F18's native inputs and runs the real pinned readers through `import_native`.                                                                  | Both hosts report `complete` with the pinned commit; sessions and counts equal the fixture expectations; a second run adds nothing; source bytes are unchanged. The test is in the required conformance inventory and cannot skip in the gate.                                                             |
 
 ## Verification

@@ -214,8 +214,7 @@ fn conformance_native_import() {
                 session.outcome,
                 SessionOutcome::Imported {
                     records_new: want["records"].as_u64().unwrap() as usize,
-                    records_enriched: 0,
-                    records_dropped: 0
+                    records_enriched: 0
                 }
             );
             let stored = store

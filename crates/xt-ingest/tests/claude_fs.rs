@@ -148,8 +148,7 @@ fn claude_fs_imports_main_and_sidechain_files_metadata_only_and_leaves_sources_u
         main.outcome,
         SessionOutcome::Imported {
             records_new: 25,
-            records_enriched: 0,
-            records_dropped: 0
+            records_enriched: 0
         }
     );
     assert_eq!(main.source_surface.as_deref(), Some("cli"));
@@ -167,8 +166,7 @@ fn claude_fs_imports_main_and_sidechain_files_metadata_only_and_leaves_sources_u
         side.outcome,
         SessionOutcome::Imported {
             records_new: 2,
-            records_enriched: 0,
-            records_dropped: 0
+            records_enriched: 0
         }
     );
 
@@ -259,8 +257,7 @@ fn claude_fs_imports_main_and_sidechain_files_metadata_only_and_leaves_sources_u
             session.outcome,
             SessionOutcome::Imported {
                 records_new: 0,
-                records_enriched: 0,
-                records_dropped: 0
+                records_enriched: 0
             },
             "a repeated import adds nothing: {session:?}"
         );

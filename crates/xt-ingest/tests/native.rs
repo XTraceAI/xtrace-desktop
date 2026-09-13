@@ -85,7 +85,6 @@ fn import(
                 block,
                 cursor,
                 1_788_782_400_000,
-                true,
             )
         })
         .collect()
@@ -112,8 +111,7 @@ fn reader_streams_import_identity_surface_usage_and_counts_metadata_only() {
                 result.outcome,
                 SessionOutcome::Imported {
                     records_new: want["records"].as_u64().unwrap() as usize,
-                    records_enriched: 0,
-                    records_dropped: 0
+                    records_enriched: 0
                 },
                 "{native}"
             );
@@ -209,8 +207,7 @@ fn reader_streams_import_identity_surface_usage_and_counts_metadata_only() {
                 result.outcome,
                 SessionOutcome::Imported {
                     records_new: 0,
-                    records_enriched: 0,
-                    records_dropped: 0
+                    records_enriched: 0
                 },
                 "{result:?}"
             );
@@ -233,8 +230,7 @@ fn metadata_only_streams_discover_sessions_without_writing_rows() {
             result.outcome,
             SessionOutcome::Imported {
                 records_new: 0,
-                records_enriched: 0,
-                records_dropped: 0
+                records_enriched: 0
             }
         );
         assert!(
@@ -452,4 +448,90 @@ fn reader_hosts_report_missing_sources_runtime_and_pin_explicitly() {
         "nothing is imported from an unverified producer"
     );
     assert!(!report.complete());
+}
+
+#[test]
+fn rejected_and_uuid_less_records_make_coverage_partial_not_complete() {
+    use xt_ingest::native::stream::BlockReader;
+    let mut store = Store::open_in_memory().unwrap();
+    let codex = golden("F18", "codex full");
+    assert!(matches!(
+        import(&mut store, Host::Codex, &codex)[0].outcome,
+        SessionOutcome::Imported { records_new: 5, .. }
+    ));
+    // A second session that reuses a UUID owned by the first one, plus a record without a UUID.
+    let mut stream = golden("F18", "cursor full");
+    let taken = codex.iter().find(|line| !is_header(line)).unwrap().clone();
+    let header_index = stream.iter().rposition(|line| is_header(line)).unwrap();
+    stream.insert(header_index + 1, taken);
+    stream.insert(
+        header_index + 2,
+        r#"{"type":"assistant","message":{"role":"assistant","content":[]}}"#.into(),
+    );
+    let results = import(&mut store, Host::Cursor, &stream);
+    assert!(
+        matches!(
+            results[0].outcome,
+            SessionOutcome::Imported { records_new: 5, .. }
+        ),
+        "{results:?}"
+    );
+    match &results[1].outcome {
+        SessionOutcome::Partial {
+            records_new,
+            records_dropped,
+            rejections,
+            ..
+        } => {
+            assert_eq!(*records_new, 7, "the session's own records still import");
+            assert_eq!(*records_dropped, 2);
+            assert!(
+                rejections.contains(&"rejected_ownership".to_owned())
+                    && rejections.contains(&"missing_uuid".to_owned()),
+                "{rejections:?}"
+            );
+        }
+        other => panic!("expected partial coverage, got {other:?}"),
+    }
+    let report = xt_ingest::native::ImportReport {
+        hosts: vec![xt_ingest::native::HostReport {
+            host: Host::Cursor,
+            status: HostStatus::Incomplete,
+            detail: None,
+            diagnostics: Vec::new(),
+            sessions: results,
+        }],
+    };
+    assert!(
+        !report.complete(),
+        "a partial session can never read as complete coverage"
+    );
+
+    // Feeding the same stream one line at a time yields the same blocks.
+    let whole = parse_stream(&stream, Host::Cursor, SessionSource::ReadersCli).unwrap();
+    let mut reader = BlockReader::new(Host::Cursor, SessionSource::ReadersCli);
+    let mut incremental = Vec::new();
+    for line in &stream {
+        incremental.extend(reader.push(line).unwrap());
+        incremental.extend(reader.take_queued());
+    }
+    incremental.extend(reader.finish());
+    let ids = |blocks: &[BlockOutcome]| {
+        blocks
+            .iter()
+            .map(|block| match block {
+                BlockOutcome::Ready(ready) => (
+                    ready.header.native_session_id.clone(),
+                    ready.records.len(),
+                    ready.dropped,
+                ),
+                BlockOutcome::Malformed {
+                    native_session_id,
+                    line,
+                    ..
+                } => (native_session_id.clone().unwrap_or_default(), *line, 0),
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&whole), ids(&incremental));
 }

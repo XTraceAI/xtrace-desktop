@@ -177,16 +177,32 @@ pub fn resolve_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError>
     Ok(python)
 }
 
-/// Run the pinned reader for one host over `home`. Only the shared stream on
+/// A running pinned reader: its stdout is consumed line by line by the
+/// caller; stderr (static diagnostics only) is drained concurrently.
+pub struct ReaderProcess {
+    child: std::process::Child,
+    pub stdout: std::io::BufReader<std::process::ChildStdout>,
+    stderr: std::thread::JoinHandle<Vec<u8>>,
+}
+
+#[derive(Debug)]
+pub struct ReaderOutcome {
+    pub diagnostics: Vec<ReaderDiagnostic>,
+    /// The producer exits 0 for complete coverage and 2 for incomplete coverage
+    /// with partial successes still emitted.
+    pub complete: bool,
+}
+
+/// Start the pinned reader for one host over `home`. Only the shared stream on
 /// stdout and static diagnostic codes on stderr are consumed; a crash surfaces
 /// as a bounded failure text, never as imported data.
-pub fn run_reader(
+pub fn spawn_reader(
     python: &OsStr,
     producer: &PinnedProducer,
     host: Host,
     home: &Path,
-) -> Result<ReaderRun, ReaderError> {
-    let output = Command::new(python)
+) -> Result<ReaderProcess, ReaderError> {
+    let mut child = Command::new(python)
         .arg(&producer.script)
         .args(["--host", host.as_str()])
         .env_clear()
@@ -200,52 +216,84 @@ pub fn run_reader(
         .env("PYTHONUTF8", "1")
         .env("NO_PROXY", "*")
         .current_dir(home)
-        .output()
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|_| ReaderError::Failed("reader process could not start".into()))?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let mut diagnostics = Vec::new();
-    let mut unexpected = None;
-    for line in stderr.lines().filter(|line| !line.trim().is_empty()) {
-        match serde_json::from_str::<serde_json::Value>(line) {
-            Ok(value)
-                if value.get("type").and_then(serde_json::Value::as_str) == Some("diagnostic") =>
-            {
-                diagnostics.push(ReaderDiagnostic {
-                    code: value
-                        .get("code")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("unknown")
-                        .to_owned(),
-                    path: value
-                        .get("path")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_owned),
-                });
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ReaderError::Failed("reader stdout is unavailable".into()))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ReaderError::Failed("reader stderr is unavailable".into()))?;
+    let drain = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut stderr, &mut bytes);
+        bytes
+    });
+    Ok(ReaderProcess {
+        child,
+        stdout: std::io::BufReader::new(stdout),
+        stderr: drain,
+    })
+}
+
+impl ReaderProcess {
+    /// Wait for the reader after its stdout has been consumed and classify
+    /// its diagnostics and exit status.
+    pub fn finish(mut self) -> Result<ReaderOutcome, ReaderError> {
+        drop(self.stdout);
+        let status = self
+            .child
+            .wait()
+            .map_err(|_| ReaderError::Failed("reader process could not be awaited".into()))?;
+        let stderr = self.stderr.join().unwrap_or_default();
+        let stderr = String::from_utf8_lossy(&stderr);
+        let mut diagnostics = Vec::new();
+        let mut unexpected = None;
+        for line in stderr.lines().filter(|line| !line.trim().is_empty()) {
+            match serde_json::from_str::<serde_json::Value>(line) {
+                Ok(value)
+                    if value.get("type").and_then(serde_json::Value::as_str)
+                        == Some("diagnostic") =>
+                {
+                    diagnostics.push(ReaderDiagnostic {
+                        code: value
+                            .get("code")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unknown")
+                            .to_owned(),
+                        path: value
+                            .get("path")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned),
+                    });
+                }
+                _ => unexpected = Some(line.chars().take(160).collect::<String>()),
             }
-            _ => unexpected = Some(line.chars().take(160).collect::<String>()),
         }
-    }
-    let complete = match output.status.code() {
-        Some(0) => true,
-        Some(2) => false,
-        code => {
+        let complete = match status.code() {
+            Some(0) => true,
+            Some(2) => false,
+            code => {
+                return Err(ReaderError::Failed(format!(
+                    "reader exited with status {}: {}",
+                    code.map_or("signal".to_owned(), |c| c.to_string()),
+                    unexpected.unwrap_or_default()
+                )));
+            }
+        };
+        if let Some(text) = unexpected {
             return Err(ReaderError::Failed(format!(
-                "reader exited with status {}: {}",
-                code.map_or("signal".to_owned(), |c| c.to_string()),
-                unexpected.unwrap_or_default()
+                "reader wrote non-diagnostic output: {text}"
             )));
         }
-    };
-    if let Some(text) = unexpected {
-        return Err(ReaderError::Failed(format!(
-            "reader wrote non-diagnostic output: {text}"
-        )));
+        Ok(ReaderOutcome {
+            diagnostics,
+            complete,
+        })
     }
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|_| ReaderError::Failed("reader stream is not UTF-8".into()))?;
-    Ok(ReaderRun {
-        lines: stdout.lines().map(str::to_owned).collect(),
-        diagnostics,
-        complete,
-    })
 }

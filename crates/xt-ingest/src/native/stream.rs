@@ -92,8 +92,151 @@ fn is_header(line: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Split one stream into per-session blocks. `host` is the host the caller asked
-/// the producer for; a header claiming another host is malformed.
+/// Incremental splitter: feed the stream one line at a time and take each
+/// session block as soon as its successor header (or the end) arrives, so a
+/// large history is never held in memory as a whole.
+pub struct BlockReader {
+    host: Host,
+    source: SessionSource,
+    current: Option<(SessionBlock, SourceContext)>,
+    /// A malformed block swallows its records until the next header.
+    skipping: bool,
+    /// A malformed successor header that arrived together with a completed block.
+    queued: Option<BlockOutcome>,
+    line: usize,
+}
+
+impl BlockReader {
+    /// `host` is the host the caller asked the producer for; a header claiming
+    /// another host is malformed.
+    pub fn new(host: Host, source: SessionSource) -> Self {
+        Self {
+            host,
+            source,
+            current: None,
+            skipping: false,
+            queued: None,
+            line: 0,
+        }
+    }
+
+    /// Consume one line. A completed block is returned when the next header
+    /// begins; a record before any header rejects the stream.
+    pub fn push(&mut self, line: &str) -> Result<Option<BlockOutcome>, StreamError> {
+        self.line += 1;
+        let number = self.line;
+        if line.trim().is_empty() {
+            return Ok(None);
+        }
+        if is_header(line) {
+            let finished = self
+                .current
+                .take()
+                .map(|(block, _)| BlockOutcome::Ready(Box::new(block)));
+            self.skipping = false;
+            let pending = match self.start_block(line, number) {
+                Ok(()) => None,
+                Err(malformed) => {
+                    self.skipping = true;
+                    Some(malformed)
+                }
+            };
+            // A finished block precedes a malformed successor; the caller sees
+            // the successor on the next push (it is queued behind the header).
+            return Ok(match (finished, pending) {
+                (Some(block), Some(malformed)) => {
+                    self.queued = Some(malformed);
+                    Some(block)
+                }
+                (Some(block), None) => Some(block),
+                (None, Some(malformed)) => Some(malformed),
+                (None, None) => None,
+            });
+        }
+        if self.skipping {
+            return Ok(None);
+        }
+        let Some((block, context)) = self.current.as_mut() else {
+            return Err(StreamError::RecordBeforeHeader { line: number });
+        };
+        match parse_with_context(line, context) {
+            Ok(Parsed::Record(record)) => block.records.push(*record),
+            Ok(Parsed::Dropped(_)) => block.dropped += 1,
+            Ok(Parsed::Inert | Parsed::StructuralEvent(_) | Parsed::PrLink(_)) => block.inert += 1,
+            Err(_) => {
+                let (block, _) = self.current.take().unwrap();
+                self.skipping = true;
+                return Ok(Some(BlockOutcome::Malformed {
+                    native_session_id: Some(block.header.native_session_id),
+                    line: number,
+                    reason: "canonical record does not match the shared stream contract",
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    fn start_block(&mut self, line: &str, number: usize) -> Result<(), BlockOutcome> {
+        let header =
+            serde_json::from_str::<SessionHeader>(line).map_err(|_| BlockOutcome::Malformed {
+                native_session_id: None,
+                line: number,
+                reason: "session header does not match the shared stream contract",
+            })?;
+        let native = header.native_session_id.clone();
+        let reason = if header.host != self.host.as_str() {
+            Some("session header names another host")
+        } else if native.trim().is_empty() || header.conversation_id.trim().is_empty() {
+            Some("session header lacks an identity")
+        } else if header.conversation_id != expected_conversation_id(self.host, &native) {
+            Some("session header conversation ID does not derive from its native ID")
+        } else if header
+            .started_at
+            .as_deref()
+            .is_some_and(|value| chrono::DateTime::parse_from_rfc3339(value).is_err())
+        {
+            Some("session header start is not RFC3339")
+        } else if !header.mtime.is_finite() || header.mtime < 0.0 {
+            Some("session header clock is not a representable instant")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            return Err(BlockOutcome::Malformed {
+                native_session_id: Some(native),
+                line: number,
+                reason,
+            });
+        }
+        let context = header.context(self.host, self.source);
+        self.current = Some((
+            SessionBlock {
+                header,
+                records: Vec::new(),
+                inert: 0,
+                dropped: 0,
+            },
+            context,
+        ));
+        Ok(())
+    }
+
+    /// A malformed successor header that was queued behind a completed block.
+    pub fn take_queued(&mut self) -> Option<BlockOutcome> {
+        self.queued.take()
+    }
+
+    /// The final block once the stream has ended.
+    pub fn finish(mut self) -> Option<BlockOutcome> {
+        self.queued.take().or_else(|| {
+            self.current
+                .take()
+                .map(|(block, _)| BlockOutcome::Ready(Box::new(block)))
+        })
+    }
+}
+
+/// Split one complete stream into per-session blocks.
 pub fn parse_stream<I>(
     lines: I,
     host: Host,
@@ -103,96 +246,17 @@ where
     I: IntoIterator,
     I::Item: AsRef<str>,
 {
+    let mut reader = BlockReader::new(host, source);
     let mut blocks = Vec::new();
-    let mut current: Option<(SessionBlock, SourceContext)> = None;
-    // A malformed block swallows its records until the next header.
-    let mut skipping = false;
-    for (index, line) in lines.into_iter().enumerate() {
-        let line = line.as_ref();
-        let number = index + 1;
-        if line.trim().is_empty() {
-            continue;
+    for line in lines {
+        if let Some(block) = reader.push(line.as_ref())? {
+            blocks.push(block);
         }
-        if is_header(line) {
-            if let Some((block, _)) = current.take() {
-                blocks.push(BlockOutcome::Ready(Box::new(block)));
-            }
-            skipping = false;
-            match serde_json::from_str::<SessionHeader>(line) {
-                Ok(header) => {
-                    let native = header.native_session_id.clone();
-                    let reason = if header.host != host.as_str() {
-                        Some("session header names another host")
-                    } else if native.trim().is_empty() || header.conversation_id.trim().is_empty() {
-                        Some("session header lacks an identity")
-                    } else if header.conversation_id != expected_conversation_id(host, &native) {
-                        Some("session header conversation ID does not derive from its native ID")
-                    } else if header
-                        .started_at
-                        .as_deref()
-                        .is_some_and(|value| chrono::DateTime::parse_from_rfc3339(value).is_err())
-                    {
-                        Some("session header start is not RFC3339")
-                    } else if !header.mtime.is_finite() || header.mtime < 0.0 {
-                        Some("session header clock is not a representable instant")
-                    } else {
-                        None
-                    };
-                    if let Some(reason) = reason {
-                        blocks.push(BlockOutcome::Malformed {
-                            native_session_id: Some(native),
-                            line: number,
-                            reason,
-                        });
-                        skipping = true;
-                        continue;
-                    }
-                    let context = header.context(host, source);
-                    current = Some((
-                        SessionBlock {
-                            header,
-                            records: Vec::new(),
-                            inert: 0,
-                            dropped: 0,
-                        },
-                        context,
-                    ));
-                }
-                Err(_) => {
-                    blocks.push(BlockOutcome::Malformed {
-                        native_session_id: None,
-                        line: number,
-                        reason: "session header does not match the shared stream contract",
-                    });
-                    skipping = true;
-                }
-            }
-            continue;
-        }
-        if skipping {
-            continue;
-        }
-        let Some((block, context)) = current.as_mut() else {
-            return Err(StreamError::RecordBeforeHeader { line: number });
-        };
-        match parse_with_context(line, context) {
-            Ok(Parsed::Record(record)) => block.records.push(*record),
-            Ok(Parsed::Dropped(_)) => block.dropped += 1,
-            Ok(Parsed::Inert | Parsed::StructuralEvent(_) | Parsed::PrLink(_)) => block.inert += 1,
-            Err(_) => {
-                let (block, _) = current.take().unwrap();
-                blocks.push(BlockOutcome::Malformed {
-                    native_session_id: Some(block.header.native_session_id),
-                    line: number,
-                    reason: "canonical record does not match the shared stream contract",
-                });
-                skipping = true;
-            }
+        if let Some(queued) = reader.take_queued() {
+            blocks.push(queued);
         }
     }
-    if let Some((block, _)) = current.take() {
-        blocks.push(BlockOutcome::Ready(Box::new(block)));
-    }
+    blocks.extend(reader.finish());
     Ok(blocks)
 }
 

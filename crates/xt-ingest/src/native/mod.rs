@@ -20,7 +20,11 @@ use readers_cli::{ReaderDiagnostic, ReaderError};
 use serde::Serialize;
 use std::{ffi::OsStr, path::Path};
 use stream::{BlockOutcome, SessionBlock};
-use xt_store::{Host, SessionSource, Store, batch::SourceCursor, ingest::DiscoveredSession};
+use xt_store::{
+    Host, SessionSource, Store,
+    batch::{RecordDisposition, SourceCursor},
+    ingest::DiscoveredSession,
+};
 
 pub struct ImportRequest<'a> {
     /// The home directory whose `.claude`, `.codex` and `.cursor` trees are read.
@@ -52,10 +56,19 @@ pub enum HostStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "outcome")]
 pub enum SessionOutcome {
+    /// Every record of the session was accepted.
     Imported {
         records_new: usize,
         records_enriched: usize,
+    },
+    /// The session's identity and accepted records are stored, but some records
+    /// could not be: they lacked a UUID, or the writer rejected them (a UUID
+    /// owned by another session, a type conflict). Coverage is incomplete.
+    Partial {
+        records_new: usize,
+        records_enriched: usize,
         records_dropped: usize,
+        rejections: Vec<String>,
     },
     Skipped {
         reason: String,
@@ -94,21 +107,23 @@ impl HostReport {
     }
 }
 
+fn all_imported(sessions: &[SessionResult]) -> bool {
+    sessions
+        .iter()
+        .all(|session| matches!(session.outcome, SessionOutcome::Imported { .. }))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ImportReport {
     pub hosts: Vec<HostReport>,
 }
 
 impl ImportReport {
-    /// True only when every requested host imported all of its sessions.
+    /// True only when every requested host imported every record of every session.
     pub fn complete(&self) -> bool {
-        self.hosts.iter().all(|host| {
-            host.status == HostStatus::Complete
-                && host
-                    .sessions
-                    .iter()
-                    .all(|session| matches!(session.outcome, SessionOutcome::Imported { .. }))
-        })
+        self.hosts
+            .iter()
+            .all(|host| host.status == HostStatus::Complete)
     }
 }
 
@@ -171,7 +186,6 @@ fn import_claude(store: &mut Store, request: &ImportRequest<'_>) -> HostReport {
                     read.outcome,
                     Some(cursor),
                     request.observed_at,
-                    true,
                 ));
             }
             Err(error) => {
@@ -191,11 +205,7 @@ fn import_claude(store: &mut Store, request: &ImportRequest<'_>) -> HostReport {
             }
         }
     }
-    let status = if diagnostics.is_empty()
-        && sessions
-            .iter()
-            .all(|s| matches!(s.outcome, SessionOutcome::Imported { .. }))
-    {
+    let status = if diagnostics.is_empty() && all_imported(&sessions) {
         HostStatus::Complete
     } else {
         HostStatus::Incomplete
@@ -245,61 +255,92 @@ fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host
             return HostReport::unavailable(host, HostStatus::PinMismatch, error.to_string());
         }
     };
-    let run = match readers_cli::run_reader(&python, &producer, host, request.home) {
-        Ok(run) => run,
+    let mut process = match readers_cli::spawn_reader(&python, &producer, host, request.home) {
+        Ok(process) => process,
         Err(error) => {
             return HostReport::unavailable(host, HostStatus::ReaderFailed, error.to_string());
         }
     };
-    let blocks = match stream::parse_stream(&run.lines, host, SessionSource::ReadersCli) {
-        Ok(blocks) => blocks,
-        Err(error) => {
-            return HostReport::unavailable(host, HostStatus::ReaderFailed, error.to_string());
-        }
+    // Sessions import as their blocks complete, so a large history never sits
+    // in memory as a whole and every session read before a later failure stays.
+    let mut reader = stream::BlockReader::new(host, SessionSource::ReadersCli);
+    let mut sessions = Vec::new();
+    let mut stream_failure = None;
+    let settle = |store: &mut Store, block: BlockOutcome, sessions: &mut Vec<SessionResult>| {
+        let cursor = match &block {
+            BlockOutcome::Ready(ready) => Some(SourceCursor {
+                source: SessionSource::ReadersCli,
+                cursor_key: format!("{}:{}", host.as_str(), ready.header.path),
+                // The reader's native update clock in milliseconds; byte offsets
+                // belong to the per-file cursors of incremental scanning.
+                position: (ready.header.mtime * 1000.0) as i64,
+                updated_at: request.observed_at,
+            }),
+            BlockOutcome::Malformed { .. } => None,
+        };
+        sessions.push(import_block(
+            store,
+            host,
+            SessionSource::ReadersCli,
+            block,
+            cursor,
+            request.observed_at,
+        ));
     };
-    let sessions = blocks
-        .into_iter()
-        .map(|block| {
-            let cursor = match &block {
-                BlockOutcome::Ready(ready) => Some(SourceCursor {
-                    source: SessionSource::ReadersCli,
-                    cursor_key: format!("{}:{}", host.as_str(), ready.header.path),
-                    // The reader's native update clock in milliseconds; byte offsets
-                    // belong to the per-file cursors of incremental scanning.
-                    position: (ready.header.mtime * 1000.0) as i64,
-                    updated_at: request.observed_at,
-                }),
-                BlockOutcome::Malformed { .. } => None,
-            };
-            import_block(
-                store,
-                host,
-                SessionSource::ReadersCli,
-                block,
-                cursor,
-                request.observed_at,
-                run.complete,
-            )
-        })
-        .collect::<Vec<_>>();
-    let status = if run.complete
-        && run.diagnostics.is_empty()
-        && sessions
-            .iter()
-            .all(|s| matches!(s.outcome, SessionOutcome::Imported { .. }))
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match std::io::BufRead::read_line(&mut process.stdout, &mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => {
+                stream_failure = Some("reader stream could not be read".to_owned());
+                break;
+            }
+        }
+        let text = line.trim_end_matches(['\n', '\r']);
+        match reader.push(text) {
+            Ok(Some(block)) => settle(store, block, &mut sessions),
+            Ok(None) => {}
+            Err(error) => {
+                stream_failure = Some(error.to_string());
+                break;
+            }
+        }
+        if let Some(queued) = reader.take_queued() {
+            settle(store, queued, &mut sessions);
+        }
+    }
+    if stream_failure.is_none()
+        && let Some(block) = reader.finish()
     {
-        HostStatus::Complete
-    } else {
-        HostStatus::Incomplete
+        settle(store, block, &mut sessions);
+    }
+    let outcome = process.finish();
+    let (status, detail, diagnostics) = match (stream_failure, outcome) {
+        (Some(failure), _) => (HostStatus::ReaderFailed, failure, Vec::new()),
+        (None, Err(error)) => (HostStatus::ReaderFailed, error.to_string(), Vec::new()),
+        (None, Ok(run)) => {
+            let status = if run.complete && run.diagnostics.is_empty() && all_imported(&sessions) {
+                HostStatus::Complete
+            } else {
+                HostStatus::Incomplete
+            };
+            (
+                status,
+                format!(
+                    "pinned producer {} (memhub {})",
+                    producer.commit, producer.plugin_version
+                ),
+                run.diagnostics,
+            )
+        }
     };
     HostReport {
         host,
         status,
-        detail: Some(format!(
-            "pinned producer {} (memhub {})",
-            producer.commit, producer.plugin_version
-        )),
-        diagnostics: run.diagnostics,
+        detail: Some(detail),
+        diagnostics,
         sessions,
     }
 }
@@ -314,7 +355,6 @@ pub fn import_block(
     block: BlockOutcome,
     cursor: Option<SourceCursor>,
     observed_at: i64,
-    discovery_complete: bool,
 ) -> SessionResult {
     let SessionBlock {
         header,
@@ -353,7 +393,9 @@ pub fn import_block(
             .and_then(|value| xt_store::timestamp::parse(value).ok())
             .map(|(_, millis)| millis),
         last_observed_at: observed_at,
-        discovery_complete,
+        // The identity is fully known from the header; host-level coverage is
+        // reported separately.
+        discovery_complete: true,
     };
     let mut result = SessionResult {
         native_session_id: Some(header.native_session_id.clone()),
@@ -363,7 +405,6 @@ pub fn import_block(
         outcome: SessionOutcome::Imported {
             records_new: 0,
             records_enriched: 0,
-            records_dropped: dropped,
         },
     };
     if let Err(error) = store.observe_discovered_session(&discovery) {
@@ -372,14 +413,16 @@ pub fn import_block(
         };
         return result;
     }
-    if records.is_empty() {
+    let (mut new, mut enriched) = (0, 0);
+    let mut rejected = vec!["missing_uuid".to_owned(); dropped];
+    if records.is_empty() && rejected.is_empty() {
         // A metadata-only stream or an empty file: identity is discovered,
         // nothing is written, the cursor stays where it was.
         return result;
     }
     let chunks: Vec<&[crate::canonical::ParsedRecord]> =
         records.chunks(MAX_BATCH_RECORDS).collect();
-    let last = chunks.len() - 1;
+    let last = chunks.len().saturating_sub(1);
     for (index, chunk) in chunks.into_iter().enumerate() {
         let batch = WriteBatch {
             context: &context,
@@ -397,16 +440,18 @@ pub fn import_block(
         };
         match write_batch(store, &batch) {
             Ok(saved) => {
-                if let SessionOutcome::Imported {
-                    records_new,
-                    records_enriched,
-                    records_dropped,
-                } = &mut result.outcome
-                {
-                    *records_new += saved.records_new;
-                    *records_enriched += saved.records_enriched;
-                    *records_dropped += saved.records_dropped;
-                }
+                new += saved.records_new;
+                enriched += saved.records_enriched;
+                // A rejection is a record this import could not store; it must
+                // never read as complete coverage.
+                rejected.extend(saved.dropped_reasons.iter().map(|(_, disposition)| {
+                    match disposition {
+                        RecordDisposition::RejectedOwnership => "rejected_ownership".to_owned(),
+                        RecordDisposition::RejectedType => "rejected_type".to_owned(),
+                        RecordDisposition::DroppedMissingUuid => "missing_uuid".to_owned(),
+                        other => format!("{other:?}").to_lowercase(),
+                    }
+                }));
             }
             Err(error) => {
                 result.outcome = SessionOutcome::Skipped {
@@ -418,5 +463,18 @@ pub fn import_block(
             }
         }
     }
+    result.outcome = if rejected.is_empty() {
+        SessionOutcome::Imported {
+            records_new: new,
+            records_enriched: enriched,
+        }
+    } else {
+        SessionOutcome::Partial {
+            records_new: new,
+            records_enriched: enriched,
+            records_dropped: rejected.len(),
+            rejections: rejected,
+        }
+    };
     result
 }
