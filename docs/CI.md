@@ -99,7 +99,10 @@ pinned commit from the public repository, without credentials, into the ignored
 accepted only at that commit. Either way the checkout must be clean and every
 listed reader source must be the pinned object, so an edited file at the right
 commit fails before any test runs. It requires Python 3.10+ (`PYTHON` selects
-the interpreter), runs `cargo test --workspace --all-features --locked -- conformance --nocapture`
+the interpreter), clears `PYTHONOPTIMIZE`, `PYTHONPATH`, `PYTHONHOME` and
+`PYTHONSTARTUP` so the harnesses' assertions and standard library stay intact
+(an interpreter running with `-O` is rejected), runs
+`cargo test --workspace --all-features --locked -- conformance --nocapture`
 with both output streams captured to `artifacts/private/conformance/cargo-test.log`,
 then runs `scripts/ci/assert-no-skipped-conformance.sh` on that log. The
 validator requires every name in `scripts/ci/conformance-inventory.txt` to have

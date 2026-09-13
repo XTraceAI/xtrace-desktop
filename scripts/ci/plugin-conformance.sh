@@ -13,8 +13,14 @@ REPOSITORY="$(node scripts/ci/plugin-pin.mjs repository)"
 COMMIT="$(node scripts/ci/plugin-pin.mjs commit)"
 PLUGIN_ROOT="$(node scripts/ci/plugin-pin.mjs plugin_root)"
 PYTHON="${PYTHON:-python3}"
+# The harnesses check their contracts with assert statements, and inherited
+# interpreter settings must not weaken them: PYTHONOPTIMIZE strips asserts,
+# PYTHONPATH can shadow the standard library, PYTHONHOME replaces the runtime.
+unset PYTHONOPTIMIZE PYTHONPATH PYTHONHOME PYTHONSTARTUP
 "$PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' \
   || { echo "Conformance requires Python 3.10+; set PYTHON." >&2; exit 1; }
+"$PYTHON" -c 'import sys; sys.exit(0 if sys.flags.optimize == 0 else 1)' \
+  || { echo "Conformance requires Python assertions to stay active; PYTHON must not enable -O." >&2; exit 1; }
 export PYTHON
 if [ -n "${AGENT_PLUGINS_DIR:-}" ]; then
   CHECKOUT="$(git -C "$AGENT_PLUGINS_DIR" rev-parse --show-toplevel)"

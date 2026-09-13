@@ -42,6 +42,8 @@ fn conformance_native_reader_stream() {
     let root = repo_root();
     let evidence = evidence_path();
     let output = Command::new(python)
+        // Assertions carry the harness contracts; an inherited -O must not strip them.
+        .env_remove("PYTHONOPTIMIZE")
         .arg(root.join("scripts/conformance/test-reader-stream.py"))
         .arg("--plugin-root")
         .arg(plugin_root)

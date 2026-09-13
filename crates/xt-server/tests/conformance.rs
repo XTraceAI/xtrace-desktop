@@ -30,6 +30,8 @@ fn run_harness(name: &str, script: &str) {
         return;
     }
     let output = Command::new(python)
+        // Assertions carry the harness contracts; an inherited -O must not strip them.
+        .env_remove("PYTHONOPTIMIZE")
         .arg(repo_root().join(script))
         .arg("--plugin-root")
         .arg(plugin_root)
