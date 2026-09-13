@@ -1,0 +1,10 @@
+{
+  "codex metadata-only": [
+    "{\"conversation_id\": \"codex-00000000-0000-4000-8000-000000000201\", \"cwd\": \"/repo/desktop\", \"git_branch\": null, \"host\": \"codex\", \"mtime\": 1788782400.0, \"native_session_id\": \"00000000-0000-4000-8000-000000000201\", \"path\": \"$HOME/.codex/sessions/2026/09/07/rollout-2026-09-07T12-00-00-00000000-0000-4000-8000-000000000201.jsonl\", \"source_surface\": \"Codex Desktop\", \"started_at\": \"2026-09-07T12:00:00.000Z\", \"title\": null, \"type\": \"session\"}"
+  ],
+  "cursor metadata-only": [
+    "{\"conversation_id\": \"cursor-00000000-0000-4000-8000-000000000204\", \"cwd\": \"/repo/recorded\", \"git_branch\": null, \"host\": \"cursor\", \"mtime\": 1788782400.0, \"native_session_id\": \"00000000-0000-4000-8000-000000000204\", \"path\": \"$HOME/.cursor/chats/19ee0000fixture0/00000000-0000-4000-8000-000000000204/store.db\", \"source_surface\": \"cursor-cli\", \"started_at\": \"2026-09-07T12:00:00.338Z\", \"title\": null, \"type\": \"session\"}",
+    "{\"conversation_id\": \"cursor-00000000-0000-4000-8000-000000000203\", \"cwd\": \"/repo/legacy\", \"git_branch\": null, \"host\": \"cursor\", \"mtime\": 1788782400.0, \"native_session_id\": \"00000000-0000-4000-8000-000000000203\", \"path\": \"$HOME/.cursor/chats/19ee0000fixture0/00000000-0000-4000-8000-000000000203/store.db\", \"source_surface\": null, \"started_at\": \"2026-09-07T12:00:00.338Z\", \"title\": null, \"type\": \"session\"}",
+    "{\"conversation_id\": \"cursor-00000000-0000-4000-8000-000000000202\", \"cwd\": null, \"git_branch\": null, \"host\": \"cursor\", \"mtime\": 1788782400.0, \"native_session_id\": \"00000000-0000-4000-8000-000000000202\", \"path\": \"$HOME/.cursor/projects/surfacehash/agent-transcripts/00000000-0000-4000-8000-000000000202/00000000-0000-4000-8000-000000000202.jsonl\", \"source_surface\": \"cursor-ide\", \"started_at\": null, \"title\": null, \"type\": \"session\"}"
+  ]
+}

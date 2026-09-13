@@ -1,0 +1,387 @@
+{
+  "author": "XTrace fixture maintainers",
+  "shape": "Pinned native reader stream: one Codex CLI rollout, one Cursor IDE transcript and one legacy Cursor store, in full and metadata-only mode.",
+  "anchor": "2026-09-07T12:00:00Z",
+  "anchor_epoch": 1788782400,
+  "notes": [
+    "Record counts are derived from the inputs. Codex keeps the user request, the reasoning summary, the assistant text, the tool call and its output (5); developer text, the AGENTS.md preamble and the duplicated UI event are excluded.",
+    "Cursor exports open with one import banner user record. The transcript then keeps two user requests and three assistant messages, one of which splits into a text record and a tool_use record (7); turn_ended rows are structural.",
+    "The Cursor store keeps the banner, the user request, the assistant text, the assistant tool call (carrying the usage) and the tool result (5); the system prompt and the empty reasoning block are excluded."
+  ],
+  "runs": [
+    {
+      "host": "codex",
+      "mode": "full"
+    },
+    {
+      "host": "codex",
+      "mode": "metadata-only"
+    },
+    {
+      "host": "cursor",
+      "mode": "full"
+    },
+    {
+      "host": "cursor",
+      "mode": "metadata-only"
+    }
+  ],
+  "files": [
+    {
+      "path": ".codex/sessions/2026/09/07/rollout-2026-09-07T12-00-00-00000000-0000-4000-8000-000000000181.jsonl",
+      "lines": [
+        {
+          "timestamp": "2026-09-07T12:00:00.000Z",
+          "type": "session_meta",
+          "payload": {
+            "id": "00000000-0000-4000-8000-000000000181",
+            "timestamp": "2026-09-07T12:00:00.000Z",
+            "cwd": "/repo/fixture",
+            "originator": "codex_cli",
+            "cli_version": "0.1.0",
+            "git": {
+              "branch": "fixture-branch"
+            }
+          }
+        },
+        {
+          "timestamp": "2026-09-07T12:00:01.000Z",
+          "type": "response_item",
+          "payload": {
+            "type": "message",
+            "role": "developer",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "<permissions>"
+              }
+            ]
+          }
+        },
+        {
+          "timestamp": "2026-09-07T12:00:02.000Z",
+          "type": "response_item",
+          "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "# AGENTS.md instructions for /repo\n..."
+              }
+            ]
+          }
+        },
+        {
+          "timestamp": "2026-09-07T12:00:03.000Z",
+          "type": "turn_context",
+          "payload": {
+            "model": "gpt-5.3-codex"
+          }
+        },
+        {
+          "timestamp": "2026-09-07T12:00:04.000Z",
+          "type": "event_msg",
+          "payload": {
+            "type": "user_message",
+            "message": "duplicate UI text"
+          }
+        },
+        {
+          "timestamp": "2026-09-07T12:00:05.000Z",
+          "type": "response_item",
+          "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Fix the bug"
+              }
+            ]
+          }
+        },
+        {
+          "timestamp": "2026-09-07T12:00:06.000Z",
+          "type": "response_item",
+          "payload": {
+            "type": "reasoning",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "**Planning**"
+              }
+            ],
+            "encrypted_content": "OPAQUE=="
+          }
+        },
+        {
+          "timestamp": "2026-09-07T12:00:07.000Z",
+          "type": "response_item",
+          "payload": {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "On it."
+              }
+            ]
+          }
+        },
+        {
+          "timestamp": "2026-09-07T12:00:08.000Z",
+          "type": "response_item",
+          "payload": {
+            "type": "function_call",
+            "name": "exec_command",
+            "arguments": "{\"cmd\":\"ls\"}",
+            "call_id": "call_1"
+          }
+        },
+        {
+          "timestamp": "2026-09-07T12:00:09.000Z",
+          "type": "response_item",
+          "payload": {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "file.py"
+          }
+        },
+        {
+          "timestamp": "2026-09-07T12:00:10.000Z",
+          "type": "event_msg",
+          "payload": {
+            "type": "token_count",
+            "info": {
+              "total_token_usage": {
+                "input_tokens": 100,
+                "cached_input_tokens": 60,
+                "cache_write_input_tokens": 10,
+                "output_tokens": 20,
+                "reasoning_output_tokens": 5,
+                "total_tokens": 120
+              },
+              "last_token_usage": {
+                "input_tokens": 100,
+                "cached_input_tokens": 60,
+                "cache_write_input_tokens": 10,
+                "output_tokens": 20,
+                "reasoning_output_tokens": 5,
+                "total_tokens": 120
+              }
+            }
+          }
+        },
+        {
+          "timestamp": "2026-09-07T12:00:11.000Z",
+          "type": "event_msg",
+          "payload": {
+            "type": "task_complete",
+            "last_agent_message": "Fixed it"
+          }
+        }
+      ]
+    },
+    {
+      "path": ".cursor/projects/fixturehash/agent-transcripts/00000000-0000-4000-8000-000000000182/00000000-0000-4000-8000-000000000182.jsonl",
+      "lines": [
+        {
+          "role": "user",
+          "message": {
+            "content": [
+              {
+                "type": "text",
+                "text": "<timestamp>Monday, Sep 7, 2026, 5:05 AM (UTC-7)</timestamp>\n<user_query>\nReply once\n</user_query>"
+              }
+            ]
+          }
+        },
+        {
+          "role": "assistant",
+          "message": {
+            "content": [
+              {
+                "type": "text",
+                "text": "FIRST"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_ended",
+          "status": "success"
+        },
+        {
+          "role": "user",
+          "message": {
+            "content": [
+              {
+                "type": "text",
+                "text": "<timestamp>Monday, Sep 7, 2026, 5:07 AM (UTC-7)</timestamp>\n<user_query>\nEdit it\n</user_query>"
+              }
+            ]
+          }
+        },
+        {
+          "role": "assistant",
+          "message": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Working."
+              },
+              {
+                "type": "tool_use",
+                "name": "Write",
+                "input": {
+                  "path": "/repo/fixture/out.txt",
+                  "contents": "ok\n"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "role": "assistant",
+          "message": {
+            "content": [
+              {
+                "type": "text",
+                "text": "DONE"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_ended",
+          "status": "success"
+        }
+      ]
+    },
+    {
+      "path": ".cursor/chats/19ee0000fixture0/00000000-0000-4000-8000-000000000183/meta.json",
+      "json": {
+        "schemaVersion": 1,
+        "cwd": "/repo/fixture",
+        "createdAtMs": 1788782400338,
+        "updatedAtMs": 1788782423901,
+        "hasConversation": true
+      }
+    },
+    {
+      "path": ".cursor/chats/19ee0000fixture0/00000000-0000-4000-8000-000000000183/store.db",
+      "store": {
+        "agent_id": "00000000-0000-4000-8000-000000000183",
+        "name": "Fixture agent",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are an AI coding assistant..."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<timestamp>Monday, Sep 7</timestamp>\n<user_query>\nFix the bug\n</user_query>"
+              }
+            ],
+            "providerOptions": {
+              "cursor": {
+                "requestId": "r1"
+              }
+            }
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "reasoning",
+                "text": "",
+                "signature": "OPAQUE"
+              },
+              {
+                "type": "text",
+                "text": "On it."
+              },
+              {
+                "type": "tool-call",
+                "toolCallId": "call-1",
+                "toolName": "Shell",
+                "args": {
+                  "command": "ls"
+                }
+              }
+            ],
+            "usage": {
+              "inputTokens": 50,
+              "outputTokens": 12,
+              "cacheReadTokens": 20,
+              "cacheWriteTokens": 3
+            },
+            "providerOptions": {
+              "cursor": {
+                "modelName": "fixture-model"
+              }
+            }
+          },
+          {
+            "role": "tool",
+            "content": [
+              {
+                "type": "tool-result",
+                "toolCallId": "call-1",
+                "toolName": "Shell",
+                "result": "file.py"
+              }
+            ]
+          }
+        ],
+        "nodes": [
+          {
+            "name": "interior",
+            "children": [0, 1],
+            "clock_ms": 1788782404000
+          },
+          {
+            "name": "root",
+            "children": ["interior", 2, 3],
+            "clock_ms": 1788782416000,
+            "extra_hex": "b20103636c69"
+          }
+        ]
+      }
+    }
+  ],
+  "expected_headers": [
+    {
+      "host": "codex",
+      "native_session_id": "00000000-0000-4000-8000-000000000181",
+      "source_surface": "codex_cli",
+      "started_at": "2026-09-07T12:00:00.000Z",
+      "cwd": "/repo/fixture",
+      "git_branch": "fixture-branch",
+      "records": 5
+    },
+    {
+      "host": "cursor",
+      "native_session_id": "00000000-0000-4000-8000-000000000183",
+      "source_surface": null,
+      "started_at": "2026-09-07T12:00:00.338Z",
+      "cwd": "/repo/fixture",
+      "git_branch": null,
+      "records": 5
+    },
+    {
+      "host": "cursor",
+      "native_session_id": "00000000-0000-4000-8000-000000000182",
+      "source_surface": "cursor-ide",
+      "started_at": null,
+      "cwd": null,
+      "git_branch": null,
+      "records": 7
+    }
+  ],
+  "golden": "golden.json"
+}

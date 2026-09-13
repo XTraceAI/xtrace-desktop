@@ -177,6 +177,15 @@ F17/F18/F20 also expose named `parser` snapshots for the pure canonical parser.
 They share the same loader and preserve existing schema evidence; parser
 classification does not mark their product expectations populated.
 
+F18 and F20 additionally expose a `native` snapshot (`input/native/native.json`)
+describing synthetic Codex rollouts, Cursor IDE transcripts and Cursor stores
+(the store is built from its JSON description at test time; no binary is
+committed), the identity, surface and record-count expectations derived by hand
+from those inputs, and the committed contract golden `golden.json` captured
+from the pinned reader. The required native check runs the pinned
+`readers_cli.py` over them; see [pinned plugin conformance](CI.md#pinned-plugin-conformance).
+Native inputs do not mark the product expectations populated either.
+
 The harness owns catalog structure. The first subsystem PR populating a fixture
 owns its inputs; later PRs coordinate additions to that fixture's expected keys
 or named variants rather than replacing earlier evidence. Start with synthetic
@@ -209,9 +218,9 @@ assertions. Follow [CI.md](CI.md) for combined-source validation.
 | F15 | Skeleton                      | Enforcement downgrade                                           |
 | F16 | Skeleton                      | Named filesystem/environment probe snapshots                    |
 | F17 | Skeleton                      | Claude response revisions, copies and missing IDs               |
-| F18 | Skeleton                      | Source replay, enrichment, retention and purge variants         |
+| F18 | Skeleton, native inputs       | Source replay, enrichment, retention and purge variants         |
 | F19 | Skeleton                      | Overlapping pull-request attribution                            |
-| F20 | Skeleton                      | Surface identity and capture coverage                           |
+| F20 | Skeleton, native inputs       | Surface identity and capture coverage                           |
 | F21 | Skeleton                      | Initial scan/tail handoff race                                  |
 
 Purge variants must eventually cover previously stored transcript/tool/fire/judge
