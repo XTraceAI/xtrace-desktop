@@ -77,16 +77,15 @@ test('routine CI is Linux-only and native work is explicit release preparation',
 });
 
 test('release validation provisions the producer required by native conformance', async () => {
-  const conformance = await readFile(
-    new URL('../../crates/xt-server/tests/conformance.rs', import.meta.url),
-    'utf8',
-  );
-  const pin = conformance.match(/"--expected-commit",\s*"([a-f0-9]{40})"/)[1];
+  const pin = JSON.parse(
+    await readFile(new URL('../../.plugin-pin', import.meta.url), 'utf8'),
+  ).commit;
+  assert.match(pin, /^[a-f0-9]{40}$/);
   const steps = release.split(/\n {6}- /);
   const producer = steps.findIndex((step) => step.includes('repository: XTraceAI/agent-plugins'));
   const validation = steps.findIndex((step) => step.includes('pnpm check:native'));
   assert.ok(producer > 0 && validation > producer, 'producer must exist before the mandatory gate');
-  assert.equal(steps[producer].match(/\n {10}ref: ([a-f0-9]{40})\n/)[1], pin);
+  assert.equal(steps[producer].match(/\n {10}ref: ([a-f0-9]{40})(?: #[^\n]*)?\n/)[1], pin);
   assert.match(steps[producer], /persist-credentials: false/);
   const path = steps[producer].match(/\n {10}path: (.+)\n/)[1];
   assert.ok(

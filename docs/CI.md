@@ -83,6 +83,51 @@ replace it with a runner that preserves actual macOS 14 floor testing. Building
 with a deployment target of 14 on a newer OS does not test that floor.
 See the [runner image](https://github.com/actions/runner-images/blob/main/images/macos/macos-14-arm64-Readme.md).
 
+## Pinned plugin conformance
+
+`.plugin-pin` names the one reviewed capture-producer revision Desktop is
+validated against: the public `agent-plugins` repository, a full commit SHA,
+the plugin root, the plugin's release version and the Git object IDs of the
+reader sources the Desktop index will consume (`readers/`, `readers_cli.py`,
+`cursor_flush.py`). `node scripts/ci/plugin-pin.mjs commit` prints a field;
+`scripts/ci/plugin-pin.test.mjs` rejects malformed pins in hosted CI.
+
+`scripts/ci/plugin-conformance.sh` owns the pinned checkout, the environment
+and unskipped execution. Without `AGENT_PLUGINS_DIR` it fetches exactly the
+pinned commit from the public repository, without credentials, into the ignored
+`artifacts/private/plugin-conformance/` directory; a supplied checkout is
+accepted only at that commit. Either way the checkout must be clean and every
+listed reader source must be the pinned object, so an edited file at the right
+commit fails before any test runs. It requires Python 3.10+ (`PYTHON` selects
+the interpreter), clears `PYTHONOPTIMIZE`, `PYTHONPATH`, `PYTHONHOME` and
+`PYTHONSTARTUP` so the harnesses' assertions and standard library stay intact
+(an interpreter running with `-O` is rejected), runs
+`cargo test --workspace --all-features --locked -- conformance --nocapture`
+with both output streams captured to `artifacts/private/conformance/cargo-test.log`,
+then runs `scripts/ci/assert-no-skipped-conformance.sh` on that log. The
+validator requires every name in `scripts/ci/conformance-inventory.txt` to have
+run and passed, and fails on any `SKIP` line, ignored test, failure, zero count
+or missing name. Under a plain `cargo test` without the environment the
+conformance tests print `SKIP` and return; that output can never satisfy the
+gate. Missing checkout, missing Python, an unfetchable or differing pin, a
+removed hook or an absent named test are all red before merging.
+
+The inventory currently requires:
+
+| Test                               | Real contract exercised                                                                                                                                                                         |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `conformance_flush_turn`           | The pinned Stop hook imports through both routing mechanisms, advancing its real cursor only after committed acknowledgements, including retry after a failed commit and metadata-only storage. |
+| `conformance_plugin_transport`     | The pinned decoder and token client against the headless binary: initialize, SSE `tools/list`, token mint/list/delete, notification and empty-import rejection.                                 |
+| `conformance_native_reader_stream` | The pinned `readers_cli.py` over the fixture catalog's synthetic native Codex/Cursor files ([F18 and F20](FIXTURES.md)); see [acceptance](acceptance/plugin-conformance.md).                    |
+
+Record in the PR the pin commit printed by the hook and the `executed N of N`
+line with its test names. Every producer release train that Desktop adopts
+updates `.plugin-pin`, the release workflow's producer `ref`, the reader source
+object IDs and, when the reader stream changes on purpose, the fixture goldens
+(`python3 scripts/conformance/test-reader-stream.py --write-golden`, then review
+the diff). A pin whose readers emit a different stream fails the reader test
+until the golden and the consumer are updated together.
+
 ## Disclosure and manual audits
 
 Run the local current-content disclosure check immediately before every merge,
@@ -175,11 +220,12 @@ no existing instance of the app. It does not inspect WKWebView content, tray
 interaction or production packaging. Those checks belong to later native and
 release acceptance.
 
-`node scripts/ci/run-hook.mjs plugin-conformance` invokes
-`scripts/ci/plugin-conformance.sh` when installed. A `.plugin-pin` or
-`assert-no-skipped-conformance.sh` also makes the runner mandatory. The hook must
-use a pinned plugin checkout, configure its environment and reject skipped
-conformance tests. `node scripts/ci/run-hook.mjs dto` invokes `scripts/ci/check-dto.sh` once
+`node scripts/ci/run-hook.mjs plugin-conformance` invokes the installed
+`scripts/ci/plugin-conformance.sh`; `.plugin-pin` and
+`assert-no-skipped-conformance.sh` also make the runner mandatory, so none of the
+three can disappear compared with the reviewed base. See
+[pinned plugin conformance](#pinned-plugin-conformance) for what the hook
+requires and records. `node scripts/ci/run-hook.mjs dto` invokes `scripts/ci/check-dto.sh` once
 installed; a generated DTO directory makes that check mandatory. The DTO
 hook must generate into temporary output and reject missing, extra or stale
 committed exports. UI jobs consume those committed exports; the local native result supplies
@@ -192,7 +238,8 @@ the sign-off, verification and disclosure requirements; no Dependabot schedule i
 this change. Dependency updates use the normal reviewed PR process. Cache timing and manual combined-result validation need recorded run evidence.
 The release-only workflow checks out the pinned production plugin under an ignored
 private artifact directory and supplies its plugin root to the mandatory native
-conformance hook. Its pin must match the conformance test. This adds no PR job.
+conformance hook. Its checkout `ref` must equal the `.plugin-pin` commit; the
+workflow tests enforce that. This adds no PR job.
 The first hosted release dispatch remains pending until release preparation. Live queue evidence
 is required before queue activation, rather than during private manual merging.
 
