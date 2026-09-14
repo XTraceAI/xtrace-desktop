@@ -570,27 +570,60 @@ impl SessionWriter {
     }
 
     /// Fill in metadata that only records reveal (a Claude file's surface,
-    /// cwd and branch come from its first batch). Known values fill once; a
-    /// value that disagrees with the index is an explicit skip.
+    /// cwd and branch come from its records). Each label fills once, from
+    /// whichever batch first carries it, so a label the first batch lacked is
+    /// still taken from a later one; a value that disagrees with the index is
+    /// an explicit skip.
     pub fn enrich(
         &mut self,
         store: &mut Store,
         header: &stream::SessionHeader,
         observed_at: i64,
     ) -> Result<(), Box<SessionResult>> {
+        let merged = stream::SessionHeader {
+            source_surface: self
+                .context
+                .source_surface
+                .clone()
+                .or_else(|| header.source_surface.clone()),
+            started_at: self
+                .context
+                .started_at
+                .clone()
+                .or_else(|| header.started_at.clone()),
+            cwd: self.cwd.clone().or_else(|| header.cwd.clone()),
+            git_branch: self
+                .git_branch
+                .clone()
+                .or_else(|| header.git_branch.clone()),
+            ..header.clone()
+        };
+        if merged.source_surface == self.context.source_surface
+            && merged.started_at == self.context.started_at
+            && merged.cwd == self.cwd
+            && merged.git_branch == self.git_branch
+        {
+            return Ok(());
+        }
         if let Err(error) =
-            store.observe_discovered_session(&discovery(self.host, header, observed_at))
+            store.observe_discovered_session(&discovery(self.host, &merged, observed_at))
         {
             return Err(Box::new(self.abandon(format!(
                 "discovered identity conflicts with the index: {error}"
             ))));
         }
         let source = self.context.source.unwrap_or(SessionSource::Transcript);
-        self.context = header.context(self.host, source);
-        self.cwd = header.cwd.clone();
-        self.git_branch = header.git_branch.clone();
-        self.result.source_surface = header.source_surface.clone();
+        self.context = merged.context(self.host, source);
+        self.cwd = merged.cwd;
+        self.git_branch = merged.git_branch;
+        self.result.source_surface = self.context.source_surface.clone();
         Ok(())
+    }
+
+    /// Whether every record-revealed label is known; until then each batch
+    /// is inspected for the labels still missing.
+    pub fn labels_complete(&self) -> bool {
+        self.context.source_surface.is_some() && self.cwd.is_some() && self.git_branch.is_some()
     }
 
     /// Records the parser could not identify; they count against coverage.

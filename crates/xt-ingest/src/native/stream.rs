@@ -118,16 +118,66 @@ fn classify(line: &str) -> LineKind {
     }
 }
 
-/// Whether broken JSON still carries the `"type": "session"` discriminator,
-/// as a header truncated before its later keys does.
+/// Whether broken JSON still carries a top-level `"type": "session"`
+/// discriminator, as a header truncated before its later keys does. Nested
+/// objects and arrays (a record's tool input, say) are skipped, so only the
+/// line's own discriminator counts.
 fn names_session(text: &str) -> bool {
-    text.match_indices("\"type\"").any(|(index, key)| {
-        text[index + key.len()..]
-            .trim_start()
-            .strip_prefix(':')
-            .map(str::trim_start)
-            .is_some_and(|value| value.starts_with("\"session\""))
-    })
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    let mut key_position = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => {
+                let start = index + 1;
+                let mut end = start;
+                while end < bytes.len() && bytes[end] != b'"' {
+                    if bytes[end] == b'\\' {
+                        end += 1;
+                    }
+                    end += 1;
+                }
+                let end = end.min(bytes.len());
+                if depth == 1 && key_position && text.get(start..end) == Some("type") {
+                    let mut after = end + 1;
+                    while after < bytes.len() && bytes[after].is_ascii_whitespace() {
+                        after += 1;
+                    }
+                    if after < bytes.len() && bytes[after] == b':' {
+                        let mut value = after + 1;
+                        while value < bytes.len() && bytes[value].is_ascii_whitespace() {
+                            value += 1;
+                        }
+                        if text
+                            .get(value..)
+                            .is_some_and(|rest| rest.starts_with("\"session\""))
+                        {
+                            return true;
+                        }
+                    }
+                }
+                key_position = false;
+                index = end + 1;
+            }
+            b'{' | b'[' => {
+                depth += 1;
+                key_position = depth == 1;
+                index += 1;
+            }
+            b'}' | b']' => {
+                depth = depth.saturating_sub(1);
+                key_position = false;
+                index += 1;
+            }
+            b',' => {
+                key_position = depth == 1;
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    false
 }
 
 /// One parsed line of the stream. A consumer that writes as it reads never

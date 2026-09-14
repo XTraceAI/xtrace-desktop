@@ -785,3 +785,49 @@ fn claude_fs_never_persists_a_blank_record_label_as_the_discovered_surface() {
     let discovered = store.discovered_sessions(Host::Claude).unwrap();
     assert_eq!(discovered[0].surface.as_deref(), Some("cli"));
 }
+
+#[test]
+fn claude_fs_keeps_enriching_metadata_after_the_first_batch() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/-Users-late");
+    fs::create_dir_all(&project).unwrap();
+    let session = "00000000-0000-4000-8000-00000000d0d0";
+    let mut body = String::new();
+    for index in 0..2_005 {
+        let mut line: Value = serde_json::from_str(&synthetic_line(index, session)).unwrap();
+        if index < 2_000 {
+            // The whole first batch omits every optional label.
+            line.as_object_mut().unwrap().remove("entrypoint");
+            line.as_object_mut().unwrap().remove("cwd");
+        } else {
+            line["gitBranch"] = json!("late-branch");
+        }
+        body.push_str(&line.to_string());
+        body.push('\n');
+    }
+    fs::write(project.join(format!("{session}.jsonl")), body).unwrap();
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Complete, "{report:?}");
+    let result = &report.hosts[0].sessions[0];
+    assert_eq!(
+        result.outcome,
+        SessionOutcome::Imported {
+            records_new: 2_005,
+            records_enriched: 0
+        }
+    );
+    assert_eq!(
+        result.source_surface.as_deref(),
+        Some("cli"),
+        "the later batch revealed the surface"
+    );
+    let discovered = store.discovered_sessions(Host::Claude).unwrap();
+    assert_eq!(discovered.len(), 1);
+    assert_eq!(discovered[0].surface.as_deref(), Some("cli"));
+    let stored = store.session(session).unwrap().unwrap();
+    assert_eq!(stored.meta.surface.as_deref(), Some("cli"));
+    assert_eq!(stored.meta.cwd.as_deref(), Some("/repo/fixture"));
+    assert_eq!(stored.meta.git_branch.as_deref(), Some("late-branch"));
+}

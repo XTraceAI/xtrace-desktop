@@ -209,8 +209,8 @@ fn header(file: &ClaudeFile, first: &[ParsedRecord]) -> SessionHeader {
 
 /// Import one file as a stream of complete lines. The file name identifies
 /// the session, so its discovered identity is registered before any line is
-/// parsed; the first batch's records then fill in the surface, cwd and
-/// branch. Batches commit as they fill, and the file cursor (bytes through
+/// parsed; each batch then fills in whichever of the surface, cwd and branch
+/// is still unknown. Batches commit as they fill, and the file cursor (bytes through
 /// the last complete line) commits with the last one. A trailing partial line
 /// is left unconsumed. A malformed or non-UTF-8 line stops the file with the
 /// committed count named and without advancing the cursor; the parent
@@ -237,7 +237,6 @@ pub fn import_file(
     let mut complete_bytes: u64 = 0;
     let mut line_number = 0usize;
     let mut buffer = Vec::new();
-    let mut enriched = false;
     let stop = |writer: &SessionWriter, line: usize, reason: &str| {
         writer.abandon(format!(
             "{reason} (stream line {line}); {} earlier batches stay committed",
@@ -288,11 +287,10 @@ pub fn import_file(
             }
         }
         if batch.len() == MAX_BATCH_RECORDS {
-            if !enriched {
-                if let Err(skipped) = writer.enrich(store, &header(file, &batch), observed_at) {
-                    return Ok(*skipped);
-                }
-                enriched = true;
+            if !writer.labels_complete()
+                && let Err(skipped) = writer.enrich(store, &header(file, &batch), observed_at)
+            {
+                return Ok(*skipped);
             }
             if let Err(skipped) = writer.write(store, &batch, observed_at, None) {
                 return Ok(*skipped);
@@ -306,7 +304,9 @@ pub fn import_file(
     if writer.batches == 0 && batch.is_empty() {
         return Ok(writer.finish());
     }
-    if !enriched && let Err(skipped) = writer.enrich(store, &header(file, &batch), observed_at) {
+    if !writer.labels_complete()
+        && let Err(skipped) = writer.enrich(store, &header(file, &batch), observed_at)
+    {
         return Ok(*skipped);
     }
     let cursor = SourceCursor {

@@ -959,3 +959,52 @@ fn headers_with_empty_labels_are_malformed_before_any_record_arrives() {
         );
     }
 }
+
+#[test]
+fn nested_session_discriminators_in_truncated_records_are_not_boundaries() {
+    use xt_ingest::native::readers_cli::ReaderOutcome;
+    use xt_ingest::native::{HostStatus, import_reader_lines};
+    let first = "00000000-0000-4000-8000-00000000ae57";
+    let mut store = Store::open_in_memory().unwrap();
+    let mut lines = synthetic_session(first, 3);
+    // A record cut off inside its tool input, which happens to hold the
+    // discriminator: a malformed record of the active session, not a
+    // successor header, so the session is abandoned rather than completed.
+    lines.push(
+        r#"{"uuid":"5555ae57-5555-4555-8555-000000000099","type":"assistant","cwd":"/repo/fixture","timestamp":"2026-09-07T12:00:09Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"type":"session","command":"ls"#
+            .to_owned(),
+    );
+    let report = import_reader_lines(
+        &mut store,
+        Host::Codex,
+        "test".into(),
+        stream_of(lines),
+        1,
+        || {
+            Ok(ReaderOutcome {
+                diagnostics: Vec::new(),
+                complete: true,
+            })
+        },
+    );
+    assert_eq!(report.status, HostStatus::Incomplete, "{report:?}");
+    assert_eq!(report.sessions.len(), 1, "no phantom successor: {report:?}");
+    match &report.sessions[0].outcome {
+        SessionOutcome::Skipped { reason } => assert!(
+            reason.contains("line 5") && reason.contains("0 earlier batches"),
+            "{reason}"
+        ),
+        other => panic!("{other:?}"),
+    }
+    assert!(
+        store
+            .source_cursor(
+                SessionSource::ReadersCli,
+                &format!("codex:$HOME/.codex/sessions/{first}.jsonl")
+            )
+            .unwrap()
+            .is_none(),
+        "an abandoned session commits no cursor"
+    );
+    assert_eq!(store.counts().unwrap().sessions, 0);
+}
