@@ -76,3 +76,5 @@ Complete empty or inert-only rescans reset an existing cursor to zero without re
 Completed-scan writes and empty resets apply only when their observation time is at least as recent as the stored observation. A two-connection SQLite regression verifies late older updates and resets cannot replace newer observations, including after an empty reset. Equal timestamps retain the smaller offset regardless of commit order; an empty scan contributes zero. This may cause safe replay rather than skipping input.
 
 Pinned reader streams reject unknown, missing and structural record types as malformed session content. Claude native files retain their separate structural-line handling. Stored scan positions are observations only: initial imports never read them to skip source input. Incremental resume must validate file generation/replacement before using any saved position; command timestamps alone do not establish source-generation order. This remains a subsequent incremental-import requirement.
+
+On Unix, undecodable names in main or subagent discovery produce `discovery_incomplete`; readable siblings still import and source bytes remain unchanged.

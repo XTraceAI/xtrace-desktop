@@ -1254,3 +1254,34 @@ fn claude_fs_rescans_a_shorter_replacement_without_sticking_or_losing_history() 
         );
     }
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn claude_fs_reports_non_utf8_main_and_sidechain_names_without_mutating_sources() {
+    use std::os::unix::ffi::OsStringExt;
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = fake_home(&home);
+    let sidechain = project.join(SID).join("subagents");
+    for directory in [&project, &sidechain] {
+        let name = std::ffi::OsString::from_vec(b"invalid-\xff.jsonl".to_vec());
+        fs::write(directory.join(name), synthetic_line(99, SID) + "\n").unwrap();
+    }
+    let before = hashes(&home);
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Incomplete);
+    assert_eq!(
+        report.hosts[0]
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "discovery_incomplete")
+            .count(),
+        2
+    );
+    assert!(
+        !store.records(SID).unwrap().is_empty(),
+        "readable files still import"
+    );
+    assert_eq!(hashes(&home), before);
+}

@@ -65,10 +65,9 @@ pub fn enumerate(projects: &Path) -> std::io::Result<(Vec<ClaudeFile>, Vec<Reade
                 diagnostics.push(unreadable(&project));
                 continue;
             };
-            let name = entry
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default();
+            let Some(name) = entry_name(&entry, &mut diagnostics) else {
+                continue;
+            };
             if name.starts_with('.') {
                 continue;
             }
@@ -132,10 +131,9 @@ fn collect_jsonl(
             diagnostics.push(unreadable(directory));
             continue;
         };
-        let name = entry
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
+        let Some(name) = entry_name(&entry, diagnostics) else {
+            continue;
+        };
         if name.starts_with('.') {
             continue;
         }
@@ -384,4 +382,33 @@ pub fn import_file(
         updated_at: observed_at,
     };
     Ok(writer.complete(store, Some(&cursor)))
+}
+
+fn entry_name<'a>(path: &'a Path, diagnostics: &mut Vec<ReaderDiagnostic>) -> Option<&'a str> {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some(name) => Some(name),
+        None => {
+            diagnostics.push(unreadable(path));
+            None
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod name_tests {
+    use super::*;
+    use std::os::unix::ffi::OsStringExt;
+    #[test]
+    fn undecodable_name_adds_a_discovery_diagnostic() {
+        let path = PathBuf::from(std::ffi::OsString::from_vec(b"invalid-\xff.jsonl".to_vec()));
+        let mut diagnostics = Vec::new();
+        assert!(entry_name(&path, &mut diagnostics).is_none());
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "discovery_incomplete");
+        assert_eq!(
+            entry_name(Path::new("valid.jsonl"), &mut diagnostics),
+            Some("valid.jsonl")
+        );
+        assert_eq!(diagnostics.len(), 1);
+    }
 }
