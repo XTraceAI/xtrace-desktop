@@ -893,3 +893,93 @@ fn claude_fs_stops_at_a_disagreeing_surface_before_discovery_learns_either() {
         Some("sdk")
     );
 }
+
+#[test]
+fn claude_fs_validates_a_batch_before_enriching_discovery() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/-Users-platform");
+    fs::create_dir_all(&project).unwrap();
+    let session = "00000000-0000-4000-8000-00000000c1c1";
+    let file = project.join(format!("{session}.jsonl"));
+    let write = |surface: &str, platform: Option<&str>| {
+        let body = (0..3)
+            .map(|index| {
+                let mut line: Value =
+                    serde_json::from_str(&synthetic_line(index, session)).unwrap();
+                line["entrypoint"] = json!(surface);
+                if let Some(platform) = platform {
+                    line["source_platform"] = json!(platform);
+                }
+                line.to_string() + "\n"
+            })
+            .collect::<String>();
+        fs::write(&file, body).unwrap();
+    };
+    // A valid surface next to an identity field the writer rejects: the
+    // batch is validated first, so the surface never reaches discovery.
+    write("cli", Some("codex"));
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Incomplete, "{report:?}");
+    match &report.hosts[0].sessions[0].outcome {
+        SessionOutcome::Skipped { reason } => {
+            assert!(reason.contains("disagree"), "{reason}");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(store.session(session).unwrap().is_none());
+    let discovered = store.discovered_sessions(Host::Claude).unwrap();
+    assert_eq!(discovered.len(), 1);
+    assert_eq!(discovered[0].surface, None);
+
+    // The corrected transcript, on another valid surface, imports.
+    write("sdk", None);
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Complete, "{report:?}");
+    assert_eq!(
+        store.discovered_sessions(Host::Claude).unwrap()[0]
+            .surface
+            .as_deref(),
+        Some("sdk")
+    );
+}
+
+#[test]
+fn claude_fs_registers_an_unopenable_transcript_as_discovered() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/-Users-locked");
+    fs::create_dir_all(&project).unwrap();
+    let session = "00000000-0000-4000-8000-00000000c2c2";
+    let file = project.join(format!("{session}.jsonl"));
+    fs::write(&file, synthetic_line(0, session) + "\n").unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).unwrap();
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let report = run(&mut store, &home);
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+    let claude = &report.hosts[0];
+    assert_eq!(claude.status, HostStatus::Incomplete, "{report:?}");
+    assert!(
+        claude
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "session_unreadable"),
+        "{report:?}"
+    );
+    match &claude.sessions[0].outcome {
+        SessionOutcome::Skipped { reason } => {
+            assert!(reason.contains("could not be read"), "{reason}");
+        }
+        other => panic!("{other:?}"),
+    }
+    let discovered = store.discovered_sessions(Host::Claude).unwrap();
+    assert_eq!(
+        discovered.len(),
+        1,
+        "the file name still identifies the session"
+    );
+    assert_eq!(discovered[0].native_session_id, session);
+    assert_eq!(store.counts().unwrap().sessions, 0);
+}

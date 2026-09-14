@@ -220,7 +220,8 @@ pub fn import_file(
     file: &ClaudeFile,
     observed_at: i64,
 ) -> std::io::Result<SessionResult> {
-    let mut reader = BufReader::new(fs::File::open(&file.path)?);
+    // The identity is registered before the open, so a transcript that
+    // vanished or became unreadable since enumeration is still a known session.
     let mut writer = match SessionWriter::begin(
         store,
         Host::Claude,
@@ -231,6 +232,7 @@ pub fn import_file(
         Ok(started) => started,
         Err(skipped) => return Ok(*skipped),
     };
+    let mut reader = BufReader::new(fs::File::open(&file.path)?);
     let context = context(&file.session_id);
     // The file's surface is the first one a record names; the writer rejects
     // a disagreeing record later, so the check happens here, before a label
@@ -304,10 +306,13 @@ pub fn import_file(
             }
         }
         if batch.len() == MAX_BATCH_RECORDS {
-            if !writer.labels_complete()
-                && let Err(skipped) = writer.enrich(store, &header(file, &batch), observed_at)
-            {
-                return Ok(*skipped);
+            if !writer.labels_complete() {
+                if let Err(skipped) = writer.validate(&batch, observed_at) {
+                    return Ok(*skipped);
+                }
+                if let Err(skipped) = writer.enrich(store, &header(file, &batch), observed_at) {
+                    return Ok(*skipped);
+                }
             }
             if let Err(skipped) = writer.write(store, &batch, observed_at, None) {
                 return Ok(*skipped);
@@ -321,10 +326,13 @@ pub fn import_file(
     if writer.batches == 0 && batch.is_empty() {
         return Ok(writer.finish());
     }
-    if !writer.labels_complete()
-        && let Err(skipped) = writer.enrich(store, &header(file, &batch), observed_at)
-    {
-        return Ok(*skipped);
+    if !writer.labels_complete() {
+        if let Err(skipped) = writer.validate(&batch, observed_at) {
+            return Ok(*skipped);
+        }
+        if let Err(skipped) = writer.enrich(store, &header(file, &batch), observed_at) {
+            return Ok(*skipped);
+        }
     }
     let cursor = SourceCursor {
         source: SessionSource::Transcript,

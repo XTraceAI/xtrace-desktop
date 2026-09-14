@@ -106,10 +106,7 @@ fn classify(line: &str) -> LineKind {
         Ok(_) => LineKind::Other,
         Err(_) => {
             let trimmed = line.trim_start();
-            if trimmed.starts_with('{')
-                && (names_session(trimmed)
-                    || (trimmed.contains("\"mtime\"") && trimmed.contains("\"native_session_id\"")))
-            {
+            if trimmed.starts_with('{') && header_shaped(trimmed) {
                 LineKind::MalformedHeader
             } else {
                 LineKind::Other
@@ -118,12 +115,12 @@ fn classify(line: &str) -> LineKind {
     }
 }
 
-/// Whether broken JSON still carries a top-level `"type": "session"`
-/// discriminator, as a header truncated before its later keys does. Nested
-/// objects and arrays (a record's tool input, say) are skipped, so only the
-/// line's own discriminator counts.
-fn names_session(text: &str) -> bool {
+/// The top-level entries of possibly truncated JSON object text: each key
+/// with the text that follows its colon. Nested objects and arrays (a
+/// record's tool input, say) are skipped, so only the line's own keys count.
+fn top_level_entries(text: &str) -> Vec<(&str, &str)> {
     let bytes = text.as_bytes();
+    let mut entries = Vec::new();
     let mut depth = 0usize;
     let mut key_position = false;
     let mut index = 0;
@@ -139,7 +136,10 @@ fn names_session(text: &str) -> bool {
                     end += 1;
                 }
                 let end = end.min(bytes.len());
-                if depth == 1 && key_position && text.get(start..end) == Some("type") {
+                if depth == 1
+                    && key_position
+                    && let Some(key) = text.get(start..end)
+                {
                     let mut after = end + 1;
                     while after < bytes.len() && bytes[after].is_ascii_whitespace() {
                         after += 1;
@@ -149,11 +149,8 @@ fn names_session(text: &str) -> bool {
                         while value < bytes.len() && bytes[value].is_ascii_whitespace() {
                             value += 1;
                         }
-                        if text
-                            .get(value..)
-                            .is_some_and(|rest| rest.starts_with("\"session\""))
-                        {
-                            return true;
+                        if let Some(rest) = text.get(value..) {
+                            entries.push((key, rest));
                         }
                     }
                 }
@@ -177,7 +174,20 @@ fn names_session(text: &str) -> bool {
             _ => index += 1,
         }
     }
-    false
+    entries
+}
+
+/// Whether broken JSON is still header-shaped: its own `"type": "session"`
+/// discriminator, or the header-only `mtime` and `native_session_id` keys,
+/// at the top level, as a header truncated partway is. A record truncated
+/// inside content that merely contains those keys is not.
+fn header_shaped(text: &str) -> bool {
+    let entries = top_level_entries(text);
+    let has = |name: &str| entries.iter().any(|(key, _)| *key == name);
+    entries
+        .iter()
+        .any(|(key, value)| *key == "type" && value.starts_with("\"session\""))
+        || (has("mtime") && has("native_session_id"))
 }
 
 /// One parsed line of the stream. A consumer that writes as it reads never

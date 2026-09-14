@@ -620,6 +620,37 @@ impl SessionWriter {
         Ok(())
     }
 
+    /// The writer's own identity checks over a batch, without writing. A
+    /// batch the writer would reject must never enrich the discovered
+    /// identity first: that identity fills once, so a label persisted ahead
+    /// of a rejected batch would outlive the skip.
+    pub fn validate(
+        &self,
+        records: &[crate::canonical::ParsedRecord],
+        observed_at: i64,
+    ) -> Result<(), Box<SessionResult>> {
+        let batch = WriteBatch {
+            context: &self.context,
+            declared_host: Some(self.host),
+            records,
+            title: None,
+            cwd: self.cwd.as_deref(),
+            git_branch: self.git_branch.as_deref(),
+            namespace: None,
+            keep_content: true,
+            observed_at,
+            receipt: None,
+            cursor: None,
+        };
+        match crate::writer::resolve_session(&batch) {
+            Ok(_) => Ok(()),
+            Err(error) => Err(Box::new(self.abandon(format!(
+                "session could not be written after {} committed batches: {error}",
+                self.batches
+            )))),
+        }
+    }
+
     /// Whether every record-revealed label is known; until then each batch
     /// is inspected for the labels still missing.
     pub fn labels_complete(&self) -> bool {
