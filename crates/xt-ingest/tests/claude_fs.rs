@@ -1168,3 +1168,60 @@ fn claude_fs_never_fills_session_metadata_with_blank_record_labels() {
     assert_eq!(stored.meta.cwd.as_deref(), Some("/repo/real"));
     assert_eq!(stored.meta.git_branch.as_deref(), Some("main"));
 }
+
+#[test]
+fn claude_fs_rescans_a_shorter_replacement_without_sticking_or_losing_history() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/replacement");
+    fs::create_dir_all(&project).unwrap();
+    let file = project.join(format!("{SID}.jsonl"));
+    let key = format!("claude:{}", file.display());
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let body = |count| {
+        (0..count)
+            .map(|i| synthetic_line(i, SID) + "\n")
+            .collect::<String>()
+    };
+    fs::write(&file, body(5)).unwrap();
+    assert!(run(&mut store, &home).complete());
+    let old = store
+        .source_cursor(SessionSource::Transcript, &key)
+        .unwrap()
+        .unwrap();
+    // Atomic replacement at the same path, shorter than the old cursor.
+    let replacement = project.join("replacement.tmp");
+    fs::write(&replacement, body(2)).unwrap();
+    fs::rename(&replacement, &file).unwrap();
+    let before = hashes(&home);
+    for _ in 0..2 {
+        assert!(run(&mut store, &home).complete());
+        let current = store
+            .source_cursor(SessionSource::Transcript, &key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.position, body(2).len() as i64);
+        assert!(current.position < old.position);
+        assert_eq!(store.records(SID).unwrap().len(), 5);
+    }
+    assert_eq!(hashes(&home), before);
+    // In-place truncation is also a complete scan; a malformed replacement is not.
+    fs::write(&file, body(1)).unwrap();
+    assert!(run(&mut store, &home).complete());
+    let completed = store
+        .source_cursor(SessionSource::Transcript, &key)
+        .unwrap()
+        .unwrap();
+    fs::write(&file, "{broken\n").unwrap();
+    assert!(!run(&mut store, &home).complete());
+    assert_eq!(
+        store
+            .source_cursor(SessionSource::Transcript, &key)
+            .unwrap()
+            .unwrap(),
+        completed
+    );
+    fs::write(&file, body(6)).unwrap();
+    assert!(run(&mut store, &home).complete());
+    assert_eq!(store.records(SID).unwrap().len(), 6);
+}

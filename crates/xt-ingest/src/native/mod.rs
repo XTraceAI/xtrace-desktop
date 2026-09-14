@@ -693,7 +693,9 @@ impl SessionWriter {
         if let Some(cursor) = cursor
             && self.batches > 0
             && self.rejected.is_empty()
-            && let Err(error) = store.advance_source_cursor(cursor)
+            // This importer always reads from the beginning. A complete rescan
+            // may observe a shorter file or an older restored reader clock.
+            && let Err(error) = store.record_completed_source_scan(cursor)
         {
             return self.abandon(format!(
                 "cursor could not be recorded after {} committed batches: {error}",

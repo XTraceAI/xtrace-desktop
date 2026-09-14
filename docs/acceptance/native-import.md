@@ -68,3 +68,5 @@ they are never part of a cloud or telemetry payload. The pin is verified with
 `git` against the supplied checkout; a bundled, hash-verified reader is later work.
 
 The importer uses one streaming path for production and fixture tests. It does not infer session boundaries from partial JSON; completed earlier sessions remain available and affected sessions replay on the next import.
+
+A successful full rescan replaces its recorded position even when an atomic replacement or in-place truncation makes the source shorter. The importer always starts at the beginning; incremental writes retain their monotonic cursor rule. Failed or partial rescans leave the previous observation unchanged. The shortened-file regression checks two repeated imports, preserved historical rows, unchanged source bytes, malformed replacement and subsequent growth.

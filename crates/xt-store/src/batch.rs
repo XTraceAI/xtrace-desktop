@@ -81,8 +81,9 @@ pub enum EvidencePolicy {
     AcceptedOnly,
 }
 
-/// Positions are monotonically nondecreasing within a source/key. A reader that
-/// needs to represent a new/truncated source generation must use a distinct key.
+/// Incremental positions are monotonically nondecreasing within a source/key.
+/// A complete scan from the beginning may replace its observation through
+/// `record_completed_source_scan`; it must not reuse an old offset to skip input.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceCursor {
     pub source: SessionSource,
@@ -323,6 +324,24 @@ impl Store {
     /// committed; a position can never regress.
     pub fn advance_source_cursor(&mut self, cursor: &SourceCursor) -> Result<()> {
         advance_cursor(&self.connection, cursor)
+    }
+
+    /// Replace the observation after a complete scan from the source's beginning.
+    /// Unlike incremental advancement, a full scan can observe a shorter restored
+    /// file. The caller must finish all writes and reject partial coverage first.
+    pub fn record_completed_source_scan(&mut self, cursor: &SourceCursor) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO source_cursors(source,cursor_key,position,updated_at) VALUES (?1,?2,?3,?4)
+             ON CONFLICT(source,cursor_key) DO UPDATE SET position=excluded.position,
+                 updated_at=excluded.updated_at",
+            params![
+                cursor.source,
+                cursor.cursor_key,
+                cursor.position,
+                cursor.updated_at
+            ],
+        )?;
+        Ok(())
     }
 }
 
