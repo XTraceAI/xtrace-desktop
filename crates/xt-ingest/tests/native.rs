@@ -1047,3 +1047,38 @@ fn nested_session_discriminators_in_truncated_records_are_not_boundaries() {
         assert_eq!(store.counts().unwrap().sessions, 0);
     }
 }
+
+#[test]
+fn reader_non_records_reject_coverage_and_resume_at_the_next_header() {
+    for invalid in [
+        r#"{}"#,
+        r#"{"type":"assistnt"}"#,
+        r#"{"type":"system"}"#,
+        r#"{"type":"attachment"}"#,
+    ] {
+        let mut store = Store::open_in_memory().unwrap();
+        let first = "00000000-0000-4000-8000-00000000f157";
+        let second = "00000000-0000-4000-8000-000000005ecd";
+        let mut lines = synthetic_session(first, 3);
+        lines.push(invalid.into());
+        lines.extend(synthetic_session(second, 4));
+        let results = import(&mut store, Host::Codex, &lines);
+        assert!(
+            matches!(&results[0].outcome, SessionOutcome::Skipped { .. }),
+            "{invalid}: {results:?}"
+        );
+        assert!(
+            store
+                .source_cursor(
+                    SessionSource::ReadersCli,
+                    &format!("codex:$HOME/.codex/sessions/{first}.jsonl")
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            results[1].outcome,
+            SessionOutcome::Imported { records_new: 4, .. }
+        ));
+    }
+}

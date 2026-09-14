@@ -181,8 +181,7 @@ impl StreamEvents {
         Ok(match parse_with_context(line, context) {
             Ok(Parsed::Record(record)) => Some(StreamEvent::Record(record)),
             Ok(Parsed::Dropped(_)) => Some(StreamEvent::Dropped),
-            Ok(Parsed::Inert | Parsed::StructuralEvent(_) | Parsed::PrLink(_)) => None,
-            Err(_) => {
+            Ok(Parsed::Inert | Parsed::StructuralEvent(_) | Parsed::PrLink(_)) | Err(_) => {
                 let native = native.clone();
                 self.context = None;
                 self.skipping = true;
