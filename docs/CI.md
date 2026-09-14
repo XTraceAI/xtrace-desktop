@@ -130,13 +130,14 @@ until the golden and the consumer are updated together.
 
 ## Disclosure and manual audits
 
-Run the local current-content disclosure check immediately before every merge,
-after reviewing source/history, final PR text, linked records, comments and
-attachments. Follow [PUBLICATION.md](PUBLICATION.md) for token isolation and
-snapshot preparation. Ordinary PR events, comments, reviews, CI completion and
-time passing do not start hosted publication scans. There is no scheduled sweep
-or review-event relay. Old advisory results may remain on existing PRs and are
-not current approval evidence.
+Routine PRs have no disclosure checkbox or snapshot gate. Before changing the
+repository to public, and again before the first downloadable release, run the
+local comprehensive review after inspecting source/history, relevant PR and issue
+text, comments and attachments. Follow [PUBLICATION.md](PUBLICATION.md) for the
+procedure and token isolation. Ordinary PR events, comments, reviews, CI
+completion and time passing do not start hosted publication scans. There is no
+scheduled sweep or review-event relay. Old advisory results are not current
+publication evidence.
 
 `Publication content advisory` remains available for an explicitly requested
 repository-wide audit through manual dispatch on the default branch. It reads
@@ -146,8 +147,8 @@ It has no automatic enforcement role; its GitHub Actions identity is spoofable.
 ## Reviewed merges
 
 Serialize reviewed squash merges. Verify current head/base identities, hosted CI
-provenance, DCO, local native results, current disclosure review and unresolved
-findings together. Green Linux CI alone does not authorize a merge or direct push.
+provenance, DCO, local native results and unresolved findings together. Green
+Linux CI alone does not authorize a merge or direct push.
 Failed required local checks prevent merging just as failed hosted checks do.
 
 Merge queues remain disabled pending separately approved activation and live
@@ -159,8 +160,9 @@ remain, but they do not certify native or disclosure validation of a live queue.
 PRs use descriptive names and include substantive `## Change` and
 `## Verification` sections. Describe the problem, resulting behavior, test setup,
 actions, expected and actual results, and any checks still pending. Complete the
-separate disclosure review in [PUBLICATION.md](PUBLICATION.md). Public acceptance
-contracts describe observable behavior and belong in [acceptance/](acceptance/).
+publication/release review in [PUBLICATION.md](PUBLICATION.md) before making the
+repository or a downloadable artifact public. Public acceptance contracts
+describe observable behavior and belong in [acceptance/](acceptance/).
 
 The `security` job tests candidate code without API credentials. A separate
 `policy` job checks out the default branch, or the full commit SHA in repository

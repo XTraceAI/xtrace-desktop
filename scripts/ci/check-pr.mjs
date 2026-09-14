@@ -77,7 +77,11 @@ export async function checkSourcePolicy({ api, repository, eventName, event }) {
   let count = 0;
   for (const member of selection.members) {
     const route = `/repos/${repository}/pulls/${member.number}`;
-    const pr = validatePullRequest(await api(route), repository, member.head);
+    // Contribution policy is automatic. The solo-maintainer publication review
+    // runs separately before the repository or a release becomes public.
+    const pr = validatePullRequest(await api(route), repository, member.head, {
+      attestation: false,
+    });
     validateDescription(pr.body);
     const commits = await sourceCommits(api, repository, pr);
     for (const commit of commits) validateDco(commit);

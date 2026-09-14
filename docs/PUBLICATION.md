@@ -20,41 +20,35 @@ operations and internal review history out of outbound material.
    well as the current files, and inspect prior GitHub edits where available.
    Editing the latest text does not remove its earlier versions; GitHub provides
    a separate [comment edit-history view](https://docs.github.com/en/communities/moderating-comments-and-conversations/tracking-changes-in-a-comment).
-4. After reviewing the final text, linked issues, comments and attachments,
-   prepare the disclosure snapshot below and complete the template's checkbox.
-   Repeat this review whenever those materials or the source commit change,
-   including after a previous check passed.
+4. Before changing the repository to public, and again before publishing the
+   first downloadable release, perform the comprehensive review described
+   below. Ordinary solo-maintainer PRs do not require a disclosure checkbox or
+   snapshot.
 
 People or agents must perform the semantic review: a pattern scanner cannot
 understand whether a conversation is private or whether its inclusion is
-appropriate. An attestation records that review; it is not automated proof of it.
+appropriate.
 
-## Keep the disclosure review current
+## Comprehensive review before publication
 
-Keep the checkbox and `Disclosure snapshot: pending` line in ordinary Markdown,
-outside examples or HTML containers. Prepare and review the final PR description
-locally, then publish that exact description with the snapshot set to `pending`.
-Wait for discussion to settle, then run:
+Run the following from a clean, full local clone immediately before changing
+repository visibility and before the first downloadable release:
 
 ```sh
-pnpm publication:check --repository OWNER/REPO --pr NUMBER --snapshot --body /path/to/pr-body.md
+pnpm publication:test
+pnpm security:scan
+pnpm publication:check --repository OWNER/REPO --pr NUMBER
 ```
 
-This read-only command prints a SHA-256 snapshot line. Replace the placeholder
-with that line and check the disclosure checkbox after reviewing the content.
-Update only those two controls in the published body. A local `--body` file must
-match the already-published prose; changing prose requires publishing it first
-and preparing another snapshot. This two-step process binds GitHub-assigned
-revision identities without making the snapshot hash itself.
-
-The digest covers the current source head, exact PR prose, linked issue
-relationships and text, and discussion/review content, including attachment
-links. Only the source PR’s review checkbox and snapshot values are normalized to avoid
-hashing their own values. Linked issue and PR bodies are hashed verbatim, including
-their disclosure controls. The digest establishes which content was attested;
-it does not establish semantic approval or inspect attachment bytes. Version 2
-snapshots also bind retained source PR body-edit identities and title-change
-events. Existing version 1 snapshots must be refreshed once after upgrading.
+Use `publication:check` for the current release/publication PR or another PR whose
+linked discussion represents the material being published. It reads the PR,
+linked issues, comments, reviews and retained source revisions, then scans that
+text and the relevant Git history without changing GitHub. Separately inspect the
+repository's closed PRs/issues and every image or attachment that will become
+public: GitHub and the scanner do not provide a complete repository-wide audit of
+historical attachment bytes. Record the completed audit in the release or
+visibility-change checklist. Per-PR attestations can be reconsidered if outside
+contributors begin submitting work.
 
 Force-push timeline events bind both former and replacement head identities.
 The local checker and advisory workflow fetch retained source heads into owned
@@ -76,9 +70,8 @@ closed; more than 100 retained edits on one review also fails closed. Deleted
 versions contribute opaque deletion identities. API omissions still limit history
 coverage.
 
-Comments from people and bots are included. The gate writes check results only,
-so its own operation does not change the discussion or create an attestation
-loop. Wait for review comments to settle before preparing the final snapshot.
+Comments from people and bots are included. The optional hosted advisory writes
+check results only, so its own operation does not change the discussion.
 Manual Development-sidebar issue links are included through GitHub's API.
 Source PR body history is read through `userContentEdits`, and title changes
 through `RenamedTitleEvent` timeline records. Adjacent body revisions that differ
@@ -151,7 +144,8 @@ scanning, and a value deleted from the current tree can still be detected in his
 
 ## CI boundary
 
-Manual disclosure review is the publication gate. CI’s `security` job supplies
+The comprehensive local review is a publication/release gate, not a routine PR
+merge requirement. CI’s `security` job supplies
 candidate source/test diagnostics, and an explicitly dispatched `publication-content-advisory` supplies
 current-content diagnostics from reviewed default-branch code. Neither a check
 name nor the GitHub Actions app identity proves the producer: a candidate workflow
@@ -160,12 +154,11 @@ can emit an automatic job check with the same name and app. The custom
 validate it. Do not require these contexts as a disclosure security boundary or
 use their green status to authorize a merge.
 
-Before each serialized manual merge, review the exact source/base and workflow
-provenance, run the local disclosure check from reviewed code against current
-public content, and inspect the result and attestation. Automated enforcement is
-deferred until a separately trusted publisher (such as a dedicated GitHub App)
-and live same-name spoofing acceptance demonstrate an unforgeable required
-identity. No App credential or repository setting is installed by this change.
+Before changing repository visibility or publishing a downloadable release,
+review the exact source and workflow provenance, run the local disclosure check
+from reviewed code against current public-facing content, and inspect its result.
+Automated enforcement is deferred; no publisher credential or repository setting
+is installed by this procedure.
 
 Candidate scripts and runtime dependencies receive no repository API token,
 and their jobs have no issue or pull-request metadata permissions. The pinned
@@ -198,8 +191,8 @@ repository-wide audit on the default branch. PR changes, issue/comment changes,
 reviews, CI completion and schedules do not start it. The review-event relay and
 its source-blob pin have been retired because automatic event delivery no longer
 participates in disclosure validation. There is no automatic invalidation of old
-hosted results. A maintainer must run the current local check before each merge;
-old green results cannot stand in for that check.
+hosted results. Run the current local check for the final publication/release
+candidate; old green results cannot stand in for that check.
 
 An explicit audit enumerates open PRs and queue heads. Each PR receives only its
 own advisory check. Before scheduling work, the coordinator marks results failed

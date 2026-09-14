@@ -13,7 +13,7 @@ import {
   sha,
 } from './metadata.mjs';
 import { githubApi } from './api.mjs';
-import { readPublicContent, requireDisclosure } from './content.mjs';
+import { readPublicContent } from './content.mjs';
 import { disclosureControls } from './markdown.mjs';
 
 function options(args) {
@@ -131,7 +131,6 @@ async function main() {
       const review = await readPublicContent(api, repository, member.number);
       const pr = review.pr;
       requireValue(pr.head.sha === member.head, 'Source PR changed during this run.');
-      requireDisclosure(review);
       const sourceRef = 'refs/publication-local/' + randomUUID();
       sourceRefs.push(sourceRef);
       git(
@@ -187,7 +186,6 @@ async function main() {
     );
     for (const [number, before] of snapshots) {
       const current = await readPublicContent(api, repository, number);
-      requireDisclosure(current);
       requireValue(
         current.digest === before,
         'Public content changed during the scan; review current content and rerun checks.',
@@ -201,7 +199,7 @@ async function main() {
       );
     }
     console.log(
-      `Publication check passed for ${selection.members.length} source PR(s) and ${contentCount} public text item(s). Explicit disclosure review attestation verified; attachments and semantics remain the reviewer’s responsibility.`,
+      `Publication check passed for ${selection.members.length} source PR(s) and ${contentCount} public text item(s). No detected secret was found; attachments and semantics remain the reviewer’s responsibility.`,
     );
   } finally {
     let cleanupFailed = false;

@@ -240,8 +240,6 @@ test('linked issue and PR disclosure controls are hashed verbatim', async () => 
       const current = await readPublicContent(state.api, repository, 3);
       assert.equal(current.content.linked[0].body, state.issue.body);
       assert.throws(() => requireDisclosure(current), /stale/);
-      assert.equal((await reconcile(state, async () => {}, 'workflow_dispatch')).failures, 1);
-      await seal(state);
       assert.equal((await reconcile(state, async () => {}, 'workflow_dispatch')).failures, 0);
     }
   }
@@ -365,7 +363,7 @@ test('automated disclosure output is advisory and cannot claim merge authorizati
   assert.equal(state.writes[0].body.name, 'publication-content-advisory');
   assert.match(state.writes.at(-1).body.output.title, /Advisory/);
   assert.match(state.writes.at(-1).body.output.summary, /not merge authorization/);
-  assert.match(state.writes.at(-1).body.output.summary, /current local disclosure review/);
+  assert.match(state.writes.at(-1).body.output.summary, /review before publication/);
 });
 
 test('source commit comments and attachments invalidate snapshots on creation, edit and deletion', async () => {
@@ -383,8 +381,6 @@ test('source commit comments and attachments invalidate snapshots on creation, e
     if (change === 'delete') state.commitComments = [];
     const review = await readPublicContent(state.api, repository, 3);
     assert.throws(() => requireDisclosure(review), /stale/);
-    assert.equal((await reconcile(state, async () => {}, 'workflow_dispatch')).failures, 1);
-    await seal(state);
     assert.equal(
       (
         await reconcile(
@@ -417,7 +413,7 @@ test('commit pagination fails closed and unrelated commit comments do not stale 
   await assert.rejects(readPublicContent(state.api, repository, 3), /commit pagination/);
 });
 
-test('issue edits invalidate the check and refreshed disclosure passes without writing comments', async () => {
+test('the advisory scans the current linked issue text without a prior snapshot', async () => {
   const state = fixture();
   state.references = [{ number: 9, repository: { nameWithOwner: repository } }];
   await seal(state);
@@ -433,26 +429,19 @@ test('issue edits invalidate the check and refreshed disclosure passes without w
         'workflow_dispatch',
       )
     ).failures,
-    1,
-  );
-  assert.equal(scans, 0);
-  assert.equal(state.writes[0].body.status, 'completed');
-  assert.equal(state.writes[1].body.conclusion, 'failure');
-  await seal(state);
-  assert.equal(
-    (
-      await reconcile(
-        state,
-        async () => {
-          scans++;
-        },
-        'workflow_dispatch',
-      )
-    ).failures,
     0,
   );
   assert.equal(scans, 1);
+  assert.equal(state.writes[0].body.status, 'completed');
+  assert.equal(state.writes[1].body.conclusion, 'success');
   assert.ok(state.writes.every((write) => write.path.includes('/check-runs')));
+});
+
+test('routine advisory scanning does not require per-PR attestation controls', async () => {
+  const state = fixture();
+  state.pr.body = '## Change\n\nSynthetic change.\n\n## Verification\n\nPassed.';
+  assert.equal((await reconcile(state)).failures, 0);
+  assert.equal(state.writes.at(-1).body.conclusion, 'success');
 });
 
 test('content and source base/head races cannot overwrite a pending check with success', async () => {

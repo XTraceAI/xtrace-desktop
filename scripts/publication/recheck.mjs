@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanRepository } from '../security/scan-secrets.mjs';
 import { githubApi, pages } from './api.mjs';
-import { readPublicContent, requireDisclosure } from './content.mjs';
+import { readPublicContent } from './content.mjs';
 import { withCandidateSource } from './source.mjs';
 import {
   prNumber,
@@ -134,7 +134,6 @@ export async function checkPublication({
   try {
     const before = await readPublicContent(api, repository, member.number);
     requireValue(before.pr.head.sha === member.head, 'Source PR changed; rerun content checks.');
-    requireDisclosure(before);
     await scan(repo, before.texts, {
       repository,
       number: member.number,
@@ -143,7 +142,6 @@ export async function checkPublication({
       retainedHeads: before.content.headRevisions.heads,
     });
     const after = await readPublicContent(api, repository, member.number);
-    requireDisclosure(after);
     requireValue(
       after.pr.head.sha === member.head &&
         after.pr.base.sha === before.pr.base.sha &&
@@ -161,7 +159,6 @@ export async function checkPublication({
     // intervening API work before writing the result. GitHub offers no atomic
     // content-read/check-write operation; later edits still need reconciliation.
     const current = await readPublicContent(api, repository, member.number);
-    requireDisclosure(current);
     requireValue(
       current.pr.head.sha === member.head &&
         current.pr.base.sha === before.pr.base.sha &&
@@ -170,7 +167,7 @@ export async function checkPublication({
     );
     conclusion = 'success';
     summary =
-      'Advisory scan found no detected secret in the observed source and disclosure snapshot. This check is not merge authorization; perform current local disclosure review.';
+      'Advisory scan found no detected secret in the observed source and public text. This check is not merge authorization; attachments and semantics still need review before publication.';
   } catch (error) {
     if (error instanceof PublicationError) summary = error.message;
   }
@@ -182,8 +179,8 @@ export async function checkPublication({
       output: {
         title:
           conclusion === 'success'
-            ? 'Advisory disclosure snapshot current'
-            : 'Disclosure review required',
+            ? 'Advisory publication scan complete'
+            : 'Publication scan incomplete',
         summary,
       },
     },
