@@ -343,6 +343,15 @@ impl Store {
         )?;
         Ok(())
     }
+
+    /// A complete scan with no storable records invalidates any previous offset.
+    pub fn clear_source_cursor(&mut self, source: SessionSource, key: &str) -> Result<()> {
+        self.connection.execute(
+            "DELETE FROM source_cursors WHERE source=?1 AND cursor_key=?2",
+            params![source, key],
+        )?;
+        Ok(())
+    }
 }
 
 fn advance_cursor(connection: &Connection, cursor: &SourceCursor) -> Result<()> {

@@ -1224,4 +1224,29 @@ fn claude_fs_rescans_a_shorter_replacement_without_sticking_or_losing_history() 
     fs::write(&file, body(6)).unwrap();
     assert!(run(&mut store, &home).complete());
     assert_eq!(store.records(SID).unwrap().len(), 6);
+    for (index, empty) in ["", "{\"type\":\"attachment\"}\n"].into_iter().enumerate() {
+        fs::write(&file, empty).unwrap();
+        let before = hashes(&home);
+        for _ in 0..2 {
+            assert!(run(&mut store, &home).complete());
+            assert!(
+                store
+                    .source_cursor(SessionSource::Transcript, &key)
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(store.records(SID).unwrap().len(), 6 + index);
+        }
+        assert_eq!(hashes(&home), before);
+        // Newly appended content is imported even while shorter than the old file.
+        fs::write(&file, synthetic_line(6, SID) + "\n").unwrap();
+        assert!(run(&mut store, &home).complete());
+        assert_eq!(store.records(SID).unwrap().len(), 7);
+        assert!(
+            store
+                .source_cursor(SessionSource::Transcript, &key)
+                .unwrap()
+                .is_some()
+        );
+    }
 }

@@ -685,22 +685,28 @@ impl SessionWriter {
         }
     }
 
-    /// Record the cursor, then report. The cursor is recorded only after at
+    /// Record the cursor, then report. Empty complete scans clear old cursors.
+    /// A new cursor is recorded only after at
     /// least one batch committed and only when no record was rejected or
     /// dropped, so it never claims the source was consumed past a gap; a
     /// session with a gap is reported partial and is read again next time.
     pub fn complete(self, store: &mut Store, cursor: Option<&SourceCursor>) -> SessionResult {
         if let Some(cursor) = cursor
-            && self.batches > 0
             && self.rejected.is_empty()
-            // This importer always reads from the beginning. A complete rescan
-            // may observe a shorter file or an older restored reader clock.
-            && let Err(error) = store.record_completed_source_scan(cursor)
         {
-            return self.abandon(format!(
-                "cursor could not be recorded after {} committed batches: {error}",
-                self.batches
-            ));
+            // Empty complete scans invalidate an earlier offset but never
+            // create one for a newly discovered header-only session.
+            let saved = if self.batches == 0 {
+                store.clear_source_cursor(cursor.source, &cursor.cursor_key)
+            } else {
+                store.record_completed_source_scan(cursor)
+            };
+            if let Err(error) = saved {
+                return self.abandon(format!(
+                    "cursor could not be recorded after {} committed batches: {error}",
+                    self.batches
+                ));
+            }
         }
         self.finish()
     }
