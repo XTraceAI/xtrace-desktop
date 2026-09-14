@@ -297,8 +297,8 @@ fn file_surface(
 /// written, so a label committed with the first batch is never contradicted
 /// by a later record; each batch then fills in whichever of the surface, cwd
 /// and branch is still unknown, and those labels persist only with a
-/// committed batch. Batches commit as they fill, and the file cursor (bytes
-/// through the last complete line) is recorded after the last one, only for
+/// committed batch. Batches commit as they fill, and a zero-position source
+/// locator is recorded after the last one, only for
 /// a file with no rejected or dropped record. A trailing partial line is left
 /// unconsumed. A malformed or non-UTF-8 line stops the file with the
 /// committed count named and without advancing the cursor; the parent
@@ -339,7 +339,6 @@ pub fn import_file(
     let mut reader = BufReader::new(snapshot);
     let mut batch: Vec<ParsedRecord> = Vec::new();
     let mut dropped = 0;
-    let mut complete_bytes: u64 = 0;
     let mut line_number = 0usize;
     let mut buffer = Vec::new();
     loop {
@@ -348,7 +347,6 @@ pub fn import_file(
         if read == 0 || !buffer.ends_with(b"\n") {
             break; // end of file, or a partial trailing line that is not consumed
         }
-        complete_bytes += read as u64;
         line_number += 1;
         let Ok(text) = std::str::from_utf8(&buffer) else {
             return Ok(stop(&writer, line_number, "transcript is not UTF-8"));
@@ -421,7 +419,7 @@ pub fn import_file(
     let cursor = SourceCursor {
         source: SessionSource::Transcript,
         cursor_key: format!("claude:{}", file.path.display()),
-        position: i64::try_from(complete_bytes).unwrap_or(i64::MAX),
+        position: 0,
         updated_at: observed_at,
     };
     Ok(writer.complete(store, Some(&cursor)))

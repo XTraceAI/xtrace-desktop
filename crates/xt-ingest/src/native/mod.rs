@@ -394,7 +394,7 @@ where
         // A session that produced no storable record (a header-only or
         // dropped-only stream) exists only as a discovered identity: an empty
         // batch commits no row, and no cursor is recorded without a committed
-        // batch, exactly as the block path behaves.
+        // batch.
         if let Err(skipped) = writer.write(store, &batch, observed_at) {
             sessions.push(*skipped);
             return;
@@ -427,9 +427,8 @@ where
                 let cursor = SourceCursor {
                     source: SessionSource::ReadersCli,
                     cursor_key: format!("{}:{}", host.as_str(), header.path),
-                    // The reader's native update clock in milliseconds; byte offsets
-                    // belong to the per-file cursors of incremental scanning.
-                    position: (header.mtime * 1000.0) as i64,
+                    // Locator only. Incremental resume is not implemented.
+                    position: 0,
                     updated_at: observed_at,
                 };
                 match SessionWriter::begin(
@@ -561,8 +560,8 @@ where
 /// identity first; bounded record batches then commit one at a time, each
 /// carrying the identity labels learned so far, which fill the discovered
 /// identity only if that batch commits; and the cursor is recorded after the
-/// last batch, only for a session with no rejected or dropped record, so it
-/// never claims the source was consumed past a gap. Titles are never
+/// last batch as a zero-position locator, only for a session with no rejected
+/// or dropped record. It never supplies an incremental resume position. Titles are never
 /// persisted: they derive from prompts.
 pub struct SessionWriter {
     host: Host,
@@ -745,17 +744,7 @@ impl SessionWriter {
         if let Some(cursor) = cursor
             && self.rejected.is_empty()
         {
-            // Empty complete scans reset an earlier offset but never
-            // create one for a newly discovered header-only session.
-            let saved = if self.batches == 0 {
-                store.reset_existing_source_cursor(
-                    cursor.source,
-                    &cursor.cursor_key,
-                    cursor.updated_at,
-                )
-            } else {
-                store.record_completed_source_scan(cursor)
-            };
+            let saved = store.record_native_source_locator(cursor, self.batches > 0);
             if let Err(error) = saved {
                 return self.abandon(format!(
                     "cursor could not be recorded after {} committed batches: {error}",

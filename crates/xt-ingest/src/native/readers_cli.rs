@@ -37,15 +37,6 @@ pub struct ReaderDiagnostic {
     pub path: Option<String>,
 }
 
-#[derive(Debug)]
-pub struct ReaderRun {
-    pub lines: Vec<String>,
-    pub diagnostics: Vec<ReaderDiagnostic>,
-    /// The producer exits 0 for complete coverage and 2 for incomplete coverage
-    /// with partial successes still emitted.
-    pub complete: bool,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReaderError {
     MissingRuntime(String),

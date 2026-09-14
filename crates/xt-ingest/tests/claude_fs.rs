@@ -241,13 +241,10 @@ fn claude_fs_imports_main_and_sidechain_files_metadata_only_and_leaves_sources_u
         )
         .unwrap()
         .expect("main file cursor");
-    let bytes = fs::read(&main_path).unwrap();
-    let complete = bytes.iter().rposition(|b| *b == b'\n').unwrap() as i64 + 1;
     assert_eq!(
-        cursor.position, complete,
-        "the cursor stops before the partial tail"
+        cursor.position, 0,
+        "initial imports keep only a source locator"
     );
-    assert!(cursor.position < bytes.len() as i64);
     let discovered = store.discovered_sessions(Host::Claude).unwrap();
     assert_eq!(discovered.len(), 1);
     assert_eq!(discovered[0].native_session_id, SID);
@@ -468,9 +465,8 @@ fn claude_fs_streams_large_files_in_bounded_batches_and_keeps_committed_batches_
         .unwrap()
         .unwrap();
     assert_eq!(
-        cursor.position,
-        body.len() as i64,
-        "the cursor commits with the final batch"
+        cursor.position, 0,
+        "the locator does not claim a resume position"
     );
     assert_eq!(
         store.session(big).unwrap().unwrap().meta.surface.as_deref(),
@@ -607,7 +603,7 @@ fn claude_fs_keeps_an_exact_batch_boundary_cursor_and_reports_aliases() {
         )
         .unwrap()
         .expect("a file ending exactly on a batch boundary keeps its cursor");
-    assert_eq!(cursor.position, body.len() as i64);
+    assert_eq!(cursor.position, 0);
     assert!(
         store
             .session("00000000-0000-4000-8000-00000000a11a")
@@ -1204,8 +1200,8 @@ fn claude_fs_rescans_a_shorter_replacement_without_sticking_or_losing_history() 
             .source_cursor(SessionSource::Transcript, &key)
             .unwrap()
             .unwrap();
-        assert_eq!(current.position, body(2).len() as i64);
-        assert!(current.position < old.position);
+        assert_eq!(current.position, 0);
+        assert_eq!(old.position, 0);
         assert_eq!(store.records(SID).unwrap().len(), 5);
     }
     assert_eq!(hashes(&home), before);

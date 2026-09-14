@@ -82,8 +82,8 @@ pub enum EvidencePolicy {
 }
 
 /// Incremental positions are monotonically nondecreasing within a source/key.
-/// A complete scan from the beginning may replace its observation through
-/// `record_completed_source_scan`; it must not reuse an old offset to skip input.
+/// Initial native imports retain locators at position zero; generation-aware
+/// incremental positions belong to the eventual incremental consumer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceCursor {
     pub source: SessionSource,
@@ -342,43 +342,29 @@ impl Store {
 }
 
 impl Store {
-    /// Record a source position on its own, after the rows it covers have
-    /// committed; a position can never regress.
-    pub fn advance_source_cursor(&mut self, cursor: &SourceCursor) -> Result<()> {
-        advance_cursor(&self.connection, cursor)
-    }
-
-    /// Replace the observation after a complete scan from the source's beginning.
-    /// Unlike incremental advancement, a full scan can observe a shorter restored
-    /// file. The caller must finish all writes and reject partial coverage first.
-    pub fn record_completed_source_scan(&mut self, cursor: &SourceCursor) -> Result<()> {
-        self.connection.execute(
-            "INSERT INTO source_cursors(source,cursor_key,position,updated_at) VALUES (?1,?2,?3,?4)
-             ON CONFLICT(source,cursor_key) DO UPDATE SET position=CASE
-                 WHEN excluded.updated_at = source_cursors.updated_at
-                 THEN min(source_cursors.position, excluded.position) ELSE excluded.position END,
-                 updated_at=excluded.updated_at WHERE excluded.updated_at >= source_cursors.updated_at",
-            params![
-                cursor.source,
-                cursor.cursor_key,
-                cursor.position,
-                cursor.updated_at
-            ],
-        )?;
-        Ok(())
-    }
-
-    /// Reset only an existing observation, retaining its timestamp to reject late scans.
-    pub fn reset_existing_source_cursor(
+    /// Retain a native source locator without claiming an incremental resume
+    /// position. Initial imports always read from the beginning. Empty scans
+    /// may reset an existing locator but never create a new one.
+    pub fn record_native_source_locator(
         &mut self,
-        source: SessionSource,
-        key: &str,
-        observed_at: i64,
+        cursor: &SourceCursor,
+        create: bool,
     ) -> Result<()> {
+        if !matches!(
+            cursor.source,
+            SessionSource::Transcript | SessionSource::ReadersCli
+        ) {
+            return Err(Error::InvalidInput(
+                "native locator requires a native source",
+            ));
+        }
         self.connection.execute(
-            "UPDATE source_cursors SET position=0, updated_at=?3
-             WHERE source=?1 AND cursor_key=?2 AND updated_at <= ?3",
-            params![source, key, observed_at],
+            "INSERT INTO source_cursors(source,cursor_key,position,updated_at)
+             SELECT ?1,?2,0,?3 WHERE ?4 OR EXISTS (
+                 SELECT 1 FROM source_cursors WHERE source=?1 AND cursor_key=?2)
+             ON CONFLICT(source,cursor_key) DO UPDATE SET position=0,
+                 updated_at=max(source_cursors.updated_at,excluded.updated_at)",
+            params![cursor.source, cursor.cursor_key, cursor.updated_at, create],
         )?;
         Ok(())
     }

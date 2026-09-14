@@ -1,106 +1,88 @@
 # Native source import acceptance
 
-`xtrace-core import-native` reads a machine's Claude, Codex and Cursor history
-into the local index without an installed plugin, a cloud login or any network
-use. Codex and Cursor history is read by the exact shared readers named in
-`.plugin-pin`; Claude history is read from its canonical JSONL directly, one complete line at a time. Every
-host takes one path: the shared stream (one session header, then that session's
-canonical records) is split per session and written through the transactional
-canonical writer under the persisted content policy, which defaults to metadata
-only. Native files are only ever opened for reading.
+`xtrace-core import-native` performs an initial import of Claude, Codex and Cursor
+history into the existing local index. It needs no installed capture plugin or
+cloud login. Codex/Cursor use a supplied checkout of the shared readers named by
+`.plugin-pin`; bundled reader delivery and automatic app integration are later work.
 
 ```sh
 xtrace-core import-native --db PATH --home DIR [--host claude|codex|cursor]... \
   [--pin FILE] [--plugin-root DIR] [--python EXE]
 ```
 
-The report is JSON on stdout. Exit 0 means every requested host imported every
-record of every discovered session; exit 2 means a host or session was
-unavailable, unreadable, incomplete, partial or malformed and says which; exit 1
-means the command itself could not run. A session whose identity and accepted
-records are stored but whose other records the writer rejected (a UUID owned by
-another session, a type conflict) or that lacked a UUID is reported as `partial`
-with each rejection named, and its host as `incomplete`. Reader output is
-consumed as a stream: each session imports as soon as its block completes, so a
-large history is never held in memory as a whole, and sessions read before a
-later reader failure stay imported and are listed under that failure.
+The command prints a per-host/per-session JSON report. Exit 0 means complete
+coverage, 2 means an explicit missing, unreadable, malformed or partial source,
+and 1 means the command could not run. Readable sessions remain available when
+other sessions fail. Every import reads from the beginning and deduplicates through
+the existing writer.
 
-| Case                                                               | Setup/action                                                                                                                                                                                                                                                                               | Expected and observed result                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude tree                                                        | A fake `~/.claude/projects` with a main transcript (25 F1 records, one structural line, a partial trailing line), a `subagents/` sidechain file, `memory/`, non-JSONL and hidden files.                                                                                                    | Main and sidechain records land in the parent canonical session with native ID, `cli` surface, cwd and branch; sidechains keep `agentId`/`isSidechain`; only complete lines import; ignored trees stay ignored; the file cursor stops before the partial tail; `discovered_sessions` records the identity.                                                                                                                                     |
-| Reader streams                                                     | F18 Codex/Cursor goldens (store, IDE transcript, rollout) imported as the pinned producer emits them; F20 metadata-only headers.                                                                                                                                                           | One canonical session per native ID with surface, native start, cwd, branch, timestamps, model and tool counts; readable usage kept, absent usage null; metadata-only headers discover sessions without writing rows.                                                                                                                                                                                                                          |
-| Metadata-only default                                              | Import under an unconfigured store and inspect every content column.                                                                                                                                                                                                                       | `content_json`, `tool_uses.input_json` and `sessions.title` stay NULL (reader titles derive from prompts and are never passed); IDs, lengths, counts and usage remain.                                                                                                                                                                                                                                                                         |
-| Repeated import                                                    | Run the same import twice.                                                                                                                                                                                                                                                                 | The second run reports zero new records for every session and the row counts are unchanged.                                                                                                                                                                                                                                                                                                                                                    |
-| Unchanged sources                                                  | Hash every file under the home before and after both runs.                                                                                                                                                                                                                                 | Every byte and the set of files are identical.                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Explicit gaps                                                      | Home without a host's directory; `--python` pointing at nothing; no plugin root; a checkout at another commit; a file whose records name another session; a malformed header or record.                                                                                                    | `missing_source`, `missing_runtime`, `pin_mismatch` per host with a reason; `skipped` per session with the stream line; the remaining sessions still import and the process exits 2.                                                                                                                                                                                                                                                           |
-| Partial sessions                                                   | A stream whose session reuses a UUID owned by another session and contains a record without a UUID.                                                                                                                                                                                        | The session's own records import; the outcome is `partial` naming `rejected_ownership` and `missing_uuid`; the host is `incomplete`; the report is never `complete`.                                                                                                                                                                                                                                                                           |
-| Large and faulty Claude files                                      | A 4,500-record transcript; a transcript with a malformed line after its first 2,000 records; a project directory without read permission beside a readable one.                                                                                                                            | Files stream in bounded batches (the cursor commits with the final batch; a second run adds nothing); the faulty file is `skipped` naming the stream line and the committed batch count, its cursor is not advanced; the unreadable project is a `discovery_incomplete` diagnostic while the readable project imports in full.                                                                                                                 |
-| Reader stream lifecycle                                            | A 4,500-record reader session and one of exactly 2,000 records; a producer that dies after emitting part of a session; a read error mid-stream; a Claude file of exactly 2,000 records; an alias beside a transcript.                                                                      | Reader sessions drain in bounded batches while still being read and an empty final batch still commits the cursor; the session open when the producer fails keeps its committed batches but is reported as ended early with no cursor while earlier sessions are complete; the alias is a `discovery_incomplete` diagnostic and is never followed.                                                                                             |
-| Malformed successor header; relative interpreter                   | A valid session followed by a header that fails the contract; `--python ./relative/wrapper`.                                                                                                                                                                                               | The valid session completes with its cursor and the malformed header is the one skipped (with its line); an explicit relative interpreter path is anchored to the caller's directory before the reader runs from the imported home, while a bare command name stays a PATH lookup.                                                                                                                                                             |
-| Broken successor headers; stream errors                            | A successor header with a missing discriminator or broken JSON followed by records; a record before any header while the producer keeps writing.                                                                                                                                           | Decoded header objects establish boundaries even when their schema is invalid. Invalid JSON abandons the active session without a cursor and resumes only at a later decoded header; on a stream-level error the remaining producer output is drained before the producer is awaited, so it can never block on a full pipe.                                                                                                                    |
-| Sessions without a storable record                                 | A metadata-only Cursor stream (F20) plus a session whose only record lacks a UUID, run through the streaming path; an empty Claude transcript and one holding only inert lines.                                                                                                            | Every session is registered as discovered; none gets a canonical `sessions` row or a cursor. The UUID-less session is `Partial` with one drop; the rest are `Imported` with zero records.                                                                                                                                                                                                                                                      | `header_only_streams_leave_no_canonical_row_or_cursor_in_the_streaming_path`, `claude_fs_registers_empty_and_inert_only_files_as_discovered_without_rows`                                       |
-| Identity before parsing; empty header labels                       | Claude transcripts whose first line is malformed JSON or not UTF-8, next to a sound one; reader headers with `source_surface: ""`, `cwd: " "`, `git_branch: ""` or `path: ""`.                                                                                                             | The Claude file name registers the discovered identity before any line is parsed, so a skipped file is still a known session (surface unknown); the sound file's first batch fills in its surface. A header with an empty label is malformed before any record arrives, so producer validity never depends on record count; the following session imports.                                                                                     | `claude_fs_registers_identities_before_parsing_and_enriches_them_from_the_first_batch`, `headers_with_empty_labels_are_malformed_before_any_record_arrives`                                     |
-| Relative home                                                      | `import_native` and `xtrace-core import-native --home ./home` with a home spelled relative to the current directory; the pinned readers run over the same relative spelling in the native check.                                                                                           | The home is anchored to the current directory once, before anything reads or spawns: the readers change into an absolute home and receive it as `HOME`, every reported path is absolute, cursor keys use the anchored path, and the absolute spelling of the same home is the same import (nothing new).                                                                                                                                       | `claude_fs_anchors_a_relative_home_so_paths_and_cursor_keys_are_absolute`, `import_native_reports_and_exits_by_coverage`, `conformance_native_import` (relative-home pass)                      |
-| Blank record labels; truncated successor headers                   | A Claude transcript whose records carry `entrypoint: " "` and `cwd: " "`, then the same file corrected; a reader stream whose successor header is truncated right after `"type":"session"`.                                                                                                | A blank record label never reaches the discovered identity, so the skipped file (the writer rejects the empty identity label) imports once corrected and its surface fills in then. A truncated JSON line abandons the active session without advancing its cursor; subsequent records are ignored until a decoded header.                                                                                                                     | `claude_fs_never_persists_a_blank_record_label_as_the_discovered_surface`, `invalid_json_withholds_cursor_and_stream_errors_drain_the_producer`                                                 |
-| Late labels; nested discriminators                                 | A Claude transcript whose first 2,000 records omit `entrypoint`, `cwd` and `gitBranch` while later records carry them; a reader record truncated inside a tool input that holds `"type":"session"`.                                                                                        | Each label fills once from whichever batch first carries it: the reported and discovered surface, the session cwd and the branch all come from the later batch. Only a line's own top-level discriminator marks a boundary: the truncated record is a malformed record of the active session, which is abandoned without a cursor, and no phantom successor is reported.                                                                       | `claude_fs_keeps_enriching_metadata_after_the_first_batch`, `nested_session_discriminators_in_truncated_records_are_not_boundaries`                                                             |
-| Disagreeing surfaces in one Claude file                            | A transcript whose records name two different valid surfaces (`cli`, then `sdk`), then the same file corrected to one surface.                                                                                                                                                             | The file stops explicitly at the first disagreeing record, before either surface could reach the fill-once discovered identity; the corrected file imports on the surface the first import did not pick and fills it in. The synthesized header takes the surface the writer validates.                                                                                                                                                        | `claude_fs_stops_at_a_disagreeing_surface_before_discovery_learns_either`                                                                                                                       |
-| Nested header keys; rejected batches; unopenable files             | A reader record truncated inside tool input holding `"mtime"` and `"native_session_id"`; a Claude batch with a valid surface next to `source_platform: "codex"`, then corrected; a transcript whose permissions deny the open after enumeration.                                           | Only a line's own top-level keys make it header-shaped, so the truncated record abandons its session without a phantom successor. A batch is run through the writer's identity checks before it can enrich discovery, so a rejected batch leaves the discovered surface unknown and the corrected file imports. The identity is registered before the open, so an unopenable transcript is a skipped, diagnosed, and still discovered session. | `nested_session_discriminators_in_truncated_records_are_not_boundaries`, `claude_fs_validates_a_batch_before_enriching_discovery`, `claude_fs_registers_an_unopenable_transcript_as_discovered` |
-| Labels persist with their batch; partial sessions record no cursor | A Claude batch that passes the parser and the writer's identity checks but is rejected by the store while writing (a text block without text), then the file corrected on another surface; a reader session with an ownership-rejected record and a UUID-less line next to a complete one. | The discovered identity fills inside the batch's own transaction, so a rejected batch leaves no row and no label and the corrected file imports on its surface. A session with any rejected or dropped record is reported partial and records no cursor, so no position ever claims the source was consumed past a gap; the complete session keeps its cursor.                                                                                 | `claude_fs_persists_labels_only_with_a_committed_batch`, `rejected_and_uuid_less_records_make_coverage_partial_not_complete`                                                                    |
-| Disagreement after a batch boundary                                | A Claude transcript whose first 2,000 records name `cli` and whose record 2,001 names `sdk`, then the file corrected entirely to `sdk`.                                                                                                                                                    | The surface is settled over the whole file in a streaming pre-pass before any row is written, so the file is skipped at line 2,001 with no row and no discovered surface, and the corrected file imports all 2,001 records on `sdk`.                                                                                                                                                                                                           | `claude_fs_settles_the_surface_over_the_whole_file_before_writing_any_row`                                                                                                                      |
-| Blank cwd and branch on records                                    | A Claude transcript whose records carry `cwd: " "` and `gitBranch: ""`, then the same file with real values.                                                                                                                                                                               | The canonical parser treats a blank cwd or branch as absent (as the producers do for their headers), so the import completes with the session metadata unknown rather than blank, and the real values fill it in afterwards instead of being refused as a conflict.                                                                                                                                                                            | `blank_cwd_and_branch_labels_are_absent_not_empty`, `claude_fs_never_fills_session_metadata_with_blank_record_labels`                                                                           |
-| Pinned producer (native check)                                     | `conformance_native_import` materializes F18's native inputs and runs the real pinned readers through `import_native`.                                                                                                                                                                     | Both hosts report `complete` with the pinned commit; sessions and counts equal the fixture expectations; a second run adds nothing; source bytes are unchanged. The test is in the required conformance inventory and cannot skip in the gate.                                                                                                                                                                                                 |
+## Import and persistence
+
+- Claude enumerates main transcripts and nested subagent files into their parent
+  session. Hidden entries, memory directories and unrelated files are ignored.
+- Codex/Cursor use one streaming parser for both production and fixture tests:
+  a decoded session header followed by canonical user/assistant records.
+- Writes use bounded batches and the persisted retention policy. With no content
+  preference, transcript text, prompt-derived titles and tool inputs remain absent.
+  IDs, counts, available usage and source metadata are retained; unknown usage
+  remains unknown. Viewing or import does not enable archival.
+- Invalid JSON or non-record stream entries abandon the affected session without
+  claiming complete coverage. Later decoded headers resume import. Already committed
+  batches survive a later failure; the trailing batch waits for producer exit.
+- Rejected or UUID-less records yield partial coverage. Conflicting identities and
+  discovery metadata fail explicitly; invalid batches cannot persist discovery labels.
+- Successful imports retain private source locators in the existing `source_cursors`
+  table with **position zero**, meaning full replay. The timestamp is only a last-seen
+  observation. There is no scan-order arbitration, byte-offset resume or mtime resume.
+  Empty scans update an existing locator but create no new one. Failed/partial scans
+  do not replace a locator. Reimports preserve indexed history when sources shrink.
+
+## Source safety and scope
+
+- The CLI validates database and SQLite-sidecar destinations before opening SQLite.
+  Paths inside native history and existing multiply-linked destinations are rejected.
+- Claude source roots, project aliases and transcript aliases are diagnosed instead
+  of deliberately followed. Missing, unreadable and undecodable entries have explicit
+  coverage results; blank session identities cannot enter discovery.
+- On Unix, transcript opens use no-follow/nonblocking flags and check the enumerated
+  device/inode before copying. A bounded anonymous snapshot must contain exactly the
+  captured source length. Validation and import share its bytes; later appends wait
+  for the next scan. Temporary contents are removed on close.
+- Surface consistency is checked within each Claude file before writing. Dropped
+  records still contribute known surface facts; unusable explicit labels are errors.
+  Separate files with contradictory identities remain explicit conflicts; changing
+  source files does not automatically replace historical index identities.
+- Reader code executes from a temporary export of the verified Git commit, excluding
+  ignored Python files/caches. On Unix, the probed interpreter is resolved to an
+  absolute path before changing the reader's working directory.
+- These checks do not provide a security boundary against another local process
+  concurrently replacing ancestor directories. Directory-handle-relative traversal
+  is not implemented. Source file bytes are never intentionally modified by import.
+
+File watching, generation-aware resume, scan scheduling, reader bundling and UI are
+subsequent work. An incremental consumer must validate source generation before
+skipping input; neither the current locator nor its timestamp establishes it.
 
 ## Verification
 
-Run `cargo test -p xt-ingest --test claude_fs --test native --locked` and
-`cargo test -p xt-server --test native_import --locked` for the synthetic trees,
-streams, explicit results and the command. Run the required native check
-(`node scripts/ci/run-hook.mjs plugin-conformance`) for the pinned-producer
-case; it lists `conformance_native_import` among the executed tests.
+| Area                         | Required checks and expected result                                                                                                                                                                                                                      |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude filesystem            | Main/subagent mapping; ignored entries; partial lines; metadata-only default; repeated import without duplicates; unchanged originals; missing/permission/alias/name errors; cross-batch label consistency; corrected invalid files import successfully. |
+| Stream and lifecycle         | Native identity/usage fixtures; malformed headers/records; no cross-session attribution; bounded batches; draining after stream failure; incomplete producer exit; partial rejection reports; exact-batch boundaries.                                    |
+| Native locators              | Position remains zero for repeated, older and tied observations; old development offsets reset safely; empty undiscovered sessions create no locator; historical records survive shorter/empty replacements.                                             |
+| Storage ownership            | Mismatched host/native/conversation/surface/start facts reject before writes; existing batch atomicity and retention checks remain in force.                                                                                                             |
+| Source and executable safety | Database/source aliases reject before mutation; opened-file replacement and short-copy rejection; fixed snapshot under append; ignored Python modules excluded; stable interpreter selection.                                                            |
+| Pinned conformance           | All four inventoried tests execute, including the real pinned reader-to-index import, deduplication and unchanged-source evidence.                                                                                                                       |
 
-Limitations of this change: it performs one initial read of the sources.
-Incremental rescans, per-file byte cursors for reader hosts, file watching,
-launch/focus scheduling, the runtime resolver for `python3` and the bundled
-reader delivery belong to later work. The recorded `source_cursors` rows hold
-the native locator (Claude: bytes through the last complete line; reader hosts:
-the producer's update clock in milliseconds) as private local index metadata;
-they are never part of a cloud or telemetry payload. The pin is verified with
-`git` against the supplied checkout; a bundled, hash-verified reader is later work.
+```sh
+cargo test -p xt-ingest --test claude_fs --test native --locked
+cargo test -p xt-store --test completed_scan --locked
+cargo test -p xt-server --test native_import --locked
+node scripts/ci/run-hook.mjs plugin-conformance
+pnpm check:native --base FULL_REVIEWED_BASE_SHA
+```
 
-The importer uses one streaming path for production and fixture tests. It does not infer session boundaries from partial JSON; completed earlier sessions remain available and affected sessions replay on the next import.
-
-A successful full rescan replaces its recorded position even when an atomic replacement or in-place truncation makes the source shorter. The importer always starts at the beginning; incremental writes retain their monotonic cursor rule. Failed or partial rescans leave the previous observation unchanged. The shortened-file regression checks two repeated imports, preserved historical rows, unchanged source bytes, malformed replacement and subsequent growth.
-
-Complete empty or inert-only rescans reset an existing cursor to zero without removing indexed history. Its observation timestamp is retained to prevent an older overlapping scan from restoring a stale offset. Never-imported empty sessions create no cursor; a subsequent shorter append imports normally. Partial or failed scans still preserve the previous observation.
-
-Completed-scan writes and empty resets apply only when their observation time is at least as recent as the stored observation. A two-connection SQLite regression verifies late older updates and resets cannot replace newer observations, including after an empty reset. Equal timestamps retain the smaller offset regardless of commit order; an empty scan contributes zero. This may cause safe replay rather than skipping input.
-
-Pinned reader streams reject unknown, missing and structural record types as malformed session content. Claude native files retain their separate structural-line handling. Stored scan positions are observations only: initial imports never read them to skip source input. Incremental resume must validate file generation/replacement before using any saved position; command timestamps alone do not establish source-generation order. This remains a subsequent incremental-import requirement.
-
-On Unix, undecodable names in main or subagent discovery produce `discovery_incomplete`; readable siblings still import and source bytes remain unchanged.
-
-Readers execute from a temporary export of verified committed Git objects. Ignored working-tree modules and caches are excluded. A synthetic Git regression proves ignored `scripts/json.py` cannot enter that export.
-
-Project-directory symlinks are reported as incomplete discovery and never followed, consistently with transcript/subagent aliases. Readable sibling projects still import.
-
-The Claude `.claude` and `projects` source-root entries are checked for aliases before traversal. A symlink at either entry reports incomplete discovery without reading the external history.
-
-Whitespace-only Claude filename stems and parent-session directory identities produce incomplete discovery before any identity is stored, including for empty/inert-only files. The shared session writer also rejects blank native/conversation identities.
-
-Before opening the index, the CLI rejects database/SQLite-sidecar destinations resolving inside native history directories and existing multiply-linked database/sidecar files. This prevents accidental modification of source history through direct paths, symlinks or hard links. Discovery facts supplied to a batch must match its host, native identity and known conversation identity before any writes.
-
-Batch discovery facts also reject contradictory known surface and start-time values before writes. Missing values remain compatible with enrichment.
-
-Claude root inspection distinguishes missing paths from permission and other filesystem errors. Only `NotFound` is missing-source; unreadable or non-directory roots report reader failure.
-
-Claude's surface pre-pass includes known surface labels on UUID-less canonical records, so a disagreement cannot persist a label that blocks corrected input later. Codex/Cursor root probes preserve permission/type errors instead of reporting absence when no readable root is available; a readable root still delegates detailed coverage to the shared reader.
-
-A non-null but blank/non-string surface on a dropped Claude record stops the surface pre-pass before any batch labels persist. The regression places it after 2,000 valid records and verifies a corrected transcript can import on another valid surface.
-
-Claude validation and batch import share one anonymous temporary-file snapshot bounded to the source length observed at open. Later appends are excluded from that scan and discovered on the next import, so validation and writes consume identical bytes. The temporary file is removed on close.
-
-On Unix, interpreter selection resolves relative PATH entries against the caller directory before probing. The reader then uses that same absolute executable path after changing to the imported home.
-
-On Unix, snapshot creation opens sources with no-follow/nonblocking flags and verifies that the handle is a regular file with the enumerated device/inode. Replacement symlinks and different files are rejected before copying source bytes; a subsequent scan can discover the new file normally.
-
-Snapshot copy must return exactly the length captured from the opened source. A shorter read is rejected before import; later appended bytes beyond that length remain excluded.
+Use synthetic fixtures. Record the exact source/base, actual macOS version and
+results in the PR. The portable Unix invalid-name helper test runs on macOS; the
+real invalid-filename filesystem test is Linux-only because macOS rejects those
+names. A macOS run does not claim that Linux-only case or minimum-macOS release QA.

@@ -149,7 +149,7 @@ fn reader_streams_import_identity_surface_usage_and_counts_metadata_only() {
                 )
                 .unwrap()
                 .expect("locator cursor");
-            assert!(cursor.position > 0);
+            assert_eq!(cursor.position, 0, "locator never skips source input");
         }
     }
     // Usage: the Cursor store carries readable usage on its tool call, the
