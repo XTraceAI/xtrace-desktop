@@ -20,13 +20,14 @@ use std::{
 };
 use xt_store::{Host, SessionSource, Store, batch::SourceCursor};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ClaudeFile {
     pub path: PathBuf,
     /// The canonical (and native) session the file's records belong to.
     pub session_id: String,
     pub sidechain: bool,
     pub mtime_ns: u128,
+    metadata: fs::Metadata,
 }
 
 fn unreadable(path: &Path) -> ReaderDiagnostic {
@@ -91,8 +92,9 @@ pub fn enumerate(projects: &Path) -> std::io::Result<(Vec<ClaudeFile>, Vec<Reade
                         continue;
                     }
                     match mtime_ns(&entry) {
-                        Ok(mtime_ns) => files.push(ClaudeFile {
+                        Ok((mtime_ns, metadata)) => files.push(ClaudeFile {
                             mtime_ns,
+                            metadata,
                             path: entry.clone(),
                             session_id: stem.to_owned(),
                             sidechain: false,
@@ -159,8 +161,9 @@ fn collect_jsonl(
             collect_jsonl(&entry, session_id, files, diagnostics);
         } else if kind.is_file() && name.ends_with(".jsonl") {
             match mtime_ns(&entry) {
-                Ok(mtime_ns) => files.push(ClaudeFile {
+                Ok((mtime_ns, metadata)) => files.push(ClaudeFile {
                     mtime_ns,
+                    metadata,
                     path: entry,
                     session_id: session_id.to_owned(),
                     sidechain: true,
@@ -171,12 +174,17 @@ fn collect_jsonl(
     }
 }
 
-fn mtime_ns(path: &Path) -> std::io::Result<u128> {
-    Ok(fs::metadata(path)?
+fn mtime_ns(path: &Path) -> std::io::Result<(u128, fs::Metadata)> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::other("source is not a regular file"));
+    }
+    let mtime = metadata
         .modified()?
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
-        .unwrap_or_default())
+        .unwrap_or_default();
+    Ok((mtime, metadata))
 }
 
 fn context(session: &str) -> SourceContext {
@@ -322,7 +330,7 @@ pub fn import_file(
     // The whole file must agree on its surface before the first batch can
     // commit that label to the canonical row and the fill-once discovered
     // identity; the check stays per line below in case the file grows.
-    let mut snapshot = snapshot_source(&file.path)?;
+    let mut snapshot = snapshot_source(&file.path, &file.metadata)?;
     let mut surface = match file_surface(&mut snapshot, &context)? {
         Ok(surface) => surface,
         Err((line, reason)) => return Ok(stop(&writer, line, reason)),
@@ -450,8 +458,26 @@ mod name_tests {
 
 /// One anonymous temporary file shared by validation and import. Later source
 /// appends are outside this scan; no named transcript copy remains on disk.
-fn snapshot_source(path: &Path) -> std::io::Result<fs::File> {
-    let source = fs::File::open(path)?;
+fn snapshot_source(path: &Path, expected: &fs::Metadata) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let source = options.open(path)?;
+    let opened = source.metadata()?;
+    if !opened.is_file() {
+        return Err(std::io::Error::other("source is not a regular file"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if opened.dev() != expected.dev() || opened.ino() != expected.ino() {
+            return Err(std::io::Error::other("source changed since discovery"));
+        }
+    }
     let length = source.metadata()?.len();
     let mut snapshot = tempfile::tempfile()?;
     std::io::copy(&mut source.take(length), &mut snapshot)?;
@@ -469,7 +495,7 @@ mod snapshot_tests {
         let source = temp.path().join("session.jsonl");
         let original = "{\"type\":\"assistant\",\"entrypoint\":\"cli\"}\n";
         fs::write(&source, original).unwrap();
-        let mut snapshot = snapshot_source(&source).unwrap();
+        let mut snapshot = snapshot_source(&source, &fs::metadata(&source).unwrap()).unwrap();
         assert_eq!(
             file_surface(&mut snapshot, &context("session"))
                 .unwrap()
@@ -487,7 +513,7 @@ mod snapshot_tests {
         let mut imported_bytes = String::new();
         snapshot.read_to_string(&mut imported_bytes).unwrap();
         assert_eq!(imported_bytes, original);
-        let mut next = snapshot_source(&source).unwrap();
+        let mut next = snapshot_source(&source, &fs::metadata(&source).unwrap()).unwrap();
         assert!(
             file_surface(&mut next, &context("session"))
                 .unwrap()

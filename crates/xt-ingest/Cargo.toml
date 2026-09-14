@@ -16,6 +16,9 @@ sha2 = { version = "=0.10.9", default-features = false }
 
 tempfile = "=3.27.0"
 
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"
+
 [dev-dependencies]
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
 xt-fixtures = { path = "../xt-fixtures" }

@@ -100,3 +100,5 @@ A non-null but blank/non-string surface on a dropped Claude record stops the sur
 Claude validation and batch import share one anonymous temporary-file snapshot bounded to the source length observed at open. Later appends are excluded from that scan and discovered on the next import, so validation and writes consume identical bytes. The temporary file is removed on close.
 
 On Unix, interpreter selection resolves relative PATH entries against the caller directory before probing. The reader then uses that same absolute executable path after changing to the imported home.
+
+On Unix, snapshot creation opens sources with no-follow/nonblocking flags and verifies that the handle is a regular file with the enumerated device/inode. Replacement symlinks and different files are rejected before copying source bytes; a subsequent scan can discover the new file normally.

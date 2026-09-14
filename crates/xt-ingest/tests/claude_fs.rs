@@ -1457,3 +1457,34 @@ fn claude_fs_unusable_dropped_surfaces_prevent_cross_batch_label_persistence() {
         assert!(run(&mut store, &home).complete());
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn claude_fs_rejects_source_replacement_between_enumeration_and_open() {
+    use std::os::unix::fs::symlink;
+    use xt_ingest::native::claude_fs::{enumerate, import_file};
+    for alias in [true, false] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let projects = temp.path().join("projects");
+        let project = projects.join("project");
+        fs::create_dir_all(&project).unwrap();
+        let source = project.join(format!("{SID}.jsonl"));
+        fs::write(&source, synthetic_line(0, SID) + "\n").unwrap();
+        let (files, _) = enumerate(&projects).unwrap();
+        // Keep the old inode alive to avoid inode reuse in this regression.
+        let _old = fs::File::open(&source).unwrap();
+        fs::remove_file(&source).unwrap();
+        let external = temp.path().join("external.jsonl");
+        let bytes = synthetic_line(1, SID) + "\n";
+        fs::write(&external, &bytes).unwrap();
+        if alias {
+            symlink(&external, &source).unwrap();
+        } else {
+            fs::write(&source, &bytes).unwrap();
+        }
+        let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+        assert!(import_file(&mut store, &files[0], 1).is_err());
+        assert_eq!(store.counts().unwrap().records, 0);
+        assert_eq!(fs::read_to_string(&external).unwrap(), bytes);
+    }
+}
