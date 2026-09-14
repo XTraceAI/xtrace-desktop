@@ -4,14 +4,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { ATTESTATION } from '../publication/metadata.mjs';
 import { checkSourcePolicy, validateDescription, sourceCommits } from './check-pr.mjs';
 
 const repository = 'example/project';
 const base = 'a'.repeat(40);
 const synthetic = 'b'.repeat(40);
 const body = () =>
-  `## Change\n\nAdd a synthetic capability.\n\n## Verification\n\nRun the synthetic case; expect success.\n\n- [x] ${ATTESTATION}\n`;
+  `## Change\n\nAdd a synthetic capability.\n\n## Verification\n\nRun the synthetic case; expect success.\n`;
 
 function fixture(commits) {
   const head = commits.at(-1).sha;

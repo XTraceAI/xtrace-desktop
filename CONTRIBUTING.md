@@ -46,10 +46,11 @@ notes or account-specific operating instructions. Inspect screenshots and logs
 before attaching them. Removing text from the latest version does not remove
 earlier Git commits or GitHub edit history; review both before publication.
 
-Apply the [publication review procedure](docs/PUBLICATION.md) even in a private
-repository. Run `pnpm publication:test` and `pnpm security:scan`, and check the PR
-template's disclosure attestation after reviewing the final text, linked issues,
-comments and attachments. Scanner success does not replace this semantic review.
+Keep outbound material suitable for publication even in a private repository.
+Routine PRs require no disclosure checkbox or snapshot. Follow the comprehensive
+local [publication review procedure](docs/PUBLICATION.md) before public visibility
+and the first downloadable release. Scanner success does not replace inspection
+of private text and attachments.
 
 ## Checks
 
