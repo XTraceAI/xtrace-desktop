@@ -42,26 +42,6 @@ impl SessionHeader {
     }
 }
 
-#[derive(Debug)]
-pub struct SessionBlock {
-    pub header: SessionHeader,
-    pub records: Vec<ParsedRecord>,
-    /// Structural lines the canonical parser recognised but does not store.
-    pub inert: usize,
-    pub dropped: usize,
-}
-
-#[derive(Debug)]
-pub enum BlockOutcome {
-    Ready(Box<SessionBlock>),
-    /// The session is skipped as a whole; `line` is 1-based within the stream.
-    Malformed {
-        native_session_id: Option<String>,
-        line: usize,
-        reason: &'static str,
-    },
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamError {
     /// A record appeared before any session header: the stream itself is not
@@ -80,12 +60,10 @@ impl std::fmt::Display for StreamError {
 }
 impl std::error::Error for StreamError {}
 
-/// How a line relates to the session boundary. A header is recognised by its
-/// discriminator, and a header-shaped line (it names the discriminator, or
-/// carries the header-only `mtime` and `native_session_id` keys) is still a
-/// boundary when its JSON or discriminator is broken, so a malformed or
-/// truncated successor never abandons its predecessor and its records are
-/// never imported under it.
+/// Only decoded JSON establishes a boundary. A decoded object with the
+/// header-only identity/mtime keys is an invalid header if its discriminator
+/// is missing. Invalid JSON is an error in the active session, never a guess
+/// about a successor's identity.
 enum LineKind {
     Header,
     MalformedHeader,
@@ -104,90 +82,10 @@ fn classify(line: &str) -> LineKind {
             }
         }
         Ok(_) => LineKind::Other,
-        Err(_) => {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with('{') && header_shaped(trimmed) {
-                LineKind::MalformedHeader
-            } else {
-                LineKind::Other
-            }
-        }
+        // Invalid JSON cannot establish a session boundary. Abandon the active
+        // session and resume only at a later decodable header.
+        Err(_) => LineKind::Other,
     }
-}
-
-/// The top-level entries of possibly truncated JSON object text: each key
-/// with the text that follows its colon. Nested objects and arrays (a
-/// record's tool input, say) are skipped, so only the line's own keys count.
-fn top_level_entries(text: &str) -> Vec<(&str, &str)> {
-    let bytes = text.as_bytes();
-    let mut entries = Vec::new();
-    let mut depth = 0usize;
-    let mut key_position = false;
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'"' => {
-                let start = index + 1;
-                let mut end = start;
-                while end < bytes.len() && bytes[end] != b'"' {
-                    if bytes[end] == b'\\' {
-                        end += 1;
-                    }
-                    end += 1;
-                }
-                let end = end.min(bytes.len());
-                if depth == 1
-                    && key_position
-                    && let Some(key) = text.get(start..end)
-                {
-                    let mut after = end + 1;
-                    while after < bytes.len() && bytes[after].is_ascii_whitespace() {
-                        after += 1;
-                    }
-                    if after < bytes.len() && bytes[after] == b':' {
-                        let mut value = after + 1;
-                        while value < bytes.len() && bytes[value].is_ascii_whitespace() {
-                            value += 1;
-                        }
-                        if let Some(rest) = text.get(value..) {
-                            entries.push((key, rest));
-                        }
-                    }
-                }
-                key_position = false;
-                index = end + 1;
-            }
-            b'{' | b'[' => {
-                depth += 1;
-                key_position = depth == 1;
-                index += 1;
-            }
-            b'}' | b']' => {
-                depth = depth.saturating_sub(1);
-                key_position = false;
-                index += 1;
-            }
-            b',' => {
-                key_position = depth == 1;
-                index += 1;
-            }
-            _ => index += 1,
-        }
-    }
-    entries
-}
-
-/// Whether broken JSON is still header-shaped: its own `"type": "session"`
-/// discriminator, or the header-only `mtime` and `native_session_id` keys,
-/// at the top level, as a header truncated partway is. A record truncated
-/// inside content that merely contains those keys is not.
-fn header_shaped(text: &str) -> bool {
-    let entries = top_level_entries(text);
-    let has = |name: &str| entries.iter().any(|(key, _)| *key == name);
-    entries
-        .iter()
-        .any(|(key, value)| *key == "type" && value.starts_with("\"session\""))
-        || (has("mtime") && has("native_session_id"))
 }
 
 /// One parsed line of the stream. A consumer that writes as it reads never
@@ -342,81 +240,6 @@ impl StreamEvents {
             None => Ok(header),
         }
     }
-}
-
-/// Split one complete stream into per-session blocks (whole sessions in
-/// memory; the importer consumes events instead).
-pub fn parse_stream<I>(
-    lines: I,
-    host: Host,
-    source: SessionSource,
-) -> Result<Vec<BlockOutcome>, StreamError>
-where
-    I: IntoIterator,
-    I::Item: AsRef<str>,
-{
-    let mut events = StreamEvents::new(host, source);
-    let mut blocks = Vec::new();
-    let mut open: Option<SessionBlock> = None;
-    for line in lines {
-        match events.push(line.as_ref())? {
-            None => {}
-            Some(StreamEvent::Session(header)) => {
-                blocks.extend(
-                    open.take()
-                        .map(|block| BlockOutcome::Ready(Box::new(block))),
-                );
-                open = Some(SessionBlock {
-                    header,
-                    records: Vec::new(),
-                    inert: 0,
-                    dropped: 0,
-                });
-            }
-            Some(StreamEvent::Record(record)) => {
-                if let Some(block) = open.as_mut() {
-                    block.records.push(*record);
-                }
-            }
-            Some(StreamEvent::Dropped) => {
-                if let Some(block) = open.as_mut() {
-                    block.dropped += 1;
-                }
-            }
-            Some(StreamEvent::MalformedHeader {
-                native_session_id,
-                line,
-                reason,
-            }) => {
-                blocks.extend(
-                    open.take()
-                        .map(|block| BlockOutcome::Ready(Box::new(block))),
-                );
-                blocks.push(BlockOutcome::Malformed {
-                    native_session_id,
-                    line,
-                    reason,
-                });
-            }
-            Some(StreamEvent::MalformedRecord {
-                native_session_id,
-                line,
-                reason,
-            }) => {
-                open = None;
-                blocks.push(BlockOutcome::Malformed {
-                    native_session_id: Some(native_session_id),
-                    line,
-                    reason,
-                });
-            }
-        }
-    }
-    blocks.extend(
-        open.take()
-            .map(|block| BlockOutcome::Ready(Box::new(block))),
-    );
-    Ok(blocks)
 }
 
 pub fn expected_conversation_id(host: Host, native: &str) -> String {

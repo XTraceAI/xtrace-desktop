@@ -10,10 +10,10 @@ use std::{
     process::Command,
 };
 use xt_ingest::native::{
-    HostStatus, ImportRequest, SessionOutcome, import_block, import_native,
-    stream::{BlockOutcome, StreamError, parse_stream},
+    HostStatus, ImportRequest, SessionOutcome, import_native, import_reader_lines,
+    readers_cli::ReaderOutcome,
 };
-use xt_store::{Host, SessionSource, Store, batch::SourceCursor};
+use xt_store::{Host, SessionSource, Store};
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -65,29 +65,20 @@ fn import(
     host: Host,
     lines: &[String],
 ) -> Vec<xt_ingest::native::SessionResult> {
-    parse_stream(lines, host, SessionSource::ReadersCli)
-        .unwrap()
-        .into_iter()
-        .map(|block| {
-            let cursor = match &block {
-                BlockOutcome::Ready(ready) => Some(SourceCursor {
-                    source: SessionSource::ReadersCli,
-                    cursor_key: format!("{}:{}", host.as_str(), ready.header.path),
-                    position: (ready.header.mtime * 1000.0) as i64,
-                    updated_at: 1,
-                }),
-                BlockOutcome::Malformed { .. } => None,
-            };
-            import_block(
-                store,
-                host,
-                SessionSource::ReadersCli,
-                block,
-                cursor,
-                1_788_782_400_000,
-            )
-        })
-        .collect()
+    import_reader_lines(
+        store,
+        host,
+        "fixture".into(),
+        lines.iter().cloned().map(Ok),
+        1_788_782_400_000,
+        || {
+            Ok(ReaderOutcome {
+                diagnostics: vec![],
+                complete: true,
+            })
+        },
+    )
+    .sessions
 }
 
 #[test]
@@ -304,14 +295,29 @@ fn malformed_sessions_are_skipped_explicitly_while_the_rest_import() {
     // A header for another host, and a stream without any header at all.
     let mut lines = golden("F18", "codex full");
     lines[0] = reset(&lines[0], "host", "cursor");
-    let blocks = parse_stream(&lines, Host::Codex, SessionSource::ReadersCli).unwrap();
+    let results = import(&mut store, Host::Codex, &lines);
     assert!(
-        matches!(blocks[0], BlockOutcome::Malformed { reason, .. } if reason.contains("another host"))
+        matches!(&results[0].outcome, SessionOutcome::Skipped { reason } if reason.contains("another host"))
     );
-    let headless = golden("F18", "codex full")[1..].to_vec();
-    assert_eq!(
-        parse_stream(&headless, Host::Codex, SessionSource::ReadersCli).unwrap_err(),
-        StreamError::RecordBeforeHeader { line: 1 }
+    let report = import_reader_lines(
+        &mut store,
+        Host::Codex,
+        "fixture".into(),
+        golden("F18", "codex full").into_iter().skip(1).map(Ok),
+        1,
+        || {
+            Ok(ReaderOutcome {
+                diagnostics: vec![],
+                complete: true,
+            })
+        },
+    );
+    assert_eq!(report.status, HostStatus::ReaderFailed);
+    assert!(
+        report
+            .detail
+            .unwrap()
+            .contains("precedes any session header")
     );
 }
 
@@ -735,25 +741,6 @@ fn a_malformed_successor_header_completes_the_previous_session() {
         report.sessions[1]
     );
     assert_eq!(report.sessions[1].native_session_id, None);
-    // The whole-stream helper agrees: the predecessor is ready, the successor malformed.
-    let blocks = parse_stream(
-        synthetic_session(first, 3)
-            .into_iter()
-            .chain([r#"{"type":"session","host":"codex","native_session":"broken"}"#.to_owned()])
-            .collect::<Vec<_>>(),
-        Host::Codex,
-        SessionSource::ReadersCli,
-    )
-    .unwrap();
-    assert!(matches!(blocks[0], BlockOutcome::Ready(ref ready) if ready.records.len() == 3));
-    assert!(matches!(
-        blocks[1],
-        BlockOutcome::Malformed {
-            native_session_id: None,
-            line: 5,
-            ..
-        }
-    ));
 }
 
 #[cfg(unix)]
@@ -793,7 +780,7 @@ fn an_explicit_relative_interpreter_path_is_anchored_before_the_reader_changes_d
 }
 
 #[test]
-fn broken_successor_headers_are_boundaries_and_stream_errors_drain_the_producer() {
+fn invalid_json_withholds_cursor_and_stream_errors_drain_the_producer() {
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -808,13 +795,11 @@ fn broken_successor_headers_are_boundaries_and_stream_errors_drain_the_producer(
     };
     let first = "00000000-0000-4000-8000-00000000f157";
     let second = "00000000-0000-4000-8000-000000005ecd";
-    // A successor header with a broken discriminator, one with broken JSON,
-    // and two truncated right after the discriminator (before any header-only
-    // key survives): the predecessor completes with its cursor and the
-    // successor's records never land under it.
+    // Truncated JSON cannot prove the predecessor complete. Withhold its
+    // cursor, discard the pending batch and ignore orphan successor records.
     for successor in [
-        r#"{"host":"codex","native_session_id":"x","conversation_id":"codex-x","source_surface":null,"started_at":null,"cwd":null,"git_branch":null,"title":null,"path":"p","mtime":1.0}"#.to_owned(),
-        r#"{"type":"session","host":"codex","native_session_id":"x","mtime":1.0,"path":"p""#.to_owned(),
+        r#"{"type":"session","host":"codex","native_session_id":"x","mtime":1.0,"path":"p""#
+            .to_owned(),
         r#"{"type":"session""#.to_owned(),
         r#"{ "type" : "session", "host": "codex"#.to_owned(),
     ] {
@@ -822,13 +807,35 @@ fn broken_successor_headers_are_boundaries_and_stream_errors_drain_the_producer(
         let mut lines = synthetic_session(first, 3);
         lines.push(successor);
         lines.extend(synthetic_session(second, 4).into_iter().skip(1));
-        let report = import_reader_lines(&mut store, Host::Codex, "test".into(), stream_of(lines), 1, complete);
+        lines.extend(synthetic_session(second, 4));
+        let report = import_reader_lines(
+            &mut store,
+            Host::Codex,
+            "test".into(),
+            stream_of(lines),
+            1,
+            complete,
+        );
         assert_eq!(report.status, HostStatus::Incomplete, "{report:?}");
-        assert_eq!(report.sessions[0].outcome, SessionOutcome::Imported { records_new: 3, records_enriched: 0 });
-        assert!(store.source_cursor(SessionSource::ReadersCli, &format!("codex:$HOME/.codex/sessions/{first}.jsonl")).unwrap().is_some());
-        assert!(matches!(&report.sessions[1].outcome, SessionOutcome::Skipped { reason } if reason.contains("line 5")), "{:?}", report.sessions[1]);
-        assert_eq!(store.records(&format!("codex-{first}")).unwrap().len(), 3, "the successor's records are not imported under the predecessor");
+        assert_eq!(report.sessions.len(), 2);
+        assert!(
+            matches!(&report.sessions[0].outcome, SessionOutcome::Skipped { reason } if reason.contains("line 5"))
+        );
+        assert!(
+            store
+                .source_cursor(
+                    SessionSource::ReadersCli,
+                    &format!("codex:$HOME/.codex/sessions/{first}.jsonl")
+                )
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(store.counts().unwrap().sessions, 1);
+        // Recovery occurs within the same stream after a decoded header.
+        assert!(matches!(
+            report.sessions[1].outcome,
+            SessionOutcome::Imported { records_new: 4, .. }
+        ));
     }
 
     // A record before any header is a stream error; the remaining output is

@@ -22,7 +22,6 @@ use std::{
     ffi::OsStr,
     path::{Component, Path, PathBuf},
 };
-use stream::{BlockOutcome, SessionBlock};
 use xt_store::{
     Host, SessionSource, Store,
     batch::{RecordDisposition, SourceCursor},
@@ -723,51 +722,4 @@ impl SessionWriter {
             ..self.result
         }
     }
-}
-
-/// Write one complete session block through the canonical writer.
-pub fn import_block(
-    store: &mut Store,
-    host: Host,
-    source: SessionSource,
-    block: BlockOutcome,
-    cursor: Option<SourceCursor>,
-    observed_at: i64,
-) -> SessionResult {
-    let SessionBlock {
-        header,
-        records,
-        dropped,
-        ..
-    } = match block {
-        BlockOutcome::Ready(block) => *block,
-        BlockOutcome::Malformed {
-            native_session_id,
-            line,
-            reason,
-        } => {
-            return SessionResult {
-                conversation_id: native_session_id
-                    .as_deref()
-                    .map(|native| stream::expected_conversation_id(host, native)),
-                native_session_id,
-                source_surface: None,
-                path: None,
-                outcome: SessionOutcome::Skipped {
-                    reason: format!("{reason} (stream line {line})"),
-                },
-            };
-        }
-    };
-    let mut writer = match SessionWriter::begin(store, host, source, &header, observed_at) {
-        Ok(writer) => writer,
-        Err(skipped) => return *skipped,
-    };
-    writer.note_dropped(dropped);
-    for chunk in records.chunks(MAX_BATCH_RECORDS) {
-        if let Err(skipped) = writer.write(store, chunk, observed_at) {
-            return *skipped;
-        }
-    }
-    writer.complete(store, cursor.as_ref())
 }
