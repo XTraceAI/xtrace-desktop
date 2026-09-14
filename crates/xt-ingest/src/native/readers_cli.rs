@@ -135,9 +135,19 @@ pub fn verify_pin(pin: &Pin, plugin_root: &Path) -> Result<PinnedProducer, Reade
             )));
         }
     }
-    if !git(&root, &["status", "--porcelain"])?.is_empty() {
+    if !git(
+        &root,
+        &[
+            "status",
+            "--porcelain",
+            "--ignored",
+            "--untracked-files=all",
+        ],
+    )?
+    .is_empty()
+    {
         return Err(ReaderError::PinMismatch(
-            "plugin checkout has local modifications".into(),
+            "plugin checkout has local modifications or ignored files".into(),
         ));
     }
     let script = root.join("scripts").join("readers_cli.py");

@@ -1082,3 +1082,60 @@ fn reader_non_records_reject_coverage_and_resume_at_the_next_header() {
         ));
     }
 }
+
+#[test]
+fn pinned_checkout_rejects_ignored_python_modules() {
+    use xt_ingest::native::readers_cli::{Pin, verify_pin};
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    let plugin = root.join("plugins/memhub");
+    fs::create_dir_all(plugin.join("scripts")).unwrap();
+    fs::write(plugin.join("scripts/readers_cli.py"), "import json\n").unwrap();
+    fs::write(root.join(".gitignore"), "json.py\n").unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args([
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["commit", "-qm", "Synthetic reader"]);
+    let pin = Pin {
+        repository: "fixture".into(),
+        commit: git(&["rev-parse", "HEAD"]),
+        plugin_root: "plugins/memhub".into(),
+        plugin_version: "0.0.0".into(),
+        reader_sources: [(
+            "plugins/memhub/scripts".into(),
+            git(&["rev-parse", "HEAD:plugins/memhub/scripts"]),
+        )]
+        .into_iter()
+        .collect(),
+    };
+    assert!(verify_pin(&pin, &plugin).is_ok());
+    fs::write(
+        plugin.join("scripts/json.py"),
+        "raise RuntimeError('unverified module')\n",
+    )
+    .unwrap();
+    assert!(git(&["status", "--porcelain"]).is_empty());
+    assert!(
+        verify_pin(&pin, &plugin)
+            .unwrap_err()
+            .to_string()
+            .contains("ignored files")
+    );
+}
