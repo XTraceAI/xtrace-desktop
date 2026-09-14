@@ -195,7 +195,7 @@ fn header(file: &ClaudeFile, first: &[ParsedRecord]) -> SessionHeader {
         native_session_id: file.session_id.clone(),
         source_surface: first
             .iter()
-            .find_map(|r| label(r.native.entrypoint.as_ref())),
+            .find_map(|r| label(r.canonical.source_surface.as_ref())),
         started_at: None,
         cwd: first.iter().find_map(|r| label(r.canonical.cwd.as_ref())),
         git_branch: first
@@ -232,6 +232,10 @@ pub fn import_file(
         Err(skipped) => return Ok(*skipped),
     };
     let context = context(&file.session_id);
+    // The file's surface is the first one a record names; the writer rejects
+    // a disagreeing record later, so the check happens here, before a label
+    // could reach the fill-once discovered identity.
+    let mut surface: Option<String> = None;
     let mut batch: Vec<ParsedRecord> = Vec::new();
     let mut dropped = 0;
     let mut complete_bytes: u64 = 0;
@@ -273,6 +277,19 @@ pub fn import_file(
                         line_number,
                         "record identity disagrees with the file name",
                     ));
+                }
+                if let Some(named) = label(record.canonical.source_surface.as_ref()) {
+                    match &surface {
+                        Some(known) if *known != named => {
+                            return Ok(stop(
+                                &writer,
+                                line_number,
+                                "record surface disagrees with the file's surface",
+                            ));
+                        }
+                        Some(_) => {}
+                        None => surface = Some(named),
+                    }
                 }
                 batch.push(*record);
             }

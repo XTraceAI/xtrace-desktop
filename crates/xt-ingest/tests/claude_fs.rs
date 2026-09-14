@@ -831,3 +831,65 @@ fn claude_fs_keeps_enriching_metadata_after_the_first_batch() {
     assert_eq!(stored.meta.cwd.as_deref(), Some("/repo/fixture"));
     assert_eq!(stored.meta.git_branch.as_deref(), Some("late-branch"));
 }
+
+#[test]
+fn claude_fs_stops_at_a_disagreeing_surface_before_discovery_learns_either() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/-Users-surfaces");
+    fs::create_dir_all(&project).unwrap();
+    let session = "00000000-0000-4000-8000-00000000c0c0";
+    let file = project.join(format!("{session}.jsonl"));
+    let write = |surfaces: &[&str]| {
+        let body = surfaces
+            .iter()
+            .enumerate()
+            .map(|(index, surface)| {
+                let mut line: Value =
+                    serde_json::from_str(&synthetic_line(index, session)).unwrap();
+                line["entrypoint"] = json!(surface);
+                line.to_string() + "\n"
+            })
+            .collect::<String>();
+        fs::write(&file, body).unwrap();
+    };
+    // Two valid but different surfaces in one file: an explicit stop at the
+    // second record, and the discovered identity learns neither.
+    write(&["cli", "sdk", "sdk"]);
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Incomplete, "{report:?}");
+    match &report.hosts[0].sessions[0].outcome {
+        SessionOutcome::Skipped { reason } => assert!(
+            reason.contains("surface") && reason.contains("stream line 2"),
+            "{reason}"
+        ),
+        other => panic!("{other:?}"),
+    }
+    assert!(store.session(session).unwrap().is_none());
+    let discovered = store.discovered_sessions(Host::Claude).unwrap();
+    assert_eq!(discovered.len(), 1);
+    assert_eq!(discovered[0].surface, None);
+
+    // The corrected transcript, on the surface the first import did not
+    // pick, imports and fills the surface in.
+    write(&["sdk", "sdk", "sdk"]);
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Complete, "{report:?}");
+    assert_eq!(
+        report.hosts[0].sessions[0].source_surface.as_deref(),
+        Some("sdk")
+    );
+    let discovered = store.discovered_sessions(Host::Claude).unwrap();
+    assert_eq!(discovered[0].surface.as_deref(), Some("sdk"));
+    assert_eq!(
+        store
+            .session(session)
+            .unwrap()
+            .unwrap()
+            .meta
+            .surface
+            .as_deref(),
+        Some("sdk")
+    );
+}
