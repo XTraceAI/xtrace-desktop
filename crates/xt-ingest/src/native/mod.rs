@@ -239,68 +239,178 @@ fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host
             return HostReport::unavailable(host, HostStatus::PinMismatch, error.to_string());
         }
     };
-    let mut process = match readers_cli::spawn_reader(&python, &producer, host, request.home) {
-        Ok(process) => process,
-        Err(error) => {
-            return HostReport::unavailable(host, HostStatus::ReaderFailed, error.to_string());
-        }
-    };
-    // Sessions import as their blocks complete, so a large history never sits
-    // in memory as a whole and every session read before a later failure stays.
-    let mut reader = stream::BlockReader::new(host, SessionSource::ReadersCli);
-    let mut sessions = Vec::new();
-    let mut stream_failure = None;
-    let settle = |store: &mut Store, block: BlockOutcome, sessions: &mut Vec<SessionResult>| {
-        let cursor = match &block {
-            BlockOutcome::Ready(ready) => Some(SourceCursor {
-                source: SessionSource::ReadersCli,
-                cursor_key: format!("{}:{}", host.as_str(), ready.header.path),
-                // The reader's native update clock in milliseconds; byte offsets
-                // belong to the per-file cursors of incremental scanning.
-                position: (ready.header.mtime * 1000.0) as i64,
-                updated_at: request.observed_at,
-            }),
-            BlockOutcome::Malformed { .. } => None,
+    let (mut stdout, handle) =
+        match readers_cli::spawn_reader(&python, &producer, host, request.home) {
+            Ok(spawned) => spawned,
+            Err(error) => {
+                return HostReport::unavailable(host, HostStatus::ReaderFailed, error.to_string());
+            }
         };
-        sessions.push(import_block(
-            store,
-            host,
-            SessionSource::ReadersCli,
-            block,
+    let detail = format!(
+        "pinned producer {} (memhub {})",
+        producer.commit, producer.plugin_version
+    );
+    let lines = std::iter::from_fn(|| {
+        let mut line = String::new();
+        match std::io::BufRead::read_line(&mut stdout, &mut line) {
+            Ok(0) => None,
+            Ok(_) => Some(Ok(line)),
+            Err(error) => Some(Err(error)),
+        }
+    });
+    import_reader_lines(store, host, detail, lines, request.observed_at, move || {
+        handle.finish()
+    })
+}
+
+/// Import one host's stream as it arrives. Records are written in bounded
+/// batches while a session is still being read, so memory holds at most one
+/// batch. The session still open when the stream ends is committed only after
+/// `finish` confirms a normal producer exit; if the producer failed, that
+/// session's earlier batches stay but it is reported as ended early, without
+/// a cursor, so it is never mistaken for a fully consumed source.
+pub fn import_reader_lines<I, F>(
+    store: &mut Store,
+    host: Host,
+    detail: String,
+    lines: I,
+    observed_at: i64,
+    finish: F,
+) -> HostReport
+where
+    I: IntoIterator<Item = std::io::Result<String>>,
+    F: FnOnce() -> Result<readers_cli::ReaderOutcome, ReaderError>,
+{
+    struct Active {
+        writer: SessionWriter,
+        batch: Vec<crate::canonical::ParsedRecord>,
+        cursor: SourceCursor,
+    }
+    let mut events = stream::StreamEvents::new(host, SessionSource::ReadersCli);
+    let mut sessions: Vec<SessionResult> = Vec::new();
+    let mut active: Option<Active> = None;
+    let mut stream_failure: Option<String> = None;
+    // Complete the session that a successor header (or a confirmed end) closed.
+    fn complete(
+        store: &mut Store,
+        active: Active,
+        observed_at: i64,
+        sessions: &mut Vec<SessionResult>,
+    ) {
+        let Active {
+            mut writer,
+            batch,
             cursor,
-            request.observed_at,
-        ));
-    };
-    let mut line = String::new();
-    loop {
-        line.clear();
-        match std::io::BufRead::read_line(&mut process.stdout, &mut line) {
-            Ok(0) => break,
-            Ok(_) => {}
+        } = active;
+        match writer.write(store, &batch, observed_at, Some(&cursor)) {
+            Ok(()) => sessions.push(writer.finish()),
+            Err(skipped) => sessions.push(*skipped),
+        }
+    }
+    for line in lines {
+        let line = match line {
+            Ok(line) => line,
             Err(_) => {
                 stream_failure = Some("reader stream could not be read".to_owned());
                 break;
             }
-        }
+        };
         let text = line.trim_end_matches(['\n', '\r']);
-        match reader.push(text) {
-            Ok(Some(block)) => settle(store, block, &mut sessions),
-            Ok(None) => {}
+        let event = match events.push(text) {
+            Ok(Some(event)) => event,
+            Ok(None) => continue,
             Err(error) => {
                 stream_failure = Some(error.to_string());
                 break;
             }
-        }
-        if let Some(queued) = reader.take_queued() {
-            settle(store, queued, &mut sessions);
+        };
+        match event {
+            stream::StreamEvent::Session(header) => {
+                if let Some(previous) = active.take() {
+                    complete(store, previous, observed_at, &mut sessions);
+                }
+                let cursor = SourceCursor {
+                    source: SessionSource::ReadersCli,
+                    cursor_key: format!("{}:{}", host.as_str(), header.path),
+                    // The reader's native update clock in milliseconds; byte offsets
+                    // belong to the per-file cursors of incremental scanning.
+                    position: (header.mtime * 1000.0) as i64,
+                    updated_at: observed_at,
+                };
+                match SessionWriter::begin(
+                    store,
+                    host,
+                    SessionSource::ReadersCli,
+                    &header,
+                    observed_at,
+                ) {
+                    Ok(writer) => {
+                        active = Some(Active {
+                            writer,
+                            batch: Vec::new(),
+                            cursor,
+                        })
+                    }
+                    Err(skipped) => sessions.push(*skipped),
+                }
+            }
+            stream::StreamEvent::Record(record) => {
+                if let Some(session) = active.as_mut() {
+                    session.batch.push(*record);
+                    if session.batch.len() == MAX_BATCH_RECORDS {
+                        let batch = std::mem::take(&mut session.batch);
+                        if let Err(skipped) = session.writer.write(store, &batch, observed_at, None)
+                        {
+                            sessions.push(*skipped);
+                            active = None;
+                        }
+                    }
+                }
+            }
+            stream::StreamEvent::Dropped => {
+                if let Some(session) = active.as_mut() {
+                    session.writer.note_dropped(1);
+                }
+            }
+            stream::StreamEvent::Malformed {
+                native_session_id,
+                line,
+                reason,
+            } => match active.take() {
+                Some(session) => sessions.push(session.writer.abandon(format!(
+                    "{reason} (stream line {line}); {} earlier batches stay committed",
+                    session.writer.batches
+                ))),
+                None => sessions.push(SessionResult {
+                    conversation_id: native_session_id
+                        .as_deref()
+                        .map(|native| stream::expected_conversation_id(host, native)),
+                    native_session_id,
+                    source_surface: None,
+                    path: None,
+                    outcome: SessionOutcome::Skipped {
+                        reason: format!("{reason} (stream line {line})"),
+                    },
+                }),
+            },
         }
     }
-    if stream_failure.is_none()
-        && let Some(block) = reader.finish()
-    {
-        settle(store, block, &mut sessions);
+    let outcome = finish();
+    match (&stream_failure, &outcome) {
+        (None, Ok(_)) => {
+            if let Some(session) = active.take() {
+                complete(store, session, observed_at, &mut sessions);
+            }
+        }
+        _ => {
+            if let Some(session) = active.take() {
+                sessions.push(session.writer.abandon(format!(
+                    "reader ended before completing this session; {} earlier batches stay committed",
+                    session.writer.batches
+                )));
+            }
+        }
     }
-    let outcome = process.finish();
     let (status, detail, diagnostics) = match (stream_failure, outcome) {
         (Some(failure), _) => (HostStatus::ReaderFailed, failure, Vec::new()),
         (None, Err(error)) => (HostStatus::ReaderFailed, error.to_string(), Vec::new()),
@@ -310,14 +420,7 @@ fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host
             } else {
                 HostStatus::Incomplete
             };
-            (
-                status,
-                format!(
-                    "pinned producer {} (memhub {})",
-                    producer.commit, producer.plugin_version
-                ),
-                run.diagnostics,
-            )
+            (status, detail, run.diagnostics)
         }
     };
     HostReport {
@@ -342,7 +445,8 @@ pub struct SessionWriter {
     new: usize,
     enriched: usize,
     rejected: Vec<String>,
-    batches: usize,
+    /// Batches committed so far; an ended-early session names this count.
+    pub batches: usize,
 }
 
 impl SessionWriter {
@@ -407,7 +511,9 @@ impl SessionWriter {
             .extend(std::iter::repeat_n("missing_uuid".to_owned(), count));
     }
 
-    /// Commit one bounded batch. `cursor` belongs only to the final batch.
+    /// Commit one bounded batch. `cursor` belongs only to the final batch; an
+    /// empty final batch still commits it, so a file whose records ended
+    /// exactly on a batch boundary keeps its position.
     pub fn write(
         &mut self,
         store: &mut Store,
@@ -415,7 +521,7 @@ impl SessionWriter {
         observed_at: i64,
         cursor: Option<&SourceCursor>,
     ) -> Result<(), Box<SessionResult>> {
-        if records.is_empty() {
+        if records.is_empty() && cursor.is_none() {
             return Ok(());
         }
         let batch = WriteBatch {

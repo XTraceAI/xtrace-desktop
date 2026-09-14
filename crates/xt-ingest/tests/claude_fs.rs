@@ -480,3 +480,56 @@ fn claude_fs_continues_past_an_unreadable_project_directory() {
         "the readable project still imports in full"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn claude_fs_keeps_an_exact_batch_boundary_cursor_and_reports_aliases() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/-Users-exact");
+    fs::create_dir_all(&project).unwrap();
+    let exact = "00000000-0000-4000-8000-00000000e2ac";
+    let path = project.join(format!("{exact}.jsonl"));
+    let body = (0..2_000)
+        .map(|i| synthetic_line(i, exact) + "\n")
+        .collect::<String>();
+    fs::write(&path, &body).unwrap();
+    // An alias beside it is reported, never followed.
+    std::os::unix::fs::symlink(
+        &path,
+        project.join("00000000-0000-4000-8000-00000000a11a.jsonl"),
+    )
+    .unwrap();
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let report = run(&mut store, &home);
+    let claude = &report.hosts[0];
+    assert_eq!(claude.status, HostStatus::Incomplete, "{claude:?}");
+    assert!(
+        claude
+            .diagnostics
+            .iter()
+            .any(|d| d.path.as_deref().unwrap().ends_with("a11a.jsonl"))
+    );
+    assert_eq!(claude.sessions.len(), 1);
+    assert_eq!(
+        claude.sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 2_000,
+            records_enriched: 0
+        }
+    );
+    let cursor = store
+        .source_cursor(
+            SessionSource::Transcript,
+            &format!("claude:{}", path.display()),
+        )
+        .unwrap()
+        .expect("a file ending exactly on a batch boundary keeps its cursor");
+    assert_eq!(cursor.position, body.len() as i64);
+    assert!(
+        store
+            .session("00000000-0000-4000-8000-00000000a11a")
+            .unwrap()
+            .is_none()
+    );
+}

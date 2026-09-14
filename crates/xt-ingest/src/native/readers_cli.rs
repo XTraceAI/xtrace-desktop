@@ -177,11 +177,11 @@ pub fn resolve_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError>
     Ok(python)
 }
 
-/// A running pinned reader: its stdout is consumed line by line by the
-/// caller; stderr (static diagnostics only) is drained concurrently.
-pub struct ReaderProcess {
+/// A running pinned reader's exit half: the caller consumes the returned
+/// stdout line by line, then waits here; stderr (static diagnostics only) is
+/// drained concurrently.
+pub struct ReaderHandle {
     child: std::process::Child,
-    pub stdout: std::io::BufReader<std::process::ChildStdout>,
     stderr: std::thread::JoinHandle<Vec<u8>>,
 }
 
@@ -201,7 +201,7 @@ pub fn spawn_reader(
     producer: &PinnedProducer,
     host: Host,
     home: &Path,
-) -> Result<ReaderProcess, ReaderError> {
+) -> Result<(std::io::BufReader<std::process::ChildStdout>, ReaderHandle), ReaderError> {
     let mut child = Command::new(python)
         .arg(&producer.script)
         .args(["--host", host.as_str()])
@@ -234,18 +234,19 @@ pub fn spawn_reader(
         let _ = std::io::Read::read_to_end(&mut stderr, &mut bytes);
         bytes
     });
-    Ok(ReaderProcess {
-        child,
-        stdout: std::io::BufReader::new(stdout),
-        stderr: drain,
-    })
+    Ok((
+        std::io::BufReader::new(stdout),
+        ReaderHandle {
+            child,
+            stderr: drain,
+        },
+    ))
 }
 
-impl ReaderProcess {
-    /// Wait for the reader after its stdout has been consumed and classify
-    /// its diagnostics and exit status.
+impl ReaderHandle {
+    /// Wait for the reader after its stdout has been consumed to its end and
+    /// classify its diagnostics and exit status.
     pub fn finish(mut self) -> Result<ReaderOutcome, ReaderError> {
-        drop(self.stdout);
         let status = self
             .child
             .wait()

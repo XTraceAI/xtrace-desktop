@@ -92,93 +92,96 @@ fn is_header(line: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Incremental splitter: feed the stream one line at a time and take each
-/// session block as soon as its successor header (or the end) arrives, so a
-/// large history is never held in memory as a whole.
-pub struct BlockReader {
+/// One parsed line of the stream. A consumer that writes as it reads never
+/// holds more than the records between two of its own commits.
+#[derive(Debug)]
+pub enum StreamEvent {
+    /// A new session begins; any previous session is complete.
+    Session(SessionHeader),
+    Record(Box<ParsedRecord>),
+    /// A canonical line without a usable identity; it counts against coverage.
+    Dropped,
+    /// The session named (or the unnamed header at `line`) is skipped as a
+    /// whole from this line on; a session that had already started ends here.
+    Malformed {
+        native_session_id: Option<String>,
+        line: usize,
+        reason: &'static str,
+    },
+}
+
+/// Incremental splitter: feed the stream one line at a time. `host` is the host
+/// the caller asked the producer for; a header claiming another host is malformed.
+pub struct StreamEvents {
     host: Host,
     source: SessionSource,
-    current: Option<(SessionBlock, SourceContext)>,
-    /// A malformed block swallows its records until the next header.
+    context: Option<(String, SourceContext)>,
+    /// A malformed session swallows its records until the next header.
     skipping: bool,
-    /// A malformed successor header that arrived together with a completed block.
-    queued: Option<BlockOutcome>,
     line: usize,
 }
 
-impl BlockReader {
-    /// `host` is the host the caller asked the producer for; a header claiming
-    /// another host is malformed.
+impl StreamEvents {
     pub fn new(host: Host, source: SessionSource) -> Self {
         Self {
             host,
             source,
-            current: None,
+            context: None,
             skipping: false,
-            queued: None,
             line: 0,
         }
     }
 
-    /// Consume one line. A completed block is returned when the next header
-    /// begins; a record before any header rejects the stream.
-    pub fn push(&mut self, line: &str) -> Result<Option<BlockOutcome>, StreamError> {
+    /// Consume one line. A record before any header rejects the stream.
+    pub fn push(&mut self, line: &str) -> Result<Option<StreamEvent>, StreamError> {
         self.line += 1;
         let number = self.line;
         if line.trim().is_empty() {
             return Ok(None);
         }
         if is_header(line) {
-            let finished = self
-                .current
-                .take()
-                .map(|(block, _)| BlockOutcome::Ready(Box::new(block)));
+            self.context = None;
             self.skipping = false;
-            let pending = match self.start_block(line, number) {
-                Ok(()) => None,
+            return Ok(Some(match self.header(line, number) {
+                Ok(header) => {
+                    self.context = Some((
+                        header.native_session_id.clone(),
+                        header.context(self.host, self.source),
+                    ));
+                    StreamEvent::Session(header)
+                }
                 Err(malformed) => {
                     self.skipping = true;
-                    Some(malformed)
+                    *malformed
                 }
-            };
-            // A finished block precedes a malformed successor; the caller sees
-            // the successor on the next push (it is queued behind the header).
-            return Ok(match (finished, pending) {
-                (Some(block), Some(malformed)) => {
-                    self.queued = Some(malformed);
-                    Some(block)
-                }
-                (Some(block), None) => Some(block),
-                (None, Some(malformed)) => Some(malformed),
-                (None, None) => None,
-            });
+            }));
         }
         if self.skipping {
             return Ok(None);
         }
-        let Some((block, context)) = self.current.as_mut() else {
+        let Some((native, context)) = self.context.as_ref() else {
             return Err(StreamError::RecordBeforeHeader { line: number });
         };
-        match parse_with_context(line, context) {
-            Ok(Parsed::Record(record)) => block.records.push(*record),
-            Ok(Parsed::Dropped(_)) => block.dropped += 1,
-            Ok(Parsed::Inert | Parsed::StructuralEvent(_) | Parsed::PrLink(_)) => block.inert += 1,
+        Ok(match parse_with_context(line, context) {
+            Ok(Parsed::Record(record)) => Some(StreamEvent::Record(record)),
+            Ok(Parsed::Dropped(_)) => Some(StreamEvent::Dropped),
+            Ok(Parsed::Inert | Parsed::StructuralEvent(_) | Parsed::PrLink(_)) => None,
             Err(_) => {
-                let (block, _) = self.current.take().unwrap();
+                let native = native.clone();
+                self.context = None;
                 self.skipping = true;
-                return Ok(Some(BlockOutcome::Malformed {
-                    native_session_id: Some(block.header.native_session_id),
+                Some(StreamEvent::Malformed {
+                    native_session_id: Some(native),
                     line: number,
                     reason: "canonical record does not match the shared stream contract",
-                }));
+                })
             }
-        }
-        Ok(None)
+        })
     }
 
-    fn start_block(&mut self, line: &str, number: usize) -> Result<(), BlockOutcome> {
+    fn header(&self, line: &str, number: usize) -> Result<SessionHeader, Box<StreamEvent>> {
         let header =
-            serde_json::from_str::<SessionHeader>(line).map_err(|_| BlockOutcome::Malformed {
+            serde_json::from_str::<SessionHeader>(line).map_err(|_| StreamEvent::Malformed {
                 native_session_id: None,
                 line: number,
                 reason: "session header does not match the shared stream contract",
@@ -201,42 +204,19 @@ impl BlockReader {
         } else {
             None
         };
-        if let Some(reason) = reason {
-            return Err(BlockOutcome::Malformed {
+        match reason {
+            Some(reason) => Err(Box::new(StreamEvent::Malformed {
                 native_session_id: Some(native),
                 line: number,
                 reason,
-            });
+            })),
+            None => Ok(header),
         }
-        let context = header.context(self.host, self.source);
-        self.current = Some((
-            SessionBlock {
-                header,
-                records: Vec::new(),
-                inert: 0,
-                dropped: 0,
-            },
-            context,
-        ));
-        Ok(())
-    }
-
-    /// A malformed successor header that was queued behind a completed block.
-    pub fn take_queued(&mut self) -> Option<BlockOutcome> {
-        self.queued.take()
-    }
-
-    /// The final block once the stream has ended.
-    pub fn finish(mut self) -> Option<BlockOutcome> {
-        self.queued.take().or_else(|| {
-            self.current
-                .take()
-                .map(|(block, _)| BlockOutcome::Ready(Box::new(block)))
-        })
     }
 }
 
-/// Split one complete stream into per-session blocks.
+/// Split one complete stream into per-session blocks (whole sessions in
+/// memory; the importer consumes events instead).
 pub fn parse_stream<I>(
     lines: I,
     host: Host,
@@ -246,17 +226,52 @@ where
     I: IntoIterator,
     I::Item: AsRef<str>,
 {
-    let mut reader = BlockReader::new(host, source);
+    let mut events = StreamEvents::new(host, source);
     let mut blocks = Vec::new();
+    let mut open: Option<SessionBlock> = None;
     for line in lines {
-        if let Some(block) = reader.push(line.as_ref())? {
-            blocks.push(block);
-        }
-        if let Some(queued) = reader.take_queued() {
-            blocks.push(queued);
+        match events.push(line.as_ref())? {
+            None => {}
+            Some(StreamEvent::Session(header)) => {
+                blocks.extend(
+                    open.take()
+                        .map(|block| BlockOutcome::Ready(Box::new(block))),
+                );
+                open = Some(SessionBlock {
+                    header,
+                    records: Vec::new(),
+                    inert: 0,
+                    dropped: 0,
+                });
+            }
+            Some(StreamEvent::Record(record)) => {
+                if let Some(block) = open.as_mut() {
+                    block.records.push(*record);
+                }
+            }
+            Some(StreamEvent::Dropped) => {
+                if let Some(block) = open.as_mut() {
+                    block.dropped += 1;
+                }
+            }
+            Some(StreamEvent::Malformed {
+                native_session_id,
+                line,
+                reason,
+            }) => {
+                open = None;
+                blocks.push(BlockOutcome::Malformed {
+                    native_session_id,
+                    line,
+                    reason,
+                });
+            }
         }
     }
-    blocks.extend(reader.finish());
+    blocks.extend(
+        open.take()
+            .map(|block| BlockOutcome::Ready(Box::new(block))),
+    );
     Ok(blocks)
 }
 

@@ -48,8 +48,13 @@ pub fn enumerate(projects: &Path) -> std::io::Result<(Vec<ClaudeFile>, Vec<Reade
             diagnostics.push(unreadable(projects));
             continue;
         };
-        if !project.is_dir() {
-            continue;
+        match fs::symlink_metadata(&project) {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => continue,
+            Err(_) => {
+                diagnostics.push(unreadable(&project));
+                continue;
+            }
         }
         let Ok(entries) = fs::read_dir(&project) else {
             diagnostics.push(unreadable(&project));
@@ -67,7 +72,16 @@ pub fn enumerate(projects: &Path) -> std::io::Result<(Vec<ClaudeFile>, Vec<Reade
             if name.starts_with('.') {
                 continue;
             }
-            if entry.is_file() {
+            let Ok(kind) = fs::symlink_metadata(&entry).map(|meta| meta.file_type()) else {
+                diagnostics.push(unreadable(&entry));
+                continue;
+            };
+            if kind.is_symlink() {
+                // An alias is not a discovered transcript: it is reported, not followed.
+                diagnostics.push(unreadable(&entry));
+                continue;
+            }
+            if kind.is_file() {
                 if let Some(stem) = name.strip_suffix(".jsonl").filter(|stem| !stem.is_empty()) {
                     match mtime_ns(&entry) {
                         Ok(mtime_ns) => files.push(ClaudeFile {
@@ -79,10 +93,18 @@ pub fn enumerate(projects: &Path) -> std::io::Result<(Vec<ClaudeFile>, Vec<Reade
                         Err(_) => diagnostics.push(unreadable(&entry)),
                     }
                 }
-            } else if entry.is_dir() && name != "memory" {
+            } else if kind.is_dir() && name != "memory" {
                 let subagents = entry.join("subagents");
-                if subagents.is_dir() {
-                    collect_jsonl(&subagents, name, &mut files, &mut diagnostics);
+                match fs::symlink_metadata(&subagents) {
+                    Ok(meta) if meta.is_dir() => {
+                        collect_jsonl(&subagents, name, &mut files, &mut diagnostics)
+                    }
+                    Ok(meta) if meta.file_type().is_symlink() => {
+                        diagnostics.push(unreadable(&subagents))
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => diagnostics.push(unreadable(&subagents)),
                 }
             }
         }
@@ -117,9 +139,15 @@ fn collect_jsonl(
         if name.starts_with('.') {
             continue;
         }
-        if entry.is_dir() {
+        let Ok(kind) = fs::symlink_metadata(&entry).map(|meta| meta.file_type()) else {
+            diagnostics.push(unreadable(&entry));
+            continue;
+        };
+        if kind.is_symlink() {
+            diagnostics.push(unreadable(&entry));
+        } else if kind.is_dir() {
             collect_jsonl(&entry, session_id, files, diagnostics);
-        } else if entry.is_file() && name.ends_with(".jsonl") {
+        } else if kind.is_file() && name.ends_with(".jsonl") {
             match mtime_ns(&entry) {
                 Ok(mtime_ns) => files.push(ClaudeFile {
                     mtime_ns,

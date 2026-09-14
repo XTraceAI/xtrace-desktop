@@ -452,7 +452,6 @@ fn reader_hosts_report_missing_sources_runtime_and_pin_explicitly() {
 
 #[test]
 fn rejected_and_uuid_less_records_make_coverage_partial_not_complete() {
-    use xt_ingest::native::stream::BlockReader;
     let mut store = Store::open_in_memory().unwrap();
     let codex = golden("F18", "codex full");
     assert!(matches!(
@@ -506,32 +505,156 @@ fn rejected_and_uuid_less_records_make_coverage_partial_not_complete() {
         !report.complete(),
         "a partial session can never read as complete coverage"
     );
+}
 
-    // Feeding the same stream one line at a time yields the same blocks.
-    let whole = parse_stream(&stream, Host::Cursor, SessionSource::ReadersCli).unwrap();
-    let mut reader = BlockReader::new(Host::Cursor, SessionSource::ReadersCli);
-    let mut incremental = Vec::new();
-    for line in &stream {
-        incremental.extend(reader.push(line).unwrap());
-        incremental.extend(reader.take_queued());
+fn stream_of(lines: Vec<String>) -> impl Iterator<Item = std::io::Result<String>> {
+    lines.into_iter().map(Ok)
+}
+
+fn synthetic_session(native: &str, records: usize) -> Vec<String> {
+    let mut lines = vec![serde_json::json!({
+        "type": "session", "host": "codex", "native_session_id": native,
+        "conversation_id": format!("codex-{native}"), "source_surface": "codex_cli",
+        "started_at": "2026-09-07T12:00:00.000Z", "cwd": "/repo/fixture", "git_branch": null,
+        "title": null, "path": format!("$HOME/.codex/sessions/{native}.jsonl"), "mtime": 1788782400.0
+    })
+    .to_string()];
+    for index in 0..records {
+        let role = if index.is_multiple_of(2) {
+            "user"
+        } else {
+            "assistant"
+        };
+        lines.push(serde_json::json!({
+            "uuid": format!("5555{}-5555-4555-8555-{index:012}", &native[native.len() - 4..]),
+            "type": role, "cwd": "/repo/fixture",
+            "timestamp": format!("2026-09-07T12:{:02}:{:02}Z", (index / 60) % 60, index % 60),
+            "message": {"role": role, "content": [{"type": "text", "text": format!("turn {index}")}]}
+        })
+        .to_string());
     }
-    incremental.extend(reader.finish());
-    let ids = |blocks: &[BlockOutcome]| {
-        blocks
-            .iter()
-            .map(|block| match block {
-                BlockOutcome::Ready(ready) => (
-                    ready.header.native_session_id.clone(),
-                    ready.records.len(),
-                    ready.dropped,
-                ),
-                BlockOutcome::Malformed {
-                    native_session_id,
-                    line,
-                    ..
-                } => (native_session_id.clone().unwrap_or_default(), *line, 0),
-            })
-            .collect::<Vec<_>>()
+    lines
+}
+
+#[test]
+fn streaming_import_drains_batches_and_holds_the_trailing_session_until_a_confirmed_exit() {
+    use xt_ingest::native::readers_cli::{ReaderError, ReaderOutcome};
+    use xt_ingest::native::{HostStatus, import_reader_lines};
+    let big = "00000000-0000-4000-8000-00000000b16e";
+    let exact = "00000000-0000-4000-8000-00000000e2ac";
+    let complete = || {
+        Ok(ReaderOutcome {
+            diagnostics: Vec::new(),
+            complete: true,
+        })
     };
-    assert_eq!(ids(&whole), ids(&incremental));
+
+    // A 4,500-record session drains in bounded batches; a session of exactly
+    // 2,000 records still records its cursor from an empty final batch.
+    let mut store = Store::open_in_memory().unwrap();
+    let mut lines = synthetic_session(big, 4_500);
+    lines.extend(synthetic_session(exact, 2_000));
+    let report = import_reader_lines(
+        &mut store,
+        Host::Codex,
+        "test".into(),
+        stream_of(lines),
+        1,
+        complete,
+    );
+    assert_eq!(report.status, HostStatus::Complete, "{report:?}");
+    assert_eq!(
+        report.sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 4_500,
+            records_enriched: 0
+        }
+    );
+    assert_eq!(
+        report.sessions[1].outcome,
+        SessionOutcome::Imported {
+            records_new: 2_000,
+            records_enriched: 0
+        }
+    );
+    for native in [big, exact] {
+        let key = format!("codex:$HOME/.codex/sessions/{native}.jsonl");
+        assert!(
+            store
+                .source_cursor(SessionSource::ReadersCli, &key)
+                .unwrap()
+                .is_some(),
+            "{native} keeps its cursor"
+        );
+    }
+    assert_eq!(
+        store.records(&format!("codex-{exact}")).unwrap().len(),
+        2_000
+    );
+
+    // The producer dies after emitting part of a session: the earlier session
+    // is complete, the trailing one keeps its committed batches but is reported
+    // as ended early and gets no cursor.
+    let mut store = Store::open_in_memory().unwrap();
+    let mut lines = synthetic_session(exact, 3);
+    lines.extend(synthetic_session(big, 2_300));
+    let failed = || Err(ReaderError::Failed("reader exited with status 1".into()));
+    let report = import_reader_lines(
+        &mut store,
+        Host::Codex,
+        "test".into(),
+        stream_of(lines),
+        1,
+        failed,
+    );
+    assert_eq!(report.status, HostStatus::ReaderFailed, "{report:?}");
+    assert_eq!(
+        report.sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 3,
+            records_enriched: 0
+        }
+    );
+    match &report.sessions[1].outcome {
+        SessionOutcome::Skipped { reason } => assert!(
+            reason.contains("ended before completing") && reason.contains("1 earlier batches"),
+            "{reason}"
+        ),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        store.records(&format!("codex-{big}")).unwrap().len(),
+        2_000,
+        "the committed batch stays"
+    );
+    assert!(
+        store
+            .source_cursor(
+                SessionSource::ReadersCli,
+                &format!("codex:$HOME/.codex/sessions/{big}.jsonl")
+            )
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .source_cursor(
+                SessionSource::ReadersCli,
+                &format!("codex:$HOME/.codex/sessions/{exact}.jsonl")
+            )
+            .unwrap()
+            .is_some()
+    );
+
+    // A read error mid-stream is a reader failure with the same trailing rule.
+    let mut store = Store::open_in_memory().unwrap();
+    let mut lines: Vec<std::io::Result<String>> =
+        synthetic_session(exact, 2).into_iter().map(Ok).collect();
+    lines.push(Err(std::io::Error::other("pipe broke")));
+    let report = import_reader_lines(&mut store, Host::Codex, "test".into(), lines, 1, complete);
+    assert_eq!(report.status, HostStatus::ReaderFailed);
+    assert!(
+        matches!(&report.sessions[0].outcome, SessionOutcome::Skipped { reason } if reason.contains("0 earlier batches"))
+    );
+    assert!(!report.sessions.is_empty());
 }
