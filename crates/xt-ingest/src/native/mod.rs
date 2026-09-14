@@ -372,7 +372,28 @@ where
                     session.writer.note_dropped(1);
                 }
             }
-            stream::StreamEvent::Malformed {
+            stream::StreamEvent::MalformedHeader {
+                native_session_id,
+                line,
+                reason,
+            } => {
+                // A boundary: the predecessor is complete; the successor is skipped.
+                if let Some(previous) = active.take() {
+                    complete(store, previous, observed_at, &mut sessions);
+                }
+                sessions.push(SessionResult {
+                    conversation_id: native_session_id
+                        .as_deref()
+                        .map(|native| stream::expected_conversation_id(host, native)),
+                    native_session_id,
+                    source_surface: None,
+                    path: None,
+                    outcome: SessionOutcome::Skipped {
+                        reason: format!("{reason} (stream line {line})"),
+                    },
+                });
+            }
+            stream::StreamEvent::MalformedRecord {
                 native_session_id,
                 line,
                 reason,
@@ -382,10 +403,11 @@ where
                     session.writer.batches
                 ))),
                 None => sessions.push(SessionResult {
-                    conversation_id: native_session_id
-                        .as_deref()
-                        .map(|native| stream::expected_conversation_id(host, native)),
-                    native_session_id,
+                    conversation_id: Some(stream::expected_conversation_id(
+                        host,
+                        &native_session_id,
+                    )),
+                    native_session_id: Some(native_session_id),
                     source_surface: None,
                     path: None,
                     outcome: SessionOutcome::Skipped {

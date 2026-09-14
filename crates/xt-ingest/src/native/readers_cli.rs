@@ -158,6 +158,18 @@ pub fn resolve_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError>
         .map(OsStr::to_os_string)
         .or_else(|| std::env::var_os("PYTHON").filter(|value| !value.is_empty()))
         .unwrap_or_else(|| OsString::from("python3"));
+    // The reader runs with the imported home as its working directory, so an
+    // explicit relative path (as opposed to a bare command name found on PATH)
+    // is anchored to the caller's directory now, before it changes.
+    let path = Path::new(&python);
+    let python = if path.components().count() > 1 && path.is_relative() {
+        std::env::current_dir()
+            .map_err(|_| ReaderError::MissingRuntime("current directory is unavailable".into()))?
+            .join(path)
+            .into_os_string()
+    } else {
+        python
+    };
     let probe = Command::new(&python)
         .env_remove("PYTHONOPTIMIZE")
         .env_remove("PYTHONHOME")

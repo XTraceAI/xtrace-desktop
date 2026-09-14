@@ -101,10 +101,18 @@ pub enum StreamEvent {
     Record(Box<ParsedRecord>),
     /// A canonical line without a usable identity; it counts against coverage.
     Dropped,
-    /// The session named (or the unnamed header at `line`) is skipped as a
-    /// whole from this line on; a session that had already started ends here.
-    Malformed {
+    /// A header that does not open a usable session. Like `Session`, it is a
+    /// boundary: the previous session is complete; the named (or unnamed)
+    /// session is skipped until the next header.
+    MalformedHeader {
         native_session_id: Option<String>,
+        line: usize,
+        reason: &'static str,
+    },
+    /// A record that violates the contract inside the current session, which
+    /// ends here and is skipped until the next header.
+    MalformedRecord {
+        native_session_id: String,
         line: usize,
         reason: &'static str,
     },
@@ -170,8 +178,8 @@ impl StreamEvents {
                 let native = native.clone();
                 self.context = None;
                 self.skipping = true;
-                Some(StreamEvent::Malformed {
-                    native_session_id: Some(native),
+                Some(StreamEvent::MalformedRecord {
+                    native_session_id: native,
                     line: number,
                     reason: "canonical record does not match the shared stream contract",
                 })
@@ -180,12 +188,13 @@ impl StreamEvents {
     }
 
     fn header(&self, line: &str, number: usize) -> Result<SessionHeader, Box<StreamEvent>> {
-        let header =
-            serde_json::from_str::<SessionHeader>(line).map_err(|_| StreamEvent::Malformed {
+        let header = serde_json::from_str::<SessionHeader>(line).map_err(|_| {
+            StreamEvent::MalformedHeader {
                 native_session_id: None,
                 line: number,
                 reason: "session header does not match the shared stream contract",
-            })?;
+            }
+        })?;
         let native = header.native_session_id.clone();
         let reason = if header.host != self.host.as_str() {
             Some("session header names another host")
@@ -205,7 +214,7 @@ impl StreamEvents {
             None
         };
         match reason {
-            Some(reason) => Err(Box::new(StreamEvent::Malformed {
+            Some(reason) => Err(Box::new(StreamEvent::MalformedHeader {
                 native_session_id: Some(native),
                 line: number,
                 reason,
@@ -254,14 +263,29 @@ where
                     block.dropped += 1;
                 }
             }
-            Some(StreamEvent::Malformed {
+            Some(StreamEvent::MalformedHeader {
+                native_session_id,
+                line,
+                reason,
+            }) => {
+                blocks.extend(
+                    open.take()
+                        .map(|block| BlockOutcome::Ready(Box::new(block))),
+                );
+                blocks.push(BlockOutcome::Malformed {
+                    native_session_id,
+                    line,
+                    reason,
+                });
+            }
+            Some(StreamEvent::MalformedRecord {
                 native_session_id,
                 line,
                 reason,
             }) => {
                 open = None;
                 blocks.push(BlockOutcome::Malformed {
-                    native_session_id,
+                    native_session_id: Some(native_session_id),
                     line,
                     reason,
                 });

@@ -658,3 +658,107 @@ fn streaming_import_drains_batches_and_holds_the_trailing_session_until_a_confir
     );
     assert!(!report.sessions.is_empty());
 }
+
+#[test]
+fn a_malformed_successor_header_completes_the_previous_session() {
+    use xt_ingest::native::readers_cli::ReaderOutcome;
+    use xt_ingest::native::{HostStatus, import_reader_lines};
+    let first = "00000000-0000-4000-8000-00000000f157";
+    let mut store = Store::open_in_memory().unwrap();
+    let mut lines = synthetic_session(first, 3);
+    lines.push(r#"{"type":"session","host":"codex","native_session":"broken"}"#.into());
+    lines.push(synthetic_session(first, 1).pop().unwrap()); // swallowed by the malformed session
+    let report = import_reader_lines(
+        &mut store,
+        Host::Codex,
+        "test".into(),
+        stream_of(lines),
+        1,
+        || {
+            Ok(ReaderOutcome {
+                diagnostics: Vec::new(),
+                complete: true,
+            })
+        },
+    );
+    assert_eq!(report.status, HostStatus::Incomplete, "{report:?}");
+    assert_eq!(report.sessions.len(), 2);
+    assert_eq!(
+        report.sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 3,
+            records_enriched: 0
+        }
+    );
+    assert!(
+        store
+            .source_cursor(
+                SessionSource::ReadersCli,
+                &format!("codex:$HOME/.codex/sessions/{first}.jsonl")
+            )
+            .unwrap()
+            .is_some(),
+        "the predecessor keeps its cursor"
+    );
+    assert!(
+        matches!(&report.sessions[1].outcome, SessionOutcome::Skipped { reason } if reason.contains("contract") && reason.contains("line 5")),
+        "{:?}",
+        report.sessions[1]
+    );
+    assert_eq!(report.sessions[1].native_session_id, None);
+    // The whole-stream helper agrees: the predecessor is ready, the successor malformed.
+    let blocks = parse_stream(
+        synthetic_session(first, 3)
+            .into_iter()
+            .chain([r#"{"type":"session","host":"codex","native_session":"broken"}"#.to_owned()])
+            .collect::<Vec<_>>(),
+        Host::Codex,
+        SessionSource::ReadersCli,
+    )
+    .unwrap();
+    assert!(matches!(blocks[0], BlockOutcome::Ready(ref ready) if ready.records.len() == 3));
+    assert!(matches!(
+        blocks[1],
+        BlockOutcome::Malformed {
+            native_session_id: None,
+            line: 5,
+            ..
+        }
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn an_explicit_relative_interpreter_path_is_anchored_before_the_reader_changes_directory() {
+    use std::os::unix::fs::PermissionsExt;
+    use xt_ingest::native::readers_cli::resolve_python;
+    let temp = tempfile::TempDir::new().unwrap();
+    let wrapper = temp.path().join("bin").join("python-wrapper");
+    fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
+    fs::write(&wrapper, "#!/bin/sh\nexec python3 \"$@\"\n").unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+    // A relative spelling of the wrapper from the current directory.
+    let cwd = std::env::current_dir().unwrap();
+    let ups = "../".repeat(cwd.components().count() - 1);
+    let relative = format!(
+        "{ups}{}",
+        wrapper
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .trim_start_matches('/')
+    );
+    assert!(Path::new(&relative).is_relative());
+    let resolved = resolve_python(Some(std::ffi::OsStr::new(&relative))).unwrap();
+    let resolved = Path::new(&resolved);
+    assert!(resolved.is_absolute(), "{resolved:?}");
+    assert_eq!(
+        resolved.canonicalize().unwrap(),
+        wrapper.canonicalize().unwrap()
+    );
+    // A bare command name stays a PATH lookup.
+    assert_eq!(
+        resolve_python(Some(std::ffi::OsStr::new("python3"))).unwrap(),
+        "python3"
+    );
+}
