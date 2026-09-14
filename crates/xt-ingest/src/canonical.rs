@@ -197,6 +197,17 @@ pub fn parse_with_context(line: &str, context: &SourceContext) -> Result<Parsed,
     if canonical.native_session_id.is_none() {
         canonical.native_session_id = native.session_id.clone();
     }
+    // A blank cwd or branch is no label (the producers map "" to null for
+    // theirs): it must never fill a session's fill-once metadata ahead of a
+    // real value, which could then not replace it.
+    for label in [&mut canonical.cwd, &mut canonical.git_branch] {
+        if label
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            *label = None;
+        }
+    }
     let (tool_use_count, is_tool_result_carrier) = inspect_content(&canonical)?;
     if let Some(usage) = &canonical.message.usage {
         let cache = usage.cache_creation.as_ref();

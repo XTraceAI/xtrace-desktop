@@ -365,3 +365,29 @@ fn canonical_parse_50k() {
         );
     }
 }
+
+#[test]
+fn blank_cwd_and_branch_labels_are_absent_not_empty() {
+    let line = json!({
+        "uuid": "77777777-7777-4777-8777-000000000001", "type": "user",
+        "sessionId": "00000000-0000-4000-8000-00000000b1ab", "entrypoint": "cli",
+        "cwd": " ", "gitBranch": "", "timestamp": "2026-09-07T12:00:00Z",
+        "message": {"role": "user", "content": "hello"}
+    });
+    let Parsed::Record(record) = parse_line(&line.to_string()).unwrap() else {
+        panic!("a record")
+    };
+    assert_eq!(record.canonical.cwd, None, "a blank cwd is no label");
+    assert_eq!(
+        record.canonical.git_branch, None,
+        "a blank branch is no label"
+    );
+    let mut real = line.clone();
+    real["cwd"] = json!("/repo/real");
+    real["gitBranch"] = json!("main");
+    let Parsed::Record(record) = parse_line(&real.to_string()).unwrap() else {
+        panic!("a record")
+    };
+    assert_eq!(record.canonical.cwd.as_deref(), Some("/repo/real"));
+    assert_eq!(record.canonical.git_branch.as_deref(), Some("main"));
+}

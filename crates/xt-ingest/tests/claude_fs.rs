@@ -1130,3 +1130,41 @@ fn claude_fs_settles_the_surface_over_the_whole_file_before_writing_any_row() {
         Some("sdk")
     );
 }
+
+#[test]
+fn claude_fs_never_fills_session_metadata_with_blank_record_labels() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/-Users-blank-meta");
+    fs::create_dir_all(&project).unwrap();
+    let session = "00000000-0000-4000-8000-00000000c5c5";
+    let file = project.join(format!("{session}.jsonl"));
+    let write = |cwd: &str, branch: &str| {
+        let body = (0..3)
+            .map(|index| {
+                let mut line: Value =
+                    serde_json::from_str(&synthetic_line(index, session)).unwrap();
+                line["cwd"] = json!(cwd);
+                line["gitBranch"] = json!(branch);
+                line.to_string() + "\n"
+            })
+            .collect::<String>();
+        fs::write(&file, body).unwrap();
+    };
+    // Whitespace-only labels import as absent, never as blank fill-once values.
+    write(" ", "");
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Complete, "{report:?}");
+    let stored = store.session(session).unwrap().unwrap();
+    assert_eq!(stored.meta.cwd, None, "a blank cwd is no label");
+    assert_eq!(stored.meta.git_branch, None, "a blank branch is no label");
+
+    // Real values arriving later fill the metadata in.
+    write("/repo/real", "main");
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Complete, "{report:?}");
+    let stored = store.session(session).unwrap().unwrap();
+    assert_eq!(stored.meta.cwd.as_deref(), Some("/repo/real"));
+    assert_eq!(stored.meta.git_branch.as_deref(), Some("main"));
+}
