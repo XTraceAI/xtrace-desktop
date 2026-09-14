@@ -307,7 +307,8 @@ where
             Err(skipped) => sessions.push(*skipped),
         }
     }
-    for line in lines {
+    let mut lines = lines.into_iter();
+    for line in lines.by_ref() {
         let line = match line {
             Ok(line) => line,
             Err(_) => {
@@ -415,6 +416,15 @@ where
                     },
                 }),
             },
+        }
+    }
+    if stream_failure.is_some() {
+        // The producer may still be writing: drain its output to the end (or
+        // to a read error) so it can exit, instead of waiting on a full pipe.
+        for line in lines.by_ref() {
+            if line.is_err() {
+                break;
+            }
         }
     }
     let outcome = finish();

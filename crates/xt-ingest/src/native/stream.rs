@@ -80,16 +80,41 @@ impl std::fmt::Display for StreamError {
 }
 impl std::error::Error for StreamError {}
 
-fn is_header(line: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(line)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("type")
-                .and_then(serde_json::Value::as_str)
-                .map(|kind| kind == "session")
-        })
-        .unwrap_or(false)
+/// How a line relates to the session boundary. A header is recognised by its
+/// discriminator, and a header-shaped line (it carries the header-only
+/// `mtime` and `native_session_id` keys) is still a boundary when its JSON or
+/// discriminator is broken, so a malformed successor never abandons its
+/// predecessor and its records are never imported under it.
+enum LineKind {
+    Header,
+    MalformedHeader,
+    Other,
+}
+
+fn classify(line: &str) -> LineKind {
+    match serde_json::from_str::<serde_json::Value>(line) {
+        Ok(serde_json::Value::Object(object)) => {
+            if object.get("type").and_then(serde_json::Value::as_str) == Some("session") {
+                LineKind::Header
+            } else if object.contains_key("mtime") && object.contains_key("native_session_id") {
+                LineKind::MalformedHeader
+            } else {
+                LineKind::Other
+            }
+        }
+        Ok(_) => LineKind::Other,
+        Err(_) => {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with('{')
+                && trimmed.contains("\"mtime\"")
+                && trimmed.contains("\"native_session_id\"")
+            {
+                LineKind::MalformedHeader
+            } else {
+                LineKind::Other
+            }
+        }
+    }
 }
 
 /// One parsed line of the stream. A consumer that writes as it reads never
@@ -147,22 +172,34 @@ impl StreamEvents {
         if line.trim().is_empty() {
             return Ok(None);
         }
-        if is_header(line) {
-            self.context = None;
-            self.skipping = false;
-            return Ok(Some(match self.header(line, number) {
-                Ok(header) => {
-                    self.context = Some((
-                        header.native_session_id.clone(),
-                        header.context(self.host, self.source),
-                    ));
-                    StreamEvent::Session(header)
-                }
-                Err(malformed) => {
-                    self.skipping = true;
-                    *malformed
-                }
-            }));
+        match classify(line) {
+            LineKind::Header => {
+                self.context = None;
+                self.skipping = false;
+                return Ok(Some(match self.header(line, number) {
+                    Ok(header) => {
+                        self.context = Some((
+                            header.native_session_id.clone(),
+                            header.context(self.host, self.source),
+                        ));
+                        StreamEvent::Session(header)
+                    }
+                    Err(malformed) => {
+                        self.skipping = true;
+                        *malformed
+                    }
+                }));
+            }
+            LineKind::MalformedHeader => {
+                self.context = None;
+                self.skipping = true;
+                return Ok(Some(StreamEvent::MalformedHeader {
+                    native_session_id: None,
+                    line: number,
+                    reason: "session header does not match the shared stream contract",
+                }));
+            }
+            LineKind::Other => {}
         }
         if self.skipping {
             return Ok(None);
