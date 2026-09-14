@@ -180,16 +180,27 @@ fn context(session: &str) -> SourceContext {
     }
 }
 
+/// A record-derived label; a blank value is no label. The writer rejects a
+/// record whose identity label is blank, so it must never reach the
+/// discovered identity first, where a fill-once value would outlive the skip.
+fn label(value: Option<&String>) -> Option<String> {
+    value.filter(|text| !text.trim().is_empty()).cloned()
+}
+
 fn header(file: &ClaudeFile, first: &[ParsedRecord]) -> SessionHeader {
     SessionHeader {
         kind: "session".into(),
         host: Host::Claude.as_str().into(),
         conversation_id: expected_conversation_id(Host::Claude, &file.session_id),
         native_session_id: file.session_id.clone(),
-        source_surface: first.iter().find_map(|r| r.native.entrypoint.clone()),
+        source_surface: first
+            .iter()
+            .find_map(|r| label(r.native.entrypoint.as_ref())),
         started_at: None,
-        cwd: first.iter().find_map(|r| r.canonical.cwd.clone()),
-        git_branch: first.iter().find_map(|r| r.canonical.git_branch.clone()),
+        cwd: first.iter().find_map(|r| label(r.canonical.cwd.as_ref())),
+        git_branch: first
+            .iter()
+            .find_map(|r| label(r.canonical.git_branch.as_ref())),
         title: None,
         path: file.path.to_string_lossy().into_owned(),
         mtime: file.mtime_ns as f64 / 1_000_000_000.0,

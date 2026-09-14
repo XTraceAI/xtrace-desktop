@@ -732,3 +732,56 @@ fn claude_fs_anchors_a_relative_home_so_paths_and_cursor_keys_are_absolute() {
     // The sidechain belongs to the parent session: one canonical session.
     assert_eq!(store.counts().unwrap().sessions, 1);
 }
+
+#[test]
+fn claude_fs_never_persists_a_blank_record_label_as_the_discovered_surface() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/-Users-blank");
+    fs::create_dir_all(&project).unwrap();
+    let session = "00000000-0000-4000-8000-00000000b1a0";
+    let file = project.join(format!("{session}.jsonl"));
+    let records = fixture_records().into_iter().take(2).collect::<Vec<_>>();
+    let write = |entrypoint: &str| {
+        let body = records
+            .iter()
+            .cloned()
+            .map(|record| {
+                // `native_line` fixes the surface and cwd; override them after.
+                let mut line: Value = serde_json::from_str(&native_line(record, session)).unwrap();
+                line["entrypoint"] = json!(entrypoint);
+                line.to_string() + "\n"
+            })
+            .collect::<String>();
+        fs::write(&file, body).unwrap();
+    };
+    // The writer rejects a blank identity label: the file is skipped
+    // explicitly, and the discovered identity stays without a surface.
+    write(" ");
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Incomplete, "{report:?}");
+    match &report.hosts[0].sessions[0].outcome {
+        SessionOutcome::Skipped { reason } => assert!(reason.contains("empty"), "{reason}"),
+        other => panic!("{other:?}"),
+    }
+    assert!(store.session(session).unwrap().is_none());
+    let discovered = store.discovered_sessions(Host::Claude).unwrap();
+    assert_eq!(discovered.len(), 1);
+    assert_eq!(discovered[0].surface, None, "a blank label is no label");
+
+    // A corrected transcript imports afterwards and fills the surface in.
+    write("cli");
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Complete, "{report:?}");
+    assert_eq!(
+        report.hosts[0].sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 2,
+            records_enriched: 0
+        }
+    );
+    assert!(store.session(session).unwrap().is_some());
+    let discovered = store.discovered_sessions(Host::Claude).unwrap();
+    assert_eq!(discovered[0].surface.as_deref(), Some("cli"));
+}

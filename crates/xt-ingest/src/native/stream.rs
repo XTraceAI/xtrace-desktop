@@ -81,10 +81,11 @@ impl std::fmt::Display for StreamError {
 impl std::error::Error for StreamError {}
 
 /// How a line relates to the session boundary. A header is recognised by its
-/// discriminator, and a header-shaped line (it carries the header-only
-/// `mtime` and `native_session_id` keys) is still a boundary when its JSON or
-/// discriminator is broken, so a malformed successor never abandons its
-/// predecessor and its records are never imported under it.
+/// discriminator, and a header-shaped line (it names the discriminator, or
+/// carries the header-only `mtime` and `native_session_id` keys) is still a
+/// boundary when its JSON or discriminator is broken, so a malformed or
+/// truncated successor never abandons its predecessor and its records are
+/// never imported under it.
 enum LineKind {
     Header,
     MalformedHeader,
@@ -106,8 +107,8 @@ fn classify(line: &str) -> LineKind {
         Err(_) => {
             let trimmed = line.trim_start();
             if trimmed.starts_with('{')
-                && trimmed.contains("\"mtime\"")
-                && trimmed.contains("\"native_session_id\"")
+                && (names_session(trimmed)
+                    || (trimmed.contains("\"mtime\"") && trimmed.contains("\"native_session_id\"")))
             {
                 LineKind::MalformedHeader
             } else {
@@ -115,6 +116,18 @@ fn classify(line: &str) -> LineKind {
             }
         }
     }
+}
+
+/// Whether broken JSON still carries the `"type": "session"` discriminator,
+/// as a header truncated before its later keys does.
+fn names_session(text: &str) -> bool {
+    text.match_indices("\"type\"").any(|(index, key)| {
+        text[index + key.len()..]
+            .trim_start()
+            .strip_prefix(':')
+            .map(str::trim_start)
+            .is_some_and(|value| value.starts_with("\"session\""))
+    })
 }
 
 /// One parsed line of the stream. A consumer that writes as it reads never

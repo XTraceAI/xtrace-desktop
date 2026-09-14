@@ -779,12 +779,15 @@ fn broken_successor_headers_are_boundaries_and_stream_errors_drain_the_producer(
     };
     let first = "00000000-0000-4000-8000-00000000f157";
     let second = "00000000-0000-4000-8000-000000005ecd";
-    // A successor header with a broken discriminator, then one with broken
-    // JSON: the predecessor completes with its cursor and the successor's
-    // records never land under it.
+    // A successor header with a broken discriminator, one with broken JSON,
+    // and two truncated right after the discriminator (before any header-only
+    // key survives): the predecessor completes with its cursor and the
+    // successor's records never land under it.
     for successor in [
         r#"{"host":"codex","native_session_id":"x","conversation_id":"codex-x","source_surface":null,"started_at":null,"cwd":null,"git_branch":null,"title":null,"path":"p","mtime":1.0}"#.to_owned(),
         r#"{"type":"session","host":"codex","native_session_id":"x","mtime":1.0,"path":"p""#.to_owned(),
+        r#"{"type":"session""#.to_owned(),
+        r#"{ "type" : "session", "host": "codex"#.to_owned(),
     ] {
         let mut store = Store::open_in_memory().unwrap();
         let mut lines = synthetic_session(first, 3);
