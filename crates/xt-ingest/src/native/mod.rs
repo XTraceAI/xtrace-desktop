@@ -155,8 +155,8 @@ fn import_claude(store: &mut Store, request: &ImportRequest<'_>) -> HostReport {
             "~/.claude/projects is absent",
         );
     }
-    let files = match claude_fs::enumerate(&projects) {
-        Ok(files) => files,
+    let (files, mut diagnostics) = match claude_fs::enumerate(&projects) {
+        Ok(found) => found,
         Err(error) => {
             return HostReport::unavailable(
                 Host::Claude,
@@ -169,25 +169,9 @@ fn import_claude(store: &mut Store, request: &ImportRequest<'_>) -> HostReport {
         }
     };
     let mut sessions = Vec::new();
-    let mut diagnostics = Vec::new();
     for file in files {
-        match claude_fs::read_file(&file) {
-            Ok(read) => {
-                let cursor = SourceCursor {
-                    source: SessionSource::Transcript,
-                    cursor_key: format!("claude:{}", file.path.display()),
-                    position: i64::try_from(read.complete_bytes).unwrap_or(i64::MAX),
-                    updated_at: request.observed_at,
-                };
-                sessions.push(import_block(
-                    store,
-                    Host::Claude,
-                    SessionSource::Transcript,
-                    read.outcome,
-                    Some(cursor),
-                    request.observed_at,
-                ));
-            }
+        match claude_fs::import_file(store, &file, request.observed_at) {
+            Ok(result) => sessions.push(result),
             Err(error) => {
                 diagnostics.push(ReaderDiagnostic {
                     code: "session_unreadable".into(),
@@ -345,9 +329,164 @@ fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host
     }
 }
 
-/// Write one session block through the canonical writer in bounded batches.
-/// The cursor commits with the final batch, so it never advances past rows
+/// One session's write sequence: the header registers the discovered
+/// identity first, then bounded record batches commit one at a time, and the
+/// cursor commits with the last batch only, so it never advances past rows
 /// that were not written. Titles are never persisted: they derive from prompts.
+pub struct SessionWriter {
+    host: Host,
+    context: crate::canonical::SourceContext,
+    cwd: Option<String>,
+    git_branch: Option<String>,
+    result: SessionResult,
+    new: usize,
+    enriched: usize,
+    rejected: Vec<String>,
+    batches: usize,
+}
+
+impl SessionWriter {
+    /// Register the header's identity. A conflicting discovered identity is an
+    /// explicit skip before anything is written.
+    pub fn begin(
+        store: &mut Store,
+        host: Host,
+        source: SessionSource,
+        header: &stream::SessionHeader,
+        observed_at: i64,
+    ) -> Result<Self, Box<SessionResult>> {
+        let result = SessionResult {
+            native_session_id: Some(header.native_session_id.clone()),
+            conversation_id: Some(header.conversation_id.clone()),
+            source_surface: header.source_surface.clone(),
+            path: Some(header.path.clone()),
+            outcome: SessionOutcome::Imported {
+                records_new: 0,
+                records_enriched: 0,
+            },
+        };
+        let discovery = DiscoveredSession {
+            host,
+            native_session_id: header.native_session_id.clone(),
+            conversation_id: Some(header.conversation_id.clone()),
+            surface: header.source_surface.clone(),
+            started_at_ms: header
+                .started_at
+                .as_deref()
+                .and_then(|value| xt_store::timestamp::parse(value).ok())
+                .map(|(_, millis)| millis),
+            last_observed_at: observed_at,
+            // The identity is fully known from the header; host-level coverage is
+            // reported separately.
+            discovery_complete: true,
+        };
+        if let Err(error) = store.observe_discovered_session(&discovery) {
+            return Err(Box::new(SessionResult {
+                outcome: SessionOutcome::Skipped {
+                    reason: format!("discovered identity conflicts with the index: {error}"),
+                },
+                ..result
+            }));
+        }
+        Ok(Self {
+            host,
+            context: header.context(host, source),
+            cwd: header.cwd.clone(),
+            git_branch: header.git_branch.clone(),
+            result,
+            new: 0,
+            enriched: 0,
+            rejected: Vec::new(),
+            batches: 0,
+        })
+    }
+
+    /// Records the parser could not identify; they count against coverage.
+    pub fn note_dropped(&mut self, count: usize) {
+        self.rejected
+            .extend(std::iter::repeat_n("missing_uuid".to_owned(), count));
+    }
+
+    /// Commit one bounded batch. `cursor` belongs only to the final batch.
+    pub fn write(
+        &mut self,
+        store: &mut Store,
+        records: &[crate::canonical::ParsedRecord],
+        observed_at: i64,
+        cursor: Option<&SourceCursor>,
+    ) -> Result<(), Box<SessionResult>> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let batch = WriteBatch {
+            context: &self.context,
+            declared_host: Some(self.host),
+            records,
+            title: None,
+            cwd: self.cwd.as_deref(),
+            git_branch: self.git_branch.as_deref(),
+            namespace: None,
+            // The persisted policy decides; an unconfigured store keeps metadata only.
+            keep_content: true,
+            observed_at,
+            receipt: None,
+            cursor,
+        };
+        match write_batch(store, &batch) {
+            Ok(saved) => {
+                self.new += saved.records_new;
+                self.enriched += saved.records_enriched;
+                // A rejection is a record this import could not store; it must
+                // never read as complete coverage.
+                self.rejected
+                    .extend(saved.dropped_reasons.iter().map(
+                        |(_, disposition)| match disposition {
+                            RecordDisposition::RejectedOwnership => "rejected_ownership".to_owned(),
+                            RecordDisposition::RejectedType => "rejected_type".to_owned(),
+                            RecordDisposition::DroppedMissingUuid => "missing_uuid".to_owned(),
+                            other => format!("{other:?}").to_lowercase(),
+                        },
+                    ));
+                self.batches += 1;
+                Ok(())
+            }
+            Err(error) => Err(Box::new(self.abandon(format!(
+                "session could not be written after {} committed batches: {error}",
+                self.batches
+            )))),
+        }
+    }
+
+    /// Stop with an explicit reason; whatever earlier batches committed stays.
+    pub fn abandon(&self, reason: String) -> SessionResult {
+        SessionResult {
+            outcome: SessionOutcome::Skipped { reason },
+            ..self.result.clone()
+        }
+    }
+
+    pub fn finish(self) -> SessionResult {
+        let outcome = if self.rejected.is_empty() {
+            SessionOutcome::Imported {
+                records_new: self.new,
+                records_enriched: self.enriched,
+            }
+        } else {
+            SessionOutcome::Partial {
+                records_new: self.new,
+                records_enriched: self.enriched,
+                records_dropped: self.rejected.len(),
+                rejections: self.rejected,
+            }
+        };
+        SessionResult {
+            outcome,
+            ..self.result
+        }
+    }
+}
+
+/// Write one complete session block through the canonical writer.
 pub fn import_block(
     store: &mut Store,
     host: Host,
@@ -381,100 +520,19 @@ pub fn import_block(
             };
         }
     };
-    let context = header.context(host, source);
-    let discovery = DiscoveredSession {
-        host,
-        native_session_id: header.native_session_id.clone(),
-        conversation_id: Some(header.conversation_id.clone()),
-        surface: header.source_surface.clone(),
-        started_at_ms: header
-            .started_at
-            .as_deref()
-            .and_then(|value| xt_store::timestamp::parse(value).ok())
-            .map(|(_, millis)| millis),
-        last_observed_at: observed_at,
-        // The identity is fully known from the header; host-level coverage is
-        // reported separately.
-        discovery_complete: true,
+    let mut writer = match SessionWriter::begin(store, host, source, &header, observed_at) {
+        Ok(writer) => writer,
+        Err(skipped) => return *skipped,
     };
-    let mut result = SessionResult {
-        native_session_id: Some(header.native_session_id.clone()),
-        conversation_id: Some(header.conversation_id.clone()),
-        source_surface: header.source_surface.clone(),
-        path: Some(header.path.clone()),
-        outcome: SessionOutcome::Imported {
-            records_new: 0,
-            records_enriched: 0,
-        },
-    };
-    if let Err(error) = store.observe_discovered_session(&discovery) {
-        result.outcome = SessionOutcome::Skipped {
-            reason: format!("discovered identity conflicts with the index: {error}"),
-        };
-        return result;
-    }
-    let (mut new, mut enriched) = (0, 0);
-    let mut rejected = vec!["missing_uuid".to_owned(); dropped];
-    if records.is_empty() && rejected.is_empty() {
-        // A metadata-only stream or an empty file: identity is discovered,
-        // nothing is written, the cursor stays where it was.
-        return result;
-    }
+    writer.note_dropped(dropped);
     let chunks: Vec<&[crate::canonical::ParsedRecord]> =
         records.chunks(MAX_BATCH_RECORDS).collect();
     let last = chunks.len().saturating_sub(1);
     for (index, chunk) in chunks.into_iter().enumerate() {
-        let batch = WriteBatch {
-            context: &context,
-            declared_host: Some(host),
-            records: chunk,
-            title: None,
-            cwd: header.cwd.as_deref(),
-            git_branch: header.git_branch.as_deref(),
-            namespace: None,
-            // The persisted policy decides; an unconfigured store keeps metadata only.
-            keep_content: true,
-            observed_at,
-            receipt: None,
-            cursor: if index == last { cursor.as_ref() } else { None },
-        };
-        match write_batch(store, &batch) {
-            Ok(saved) => {
-                new += saved.records_new;
-                enriched += saved.records_enriched;
-                // A rejection is a record this import could not store; it must
-                // never read as complete coverage.
-                rejected.extend(saved.dropped_reasons.iter().map(|(_, disposition)| {
-                    match disposition {
-                        RecordDisposition::RejectedOwnership => "rejected_ownership".to_owned(),
-                        RecordDisposition::RejectedType => "rejected_type".to_owned(),
-                        RecordDisposition::DroppedMissingUuid => "missing_uuid".to_owned(),
-                        other => format!("{other:?}").to_lowercase(),
-                    }
-                }));
-            }
-            Err(error) => {
-                result.outcome = SessionOutcome::Skipped {
-                    reason: format!(
-                        "session could not be written after {index} committed batches: {error}"
-                    ),
-                };
-                return result;
-            }
+        let cursor = if index == last { cursor.as_ref() } else { None };
+        if let Err(skipped) = writer.write(store, chunk, observed_at, cursor) {
+            return *skipped;
         }
     }
-    result.outcome = if rejected.is_empty() {
-        SessionOutcome::Imported {
-            records_new: new,
-            records_enriched: enriched,
-        }
-    } else {
-        SessionOutcome::Partial {
-            records_new: new,
-            records_enriched: enriched,
-            records_dropped: rejected.len(),
-            rejections: rejected,
-        }
-    };
-    result
+    writer.finish()
 }

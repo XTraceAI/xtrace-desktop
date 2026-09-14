@@ -333,3 +333,150 @@ fn claude_fs_reports_absent_roots_and_identity_disagreements_explicitly() {
     }
     assert!(store.session(binary).unwrap().is_none());
 }
+
+fn synthetic_line(index: usize, session: &str) -> String {
+    let role = if index.is_multiple_of(2) {
+        "user"
+    } else {
+        "assistant"
+    };
+    // A UUID namespace per session: the last four session characters keep two
+    // synthetic files from sharing record identities.
+    let tail = &session[session.len() - 4..];
+    json!({
+        "uuid": format!("4444{tail}-4444-4444-8444-{index:012}"),
+        "type": role,
+        "sessionId": session,
+        "entrypoint": "cli",
+        "cwd": "/repo/fixture",
+        "timestamp": format!("2026-09-07T12:{:02}:{:02}Z", (index / 60) % 60, index % 60),
+        "message": {"role": role, "content": [{"type": "text", "text": format!("turn {index}")}]}
+    })
+    .to_string()
+}
+
+#[test]
+fn claude_fs_streams_large_files_in_bounded_batches_and_keeps_committed_batches_on_a_later_fault() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/-Users-large");
+    fs::create_dir_all(&project).unwrap();
+    let big = "00000000-0000-4000-8000-00000000b16e";
+    let path = project.join(format!("{big}.jsonl"));
+    let body = (0..4_500)
+        .map(|i| synthetic_line(i, big) + "\n")
+        .collect::<String>();
+    fs::write(&path, &body).unwrap();
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Complete, "{report:?}");
+    assert_eq!(
+        report.hosts[0].sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 4_500,
+            records_enriched: 0
+        }
+    );
+    assert_eq!(store.records(big).unwrap().len(), 4_500);
+    let cursor = store
+        .source_cursor(
+            SessionSource::Transcript,
+            &format!("claude:{}", path.display()),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        cursor.position,
+        body.len() as i64,
+        "the cursor commits with the final batch"
+    );
+    assert_eq!(
+        store.session(big).unwrap().unwrap().meta.surface.as_deref(),
+        Some("cli")
+    );
+    let again = run(&mut store, &home);
+    assert_eq!(
+        again.hosts[0].sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 0,
+            records_enriched: 0
+        }
+    );
+
+    // A fault after the first committed batch: the earlier batch stays, the
+    // outcome says so, and the cursor is not advanced for that file.
+    let faulty = "00000000-0000-4000-8000-00000000fa17";
+    let path = project.join(format!("{faulty}.jsonl"));
+    let mut lines = (0..2_500)
+        .map(|i| synthetic_line(i, faulty))
+        .collect::<Vec<_>>();
+    lines[2_100] = r#"{"type":"assistant","uuid":7}"#.into();
+    fs::write(&path, lines.join("\n") + "\n").unwrap();
+    let report = run(&mut store, &home);
+    let session = report.hosts[0]
+        .sessions
+        .iter()
+        .find(|s| s.native_session_id.as_deref() == Some(faulty))
+        .unwrap();
+    match &session.outcome {
+        SessionOutcome::Skipped { reason } => {
+            assert!(
+                reason.contains("stream line 2101")
+                    && reason.contains("1 earlier batches stay committed"),
+                "{reason}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        store.records(faulty).unwrap().len(),
+        2_000,
+        "the committed batch remains"
+    );
+    assert!(
+        store
+            .source_cursor(
+                SessionSource::Transcript,
+                &format!("claude:{}", path.display())
+            )
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(report.hosts[0].status, HostStatus::Incomplete);
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_fs_continues_past_an_unreadable_project_directory() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    fake_home(&home);
+    let locked = home.join(".claude/projects/-Users-locked");
+    fs::create_dir_all(&locked).unwrap();
+    fs::write(
+        locked.join("00000000-0000-4000-8000-00000000d00d.jsonl"),
+        synthetic_line(0, "00000000-0000-4000-8000-00000000d00d") + "\n",
+    )
+    .unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let report = run(&mut store, &home);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    let claude = &report.hosts[0];
+    assert_eq!(claude.status, HostStatus::Incomplete, "{claude:?}");
+    assert!(
+        claude
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "discovery_incomplete"
+                && d.path.as_deref().unwrap().ends_with("-Users-locked")),
+        "{:?}",
+        claude.diagnostics
+    );
+    assert_eq!(
+        store.records(SID).unwrap().len(),
+        27,
+        "the readable project still imports in full"
+    );
+}
