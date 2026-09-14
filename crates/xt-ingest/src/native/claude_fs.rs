@@ -242,12 +242,21 @@ fn file_surface(
         if text.trim().is_empty() {
             continue;
         }
-        let record = match parse_with_context(text, context) {
-            Ok(Parsed::Record(record)) => record,
+        let named = match parse_with_context(text, context) {
+            Ok(Parsed::Record(record)) => label(record.canonical.source_surface.as_ref()),
+            Ok(Parsed::Dropped(_)) => {
+                let raw: serde_json::Value = serde_json::from_str(text)?;
+                raw.get("source_surface")
+                    .filter(|value| !value.is_null())
+                    .or_else(|| raw.get("entrypoint"))
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.trim().is_empty())
+                    .map(str::to_owned)
+            }
             Ok(_) => continue,
             Err(_) => return Ok(Ok(surface)),
         };
-        if let Some(named) = label(record.canonical.source_surface.as_ref()) {
+        if let Some(named) = named {
             match &surface {
                 Some(known) if *known != named => {
                     return Ok(Err((

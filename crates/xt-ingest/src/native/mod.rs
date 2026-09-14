@@ -272,24 +272,44 @@ fn import_claude(store: &mut Store, request: &ImportRequest<'_>) -> HostReport {
     }
 }
 
-fn reader_sources_present(home: &Path, host: Host) -> bool {
-    match host {
-        Host::Codex => home.join(".codex").join("sessions").is_dir(),
-        Host::Cursor => {
-            home.join(".cursor").join("chats").is_dir()
-                || home.join(".cursor").join("projects").is_dir()
+fn reader_sources_present(home: &Path, host: Host) -> std::io::Result<bool> {
+    let roots: &[&str] = match host {
+        Host::Codex => &[".codex/sessions"],
+        Host::Cursor => &[".cursor/chats", ".cursor/projects"],
+        _ => &[],
+    };
+    let mut error = None;
+    for root in roots {
+        match std::fs::metadata(home.join(root)) {
+            Ok(meta) if meta.is_dir() => return Ok(true),
+            Ok(_) => error = Some(std::io::Error::other("source root is not a directory")),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => error = Some(err),
         }
-        Host::Claude | Host::Other => false,
+    }
+    match error {
+        Some(error) => Err(error),
+        None => Ok(false),
     }
 }
 
 fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host) -> HostReport {
-    if !reader_sources_present(request.home, host) {
-        return HostReport::unavailable(
-            host,
-            HostStatus::MissingSource,
-            format!("no {} session directory under the home", host.as_str()),
-        );
+    match reader_sources_present(request.home, host) {
+        Ok(true) => {}
+        Ok(false) => {
+            return HostReport::unavailable(
+                host,
+                HostStatus::MissingSource,
+                format!("no {} session directory under the home", host.as_str()),
+            );
+        }
+        Err(error) => {
+            return HostReport::unavailable(
+                host,
+                HostStatus::ReaderFailed,
+                format!("source root inaccessible: {}", error.kind()),
+            );
+        }
     }
     let python = match readers_cli::resolve_python(request.python) {
         Ok(python) => python,

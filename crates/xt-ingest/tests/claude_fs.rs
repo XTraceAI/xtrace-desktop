@@ -1394,3 +1394,34 @@ fn claude_fs_distinguishes_unreadable_roots_from_absence() {
         HostStatus::MissingSource
     );
 }
+
+#[test]
+fn claude_fs_checks_surface_on_uuid_less_records_before_persisting_labels() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/project");
+    fs::create_dir_all(&project).unwrap();
+    let file = project.join(format!("{SID}.jsonl"));
+    let mut first: Value = serde_json::from_str(&synthetic_line(0, SID)).unwrap();
+    first["entrypoint"] = json!("cli");
+    let mut second: Value = serde_json::from_str(&synthetic_line(1, SID)).unwrap();
+    second["entrypoint"] = json!("sdk");
+    second.as_object_mut().unwrap().remove("uuid");
+    fs::write(&file, format!("{first}\n{second}\n")).unwrap();
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    assert!(!run(&mut store, &home).complete());
+    assert_eq!(store.counts().unwrap().records, 0);
+    assert_eq!(
+        store.discovered_sessions(Host::Claude).unwrap()[0].surface,
+        None
+    );
+    first["entrypoint"] = json!("sdk");
+    fs::write(&file, format!("{first}\n")).unwrap();
+    assert!(run(&mut store, &home).complete());
+    assert_eq!(
+        store.discovered_sessions(Host::Claude).unwrap()[0]
+            .surface
+            .as_deref(),
+        Some("sdk")
+    );
+}

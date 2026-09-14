@@ -92,3 +92,5 @@ Before opening the index, the CLI rejects database/SQLite-sidecar destinations r
 Batch discovery facts also reject contradictory known surface and start-time values before writes. Missing values remain compatible with enrichment.
 
 Claude root inspection distinguishes missing paths from permission and other filesystem errors. Only `NotFound` is missing-source; unreadable or non-directory roots report reader failure.
+
+Claude's surface pre-pass includes known surface labels on UUID-less canonical records, so a disagreement cannot persist a label that blocks corrected input later. Codex/Cursor root probes preserve permission/type errors instead of reporting absence when no readable root is available; a readable root still delegates detailed coverage to the shared reader.

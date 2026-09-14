@@ -1140,3 +1140,31 @@ fn pinned_checkout_exports_only_committed_python_modules() {
     assert!(!producer.script.parent().unwrap().join("json.py").exists());
     assert!(!producer.script.starts_with(&plugin));
 }
+
+#[cfg(unix)]
+#[test]
+fn inaccessible_reader_roots_are_not_reported_missing() {
+    use std::os::unix::fs::PermissionsExt;
+    for (host, directory) in [(Host::Codex, ".codex"), (Host::Cursor, ".cursor")] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let root = home.join(directory);
+        fs::create_dir_all(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o000)).unwrap();
+        let mut store = Store::open_in_memory().unwrap();
+        let report = import_native(
+            &mut store,
+            &ImportRequest {
+                home: &home,
+                hosts: &[host],
+                pin: &repo().join(".plugin-pin"),
+                plugin_root: None,
+                python: None,
+                observed_at: 1,
+            },
+        );
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(report.hosts[0].status, HostStatus::ReaderFailed);
+        assert_eq!(store.counts().unwrap().records, 0);
+    }
+}
