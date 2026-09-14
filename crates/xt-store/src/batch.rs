@@ -175,6 +175,15 @@ impl Store {
                     .is_some_and(|id| id != batch.session.session_id)
                 || batch.session.native_session_id.as_deref()
                     != Some(discovery.native_session_id.as_str())
+                || discovery
+                    .surface
+                    .as_ref()
+                    .zip(batch.session.surface.as_ref())
+                    .is_some_and(|(a, b)| a != b)
+                || discovery
+                    .started_at_ms
+                    .zip(batch.session.started_at_ms)
+                    .is_some_and(|(a, b)| a != b)
         }) {
             return Err(Error::InvalidInput(
                 "discovery must belong to the batch session",

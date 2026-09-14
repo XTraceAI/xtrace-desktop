@@ -108,7 +108,9 @@ fn discovery_ownership_must_match_the_batch_before_any_write() {
     use xt_store::{Host, SessionMeta, batch::IngestBatch, ingest::DiscoveredSession};
     let mut session = SessionMeta::new("claude-session", "claude", SessionSource::Transcript);
     session.native_session_id = Some("native-session".into());
-    for field in ["host", "native", "conversation"] {
+    session.surface = Some("cli".into());
+    session.started_at_ms = Some(1000);
+    for field in ["host", "native", "conversation", "surface", "start"] {
         let mut store = Store::open_in_memory().unwrap();
         let mut discovery = DiscoveredSession {
             host: Host::Claude,
@@ -122,6 +124,8 @@ fn discovery_ownership_must_match_the_batch_before_any_write() {
         match field {
             "host" => discovery.host = Host::Codex,
             "native" => discovery.native_session_id = "other".into(),
+            "surface" => discovery.surface = Some("sdk".into()),
+            "start" => discovery.started_at_ms = Some(2000),
             _ => discovery.conversation_id = Some("other".into()),
         }
         let mut batch = IngestBatch::new(&session, &[], false);
