@@ -100,6 +100,10 @@ fn hashes(root: &Path) -> BTreeMap<PathBuf, String> {
 }
 
 fn run(store: &mut Store, home: &Path) -> ImportReport {
+    // Model distinct scan starts deterministically; equal-time ordering has
+    // dedicated storage coverage.
+    static CLOCK: std::sync::atomic::AtomicI64 =
+        std::sync::atomic::AtomicI64::new(1_788_782_400_000);
     import_native(
         store,
         &ImportRequest {
@@ -108,7 +112,7 @@ fn run(store: &mut Store, home: &Path) -> ImportReport {
             pin: &repo().join(".plugin-pin"),
             plugin_root: None,
             python: None,
-            observed_at: 1_788_782_400_000,
+            observed_at: CLOCK.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         },
     )
 }
