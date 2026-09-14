@@ -14,7 +14,7 @@ use crate::canonical::{Parsed, ParsedRecord, SourceContext, parse_with_context};
 use crate::writer::MAX_BATCH_RECORDS;
 use std::{
     fs,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Read, Seek},
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
@@ -222,10 +222,11 @@ fn header(file: &ClaudeFile, first: &[ParsedRecord]) -> SessionHeader {
 /// repeat. One streaming pass, nothing retained; a line the parser rejects
 /// ends the pass early, and the import pass reports it precisely.
 fn file_surface(
-    file: &ClaudeFile,
+    snapshot: &mut fs::File,
     context: &SourceContext,
 ) -> std::io::Result<Result<Option<String>, (usize, &'static str)>> {
-    let mut reader = BufReader::new(fs::File::open(&file.path)?);
+    snapshot.rewind()?;
+    let mut reader = BufReader::new(snapshot);
     let mut surface: Option<String> = None;
     let mut line_number = 0usize;
     let mut buffer = Vec::new();
@@ -321,11 +322,13 @@ pub fn import_file(
     // The whole file must agree on its surface before the first batch can
     // commit that label to the canonical row and the fill-once discovered
     // identity; the check stays per line below in case the file grows.
-    let mut surface = match file_surface(file, &context)? {
+    let mut snapshot = snapshot_source(&file.path)?;
+    let mut surface = match file_surface(&mut snapshot, &context)? {
         Ok(surface) => surface,
         Err((line, reason)) => return Ok(stop(&writer, line, reason)),
     };
-    let mut reader = BufReader::new(fs::File::open(&file.path)?);
+    snapshot.rewind()?;
+    let mut reader = BufReader::new(snapshot);
     let mut batch: Vec<ParsedRecord> = Vec::new();
     let mut dropped = 0;
     let mut complete_bytes: u64 = 0;
@@ -442,5 +445,53 @@ mod name_tests {
             Some("valid.jsonl")
         );
         assert_eq!(diagnostics.len(), 1);
+    }
+}
+
+/// One anonymous temporary file shared by validation and import. Later source
+/// appends are outside this scan; no named transcript copy remains on disk.
+fn snapshot_source(path: &Path) -> std::io::Result<fs::File> {
+    let source = fs::File::open(path)?;
+    let length = source.metadata()?.len();
+    let mut snapshot = tempfile::tempfile()?;
+    std::io::copy(&mut source.take(length), &mut snapshot)?;
+    snapshot.rewind()?;
+    Ok(snapshot)
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    use std::io::Write;
+    #[test]
+    fn append_between_validation_and_import_cannot_change_snapshot() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let source = temp.path().join("session.jsonl");
+        let original = "{\"type\":\"assistant\",\"entrypoint\":\"cli\"}\n";
+        fs::write(&source, original).unwrap();
+        let mut snapshot = snapshot_source(&source).unwrap();
+        assert_eq!(
+            file_surface(&mut snapshot, &context("session"))
+                .unwrap()
+                .unwrap()
+                .as_deref(),
+            Some("cli")
+        );
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&source)
+            .unwrap()
+            .write_all(b"{\"type\":\"assistant\",\"entrypoint\":\"sdk\"}\n")
+            .unwrap();
+        snapshot.rewind().unwrap();
+        let mut imported_bytes = String::new();
+        snapshot.read_to_string(&mut imported_bytes).unwrap();
+        assert_eq!(imported_bytes, original);
+        let mut next = snapshot_source(&source).unwrap();
+        assert!(
+            file_surface(&mut next, &context("session"))
+                .unwrap()
+                .is_err()
+        );
     }
 }

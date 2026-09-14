@@ -96,3 +96,5 @@ Claude root inspection distinguishes missing paths from permission and other fil
 Claude's surface pre-pass includes known surface labels on UUID-less canonical records, so a disagreement cannot persist a label that blocks corrected input later. Codex/Cursor root probes preserve permission/type errors instead of reporting absence when no readable root is available; a readable root still delegates detailed coverage to the shared reader.
 
 A non-null but blank/non-string surface on a dropped Claude record stops the surface pre-pass before any batch labels persist. The regression places it after 2,000 valid records and verifies a corrected transcript can import on another valid surface.
+
+Claude validation and batch import share one anonymous temporary-file snapshot bounded to the source length observed at open. Later appends are excluded from that scan and discovered on the next import, so validation and writes consume identical bytes. The temporary file is removed on close.
