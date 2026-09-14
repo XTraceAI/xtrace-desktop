@@ -840,3 +840,80 @@ fn broken_successor_headers_are_boundaries_and_stream_errors_drain_the_producer(
     );
     assert_eq!(consumed.load(Ordering::SeqCst), total);
 }
+
+#[test]
+fn header_only_streams_leave_no_canonical_row_or_cursor_in_the_streaming_path() {
+    use xt_ingest::native::readers_cli::ReaderOutcome;
+    use xt_ingest::native::{HostStatus, import_reader_lines};
+    let mut store = Store::open_in_memory().unwrap();
+    let mut lines = golden("F20", "cursor metadata-only");
+    // A dropped-only session (a record without a uuid) is partial, not a row.
+    let dropped = "00000000-0000-4000-8000-0000000000d1";
+    lines.extend(synthetic_session(dropped, 1).into_iter().map(|line| {
+        let mut value: Value = serde_json::from_str(&line).unwrap();
+        let object = value.as_object_mut().unwrap();
+        if is_header(&line) {
+            object.insert("host".into(), "cursor".into());
+            object.insert("conversation_id".into(), format!("cursor-{dropped}").into());
+            object.insert("source_surface".into(), "cursor-cli".into());
+            object.insert(
+                "path".into(),
+                format!("$HOME/.cursor/chats/x/{dropped}/store.db").into(),
+            );
+        } else {
+            object.remove("uuid");
+        }
+        value.to_string()
+    }));
+    let report = import_reader_lines(
+        &mut store,
+        Host::Cursor,
+        "test".into(),
+        stream_of(lines),
+        1,
+        || {
+            Ok(ReaderOutcome {
+                diagnostics: Vec::new(),
+                complete: true,
+            })
+        },
+    );
+    assert_eq!(report.status, HostStatus::Incomplete, "{report:?}");
+    assert_eq!(report.sessions.len(), 4);
+    for session in &report.sessions[..3] {
+        assert_eq!(
+            session.outcome,
+            SessionOutcome::Imported {
+                records_new: 0,
+                records_enriched: 0
+            }
+        );
+    }
+    assert!(
+        matches!(
+            &report.sessions[3].outcome,
+            SessionOutcome::Partial {
+                records_dropped: 1,
+                ..
+            }
+        ),
+        "{:?}",
+        report.sessions[3]
+    );
+    assert_eq!(
+        store.counts().unwrap().sessions,
+        0,
+        "no canonical row for a session without a storable record"
+    );
+    assert_eq!(store.discovered_sessions(Host::Cursor).unwrap().len(), 4);
+    for session in &report.sessions {
+        let key = format!("cursor:{}", session.path.as_deref().unwrap());
+        assert!(
+            store
+                .source_cursor(SessionSource::ReadersCli, &key)
+                .unwrap()
+                .is_none(),
+            "{key} must not record a cursor"
+        );
+    }
+}

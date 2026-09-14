@@ -533,3 +533,60 @@ fn claude_fs_keeps_an_exact_batch_boundary_cursor_and_reports_aliases() {
             .is_none()
     );
 }
+
+#[test]
+fn claude_fs_registers_empty_and_inert_only_files_as_discovered_without_rows() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/-Users-empty");
+    fs::create_dir_all(&project).unwrap();
+    let empty = "00000000-0000-4000-8000-00000000e000";
+    let inert = "00000000-0000-4000-8000-00000000e001";
+    fs::write(project.join(format!("{empty}.jsonl")), "").unwrap();
+    fs::write(
+        project.join(format!("{inert}.jsonl")),
+        format!(
+            "{}\n",
+            json!({"type": "summary", "summary": "x", "leafUuid": "u", "sessionId": inert})
+        ),
+    )
+    .unwrap();
+    let before = hashes(&home);
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Complete, "{report:?}");
+    assert_eq!(report.hosts[0].sessions.len(), 2);
+    for session in &report.hosts[0].sessions {
+        assert_eq!(
+            session.outcome,
+            SessionOutcome::Imported {
+                records_new: 0,
+                records_enriched: 0
+            },
+            "{session:?}"
+        );
+    }
+    let discovered = store.discovered_sessions(Host::Claude).unwrap();
+    let mut ids: Vec<&str> = discovered
+        .iter()
+        .map(|d| d.native_session_id.as_str())
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![empty, inert]);
+    assert_eq!(
+        store.counts().unwrap().sessions,
+        0,
+        "a file without a storable record leaves no canonical row"
+    );
+    for id in [empty, inert] {
+        let key = format!("claude:{}", project.join(format!("{id}.jsonl")).display());
+        assert!(
+            store
+                .source_cursor(SessionSource::Transcript, &key)
+                .unwrap()
+                .is_none(),
+            "{key} must not record a cursor"
+        );
+    }
+    assert_eq!(hashes(&home), before);
+}

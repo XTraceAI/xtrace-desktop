@@ -284,19 +284,6 @@ pub fn import_file(
             batch.clear();
         }
     }
-    if writer.is_none() && batch.is_empty() && dropped == 0 {
-        // An empty or header-less file: nothing to identify or write.
-        return Ok(SessionResult {
-            native_session_id: Some(file.session_id.clone()),
-            conversation_id: Some(file.session_id.clone()),
-            source_surface: None,
-            path: Some(file.path.to_string_lossy().into_owned()),
-            outcome: SessionOutcome::Imported {
-                records_new: 0,
-                records_enriched: 0,
-            },
-        });
-    }
     let mut writer_value = match writer {
         Some(existing) => existing,
         None => match SessionWriter::begin(
@@ -311,6 +298,12 @@ pub fn import_file(
         },
     };
     writer_value.note_dropped(dropped);
+    // The file name identifies the session even when the file is empty or
+    // holds only inert lines, so the identity is registered above; a session
+    // without a storable record gets no canonical row and no cursor.
+    if writer_value.batches == 0 && batch.is_empty() {
+        return Ok(writer_value.finish());
+    }
     let cursor = SourceCursor {
         source: SessionSource::Transcript,
         cursor_key: format!("claude:{}", file.path.display()),

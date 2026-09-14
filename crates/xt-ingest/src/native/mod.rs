@@ -302,7 +302,11 @@ where
             batch,
             cursor,
         } = active;
-        match writer.write(store, &batch, observed_at, Some(&cursor)) {
+        // A session that produced no storable records (a header-only or
+        // dropped-only stream) exists only as a discovered identity: no
+        // canonical row and no cursor, exactly as the block path behaves.
+        let cursor = (writer.batches > 0 || !batch.is_empty()).then_some(&cursor);
+        match writer.write(store, &batch, observed_at, cursor) {
             Ok(()) => sessions.push(writer.finish()),
             Err(skipped) => sessions.push(*skipped),
         }
@@ -545,7 +549,9 @@ impl SessionWriter {
 
     /// Commit one bounded batch. `cursor` belongs only to the final batch; an
     /// empty final batch still commits it, so a file whose records ended
-    /// exactly on a batch boundary keeps its position.
+    /// exactly on a batch boundary keeps its position. Callers pass no cursor
+    /// for a session that never had a storable record, so such a session
+    /// leaves no canonical row behind.
     pub fn write(
         &mut self,
         store: &mut Store,
