@@ -9,7 +9,7 @@
 
 use super::readers_cli::ReaderDiagnostic;
 use super::stream::{SessionHeader, expected_conversation_id};
-use super::{SessionOutcome, SessionResult, SessionWriter};
+use super::{SessionResult, SessionWriter};
 use crate::canonical::{Parsed, ParsedRecord, SourceContext, parse_with_context};
 use crate::writer::MAX_BATCH_RECORDS;
 use std::{
@@ -196,41 +196,42 @@ fn header(file: &ClaudeFile, first: &[ParsedRecord]) -> SessionHeader {
     }
 }
 
-/// Import one file as a stream of complete lines. The synthesized header takes
-/// its surface, cwd and branch from the first batch's records; batches commit
-/// as they fill, and the file cursor (bytes through the last complete line)
-/// commits with the last one. A trailing partial line is left unconsumed. A
-/// malformed or non-UTF-8 line stops the file with the committed count named
-/// and without advancing the cursor; the parent session's earlier batches stay.
+/// Import one file as a stream of complete lines. The file name identifies
+/// the session, so its discovered identity is registered before any line is
+/// parsed; the first batch's records then fill in the surface, cwd and
+/// branch. Batches commit as they fill, and the file cursor (bytes through
+/// the last complete line) commits with the last one. A trailing partial line
+/// is left unconsumed. A malformed or non-UTF-8 line stops the file with the
+/// committed count named and without advancing the cursor; the parent
+/// session's earlier batches stay.
 pub fn import_file(
     store: &mut Store,
     file: &ClaudeFile,
     observed_at: i64,
 ) -> std::io::Result<SessionResult> {
     let mut reader = BufReader::new(fs::File::open(&file.path)?);
+    let mut writer = match SessionWriter::begin(
+        store,
+        Host::Claude,
+        SessionSource::Transcript,
+        &header(file, &[]),
+        observed_at,
+    ) {
+        Ok(started) => started,
+        Err(skipped) => return Ok(*skipped),
+    };
     let context = context(&file.session_id);
-    let mut writer: Option<SessionWriter> = None;
     let mut batch: Vec<ParsedRecord> = Vec::new();
     let mut dropped = 0;
     let mut complete_bytes: u64 = 0;
     let mut line_number = 0usize;
     let mut buffer = Vec::new();
-    let skip = |file: &ClaudeFile, line: usize, reason: &str, batches: Option<&SessionWriter>| {
-        SessionResult {
-            native_session_id: Some(file.session_id.clone()),
-            conversation_id: Some(file.session_id.clone()),
-            source_surface: None,
-            path: Some(file.path.to_string_lossy().into_owned()),
-            outcome: SessionOutcome::Skipped {
-                reason: match batches {
-                    Some(writer) => format!(
-                        "{reason} (stream line {line}); {} earlier batches stay committed",
-                        writer.batches
-                    ),
-                    None => format!("{reason} (stream line {line})"),
-                },
-            },
-        }
+    let mut enriched = false;
+    let stop = |writer: &SessionWriter, line: usize, reason: &str| {
+        writer.abandon(format!(
+            "{reason} (stream line {line}); {} earlier batches stay committed",
+            writer.batches
+        ))
     };
     loop {
         buffer.clear();
@@ -241,68 +242,61 @@ pub fn import_file(
         complete_bytes += read as u64;
         line_number += 1;
         let Ok(text) = std::str::from_utf8(&buffer) else {
-            return Ok(skip(
-                file,
-                line_number,
-                "transcript is not UTF-8",
-                writer.as_ref(),
-            ));
+            return Ok(stop(&writer, line_number, "transcript is not UTF-8"));
         };
         if text.trim().is_empty() {
             continue;
         }
         match parse_with_context(text, &context) {
-            Ok(Parsed::Record(record)) => batch.push(*record),
+            Ok(Parsed::Record(record)) => {
+                // The file name is this session's identity; a record that
+                // names another session stops the file before its metadata
+                // could enrich the registered identity.
+                if record
+                    .native
+                    .session_id
+                    .as_deref()
+                    .is_some_and(|id| id != file.session_id)
+                {
+                    return Ok(stop(
+                        &writer,
+                        line_number,
+                        "record identity disagrees with the file name",
+                    ));
+                }
+                batch.push(*record);
+            }
             Ok(Parsed::Dropped(_)) => dropped += 1,
             Ok(Parsed::Inert | Parsed::StructuralEvent(_) | Parsed::PrLink(_)) => {}
             Err(_) => {
-                return Ok(skip(
-                    file,
+                return Ok(stop(
+                    &writer,
                     line_number,
                     "canonical record does not match the shared stream contract",
-                    writer.as_ref(),
                 ));
             }
         }
         if batch.len() == MAX_BATCH_RECORDS {
-            let writer_ref = match writer.as_mut() {
-                Some(existing) => existing,
-                None => match SessionWriter::begin(
-                    store,
-                    Host::Claude,
-                    SessionSource::Transcript,
-                    &header(file, &batch),
-                    observed_at,
-                ) {
-                    Ok(started) => writer.insert(started),
-                    Err(skipped) => return Ok(*skipped),
-                },
-            };
-            if let Err(skipped) = writer_ref.write(store, &batch, observed_at, None) {
+            if !enriched {
+                if let Err(skipped) = writer.enrich(store, &header(file, &batch), observed_at) {
+                    return Ok(*skipped);
+                }
+                enriched = true;
+            }
+            if let Err(skipped) = writer.write(store, &batch, observed_at, None) {
                 return Ok(*skipped);
             }
             batch.clear();
         }
     }
-    let mut writer_value = match writer {
-        Some(existing) => existing,
-        None => match SessionWriter::begin(
-            store,
-            Host::Claude,
-            SessionSource::Transcript,
-            &header(file, &batch),
-            observed_at,
-        ) {
-            Ok(started) => started,
-            Err(skipped) => return Ok(*skipped),
-        },
-    };
-    writer_value.note_dropped(dropped);
-    // The file name identifies the session even when the file is empty or
-    // holds only inert lines, so the identity is registered above; a session
-    // without a storable record gets no canonical row and no cursor.
-    if writer_value.batches == 0 && batch.is_empty() {
-        return Ok(writer_value.finish());
+    writer.note_dropped(dropped);
+    // A file without a storable record (empty, or inert lines only) keeps its
+    // discovered identity and nothing else: no canonical row, no cursor.
+    if writer.batches == 0 && batch.is_empty() {
+        return Ok(writer.finish());
+    }
+    if !enriched && let Err(skipped) = writer.enrich(store, &header(file, &batch), observed_at) {
+        return Ok(*skipped);
     }
     let cursor = SourceCursor {
         source: SessionSource::Transcript,
@@ -310,8 +304,8 @@ pub fn import_file(
         position: i64::try_from(complete_bytes).unwrap_or(i64::MAX),
         updated_at: observed_at,
     };
-    if let Err(skipped) = writer_value.write(store, &batch, observed_at, Some(&cursor)) {
+    if let Err(skipped) = writer.write(store, &batch, observed_at, Some(&cursor)) {
         return Ok(*skipped);
     }
-    Ok(writer_value.finish())
+    Ok(writer.finish())
 }

@@ -505,22 +505,8 @@ impl SessionWriter {
                 records_enriched: 0,
             },
         };
-        let discovery = DiscoveredSession {
-            host,
-            native_session_id: header.native_session_id.clone(),
-            conversation_id: Some(header.conversation_id.clone()),
-            surface: header.source_surface.clone(),
-            started_at_ms: header
-                .started_at
-                .as_deref()
-                .and_then(|value| xt_store::timestamp::parse(value).ok())
-                .map(|(_, millis)| millis),
-            last_observed_at: observed_at,
-            // The identity is fully known from the header; host-level coverage is
-            // reported separately.
-            discovery_complete: true,
-        };
-        if let Err(error) = store.observe_discovered_session(&discovery) {
+        if let Err(error) = store.observe_discovered_session(&discovery(host, header, observed_at))
+        {
             return Err(Box::new(SessionResult {
                 outcome: SessionOutcome::Skipped {
                     reason: format!("discovered identity conflicts with the index: {error}"),
@@ -539,6 +525,30 @@ impl SessionWriter {
             rejected: Vec::new(),
             batches: 0,
         })
+    }
+
+    /// Fill in metadata that only records reveal (a Claude file's surface,
+    /// cwd and branch come from its first batch). Known values fill once; a
+    /// value that disagrees with the index is an explicit skip.
+    pub fn enrich(
+        &mut self,
+        store: &mut Store,
+        header: &stream::SessionHeader,
+        observed_at: i64,
+    ) -> Result<(), Box<SessionResult>> {
+        if let Err(error) =
+            store.observe_discovered_session(&discovery(self.host, header, observed_at))
+        {
+            return Err(Box::new(self.abandon(format!(
+                "discovered identity conflicts with the index: {error}"
+            ))));
+        }
+        let source = self.context.source.unwrap_or(SessionSource::Transcript);
+        self.context = header.context(self.host, source);
+        self.cwd = header.cwd.clone();
+        self.git_branch = header.git_branch.clone();
+        self.result.source_surface = header.source_surface.clone();
+        Ok(())
     }
 
     /// Records the parser could not identify; they count against coverage.
@@ -627,6 +637,24 @@ impl SessionWriter {
             outcome,
             ..self.result
         }
+    }
+}
+
+fn discovery(host: Host, header: &stream::SessionHeader, observed_at: i64) -> DiscoveredSession {
+    DiscoveredSession {
+        host,
+        native_session_id: header.native_session_id.clone(),
+        conversation_id: Some(header.conversation_id.clone()),
+        surface: header.source_surface.clone(),
+        started_at_ms: header
+            .started_at
+            .as_deref()
+            .and_then(|value| xt_store::timestamp::parse(value).ok())
+            .map(|(_, millis)| millis),
+        last_observed_at: observed_at,
+        // The identity is fully known from the header; host-level coverage is
+        // reported separately.
+        discovery_complete: true,
     }
 }
 

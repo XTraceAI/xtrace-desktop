@@ -239,6 +239,16 @@ impl StreamEvents {
             Some("session header lacks an identity")
         } else if header.conversation_id != expected_conversation_id(self.host, &native) {
             Some("session header conversation ID does not derive from its native ID")
+        } else if [&header.source_surface, &header.cwd, &header.git_branch]
+            .into_iter()
+            .flatten()
+            .any(|label| label.trim().is_empty())
+        {
+            // The writer rejects empty identity labels once a record arrives;
+            // a header-only session must not pass on a technicality.
+            Some("session header carries an empty label")
+        } else if header.path.trim().is_empty() {
+            Some("session header lacks a source path")
         } else if header
             .started_at
             .as_deref()

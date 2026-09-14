@@ -917,3 +917,42 @@ fn header_only_streams_leave_no_canonical_row_or_cursor_in_the_streaming_path() 
         );
     }
 }
+
+#[test]
+fn headers_with_empty_labels_are_malformed_before_any_record_arrives() {
+    // The writer rejects an empty identity label once a record exists; the
+    // header check rejects it first, so validity never depends on record count.
+    for (key, value, needle) in [
+        ("source_surface", "", "empty label"),
+        ("cwd", " ", "empty label"),
+        ("git_branch", "", "empty label"),
+        ("path", "", "source path"),
+    ] {
+        let mut lines = golden("F18", "cursor full");
+        let mut header: Value = serde_json::from_str(&lines[0]).unwrap();
+        header
+            .as_object_mut()
+            .unwrap()
+            .insert(key.into(), Value::String(value.into()));
+        lines[0] = header.to_string();
+        let mut store = Store::open_in_memory().unwrap();
+        let results = import(&mut store, Host::Cursor, &lines);
+        assert_eq!(results.len(), 2, "{key}: {results:?}");
+        match &results[0].outcome {
+            SessionOutcome::Skipped { reason } => {
+                assert!(reason.contains(needle), "{key}: {reason}");
+            }
+            other => panic!("{key}: {other:?}"),
+        }
+        assert!(matches!(
+            results[1].outcome,
+            SessionOutcome::Imported { records_new: 7, .. }
+        ));
+        assert_eq!(store.counts().unwrap().sessions, 1, "{key}");
+        assert_eq!(
+            store.discovered_sessions(Host::Cursor).unwrap().len(),
+            1,
+            "{key}: a malformed header registers nothing"
+        );
+    }
+}

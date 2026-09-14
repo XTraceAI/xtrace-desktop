@@ -332,6 +332,84 @@ fn claude_fs_reports_absent_roots_and_identity_disagreements_explicitly() {
         other => panic!("{other:?}"),
     }
     assert!(store.session(binary).unwrap().is_none());
+    // Both skipped files are still known sessions: their file names identify
+    // them, and that identity is registered before any line is parsed.
+    let discovered = store.discovered_sessions(Host::Claude).unwrap();
+    for id in [other, binary] {
+        let known = discovered
+            .iter()
+            .find(|d| d.native_session_id == id)
+            .unwrap_or_else(|| panic!("{id} is discovered"));
+        assert_eq!(known.surface, None, "nothing was read from {id}");
+        assert!(known.discovery_complete);
+    }
+}
+
+#[test]
+fn claude_fs_registers_identities_before_parsing_and_enriches_them_from_the_first_batch() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/-Users-early");
+    fs::create_dir_all(&project).unwrap();
+    let broken = "00000000-0000-4000-8000-00000000b001";
+    let binary = "00000000-0000-4000-8000-00000000b002";
+    let sound = "00000000-0000-4000-8000-00000000b003";
+    // Malformed JSON on the very first line, before any record.
+    fs::write(
+        project.join(format!("{broken}.jsonl")),
+        "{\"type\":\"user\",\"uuid\":5}\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join(format!("{binary}.jsonl")),
+        b"{\"type\":\"user\",\"uuid\":\"\xff\"}\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join(format!("{sound}.jsonl")),
+        fixture_records()
+            .into_iter()
+            .take(3)
+            .map(|r| native_line(r, sound) + "\n")
+            .collect::<String>(),
+    )
+    .unwrap();
+    let before = hashes(&home);
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Incomplete, "{report:?}");
+    for id in [broken, binary] {
+        let skipped = report.hosts[0]
+            .sessions
+            .iter()
+            .find(|s| s.native_session_id.as_deref() == Some(id))
+            .unwrap();
+        match &skipped.outcome {
+            SessionOutcome::Skipped { reason } => assert!(
+                reason.contains("stream line 1") && reason.contains("0 earlier batches"),
+                "{reason}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert!(store.session(id).unwrap().is_none());
+    }
+    let discovered = store.discovered_sessions(Host::Claude).unwrap();
+    assert_eq!(discovered.len(), 3, "{discovered:?}");
+    let find = |id: &str| {
+        discovered
+            .iter()
+            .find(|d| d.native_session_id == id)
+            .unwrap()
+    };
+    assert_eq!(find(broken).surface, None);
+    assert_eq!(find(binary).surface, None);
+    assert_eq!(
+        find(sound).surface.as_deref(),
+        Some("cli"),
+        "the first batch enriches the registered identity"
+    );
+    assert_eq!(store.counts().unwrap().sessions, 1);
+    assert_eq!(hashes(&home), before);
 }
 
 fn synthetic_line(index: usize, session: &str) -> String {
