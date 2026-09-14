@@ -82,3 +82,5 @@ On Unix, undecodable names in main or subagent discovery produce `discovery_inco
 Readers execute from a temporary export of verified committed Git objects. Ignored working-tree modules and caches are excluded. A synthetic Git regression proves ignored `scripts/json.py` cannot enter that export.
 
 Project-directory symlinks are reported as incomplete discovery and never followed, consistently with transcript/subagent aliases. Readable sibling projects still import.
+
+The Claude `.claude` and `projects` source-root entries are checked for aliases before traversal. A symlink at either entry reports incomplete discovery without reading the external history.

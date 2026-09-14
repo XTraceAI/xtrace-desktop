@@ -1312,3 +1312,39 @@ fn claude_fs_reports_project_aliases_without_following_them() {
     assert_eq!(store.records(SID).unwrap().len(), 27);
     assert_eq!(fs::read_to_string(&transcript).unwrap(), bytes);
 }
+
+#[cfg(unix)]
+#[test]
+fn claude_fs_reports_aliased_source_roots_without_reading_external_history() {
+    use std::os::unix::fs::symlink;
+    for parent in [false, true] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let external = temp.path().join("external");
+        fake_home(&external);
+        fs::create_dir_all(&home).unwrap();
+        let alias = if parent {
+            home.join(".claude")
+        } else {
+            fs::create_dir_all(home.join(".claude")).unwrap();
+            home.join(".claude/projects")
+        };
+        let target = if parent {
+            external.join(".claude")
+        } else {
+            external.join(".claude/projects")
+        };
+        symlink(target, &alias).unwrap();
+        let before = hashes(&external);
+        let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+        let report = run(&mut store, &home);
+        assert_eq!(report.hosts[0].status, HostStatus::Incomplete);
+        assert_eq!(report.hosts[0].diagnostics.len(), 1);
+        assert_eq!(
+            report.hosts[0].diagnostics[0].path.as_deref(),
+            alias.to_str()
+        );
+        assert_eq!(store.counts().unwrap().records, 0);
+        assert_eq!(hashes(&external), before);
+    }
+}
