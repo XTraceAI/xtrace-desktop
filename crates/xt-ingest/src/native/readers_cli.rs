@@ -206,6 +206,13 @@ pub fn resolve_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError>
     } else {
         python
     };
+    #[cfg(unix)]
+    let python = absolute_executable(
+        &python,
+        &std::env::current_dir()
+            .map_err(|_| ReaderError::MissingRuntime("current directory unavailable".into()))?,
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )?;
     let probe = Command::new(&python)
         .env_remove("PYTHONOPTIMIZE")
         .env_remove("PYTHONHOME")
@@ -344,5 +351,50 @@ impl ReaderHandle {
             diagnostics,
             complete,
         })
+    }
+}
+
+#[cfg(unix)]
+fn absolute_executable(name: &OsStr, cwd: &Path, search: &OsStr) -> Result<OsString, ReaderError> {
+    use std::os::unix::fs::PermissionsExt;
+    if Path::new(name).components().count() > 1 || Path::new(name).is_absolute() {
+        return Ok(cwd.join(name).into_os_string());
+    }
+    std::env::split_paths(search)
+        .map(|entry| cwd.join(entry).join(name))
+        .find(|candidate| {
+            candidate
+                .metadata()
+                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        })
+        .map(PathBuf::into_os_string)
+        .ok_or_else(|| ReaderError::MissingRuntime("python executable is not on PATH".into()))
+}
+
+#[cfg(all(test, unix))]
+mod executable_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn relative_path_entries_are_resolved_before_changing_directory() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let caller = temp.path().join("caller");
+        let imported = temp.path().join("imported");
+        for directory in [&caller, &imported] {
+            std::fs::create_dir_all(directory).unwrap();
+            std::fs::write(directory.join("python"), "fixture").unwrap();
+            std::fs::set_permissions(
+                directory.join("python"),
+                std::fs::Permissions::from_mode(0o700),
+            )
+            .unwrap();
+        }
+        let selected = absolute_executable(OsStr::new("python"), &caller, OsStr::new(".")).unwrap();
+        assert_eq!(PathBuf::from(&selected), caller.join("./python"));
+        assert!(Path::new(&selected).is_absolute());
+        assert_ne!(
+            selected,
+            absolute_executable(OsStr::new("python"), &imported, OsStr::new(".")).unwrap()
+        );
     }
 }

@@ -98,3 +98,5 @@ Claude's surface pre-pass includes known surface labels on UUID-less canonical r
 A non-null but blank/non-string surface on a dropped Claude record stops the surface pre-pass before any batch labels persist. The regression places it after 2,000 valid records and verifies a corrected transcript can import on another valid surface.
 
 Claude validation and batch import share one anonymous temporary-file snapshot bounded to the source length observed at open. Later appends are excluded from that scan and discovered on the next import, so validation and writes consume identical bytes. The temporary file is removed on close.
+
+On Unix, interpreter selection resolves relative PATH entries against the caller directory before probing. The reader then uses that same absolute executable path after changing to the imported home.

@@ -772,10 +772,9 @@ fn an_explicit_relative_interpreter_path_is_anchored_before_the_reader_changes_d
         resolved.canonicalize().unwrap(),
         wrapper.canonicalize().unwrap()
     );
-    // A bare command name stays a PATH lookup.
-    assert_eq!(
-        resolve_python(Some(std::ffi::OsStr::new("python3"))).unwrap(),
-        "python3"
+    // Bare names also become absolute before the child changes directory.
+    assert!(
+        Path::new(&resolve_python(Some(std::ffi::OsStr::new("python3"))).unwrap()).is_absolute()
     );
 }
 
