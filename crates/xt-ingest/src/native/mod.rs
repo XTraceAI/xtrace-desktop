@@ -190,25 +190,39 @@ fn anchor(home: &Path) -> std::io::Result<PathBuf> {
 fn import_claude(store: &mut Store, request: &ImportRequest<'_>) -> HostReport {
     let projects = request.home.join(".claude").join("projects");
     for root in [request.home.join(".claude"), projects.clone()] {
-        if std::fs::symlink_metadata(&root).is_ok_and(|meta| meta.file_type().is_symlink()) {
-            return HostReport {
-                host: Host::Claude,
-                status: HostStatus::Incomplete,
-                detail: Some("Claude source root is an alias; source was not traversed".into()),
-                diagnostics: vec![ReaderDiagnostic {
-                    code: "discovery_incomplete".into(),
-                    path: Some(root.to_string_lossy().into_owned()),
-                }],
-                sessions: vec![],
-            };
+        match std::fs::symlink_metadata(&root) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return HostReport {
+                    host: Host::Claude,
+                    status: HostStatus::Incomplete,
+                    detail: Some("Claude source root is an alias; source was not traversed".into()),
+                    diagnostics: vec![ReaderDiagnostic {
+                        code: "discovery_incomplete".into(),
+                        path: Some(root.to_string_lossy().into_owned()),
+                    }],
+                    sessions: vec![],
+                };
+            }
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => {
+                return HostReport::unavailable(
+                    Host::Claude,
+                    HostStatus::ReaderFailed,
+                    "Claude source root is not a directory",
+                );
+            }
+            Err(error) => {
+                return HostReport::unavailable(
+                    Host::Claude,
+                    if error.kind() == std::io::ErrorKind::NotFound {
+                        HostStatus::MissingSource
+                    } else {
+                        HostStatus::ReaderFailed
+                    },
+                    format!("Claude source root unavailable: {}", error.kind()),
+                );
+            }
         }
-    }
-    if !projects.is_dir() {
-        return HostReport::unavailable(
-            Host::Claude,
-            HostStatus::MissingSource,
-            "~/.claude/projects is absent",
-        );
     }
     let (files, mut diagnostics) = match claude_fs::enumerate(&projects) {
         Ok(found) => found,

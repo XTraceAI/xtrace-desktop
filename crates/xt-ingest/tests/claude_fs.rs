@@ -1366,3 +1366,31 @@ fn claude_fs_rejects_blank_filename_and_parent_identities_before_discovery() {
         assert_eq!(store.counts().unwrap().sessions, 0);
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn claude_fs_distinguishes_unreadable_roots_from_absence() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let root = home.join(".claude");
+    fs::create_dir_all(root.join("projects")).unwrap();
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o000)).unwrap();
+    let report = run(&mut store, &home);
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(report.hosts[0].status, HostStatus::ReaderFailed);
+    assert!(
+        report.hosts[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("permission denied")
+    );
+    assert_eq!(store.counts().unwrap().records, 0);
+    fs::remove_dir(root.join("projects")).unwrap();
+    assert_eq!(
+        run(&mut store, &home).hosts[0].status,
+        HostStatus::MissingSource
+    );
+}

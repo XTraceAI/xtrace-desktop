@@ -90,3 +90,5 @@ Whitespace-only Claude filename stems and parent-session directory identities pr
 Before opening the index, the CLI rejects database/SQLite-sidecar destinations resolving inside native history directories and existing multiply-linked database/sidecar files. This prevents accidental modification of source history through direct paths, symlinks or hard links. Discovery facts supplied to a batch must match its host, native identity and known conversation identity before any writes.
 
 Batch discovery facts also reject contradictory known surface and start-time values before writes. Missing values remain compatible with enrichment.
+
+Claude root inspection distinguishes missing paths from permission and other filesystem errors. Only `NotFound` is missing-source; unreadable or non-directory roots report reader failure.
