@@ -1425,3 +1425,35 @@ fn claude_fs_checks_surface_on_uuid_less_records_before_persisting_labels() {
         Some("sdk")
     );
 }
+
+#[test]
+fn claude_fs_unusable_dropped_surfaces_prevent_cross_batch_label_persistence() {
+    for surface in [json!(" "), json!(12), json!({})] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/project");
+        fs::create_dir_all(&project).unwrap();
+        let file = project.join(format!("{SID}.jsonl"));
+        let mut body = String::new();
+        for i in 0..2000 {
+            let mut record: Value = serde_json::from_str(&synthetic_line(i, SID)).unwrap();
+            record["entrypoint"] = json!("cli");
+            body += &(record.to_string() + "\n");
+        }
+        body += &(json!({"type":"assistant", "source_surface":surface, "entrypoint":"sdk"})
+            .to_string()
+            + "\n");
+        fs::write(&file, body).unwrap();
+        let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+        assert!(!run(&mut store, &home).complete());
+        assert_eq!(store.counts().unwrap().records, 0);
+        assert_eq!(
+            store.discovered_sessions(Host::Claude).unwrap()[0].surface,
+            None
+        );
+        let mut corrected: Value = serde_json::from_str(&synthetic_line(0, SID)).unwrap();
+        corrected["entrypoint"] = json!("sdk");
+        fs::write(&file, corrected.to_string() + "\n").unwrap();
+        assert!(run(&mut store, &home).complete());
+    }
+}

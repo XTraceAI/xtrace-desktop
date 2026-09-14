@@ -246,12 +246,23 @@ fn file_surface(
             Ok(Parsed::Record(record)) => label(record.canonical.source_surface.as_ref()),
             Ok(Parsed::Dropped(_)) => {
                 let raw: serde_json::Value = serde_json::from_str(text)?;
-                raw.get("source_surface")
+                let value = raw
+                    .get("source_surface")
                     .filter(|value| !value.is_null())
                     .or_else(|| raw.get("entrypoint"))
-                    .and_then(|value| value.as_str())
-                    .filter(|value| !value.trim().is_empty())
-                    .map(str::to_owned)
+                    .filter(|value| !value.is_null());
+                match value {
+                    None => None,
+                    Some(value) => match value.as_str().filter(|value| !value.trim().is_empty()) {
+                        Some(surface) => Some(surface.to_owned()),
+                        None => {
+                            return Ok(Err((
+                                line_number,
+                                "dropped record has an unusable surface",
+                            )));
+                        }
+                    },
+                }
             }
             Ok(_) => continue,
             Err(_) => return Ok(Ok(surface)),

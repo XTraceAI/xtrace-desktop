@@ -94,3 +94,5 @@ Batch discovery facts also reject contradictory known surface and start-time val
 Claude root inspection distinguishes missing paths from permission and other filesystem errors. Only `NotFound` is missing-source; unreadable or non-directory roots report reader failure.
 
 Claude's surface pre-pass includes known surface labels on UUID-less canonical records, so a disagreement cannot persist a label that blocks corrected input later. Codex/Cursor root probes preserve permission/type errors instead of reporting absence when no readable root is available; a readable root still delegates detailed coverage to the shared reader.
+
+A non-null but blank/non-string surface on a dropped Claude record stops the surface pre-pass before any batch labels persist. The regression places it after 2,000 valid records and verifies a corrected transcript can import on another valid surface.
