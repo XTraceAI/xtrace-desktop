@@ -247,6 +247,44 @@ fn conformance_native_import() {
                 }
             ))
     );
+    // A relative spelling of the same home reaches the readers anchored: they
+    // change into the home and receive it as HOME, so a relative value would
+    // resolve beneath itself and report a complete, empty import.
+    let cwd = std::env::current_dir().unwrap();
+    let relative = format!(
+        "{}{}",
+        "../".repeat(cwd.components().count() - 1),
+        home.canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .trim_start_matches('/')
+    );
+    assert!(Path::new(&relative).is_relative());
+    let relative_run = import_native(
+        &mut store,
+        &ImportRequest {
+            home: Path::new(&relative),
+            ..request
+        },
+    );
+    assert!(relative_run.complete(), "{relative_run:?}");
+    for (host, earlier) in relative_run.hosts.iter().zip(&report.hosts) {
+        assert_eq!(host.sessions.len(), earlier.sessions.len(), "{host:?}");
+        for session in &host.sessions {
+            assert!(
+                Path::new(session.path.as_deref().unwrap()).is_absolute(),
+                "{session:?}"
+            );
+            assert_eq!(
+                session.outcome,
+                SessionOutcome::Imported {
+                    records_new: 0,
+                    records_enriched: 0
+                },
+                "already imported under the absolute spelling"
+            );
+        }
+    }
     let mut after = BTreeMap::new();
     hashes(&home, &mut after);
     assert_eq!(

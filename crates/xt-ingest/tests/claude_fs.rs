@@ -668,3 +668,67 @@ fn claude_fs_registers_empty_and_inert_only_files_as_discovered_without_rows() {
     }
     assert_eq!(hashes(&home), before);
 }
+
+/// A spelling of `target` relative to the current directory, via `..` hops.
+fn relative_spelling(target: &Path) -> String {
+    let cwd = std::env::current_dir().unwrap();
+    let ups = "../".repeat(cwd.components().count() - 1);
+    let relative = format!(
+        "{ups}{}",
+        target
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .trim_start_matches('/')
+    );
+    assert!(Path::new(&relative).is_relative());
+    relative
+}
+
+#[test]
+fn claude_fs_anchors_a_relative_home_so_paths_and_cursor_keys_are_absolute() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = fake_home(&home);
+    let relative = relative_spelling(&home);
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let report = run(&mut store, Path::new(&relative));
+    assert!(report.complete(), "{report:?}");
+    let anchored = std::env::current_dir().unwrap().join(&relative);
+    let main = report.hosts[0]
+        .sessions
+        .iter()
+        .find(|s| {
+            s.path
+                .as_deref()
+                .is_some_and(|p| p.ends_with(&format!("{SID}.jsonl")))
+        })
+        .unwrap();
+    let path = Path::new(main.path.as_deref().unwrap());
+    assert!(path.is_absolute(), "{path:?}");
+    assert_eq!(
+        path.canonicalize().unwrap(),
+        project.join(format!("{SID}.jsonl")).canonicalize().unwrap()
+    );
+    assert!(path.starts_with(&anchored), "{path:?} under {anchored:?}");
+    let key = format!("claude:{}", path.display());
+    assert!(
+        store
+            .source_cursor(SessionSource::Transcript, &key)
+            .unwrap()
+            .is_some(),
+        "the cursor key uses the anchored path"
+    );
+    // The absolute spelling of the same home is the same import: nothing new.
+    let again = run(&mut store, &home);
+    assert!(again.complete());
+    assert!(again.hosts[0].sessions.iter().all(|s| matches!(
+        s.outcome,
+        SessionOutcome::Imported {
+            records_new: 0,
+            records_enriched: 0
+        }
+    )));
+    // The sidechain belongs to the parent session: one canonical session.
+    assert_eq!(store.counts().unwrap().sessions, 1);
+}

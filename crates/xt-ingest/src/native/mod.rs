@@ -18,7 +18,10 @@ pub mod stream;
 use crate::writer::{MAX_BATCH_RECORDS, WriteBatch, write_batch};
 use readers_cli::{ReaderDiagnostic, ReaderError};
 use serde::Serialize;
-use std::{ffi::OsStr, path::Path};
+use std::{
+    ffi::OsStr,
+    path::{Component, Path, PathBuf},
+};
 use stream::{BlockOutcome, SessionBlock};
 use xt_store::{
     Host, SessionSource, Store,
@@ -27,7 +30,10 @@ use xt_store::{
 };
 
 pub struct ImportRequest<'a> {
-    /// The home directory whose `.claude`, `.codex` and `.cursor` trees are read.
+    /// The home directory whose `.claude`, `.codex` and `.cursor` trees are
+    /// read. A relative path is anchored to the current directory once, up
+    /// front, so the readers (which run inside it) and every reported path and
+    /// cursor key see one absolute spelling.
     pub home: &'a Path,
     pub hosts: &'a [Host],
     /// The pin file naming the producer; required for Codex and Cursor.
@@ -130,6 +136,27 @@ impl ImportReport {
 /// Import every requested host. Failures are reported, never raised: one host's
 /// missing runtime does not stop another host's import.
 pub fn import_native(store: &mut Store, request: &ImportRequest<'_>) -> ImportReport {
+    let home = match anchor(request.home) {
+        Ok(home) => home,
+        Err(error) => {
+            let detail = format!("home cannot be anchored to the current directory: {error}");
+            return ImportReport {
+                hosts: request
+                    .hosts
+                    .iter()
+                    .map(|host| HostReport::unavailable(*host, HostStatus::MissingSource, &detail))
+                    .collect(),
+            };
+        }
+    };
+    let request = &ImportRequest {
+        home: &home,
+        hosts: request.hosts,
+        pin: request.pin,
+        plugin_root: request.plugin_root,
+        python: request.python,
+        observed_at: request.observed_at,
+    };
     let hosts = request
         .hosts
         .iter()
@@ -144,6 +171,21 @@ pub fn import_native(store: &mut Store, request: &ImportRequest<'_>) -> ImportRe
         })
         .collect();
     ImportReport { hosts }
+}
+
+/// The readers change into the home and receive it as `HOME`, so a relative
+/// spelling would resolve beneath itself there; it is made absolute here, in
+/// the caller's directory, without following symlinks.
+fn anchor(home: &Path) -> std::io::Result<PathBuf> {
+    if home.is_absolute() {
+        return Ok(home.to_path_buf());
+    }
+    let mut anchored = std::env::current_dir()?;
+    anchored.extend(
+        home.components()
+            .filter(|part| !matches!(part, Component::CurDir)),
+    );
+    Ok(anchored)
 }
 
 fn import_claude(store: &mut Store, request: &ImportRequest<'_>) -> HostReport {

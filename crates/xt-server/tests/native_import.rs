@@ -52,6 +52,27 @@ fn import_native_reports_and_exits_by_coverage() {
             .ends_with(".jsonl")
     );
 
+    // A relative --home is anchored to the invoking directory; reported paths
+    // are absolute and the repeated import adds nothing.
+    let output = core()
+        .current_dir(temp.path())
+        .args(["import-native", "--db"])
+        .arg(&db)
+        .args(["--home", "./home", "--host", "claude"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["hosts"][0]["status"], "complete");
+    assert_eq!(report["hosts"][0]["sessions"][0]["records_new"], 0);
+    let path = report["hosts"][0]["sessions"][0]["path"].as_str().unwrap();
+    assert!(std::path::Path::new(path).is_absolute(), "{path}");
+    assert!(!path.contains("/./"), "{path}");
+
     // A requested host without sources is an explicit gap, not a silent success.
     let output = core()
         .args(["import-native", "--db"])
