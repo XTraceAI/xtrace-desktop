@@ -49,6 +49,10 @@ pub fn enumerate(projects: &Path) -> std::io::Result<(Vec<ClaudeFile>, Vec<Reade
             continue;
         };
         match fs::symlink_metadata(&project) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                diagnostics.push(unreadable(&project));
+                continue;
+            }
             Ok(meta) if meta.is_dir() => {}
             Ok(_) => continue,
             Err(_) => {

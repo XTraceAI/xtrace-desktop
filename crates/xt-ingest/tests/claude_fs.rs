@@ -1285,3 +1285,30 @@ fn claude_fs_reports_non_utf8_main_and_sidechain_names_without_mutating_sources(
     );
     assert_eq!(hashes(&home), before);
 }
+
+#[cfg(unix)]
+#[test]
+fn claude_fs_reports_project_aliases_without_following_them() {
+    use std::os::unix::fs::symlink;
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    fake_home(&home);
+    let external = temp.path().join("external");
+    fs::create_dir_all(&external).unwrap();
+    let transcript = external.join(format!("{SID}.jsonl"));
+    let bytes = synthetic_line(99, SID) + "\n";
+    fs::write(&transcript, &bytes).unwrap();
+    let alias = home.join(".claude/projects/aliased-project");
+    symlink(&external, &alias).unwrap();
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Incomplete);
+    assert!(
+        report.hosts[0]
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "discovery_incomplete" && d.path.as_deref() == alias.to_str())
+    );
+    assert_eq!(store.records(SID).unwrap().len(), 27);
+    assert_eq!(fs::read_to_string(&transcript).unwrap(), bytes);
+}
