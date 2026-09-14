@@ -71,4 +71,6 @@ The importer uses one streaming path for production and fixture tests. It does n
 
 A successful full rescan replaces its recorded position even when an atomic replacement or in-place truncation makes the source shorter. The importer always starts at the beginning; incremental writes retain their monotonic cursor rule. Failed or partial rescans leave the previous observation unchanged. The shortened-file regression checks two repeated imports, preserved historical rows, unchanged source bytes, malformed replacement and subsequent growth.
 
-Complete empty or inert-only rescans clear an existing cursor without removing indexed history. Repeated empty scans create no cursor; a subsequent shorter append imports normally. Partial or failed scans still preserve the previous observation.
+Complete empty or inert-only rescans reset an existing cursor to zero without removing indexed history. Its observation timestamp is retained to prevent an older overlapping scan from restoring a stale offset. Never-imported empty sessions create no cursor; a subsequent shorter append imports normally. Partial or failed scans still preserve the previous observation.
+
+Completed-scan writes and empty resets apply only when their observation time is at least as recent as the stored observation. A two-connection SQLite regression verifies late older updates and resets cannot replace newer observations, including after an empty reset.

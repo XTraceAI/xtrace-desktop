@@ -1233,7 +1233,7 @@ fn claude_fs_rescans_a_shorter_replacement_without_sticking_or_losing_history() 
                 store
                     .source_cursor(SessionSource::Transcript, &key)
                     .unwrap()
-                    .is_none()
+                    .is_some_and(|cursor| cursor.position == 0)
             );
             assert_eq!(store.records(SID).unwrap().len(), 6 + index);
         }

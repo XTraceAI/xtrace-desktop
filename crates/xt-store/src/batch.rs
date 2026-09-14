@@ -333,7 +333,7 @@ impl Store {
         self.connection.execute(
             "INSERT INTO source_cursors(source,cursor_key,position,updated_at) VALUES (?1,?2,?3,?4)
              ON CONFLICT(source,cursor_key) DO UPDATE SET position=excluded.position,
-                 updated_at=excluded.updated_at",
+                 updated_at=excluded.updated_at WHERE excluded.updated_at >= source_cursors.updated_at",
             params![
                 cursor.source,
                 cursor.cursor_key,
@@ -344,11 +344,17 @@ impl Store {
         Ok(())
     }
 
-    /// A complete scan with no storable records invalidates any previous offset.
-    pub fn clear_source_cursor(&mut self, source: SessionSource, key: &str) -> Result<()> {
+    /// Reset only an existing observation, retaining its timestamp to reject late scans.
+    pub fn reset_existing_source_cursor(
+        &mut self,
+        source: SessionSource,
+        key: &str,
+        observed_at: i64,
+    ) -> Result<()> {
         self.connection.execute(
-            "DELETE FROM source_cursors WHERE source=?1 AND cursor_key=?2",
-            params![source, key],
+            "UPDATE source_cursors SET position=0, updated_at=?3
+             WHERE source=?1 AND cursor_key=?2 AND updated_at <= ?3",
+            params![source, key, observed_at],
         )?;
         Ok(())
     }

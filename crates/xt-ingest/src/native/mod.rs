@@ -685,7 +685,7 @@ impl SessionWriter {
         }
     }
 
-    /// Record the cursor, then report. Empty complete scans clear old cursors.
+    /// Record the cursor, then report. Empty complete scans reset old cursors.
     /// A new cursor is recorded only after at
     /// least one batch committed and only when no record was rejected or
     /// dropped, so it never claims the source was consumed past a gap; a
@@ -694,10 +694,14 @@ impl SessionWriter {
         if let Some(cursor) = cursor
             && self.rejected.is_empty()
         {
-            // Empty complete scans invalidate an earlier offset but never
+            // Empty complete scans reset an earlier offset but never
             // create one for a newly discovered header-only session.
             let saved = if self.batches == 0 {
-                store.clear_source_cursor(cursor.source, &cursor.cursor_key)
+                store.reset_existing_source_cursor(
+                    cursor.source,
+                    &cursor.cursor_key,
+                    cursor.updated_at,
+                )
             } else {
                 store.record_completed_source_scan(cursor)
             };
