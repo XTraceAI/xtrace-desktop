@@ -31,6 +31,8 @@ the existing writer.
   batches survive a later failure; the trailing batch waits for producer exit.
 - Rejected or UUID-less records yield partial coverage. Conflicting identities and
   discovery metadata fail explicitly; invalid batches cannot persist discovery labels.
+  Reader headers initially register only identity; labels persist with a successful
+  batch or successful completion of a header-only session.
 - Successful imports retain private source locators in the existing `source_cursors`
   table with **position zero**, meaning full replay. The timestamp is only a last-seen
   observation. There is no scan-order arbitration, byte-offset resume or mtime resume.

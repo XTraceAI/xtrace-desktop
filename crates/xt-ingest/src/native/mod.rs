@@ -596,7 +596,7 @@ impl SessionWriter {
             result: SessionResult {
                 native_session_id: Some(header.native_session_id.clone()),
                 conversation_id: Some(header.conversation_id.clone()),
-                source_surface: header.source_surface.clone(),
+                source_surface: None,
                 path: Some(header.path.clone()),
                 outcome: SessionOutcome::Imported {
                     records_new: 0,
@@ -611,7 +611,10 @@ impl SessionWriter {
         if header.native_session_id.trim().is_empty() || header.conversation_id.trim().is_empty() {
             return Err(Box::new(writer.abandon("session identity is blank".into())));
         }
-        if let Err(error) = store.observe_discovered_session(&writer.discovery(observed_at)) {
+        let mut identity = writer.discovery(observed_at);
+        identity.surface = None;
+        identity.started_at_ms = None;
+        if let Err(error) = store.observe_discovered_session(&identity) {
             return Err(Box::new(writer.abandon(format!(
                 "discovered identity conflicts with the index: {error}"
             ))));
@@ -740,10 +743,20 @@ impl SessionWriter {
     /// least one batch committed and only when no record was rejected or
     /// dropped, so it never claims the source was consumed past a gap; a
     /// session with a gap is reported partial and is read again next time.
-    pub fn complete(self, store: &mut Store, cursor: Option<&SourceCursor>) -> SessionResult {
+    pub fn complete(mut self, store: &mut Store, cursor: Option<&SourceCursor>) -> SessionResult {
         if let Some(cursor) = cursor
             && self.rejected.is_empty()
         {
+            if self.batches == 0 {
+                if let Err(error) =
+                    store.observe_discovered_session(&self.discovery(cursor.updated_at))
+                {
+                    return self.abandon(format!(
+                        "completed header identity conflicts with the index: {error}"
+                    ));
+                }
+                self.result.source_surface = self.context.source_surface.clone();
+            }
             let saved = store.record_native_source_locator(cursor, self.batches > 0);
             if let Err(error) = saved {
                 return self.abandon(format!(

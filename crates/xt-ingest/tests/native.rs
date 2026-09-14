@@ -1167,3 +1167,36 @@ fn inaccessible_reader_roots_are_not_reported_missing() {
         assert_eq!(store.counts().unwrap().records, 0);
     }
 }
+
+#[test]
+fn rejected_reader_records_do_not_persist_header_labels() {
+    let mut lines = golden("F18", "codex full");
+    let native = serde_json::from_str::<Value>(&lines[0]).unwrap()["native_session_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    lines[0] = reset(&lines[0], "source_surface", "cli");
+    lines[1] = reset(&lines[1], "source_surface", "sdk");
+    let mut store = Store::open_in_memory().unwrap();
+    let results = import(&mut store, Host::Codex, &lines);
+    assert!(matches!(results[0].outcome, SessionOutcome::Skipped { .. }));
+    let discovered = store.discovered_sessions(Host::Codex).unwrap();
+    assert_eq!(discovered[0].native_session_id, native);
+    assert_eq!(discovered[0].surface, None);
+    assert_eq!(discovered[0].started_at_ms, None);
+    assert_eq!(store.counts().unwrap().records, 0);
+    lines[0] = reset(&lines[0], "source_surface", "sdk");
+    for line in &mut lines[1..] {
+        *line = reset(line, "source_surface", "sdk");
+    }
+    assert!(matches!(
+        import(&mut store, Host::Codex, &lines)[0].outcome,
+        SessionOutcome::Imported { .. }
+    ));
+    assert_eq!(
+        store.discovered_sessions(Host::Codex).unwrap()[0]
+            .surface
+            .as_deref(),
+        Some("sdk")
+    );
+}
