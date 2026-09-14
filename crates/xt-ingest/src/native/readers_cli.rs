@@ -27,6 +27,8 @@ pub struct PinnedProducer {
     pub commit: String,
     pub plugin_version: String,
     pub script: PathBuf,
+    // Keep the immutable-source export alive through reader execution.
+    _snapshot: std::sync::Arc<tempfile::TempDir>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -135,22 +137,45 @@ pub fn verify_pin(pin: &Pin, plugin_root: &Path) -> Result<PinnedProducer, Reade
             )));
         }
     }
-    if !git(
-        &root,
-        &[
-            "status",
-            "--porcelain",
-            "--ignored",
-            "--untracked-files=all",
-        ],
-    )?
-    .is_empty()
-    {
+    if !git(&root, &["status", "--porcelain"])?.is_empty() {
         return Err(ReaderError::PinMismatch(
-            "plugin checkout has local modifications or ignored files".into(),
+            "plugin checkout has local modifications".into(),
         ));
     }
-    let script = root.join("scripts").join("readers_cli.py");
+    // Execute only committed objects, never ignored working-tree modules/caches.
+    let snapshot = tempfile::TempDir::new()
+        .map_err(|_| ReaderError::PinMismatch("cannot create reader snapshot".into()))?;
+    let archive = Command::new("git")
+        .arg("-C")
+        .arg(&toplevel)
+        .args(["archive", &pin.commit, &pin.plugin_root])
+        .output()
+        .map_err(|_| ReaderError::PinMismatch("cannot export pinned reader".into()))?;
+    if !archive.status.success() {
+        return Err(ReaderError::PinMismatch(
+            "cannot export pinned reader".into(),
+        ));
+    }
+    let mut unpack = Command::new("tar")
+        .args(["-xf", "-", "-C"])
+        .arg(snapshot.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|_| ReaderError::PinMismatch("cannot unpack pinned reader".into()))?;
+    use std::io::Write;
+    let written = unpack.stdin.take().unwrap().write_all(&archive.stdout);
+    let status = unpack.wait();
+    if written.is_err() || !status.is_ok_and(|status| status.success()) {
+        return Err(ReaderError::PinMismatch(
+            "cannot unpack pinned reader".into(),
+        ));
+    }
+    let script = snapshot
+        .path()
+        .join(&pin.plugin_root)
+        .join("scripts/readers_cli.py");
     if !script.is_file() {
         return Err(ReaderError::PinMismatch("readers_cli.py is absent".into()));
     }
@@ -158,6 +183,7 @@ pub fn verify_pin(pin: &Pin, plugin_root: &Path) -> Result<PinnedProducer, Reade
         commit: pin.commit.clone(),
         plugin_version: pin.plugin_version.clone(),
         script,
+        _snapshot: std::sync::Arc::new(snapshot),
     })
 }
 

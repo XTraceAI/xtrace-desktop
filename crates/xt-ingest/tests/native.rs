@@ -1084,7 +1084,7 @@ fn reader_non_records_reject_coverage_and_resume_at_the_next_header() {
 }
 
 #[test]
-fn pinned_checkout_rejects_ignored_python_modules() {
+fn pinned_checkout_exports_only_committed_python_modules() {
     use xt_ingest::native::readers_cli::{Pin, verify_pin};
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
@@ -1132,10 +1132,11 @@ fn pinned_checkout_rejects_ignored_python_modules() {
     )
     .unwrap();
     assert!(git(&["status", "--porcelain"]).is_empty());
-    assert!(
-        verify_pin(&pin, &plugin)
-            .unwrap_err()
-            .to_string()
-            .contains("ignored files")
+    let producer = verify_pin(&pin, &plugin).unwrap();
+    assert_eq!(
+        fs::read_to_string(&producer.script).unwrap(),
+        "import json\n"
     );
+    assert!(!producer.script.parent().unwrap().join("json.py").exists());
+    assert!(!producer.script.starts_with(&plugin));
 }

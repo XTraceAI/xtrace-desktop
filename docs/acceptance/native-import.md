@@ -79,4 +79,4 @@ Pinned reader streams reject unknown, missing and structural record types as mal
 
 On Unix, undecodable names in main or subagent discovery produce `discovery_incomplete`; readable siblings still import and source bytes remain unchanged.
 
-Supplied reader checkouts must contain no modified, untracked or ignored files, including Python caches/modules. Use a dedicated clean checkout. A synthetic Git regression proves an ignored `scripts/json.py` is rejected even when ordinary porcelain status is clean.
+Readers execute from a temporary export of verified committed Git objects. Ignored working-tree modules and caches are excluded. A synthetic Git regression proves ignored `scripts/json.py` cannot enter that export.
