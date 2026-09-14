@@ -207,14 +207,61 @@ fn header(file: &ClaudeFile, first: &[ParsedRecord]) -> SessionHeader {
     }
 }
 
+/// The surface the whole file agrees on, settled before any row is written:
+/// the first non-blank surface a record names, which every later record must
+/// repeat. One streaming pass, nothing retained; a line the parser rejects
+/// ends the pass early, and the import pass reports it precisely.
+fn file_surface(
+    file: &ClaudeFile,
+    context: &SourceContext,
+) -> std::io::Result<Result<Option<String>, (usize, &'static str)>> {
+    let mut reader = BufReader::new(fs::File::open(&file.path)?);
+    let mut surface: Option<String> = None;
+    let mut line_number = 0usize;
+    let mut buffer = Vec::new();
+    loop {
+        buffer.clear();
+        let read = reader.read_until(b'\n', &mut buffer)?;
+        if read == 0 || !buffer.ends_with(b"\n") {
+            return Ok(Ok(surface));
+        }
+        line_number += 1;
+        let Ok(text) = std::str::from_utf8(&buffer) else {
+            return Ok(Ok(surface));
+        };
+        if text.trim().is_empty() {
+            continue;
+        }
+        let record = match parse_with_context(text, context) {
+            Ok(Parsed::Record(record)) => record,
+            Ok(_) => continue,
+            Err(_) => return Ok(Ok(surface)),
+        };
+        if let Some(named) = label(record.canonical.source_surface.as_ref()) {
+            match &surface {
+                Some(known) if *known != named => {
+                    return Ok(Err((
+                        line_number,
+                        "record surface disagrees with the file's surface",
+                    )));
+                }
+                Some(_) => {}
+                None => surface = Some(named),
+            }
+        }
+    }
+}
+
 /// Import one file as a stream of complete lines. The file name identifies
 /// the session, so its discovered identity is registered before any line is
-/// parsed; each batch then fills in whichever of the surface, cwd and branch
-/// is still unknown, and those labels persist only with a committed batch.
-/// Batches commit as they fill, and the file cursor (bytes through the last
-/// complete line) is recorded after the last one, only for a file with no
-/// rejected or dropped record. A trailing partial line
-/// is left unconsumed. A malformed or non-UTF-8 line stops the file with the
+/// parsed. The surface is settled over the whole file before any row is
+/// written, so a label committed with the first batch is never contradicted
+/// by a later record; each batch then fills in whichever of the surface, cwd
+/// and branch is still unknown, and those labels persist only with a
+/// committed batch. Batches commit as they fill, and the file cursor (bytes
+/// through the last complete line) is recorded after the last one, only for
+/// a file with no rejected or dropped record. A trailing partial line is left
+/// unconsumed. A malformed or non-UTF-8 line stops the file with the
 /// committed count named and without advancing the cursor; the parent
 /// session's earlier batches stay.
 pub fn import_file(
@@ -234,23 +281,26 @@ pub fn import_file(
         Ok(started) => started,
         Err(skipped) => return Ok(*skipped),
     };
-    let mut reader = BufReader::new(fs::File::open(&file.path)?);
     let context = context(&file.session_id);
-    // The file's surface is the first one a record names; the writer rejects
-    // a disagreeing record later, so the check happens here, before a label
-    // could reach the fill-once discovered identity.
-    let mut surface: Option<String> = None;
-    let mut batch: Vec<ParsedRecord> = Vec::new();
-    let mut dropped = 0;
-    let mut complete_bytes: u64 = 0;
-    let mut line_number = 0usize;
-    let mut buffer = Vec::new();
     let stop = |writer: &SessionWriter, line: usize, reason: &str| {
         writer.abandon(format!(
             "{reason} (stream line {line}); {} earlier batches stay committed",
             writer.batches
         ))
     };
+    // The whole file must agree on its surface before the first batch can
+    // commit that label to the canonical row and the fill-once discovered
+    // identity; the check stays per line below in case the file grows.
+    let mut surface = match file_surface(file, &context)? {
+        Ok(surface) => surface,
+        Err((line, reason)) => return Ok(stop(&writer, line, reason)),
+    };
+    let mut reader = BufReader::new(fs::File::open(&file.path)?);
+    let mut batch: Vec<ParsedRecord> = Vec::new();
+    let mut dropped = 0;
+    let mut complete_bytes: u64 = 0;
+    let mut line_number = 0usize;
+    let mut buffer = Vec::new();
     loop {
         buffer.clear();
         let read = reader.read_until(b'\n', &mut buffer)?;
