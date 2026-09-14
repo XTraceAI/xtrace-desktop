@@ -132,6 +132,7 @@ fn import_native(mut args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'st
             .as_millis(),
     )
     .map_err(|_| "Import clock is unavailable")?;
+    validate_index_destination(&db, &home)?;
     let mut store = Store::open(&db).map_err(|_| "Could not open the index database")?;
     let report = import_native(
         &mut store,
@@ -152,6 +153,53 @@ fn import_native(mut args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'st
         .map_err(|_| "Could not write the import report")?;
     if !report.complete() {
         std::process::exit(2);
+    }
+    Ok(())
+}
+
+/// Validate before SQLite can create tables or sidecars. Existing hardlinks are
+/// rejected because an alternate name can otherwise alias native history.
+fn validate_index_destination(
+    db: &std::path::Path,
+    home: &std::path::Path,
+) -> Result<(), &'static str> {
+    fn resolved(path: &std::path::Path) -> std::io::Result<PathBuf> {
+        match path.canonicalize() {
+            Ok(path) => Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if std::fs::symlink_metadata(path).is_ok() {
+                    return Err(error);
+                }
+                let parent = path
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(std::path::Path::new("."));
+                Ok(resolved(parent)?.join(path.file_name().ok_or(error)?))
+            }
+            Err(error) => Err(error),
+        }
+    }
+    let roots = [".claude", ".codex", ".cursor"].map(|name| resolved(&home.join(name)));
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let mut name = db.as_os_str().to_os_string();
+        name.push(suffix);
+        let path = PathBuf::from(name);
+        let target = resolved(&path).map_err(|_| "Cannot verify index destination")?;
+        for root in &roots {
+            if target.starts_with(
+                root.as_ref()
+                    .map_err(|_| "Cannot verify native source root")?,
+            ) {
+                return Err("Index database must be outside native history directories");
+            }
+        }
+        #[cfg(unix)]
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.nlink() > 1 {
+                return Err("Index database or sidecar has multiple hard links");
+            }
+        }
     }
     Ok(())
 }

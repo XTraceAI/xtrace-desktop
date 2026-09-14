@@ -167,6 +167,19 @@ impl Store {
                 "batch facts must belong to its canonical session",
             ));
         }
+        if batch.discovery.is_some_and(|discovery| {
+            discovery.host != batch.session.host
+                || discovery
+                    .conversation_id
+                    .as_deref()
+                    .is_some_and(|id| id != batch.session.session_id)
+                || batch.session.native_session_id.as_deref()
+                    != Some(discovery.native_session_id.as_str())
+        }) {
+            return Err(Error::InvalidInput(
+                "discovery must belong to the batch session",
+            ));
+        }
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;

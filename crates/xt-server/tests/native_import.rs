@@ -122,3 +122,41 @@ fn import_native_reports_and_exits_by_coverage() {
     assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stderr).contains("--home"));
 }
+
+#[cfg(unix)]
+#[test]
+fn database_and_sidecar_aliases_cannot_modify_native_history() {
+    use std::os::unix::fs::symlink;
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let sources = home.join(".cursor/chats/session");
+    fs::create_dir_all(&sources).unwrap();
+    let source = sources.join("store.db");
+    fs::write(&source, "").unwrap();
+    let link = temp.path().join("linked.sqlite");
+    symlink(&source, &link).unwrap();
+    let hard = temp.path().join("hard.sqlite");
+    fs::hard_link(&source, &hard).unwrap();
+    let sidecar_db = temp.path().join("sidecar.sqlite");
+    symlink(&source, temp.path().join("sidecar.sqlite-wal")).unwrap();
+    for db in [
+        &source,
+        &link,
+        &hard,
+        &sidecar_db,
+        &sources.join("new.sqlite"),
+    ] {
+        let output = core()
+            .args(["import-native", "--db"])
+            .arg(db)
+            .arg("--home")
+            .arg(&home)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(fs::read(&source).unwrap(), b"");
+    }
+    assert!(!sidecar_db.exists());
+    assert!(!sources.join("new.sqlite").exists());
+    assert_eq!(fs::read_dir(&sources).unwrap().count(), 1);
+}

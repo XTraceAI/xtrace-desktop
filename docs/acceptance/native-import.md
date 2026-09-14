@@ -86,3 +86,5 @@ Project-directory symlinks are reported as incomplete discovery and never follow
 The Claude `.claude` and `projects` source-root entries are checked for aliases before traversal. A symlink at either entry reports incomplete discovery without reading the external history.
 
 Whitespace-only Claude filename stems and parent-session directory identities produce incomplete discovery before any identity is stored, including for empty/inert-only files. The shared session writer also rejects blank native/conversation identities.
+
+Before opening the index, the CLI rejects database/SQLite-sidecar destinations resolving inside native history directories and existing multiply-linked database/sidecar files. This prevents accidental modification of source history through direct paths, symlinks or hard links. Discovery facts supplied to a batch must match its host, native identity and known conversation identity before any writes.

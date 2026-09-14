@@ -102,3 +102,37 @@ fn equal_time_scans_keep_the_smaller_offset_in_both_commit_orders() {
         );
     }
 }
+
+#[test]
+fn discovery_ownership_must_match_the_batch_before_any_write() {
+    use xt_store::{Host, SessionMeta, batch::IngestBatch, ingest::DiscoveredSession};
+    let mut session = SessionMeta::new("claude-session", "claude", SessionSource::Transcript);
+    session.native_session_id = Some("native-session".into());
+    for field in ["host", "native", "conversation"] {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut discovery = DiscoveredSession {
+            host: Host::Claude,
+            native_session_id: "native-session".into(),
+            conversation_id: Some("claude-session".into()),
+            surface: None,
+            started_at_ms: None,
+            last_observed_at: 1,
+            discovery_complete: true,
+        };
+        match field {
+            "host" => discovery.host = Host::Codex,
+            "native" => discovery.native_session_id = "other".into(),
+            _ => discovery.conversation_id = Some("other".into()),
+        }
+        let mut batch = IngestBatch::new(&session, &[], false);
+        batch.discovery = Some(&discovery);
+        assert!(store.apply_ingest_batch(&batch).is_err());
+        assert_eq!(store.counts().unwrap().sessions, 0);
+        assert!(
+            store
+                .discovered_sessions(discovery.host)
+                .unwrap()
+                .is_empty()
+        );
+    }
+}
