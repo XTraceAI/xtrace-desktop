@@ -179,12 +179,50 @@ fn validate_index_destination(
             Err(error) => Err(error),
         }
     }
+    fn reject_reverse_aliases(
+        root: &std::path::Path,
+        destinations: &[PathBuf],
+    ) -> Result<(), &'static str> {
+        let metadata = match std::fs::symlink_metadata(root) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(_) => return Err("Cannot inspect native source aliases"),
+        };
+        if metadata.file_type().is_symlink() {
+            let target =
+                std::fs::read_link(root).map_err(|_| "Cannot inspect native source alias")?;
+            let target = resolved(
+                &root
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .join(target),
+            )
+            .map_err(|_| "Cannot resolve native source alias")?;
+            if destinations.iter().any(|path| path.starts_with(&target)) {
+                return Err("Native source alias points at index destination");
+            }
+        } else if metadata.is_dir() {
+            for entry in
+                std::fs::read_dir(root).map_err(|_| "Cannot inspect native source aliases")?
+            {
+                reject_reverse_aliases(
+                    &entry
+                        .map_err(|_| "Cannot inspect native source entry")?
+                        .path(),
+                    destinations,
+                )?;
+            }
+        }
+        Ok(())
+    }
+    let mut destinations = Vec::new();
     let roots = [".claude", ".codex", ".cursor"].map(|name| resolved(&home.join(name)));
     for suffix in ["", "-wal", "-shm", "-journal"] {
         let mut name = db.as_os_str().to_os_string();
         name.push(suffix);
         let path = PathBuf::from(name);
         let target = resolved(&path).map_err(|_| "Cannot verify index destination")?;
+        destinations.push(target.clone());
         for root in &roots {
             if target.starts_with(
                 root.as_ref()
@@ -200,6 +238,14 @@ fn validate_index_destination(
                 return Err("Index database or sidecar has multiple hard links");
             }
         }
+    }
+    for source in [
+        ".claude/projects",
+        ".codex/sessions",
+        ".cursor/chats",
+        ".cursor/projects",
+    ] {
+        reject_reverse_aliases(&home.join(source), &destinations)?;
     }
     Ok(())
 }

@@ -160,3 +160,38 @@ fn database_and_sidecar_aliases_cannot_modify_native_history() {
     assert!(!sources.join("new.sqlite").exists());
     assert_eq!(fs::read_dir(&sources).unwrap().count(), 1);
 }
+
+#[cfg(unix)]
+#[test]
+fn native_reverse_symlinks_cannot_expose_the_index_as_source_history() {
+    use std::os::unix::fs::symlink;
+    for directory in [false, true] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let source = home.join(".cursor/chats/session");
+        fs::create_dir_all(&source).unwrap();
+        let data = temp.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+        let db = data.join("store.db");
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute("CREATE TABLE native_data(value TEXT)", [])
+            .unwrap();
+        drop(conn);
+        let original = fs::read(&db).unwrap();
+        if directory {
+            symlink(&data, source.join("linked")).unwrap();
+        } else {
+            symlink(&db, source.join("store.db")).unwrap();
+        }
+        let output = core()
+            .args(["import-native", "--db"])
+            .arg(&db)
+            .arg("--home")
+            .arg(&home)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(fs::read(&db).unwrap(), original);
+        assert_eq!(fs::read_dir(&data).unwrap().count(), 1);
+    }
+}

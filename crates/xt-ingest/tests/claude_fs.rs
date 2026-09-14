@@ -762,7 +762,9 @@ fn claude_fs_never_persists_a_blank_record_label_as_the_discovered_surface() {
     let report = run(&mut store, &home);
     assert_eq!(report.hosts[0].status, HostStatus::Incomplete, "{report:?}");
     match &report.hosts[0].sessions[0].outcome {
-        SessionOutcome::Skipped { reason } => assert!(reason.contains("empty"), "{reason}"),
+        SessionOutcome::Skipped { reason } => {
+            assert!(reason.contains("unusable surface"), "{reason}")
+        }
         other => panic!("{other:?}"),
     }
     assert!(store.session(session).unwrap().is_none());
@@ -1424,7 +1426,12 @@ fn claude_fs_checks_surface_on_uuid_less_records_before_persisting_labels() {
 
 #[test]
 fn claude_fs_unusable_dropped_surfaces_prevent_cross_batch_label_persistence() {
-    for surface in [json!(" "), json!(12), json!({})] {
+    for (surface, ordinary) in [
+        (json!(" "), false),
+        (json!(12), false),
+        (json!({}), false),
+        (json!(" "), true),
+    ] {
         let temp = tempfile::TempDir::new().unwrap();
         let home = temp.path().join("home");
         let project = home.join(".claude/projects/project");
@@ -1436,9 +1443,11 @@ fn claude_fs_unusable_dropped_surfaces_prevent_cross_batch_label_persistence() {
             record["entrypoint"] = json!("cli");
             body += &(record.to_string() + "\n");
         }
-        body += &(json!({"type":"assistant", "source_surface":surface, "entrypoint":"sdk"})
-            .to_string()
-            + "\n");
+        let mut last = json!({"type":"assistant", "source_surface":surface, "entrypoint":"sdk"});
+        if ordinary {
+            last["uuid"] = json!("11111111-1111-4111-8111-111111111111");
+        }
+        body += &(last.to_string() + "\n");
         fs::write(&file, body).unwrap();
         let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
         assert!(!run(&mut store, &home).complete());

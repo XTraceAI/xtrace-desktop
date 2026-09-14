@@ -252,7 +252,12 @@ fn file_surface(
             continue;
         }
         let named = match parse_with_context(text, context) {
-            Ok(Parsed::Record(record)) => label(record.canonical.source_surface.as_ref()),
+            Ok(Parsed::Record(record)) => match record.canonical.source_surface.as_ref() {
+                Some(surface) if surface.trim().is_empty() => {
+                    return Ok(Err((line_number, "record has an unusable surface")));
+                }
+                surface => surface.cloned(),
+            },
             Ok(Parsed::Dropped(_)) => {
                 let raw: serde_json::Value = serde_json::from_str(text)?;
                 let value = raw

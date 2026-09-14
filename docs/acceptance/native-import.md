@@ -43,6 +43,8 @@ the existing writer.
 
 - The CLI validates database and SQLite-sidecar destinations before opening SQLite.
   Paths inside native history and existing multiply-linked destinations are rejected.
+  Links in known native session directories pointing back at the index or its sidecars
+  are also rejected before opening SQLite.
 - Claude source roots, project aliases and transcript aliases are diagnosed instead
   of deliberately followed. Missing, unreadable and undecodable entries have explicit
   coverage results; blank session identities cannot enter discovery.
@@ -51,7 +53,8 @@ the existing writer.
   captured source length. Validation and import share its bytes; later appends wait
   for the next scan. Temporary contents are removed on close.
 - Surface consistency is checked within each Claude file before writing. Dropped
-  records still contribute known surface facts; unusable explicit labels are errors.
+  records still contribute known surface facts; unusable explicit labels on ordinary
+  and dropped records are errors.
   Separate files with contradictory identities remain explicit conflicts; changing
   source files does not automatically replace historical index identities.
 - Reader code executes from a temporary export of the verified Git commit, excluding
