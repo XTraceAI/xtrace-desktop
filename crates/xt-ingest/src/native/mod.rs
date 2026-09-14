@@ -575,6 +575,9 @@ impl SessionWriter {
             rejected: Vec::new(),
             batches: 0,
         };
+        if header.native_session_id.trim().is_empty() || header.conversation_id.trim().is_empty() {
+            return Err(Box::new(writer.abandon("session identity is blank".into())));
+        }
         if let Err(error) = store.observe_discovered_session(&writer.discovery(observed_at)) {
             return Err(Box::new(writer.abandon(format!(
                 "discovered identity conflicts with the index: {error}"

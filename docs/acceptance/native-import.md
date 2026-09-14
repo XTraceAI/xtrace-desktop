@@ -84,3 +84,5 @@ Readers execute from a temporary export of verified committed Git objects. Ignor
 Project-directory symlinks are reported as incomplete discovery and never followed, consistently with transcript/subagent aliases. Readable sibling projects still import.
 
 The Claude `.claude` and `projects` source-root entries are checked for aliases before traversal. A symlink at either entry reports incomplete discovery without reading the external history.
+
+Whitespace-only Claude filename stems and parent-session directory identities produce incomplete discovery before any identity is stored, including for empty/inert-only files. The shared session writer also rejects blank native/conversation identities.

@@ -85,7 +85,11 @@ pub fn enumerate(projects: &Path) -> std::io::Result<(Vec<ClaudeFile>, Vec<Reade
                 continue;
             }
             if kind.is_file() {
-                if let Some(stem) = name.strip_suffix(".jsonl").filter(|stem| !stem.is_empty()) {
+                if let Some(stem) = name.strip_suffix(".jsonl") {
+                    if stem.trim().is_empty() {
+                        diagnostics.push(unreadable(&entry));
+                        continue;
+                    }
                     match mtime_ns(&entry) {
                         Ok(mtime_ns) => files.push(ClaudeFile {
                             mtime_ns,
@@ -97,6 +101,10 @@ pub fn enumerate(projects: &Path) -> std::io::Result<(Vec<ClaudeFile>, Vec<Reade
                     }
                 }
             } else if kind.is_dir() && name != "memory" {
+                if name.trim().is_empty() {
+                    diagnostics.push(unreadable(&entry));
+                    continue;
+                }
                 let subagents = entry.join("subagents");
                 match fs::symlink_metadata(&subagents) {
                     Ok(meta) if meta.is_dir() => {

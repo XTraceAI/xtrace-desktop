@@ -1348,3 +1348,21 @@ fn claude_fs_reports_aliased_source_roots_without_reading_external_history() {
         assert_eq!(hashes(&external), before);
     }
 }
+
+#[test]
+fn claude_fs_rejects_blank_filename_and_parent_identities_before_discovery() {
+    for body in ["", "{\"type\":\"attachment\"}\n"] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/project");
+        fs::create_dir_all(project.join(" /subagents")).unwrap();
+        fs::write(project.join(" .jsonl"), body).unwrap();
+        fs::write(project.join(" /subagents/agent.jsonl"), body).unwrap();
+        let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+        let report = run(&mut store, &home);
+        assert_eq!(report.hosts[0].status, HostStatus::Incomplete);
+        assert_eq!(report.hosts[0].diagnostics.len(), 2);
+        assert!(store.discovered_sessions(Host::Claude).unwrap().is_empty());
+        assert_eq!(store.counts().unwrap().sessions, 0);
+    }
+}
