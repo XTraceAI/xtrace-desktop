@@ -479,8 +479,17 @@ fn snapshot_source(path: &Path, expected: &fs::Metadata) -> std::io::Result<fs::
         }
     }
     let length = source.metadata()?.len();
+    copy_snapshot(source, length)
+}
+
+fn copy_snapshot(source: impl Read, length: u64) -> std::io::Result<fs::File> {
     let mut snapshot = tempfile::tempfile()?;
-    std::io::copy(&mut source.take(length), &mut snapshot)?;
+    if std::io::copy(&mut source.take(length), &mut snapshot)? != length {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "source shortened while copying",
+        ));
+    }
     snapshot.rewind()?;
     Ok(snapshot)
 }
@@ -489,6 +498,18 @@ fn snapshot_source(path: &Path, expected: &fs::Metadata) -> std::io::Result<fs::
 mod snapshot_tests {
     use super::*;
     use std::io::Write;
+    #[test]
+    fn short_snapshot_copy_is_rejected_before_import() {
+        assert_eq!(
+            copy_snapshot(&b"short"[..], 10).unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
+        let mut snapshot = copy_snapshot(&b"exact-plus-append"[..], 5).unwrap();
+        let mut bytes = String::new();
+        snapshot.read_to_string(&mut bytes).unwrap();
+        assert_eq!(bytes, "exact");
+    }
+
     #[test]
     fn append_between_validation_and_import_cannot_change_snapshot() {
         let temp = tempfile::TempDir::new().unwrap();

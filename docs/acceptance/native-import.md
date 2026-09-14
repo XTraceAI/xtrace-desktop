@@ -102,3 +102,5 @@ Claude validation and batch import share one anonymous temporary-file snapshot b
 On Unix, interpreter selection resolves relative PATH entries against the caller directory before probing. The reader then uses that same absolute executable path after changing to the imported home.
 
 On Unix, snapshot creation opens sources with no-follow/nonblocking flags and verifies that the handle is a regular file with the enumerated device/inode. Replacement symlinks and different files are rejected before copying source bytes; a subsequent scan can discover the new file normally.
+
+Snapshot copy must return exactly the length captured from the opened source. A shorter read is rejected before import; later appended bytes beyond that length remain excluded.
