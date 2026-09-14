@@ -40,7 +40,7 @@ fn completed_scan_ordering_preserves_newer_replacements_and_empty_resets() {
             .unwrap(),
         Some(cursor(0, 40))
     );
-    // Equal timestamps are ambiguous: neither a late upsert nor reset wins.
+    // Equal timestamps are ambiguous: retain the smaller safe offset.
     older
         .record_completed_source_scan(&cursor(1000, 40))
         .unwrap();
@@ -54,9 +54,7 @@ fn completed_scan_ordering_preserves_newer_replacements_and_empty_resets() {
     older
         .record_completed_source_scan(&cursor(1000, 50))
         .unwrap();
-    older
-        .reset_existing_source_cursor(SessionSource::Transcript, "synthetic-source", 50)
-        .unwrap();
+
     assert_eq!(
         older
             .source_cursor(SessionSource::Transcript, "synthetic-source")
@@ -72,4 +70,35 @@ fn completed_scan_ordering_preserves_newer_replacements_and_empty_resets() {
             .unwrap()
             .is_none()
     );
+}
+
+#[test]
+fn equal_time_scans_keep_the_smaller_offset_in_both_commit_orders() {
+    for (first, second) in [(1000, 20), (20, 1000)] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("index.sqlite");
+        let mut a = Store::open(&path).unwrap();
+        let mut b = Store::open(&path).unwrap();
+        let cursor = |position| SourceCursor {
+            source: SessionSource::Transcript,
+            cursor_key: "same-time".into(),
+            position,
+            updated_at: 10,
+        };
+        a.record_completed_source_scan(&cursor(first)).unwrap();
+        b.record_completed_source_scan(&cursor(second)).unwrap();
+        assert_eq!(
+            a.source_cursor(SessionSource::Transcript, "same-time")
+                .unwrap(),
+            Some(cursor(20))
+        );
+        a.reset_existing_source_cursor(SessionSource::Transcript, "same-time", 10)
+            .unwrap();
+        b.record_completed_source_scan(&cursor(1000)).unwrap();
+        assert_eq!(
+            a.source_cursor(SessionSource::Transcript, "same-time")
+                .unwrap(),
+            Some(cursor(0))
+        );
+    }
 }

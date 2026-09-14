@@ -332,8 +332,10 @@ impl Store {
     pub fn record_completed_source_scan(&mut self, cursor: &SourceCursor) -> Result<()> {
         self.connection.execute(
             "INSERT INTO source_cursors(source,cursor_key,position,updated_at) VALUES (?1,?2,?3,?4)
-             ON CONFLICT(source,cursor_key) DO UPDATE SET position=excluded.position,
-                 updated_at=excluded.updated_at WHERE excluded.updated_at > source_cursors.updated_at",
+             ON CONFLICT(source,cursor_key) DO UPDATE SET position=CASE
+                 WHEN excluded.updated_at = source_cursors.updated_at
+                 THEN min(source_cursors.position, excluded.position) ELSE excluded.position END,
+                 updated_at=excluded.updated_at WHERE excluded.updated_at >= source_cursors.updated_at",
             params![
                 cursor.source,
                 cursor.cursor_key,
@@ -353,7 +355,7 @@ impl Store {
     ) -> Result<()> {
         self.connection.execute(
             "UPDATE source_cursors SET position=0, updated_at=?3
-             WHERE source=?1 AND cursor_key=?2 AND updated_at < ?3",
+             WHERE source=?1 AND cursor_key=?2 AND updated_at <= ?3",
             params![source, key, observed_at],
         )?;
         Ok(())
