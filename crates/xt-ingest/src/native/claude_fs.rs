@@ -210,8 +210,10 @@ fn header(file: &ClaudeFile, first: &[ParsedRecord]) -> SessionHeader {
 /// Import one file as a stream of complete lines. The file name identifies
 /// the session, so its discovered identity is registered before any line is
 /// parsed; each batch then fills in whichever of the surface, cwd and branch
-/// is still unknown. Batches commit as they fill, and the file cursor (bytes through
-/// the last complete line) commits with the last one. A trailing partial line
+/// is still unknown, and those labels persist only with a committed batch.
+/// Batches commit as they fill, and the file cursor (bytes through the last
+/// complete line) is recorded after the last one, only for a file with no
+/// rejected or dropped record. A trailing partial line
 /// is left unconsumed. A malformed or non-UTF-8 line stops the file with the
 /// committed count named and without advancing the cursor; the parent
 /// session's earlier batches stay.
@@ -307,32 +309,23 @@ pub fn import_file(
         }
         if batch.len() == MAX_BATCH_RECORDS {
             if !writer.labels_complete() {
-                if let Err(skipped) = writer.validate(&batch, observed_at) {
-                    return Ok(*skipped);
-                }
-                if let Err(skipped) = writer.enrich(store, &header(file, &batch), observed_at) {
-                    return Ok(*skipped);
-                }
+                writer.enrich(&header(file, &batch));
             }
-            if let Err(skipped) = writer.write(store, &batch, observed_at, None) {
+            if let Err(skipped) = writer.write(store, &batch, observed_at) {
                 return Ok(*skipped);
             }
             batch.clear();
         }
     }
     writer.note_dropped(dropped);
-    // A file without a storable record (empty, or inert lines only) keeps its
-    // discovered identity and nothing else: no canonical row, no cursor.
-    if writer.batches == 0 && batch.is_empty() {
-        return Ok(writer.finish());
-    }
     if !writer.labels_complete() {
-        if let Err(skipped) = writer.validate(&batch, observed_at) {
-            return Ok(*skipped);
-        }
-        if let Err(skipped) = writer.enrich(store, &header(file, &batch), observed_at) {
-            return Ok(*skipped);
-        }
+        writer.enrich(&header(file, &batch));
+    }
+    // A file without a storable record (empty, or inert lines only) keeps its
+    // discovered identity and nothing else: an empty batch commits no row,
+    // and no cursor is recorded without a committed batch.
+    if let Err(skipped) = writer.write(store, &batch, observed_at) {
+        return Ok(*skipped);
     }
     let cursor = SourceCursor {
         source: SessionSource::Transcript,
@@ -340,8 +333,5 @@ pub fn import_file(
         position: i64::try_from(complete_bytes).unwrap_or(i64::MAX),
         updated_at: observed_at,
     };
-    if let Err(skipped) = writer.write(store, &batch, observed_at, Some(&cursor)) {
-        return Ok(*skipped);
-    }
-    Ok(writer.finish())
+    Ok(writer.complete(store, Some(&cursor)))
 }

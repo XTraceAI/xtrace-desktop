@@ -31,6 +31,9 @@ pub struct IngestBatch<'a> {
     /// Writer mode: rejected identities contribute no source or receipt evidence.
     pub evidence_policy: EvidencePolicy,
     pub cursor: Option<&'a SourceCursor>,
+    /// A discovered identity that fills under this batch's transaction, so a
+    /// rejected batch leaves no label behind.
+    pub discovery: Option<&'a crate::ingest::DiscoveredSession>,
 }
 
 impl<'a> IngestBatch<'a> {
@@ -51,6 +54,7 @@ impl<'a> IngestBatch<'a> {
             receipt_replay: ReceiptReplay::Reject,
             evidence_policy: EvidencePolicy::RequireAll,
             cursor: None,
+            discovery: None,
         }
     }
 }
@@ -172,6 +176,9 @@ impl Store {
             batch.receipt.is_some() && batch.evidence_policy == EvidencePolicy::AcceptedOnly;
         if provisional {
             transaction.execute_batch("SAVEPOINT destination_import")?;
+        }
+        if let Some(discovery) = batch.discovery {
+            ingest::observe_discovered_session(&transaction, discovery)?;
         }
         let session_changed =
             write::upsert_session(&transaction, batch.session, keep_content, batch.namespace)?;
@@ -308,6 +315,14 @@ impl Store {
             "SELECT source,cursor_key,position,updated_at FROM source_cursors WHERE source=?1 AND cursor_key=?2",
             params![source,key], |row| Ok(SourceCursor { source: row.get(0)?, cursor_key: row.get(1)?, position: row.get(2)?, updated_at: row.get(3)? }),
         ).optional()?)
+    }
+}
+
+impl Store {
+    /// Record a source position on its own, after the rows it covers have
+    /// committed; a position can never regress.
+    pub fn advance_source_cursor(&mut self, cursor: &SourceCursor) -> Result<()> {
+        advance_cursor(&self.connection, cursor)
     }
 }
 

@@ -55,6 +55,7 @@ fn request<'a>(
         observed_at: 100,
         receipt,
         cursor: None,
+        discovery: None,
     }
 }
 

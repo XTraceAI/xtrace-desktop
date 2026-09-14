@@ -492,6 +492,35 @@ fn rejected_and_uuid_less_records_make_coverage_partial_not_complete() {
         }
         other => panic!("expected partial coverage, got {other:?}"),
     }
+    // A partial session records no cursor: the position would claim the
+    // source was consumed past records that were not imported. A complete
+    // session keeps its cursor.
+    let path_of = |line: &str| -> String {
+        serde_json::from_str::<Value>(line).unwrap()["path"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert!(
+        store
+            .source_cursor(
+                SessionSource::ReadersCli,
+                &format!("cursor:{}", path_of(&stream[header_index]))
+            )
+            .unwrap()
+            .is_none(),
+        "no cursor for a partial session"
+    );
+    assert!(
+        store
+            .source_cursor(
+                SessionSource::ReadersCli,
+                &format!("codex:{}", path_of(&codex[0]))
+            )
+            .unwrap()
+            .is_some(),
+        "a complete session keeps its cursor"
+    );
     let report = xt_ingest::native::ImportReport {
         hosts: vec![xt_ingest::native::HostReport {
             host: Host::Cursor,

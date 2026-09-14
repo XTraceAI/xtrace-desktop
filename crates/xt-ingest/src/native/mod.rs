@@ -344,14 +344,15 @@ where
             batch,
             cursor,
         } = active;
-        // A session that produced no storable records (a header-only or
-        // dropped-only stream) exists only as a discovered identity: no
-        // canonical row and no cursor, exactly as the block path behaves.
-        let cursor = (writer.batches > 0 || !batch.is_empty()).then_some(&cursor);
-        match writer.write(store, &batch, observed_at, cursor) {
-            Ok(()) => sessions.push(writer.finish()),
-            Err(skipped) => sessions.push(*skipped),
+        // A session that produced no storable record (a header-only or
+        // dropped-only stream) exists only as a discovered identity: an empty
+        // batch commits no row, and no cursor is recorded without a committed
+        // batch, exactly as the block path behaves.
+        if let Err(skipped) = writer.write(store, &batch, observed_at) {
+            sessions.push(*skipped);
+            return;
         }
+        sessions.push(writer.complete(store, Some(&cursor)));
     }
     let mut lines = lines.into_iter();
     for line in lines.by_ref() {
@@ -406,8 +407,7 @@ where
                     session.batch.push(*record);
                     if session.batch.len() == MAX_BATCH_RECORDS {
                         let batch = std::mem::take(&mut session.batch);
-                        if let Err(skipped) = session.writer.write(store, &batch, observed_at, None)
-                        {
+                        if let Err(skipped) = session.writer.write(store, &batch, observed_at) {
                             sessions.push(*skipped);
                             active = None;
                         }
@@ -511,11 +511,15 @@ where
 }
 
 /// One session's write sequence: the header registers the discovered
-/// identity first, then bounded record batches commit one at a time, and the
-/// cursor commits with the last batch only, so it never advances past rows
-/// that were not written. Titles are never persisted: they derive from prompts.
+/// identity first; bounded record batches then commit one at a time, each
+/// carrying the identity labels learned so far, which fill the discovered
+/// identity only if that batch commits; and the cursor is recorded after the
+/// last batch, only for a session with no rejected or dropped record, so it
+/// never claims the source was consumed past a gap. Titles are never
+/// persisted: they derive from prompts.
 pub struct SessionWriter {
     host: Host,
+    native_session_id: String,
     context: crate::canonical::SourceContext,
     cwd: Option<String>,
     git_branch: Option<String>,
@@ -537,117 +541,73 @@ impl SessionWriter {
         header: &stream::SessionHeader,
         observed_at: i64,
     ) -> Result<Self, Box<SessionResult>> {
-        let result = SessionResult {
-            native_session_id: Some(header.native_session_id.clone()),
-            conversation_id: Some(header.conversation_id.clone()),
-            source_surface: header.source_surface.clone(),
-            path: Some(header.path.clone()),
-            outcome: SessionOutcome::Imported {
-                records_new: 0,
-                records_enriched: 0,
-            },
-        };
-        if let Err(error) = store.observe_discovered_session(&discovery(host, header, observed_at))
-        {
-            return Err(Box::new(SessionResult {
-                outcome: SessionOutcome::Skipped {
-                    reason: format!("discovered identity conflicts with the index: {error}"),
-                },
-                ..result
-            }));
-        }
-        Ok(Self {
+        let writer = Self {
             host,
+            native_session_id: header.native_session_id.clone(),
             context: header.context(host, source),
             cwd: header.cwd.clone(),
             git_branch: header.git_branch.clone(),
-            result,
+            result: SessionResult {
+                native_session_id: Some(header.native_session_id.clone()),
+                conversation_id: Some(header.conversation_id.clone()),
+                source_surface: header.source_surface.clone(),
+                path: Some(header.path.clone()),
+                outcome: SessionOutcome::Imported {
+                    records_new: 0,
+                    records_enriched: 0,
+                },
+            },
             new: 0,
             enriched: 0,
             rejected: Vec::new(),
             batches: 0,
-        })
-    }
-
-    /// Fill in metadata that only records reveal (a Claude file's surface,
-    /// cwd and branch come from its records). Each label fills once, from
-    /// whichever batch first carries it, so a label the first batch lacked is
-    /// still taken from a later one; a value that disagrees with the index is
-    /// an explicit skip.
-    pub fn enrich(
-        &mut self,
-        store: &mut Store,
-        header: &stream::SessionHeader,
-        observed_at: i64,
-    ) -> Result<(), Box<SessionResult>> {
-        let merged = stream::SessionHeader {
-            source_surface: self
-                .context
-                .source_surface
-                .clone()
-                .or_else(|| header.source_surface.clone()),
-            started_at: self
-                .context
-                .started_at
-                .clone()
-                .or_else(|| header.started_at.clone()),
-            cwd: self.cwd.clone().or_else(|| header.cwd.clone()),
-            git_branch: self
-                .git_branch
-                .clone()
-                .or_else(|| header.git_branch.clone()),
-            ..header.clone()
         };
-        if merged.source_surface == self.context.source_surface
-            && merged.started_at == self.context.started_at
-            && merged.cwd == self.cwd
-            && merged.git_branch == self.git_branch
-        {
-            return Ok(());
-        }
-        if let Err(error) =
-            store.observe_discovered_session(&discovery(self.host, &merged, observed_at))
-        {
-            return Err(Box::new(self.abandon(format!(
+        if let Err(error) = store.observe_discovered_session(&writer.discovery(observed_at)) {
+            return Err(Box::new(writer.abandon(format!(
                 "discovered identity conflicts with the index: {error}"
             ))));
         }
-        let source = self.context.source.unwrap_or(SessionSource::Transcript);
-        self.context = merged.context(self.host, source);
-        self.cwd = merged.cwd;
-        self.git_branch = merged.git_branch;
-        self.result.source_surface = self.context.source_surface.clone();
-        Ok(())
+        Ok(writer)
     }
 
-    /// The writer's own identity checks over a batch, without writing. A
-    /// batch the writer would reject must never enrich the discovered
-    /// identity first: that identity fills once, so a label persisted ahead
-    /// of a rejected batch would outlive the skip.
-    pub fn validate(
-        &self,
-        records: &[crate::canonical::ParsedRecord],
-        observed_at: i64,
-    ) -> Result<(), Box<SessionResult>> {
-        let batch = WriteBatch {
-            context: &self.context,
-            declared_host: Some(self.host),
-            records,
-            title: None,
-            cwd: self.cwd.as_deref(),
-            git_branch: self.git_branch.as_deref(),
-            namespace: None,
-            keep_content: true,
-            observed_at,
-            receipt: None,
-            cursor: None,
-        };
-        match crate::writer::resolve_session(&batch) {
-            Ok(_) => Ok(()),
-            Err(error) => Err(Box::new(self.abandon(format!(
-                "session could not be written after {} committed batches: {error}",
-                self.batches
-            )))),
+    /// The identity as known now: the header's, plus whichever labels records
+    /// have revealed since.
+    fn discovery(&self, observed_at: i64) -> DiscoveredSession {
+        DiscoveredSession {
+            host: self.host,
+            native_session_id: self.native_session_id.clone(),
+            conversation_id: self.context.conversation_id.clone(),
+            surface: self.context.source_surface.clone(),
+            started_at_ms: self
+                .context
+                .started_at
+                .as_deref()
+                .and_then(|value| xt_store::timestamp::parse(value).ok())
+                .map(|(_, millis)| millis),
+            last_observed_at: observed_at,
+            // The identity is fully known from the header; host-level coverage is
+            // reported separately.
+            discovery_complete: true,
+        }
+    }
+
+    /// Take in metadata that only records reveal (a Claude file's surface,
+    /// cwd and branch). Each label fills once, from whichever batch first
+    /// carries it. Nothing is persisted here: the labels travel with the next
+    /// batch and fill the discovered identity only if that batch commits, so
+    /// a batch the writer or the store rejects leaves no label behind.
+    pub fn enrich(&mut self, header: &stream::SessionHeader) {
+        if self.context.source_surface.is_none() {
+            self.context.source_surface = header.source_surface.clone();
+        }
+        if self.context.started_at.is_none() {
+            self.context.started_at = header.started_at.clone();
+        }
+        if self.cwd.is_none() {
+            self.cwd = header.cwd.clone();
+        }
+        if self.git_branch.is_none() {
+            self.git_branch = header.git_branch.clone();
         }
     }
 
@@ -663,21 +623,19 @@ impl SessionWriter {
             .extend(std::iter::repeat_n("missing_uuid".to_owned(), count));
     }
 
-    /// Commit one bounded batch. `cursor` belongs only to the final batch; an
-    /// empty final batch still commits it, so a file whose records ended
-    /// exactly on a batch boundary keeps its position. Callers pass no cursor
-    /// for a session that never had a storable record, so such a session
-    /// leaves no canonical row behind.
+    /// Commit one bounded batch together with the identity labels known so
+    /// far; an empty batch commits nothing. A batch the writer or the store
+    /// rejects leaves no row and no label behind.
     pub fn write(
         &mut self,
         store: &mut Store,
         records: &[crate::canonical::ParsedRecord],
         observed_at: i64,
-        cursor: Option<&SourceCursor>,
     ) -> Result<(), Box<SessionResult>> {
-        if records.is_empty() && cursor.is_none() {
+        if records.is_empty() {
             return Ok(());
         }
+        let discovery = self.discovery(observed_at);
         let batch = WriteBatch {
             context: &self.context,
             declared_host: Some(self.host),
@@ -690,7 +648,8 @@ impl SessionWriter {
             keep_content: true,
             observed_at,
             receipt: None,
-            cursor,
+            cursor: None,
+            discovery: Some(&discovery),
         };
         match write_batch(store, &batch) {
             Ok(saved) => {
@@ -707,6 +666,8 @@ impl SessionWriter {
                             other => format!("{other:?}").to_lowercase(),
                         },
                     ));
+                // The surface is reported once it is persisted.
+                self.result.source_surface = self.context.source_surface.clone();
                 self.batches += 1;
                 Ok(())
             }
@@ -723,6 +684,24 @@ impl SessionWriter {
             outcome: SessionOutcome::Skipped { reason },
             ..self.result.clone()
         }
+    }
+
+    /// Record the cursor, then report. The cursor is recorded only after at
+    /// least one batch committed and only when no record was rejected or
+    /// dropped, so it never claims the source was consumed past a gap; a
+    /// session with a gap is reported partial and is read again next time.
+    pub fn complete(self, store: &mut Store, cursor: Option<&SourceCursor>) -> SessionResult {
+        if let Some(cursor) = cursor
+            && self.batches > 0
+            && self.rejected.is_empty()
+            && let Err(error) = store.advance_source_cursor(cursor)
+        {
+            return self.abandon(format!(
+                "cursor could not be recorded after {} committed batches: {error}",
+                self.batches
+            ));
+        }
+        self.finish()
     }
 
     pub fn finish(self) -> SessionResult {
@@ -743,24 +722,6 @@ impl SessionWriter {
             outcome,
             ..self.result
         }
-    }
-}
-
-fn discovery(host: Host, header: &stream::SessionHeader, observed_at: i64) -> DiscoveredSession {
-    DiscoveredSession {
-        host,
-        native_session_id: header.native_session_id.clone(),
-        conversation_id: Some(header.conversation_id.clone()),
-        surface: header.source_surface.clone(),
-        started_at_ms: header
-            .started_at
-            .as_deref()
-            .and_then(|value| xt_store::timestamp::parse(value).ok())
-            .map(|(_, millis)| millis),
-        last_observed_at: observed_at,
-        // The identity is fully known from the header; host-level coverage is
-        // reported separately.
-        discovery_complete: true,
     }
 }
 
@@ -803,14 +764,10 @@ pub fn import_block(
         Err(skipped) => return *skipped,
     };
     writer.note_dropped(dropped);
-    let chunks: Vec<&[crate::canonical::ParsedRecord]> =
-        records.chunks(MAX_BATCH_RECORDS).collect();
-    let last = chunks.len().saturating_sub(1);
-    for (index, chunk) in chunks.into_iter().enumerate() {
-        let cursor = if index == last { cursor.as_ref() } else { None };
-        if let Err(skipped) = writer.write(store, chunk, observed_at, cursor) {
+    for chunk in records.chunks(MAX_BATCH_RECORDS) {
+        if let Err(skipped) = writer.write(store, chunk, observed_at) {
             return *skipped;
         }
     }
-    writer.finish()
+    writer.complete(store, cursor.as_ref())
 }

@@ -983,3 +983,77 @@ fn claude_fs_registers_an_unopenable_transcript_as_discovered() {
     assert_eq!(discovered[0].native_session_id, session);
     assert_eq!(store.counts().unwrap().sessions, 0);
 }
+
+#[test]
+fn claude_fs_persists_labels_only_with_a_committed_batch() {
+    use xt_store::ingest::DiscoveredSession;
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/-Users-atomic");
+    fs::create_dir_all(&project).unwrap();
+    let session = "00000000-0000-4000-8000-00000000c3c3";
+    let file = project.join(format!("{session}.jsonl"));
+    let write = |surface: &str| {
+        let body = (0..3)
+            .map(|index| {
+                let mut line: Value =
+                    serde_json::from_str(&synthetic_line(index, session)).unwrap();
+                line["entrypoint"] = json!(surface);
+                line.to_string() + "\n"
+            })
+            .collect::<String>();
+        fs::write(&file, body).unwrap();
+    };
+    // The index already knows this session under another surface (as a
+    // reader header would have registered it). The parser and the writer's
+    // identity checks accept the file; the store rejects the batch when the
+    // label it carries conflicts, inside the batch's own transaction.
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    store
+        .observe_discovered_session(&DiscoveredSession {
+            host: Host::Claude,
+            native_session_id: session.to_owned(),
+            conversation_id: Some(session.to_owned()),
+            surface: Some("sdk".to_owned()),
+            started_at_ms: None,
+            last_observed_at: 1,
+            discovery_complete: true,
+        })
+        .unwrap();
+    write("cli");
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Incomplete, "{report:?}");
+    match &report.hosts[0].sessions[0].outcome {
+        SessionOutcome::Skipped { reason } => assert!(
+            reason.contains("could not be written after 0 committed batches")
+                && reason.contains("conflicting discovered session identity"),
+            "{reason}"
+        ),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        report.hosts[0].sessions[0].source_surface, None,
+        "a label is reported only once it is persisted"
+    );
+    assert!(
+        store.session(session).unwrap().is_none(),
+        "the rejected batch wrote no row"
+    );
+    assert_eq!(store.records(session).unwrap().len(), 0);
+    let discovered = store.discovered_sessions(Host::Claude).unwrap();
+    assert_eq!(discovered.len(), 1);
+    assert_eq!(discovered[0].surface.as_deref(), Some("sdk"));
+
+    // The transcript on the surface the index knows imports, and the labels
+    // fill in with the committed batch.
+    write("sdk");
+    let report = run(&mut store, &home);
+    assert_eq!(report.hosts[0].status, HostStatus::Complete, "{report:?}");
+    assert_eq!(
+        report.hosts[0].sessions[0].source_surface.as_deref(),
+        Some("sdk")
+    );
+    assert_eq!(store.records(session).unwrap().len(), 3);
+    let stored = store.session(session).unwrap().unwrap();
+    assert_eq!(stored.meta.cwd.as_deref(), Some("/repo/fixture"));
+}
