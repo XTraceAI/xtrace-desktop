@@ -3,9 +3,10 @@
 //! reach the index before ready with no later event, live appends, completed
 //! partial lines, new files and coalesced directory events converge within
 //! seconds, truncation, replacement, restart and a failed transaction never
-//! omit or duplicate a record, sources are never modified, storage stays
-//! metadata-only, and zero-position locators from the initial importer migrate
-//! to checkpoints by one full replay.
+//! omit or duplicate a record, an appended scan reports the surface the index
+//! holds and stops a record that disagrees with it, sources are never
+//! modified, storage stays metadata-only, and zero-position locators from the
+//! initial importer migrate to checkpoints by one full replay.
 use rusqlite::Connection;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -617,6 +618,99 @@ fn claude_tail_migrates_zero_position_locators_by_one_full_replay() {
     let report = scan_native(&mut store, &request, ScanMode::Replay);
     assert!(report.complete());
     assert_eq!(records(&store, A), 3);
+}
+
+#[test]
+fn claude_tail_appended_records_report_and_must_repeat_the_stored_surface() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    fs::write(home.file(A), body(A, 0..3)).unwrap();
+    let path = home.file(A);
+    let mut store = home.store();
+    let request = ImportRequest {
+        home: &home.root,
+        hosts: &[Host::Claude],
+        pin: &repo().join(".plugin-pin"),
+        plugin_root: None,
+        python: None,
+        observed_at: 1,
+    };
+    assert!(scan_native(&mut store, &request, ScanMode::Resume).complete());
+    assert_eq!(
+        store.session(A).unwrap().unwrap().meta.surface.as_deref(),
+        Some("cli")
+    );
+    // A record naming no surface, appended behind the checkpoint: the scan
+    // reads only the suffix, and still reports the surface the prefix settled
+    // and the index holds.
+    let mut unlabeled: serde_json::Value = serde_json::from_str(line(3, A).trim()).unwrap();
+    assert!(
+        unlabeled
+            .as_object_mut()
+            .unwrap()
+            .remove("entrypoint")
+            .is_some()
+    );
+    home.append(A, &(unlabeled.to_string() + "\n"));
+    let report = scan_native(&mut store, &request, ScanMode::Resume);
+    assert!(report.complete(), "{report:?}");
+    let session = &report.hosts[0].sessions[0];
+    assert_eq!(
+        session.outcome,
+        SessionOutcome::Imported {
+            records_new: 1,
+            records_enriched: 0
+        }
+    );
+    assert_eq!(
+        session.source_surface.as_deref(),
+        Some("cli"),
+        "an appended scan reports the surface the index holds"
+    );
+    assert_eq!(records(&store, A), 4);
+    assert_eq!(
+        store.session(A).unwrap().unwrap().meta.surface.as_deref(),
+        Some("cli")
+    );
+    let held = checkpoint(&store, &path).unwrap();
+    assert_eq!(held.1, file_len(&path));
+    // A record on another surface stops the file at that line, as it would
+    // in a whole-file read: nothing is written and the checkpoint stays.
+    let mut other: serde_json::Value = serde_json::from_str(line(4, A).trim()).unwrap();
+    other["entrypoint"] = json!("sdk");
+    home.append(A, &(other.to_string() + "\n"));
+    let report = scan_native(&mut store, &request, ScanMode::Resume);
+    assert!(!report.complete(), "{report:?}");
+    let session = &report.hosts[0].sessions[0];
+    match &session.outcome {
+        SessionOutcome::Skipped { reason } => assert!(
+            reason.contains("record surface disagrees with the file's surface")
+                && reason.contains("stream line 5"),
+            "{reason}"
+        ),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(session.source_surface.as_deref(), Some("cli"));
+    assert_eq!(records(&store, A), 4);
+    assert_eq!(checkpoint(&store, &path).unwrap(), held);
+    // The line corrected to the file's surface imports behind the same
+    // checkpoint.
+    other["entrypoint"] = json!("cli");
+    let mut kept = fs::read(&path).unwrap();
+    kept.truncate(held.1 as usize);
+    kept.extend((other.to_string() + "\n").into_bytes());
+    fs::write(&path, kept).unwrap();
+    let report = scan_native(&mut store, &request, ScanMode::Resume);
+    assert!(report.complete(), "{report:?}");
+    assert_eq!(
+        report.hosts[0].sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 1,
+            records_enriched: 0
+        }
+    );
+    assert_eq!(records(&store, A), 5);
+    assert_eq!(checkpoint(&store, &path).unwrap().1, file_len(&path));
 }
 
 #[test]

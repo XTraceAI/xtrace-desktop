@@ -200,6 +200,15 @@ fn context(session: &str) -> SourceContext {
     }
 }
 
+/// The surface the index holds for a session, persisted with its rows.
+fn stored_surface(store: &Store, session: &str) -> Option<String> {
+    store
+        .session(session)
+        .ok()
+        .flatten()
+        .and_then(|stored| stored.meta.surface)
+}
+
 /// A record-derived label; a blank value is no label. The writer rejects a
 /// record whose identity label is blank, so it must never reach the
 /// discovered identity first, where a fill-once value would outlive the skip.
@@ -229,15 +238,18 @@ fn header(file: &ClaudeFile, first: &[ParsedRecord]) -> SessionHeader {
 
 /// The surface the whole file agrees on, settled before any row is written:
 /// the first non-blank surface a record names, which every later record must
-/// repeat. One streaming pass, nothing retained; a line the parser rejects
-/// ends the pass early, and the import pass reports it precisely.
+/// repeat. `settled` is the surface the bytes before the snapshot already
+/// named, when the snapshot holds only the bytes behind a checkpoint. One
+/// streaming pass, nothing retained; a line the parser rejects ends the pass
+/// early, and the import pass reports it precisely.
 fn file_surface(
     snapshot: &mut fs::File,
     context: &SourceContext,
+    settled: Option<String>,
 ) -> std::io::Result<Result<Option<String>, (usize, &'static str)>> {
     snapshot.rewind()?;
     let mut reader = BufReader::new(snapshot);
-    let mut surface: Option<String> = None;
+    let mut surface = settled;
     let mut line_number = 0usize;
     let mut buffer = Vec::new();
     loop {
@@ -378,15 +390,10 @@ pub fn import_file(
         }
         // The report names the surface the index already holds for the
         // session, so an unchanged file reads the same as when it was imported.
-        let source_surface = store
-            .session(&file.session_id)
-            .ok()
-            .flatten()
-            .and_then(|stored| stored.meta.surface);
         return Ok(SessionResult {
             native_session_id: Some(file.session_id.clone()),
             conversation_id: Some(file.session_id.clone()),
-            source_surface,
+            source_surface: stored_surface(store, &file.session_id),
             path: Some(file.path.to_string_lossy().into_owned()),
             outcome: SessionOutcome::Imported {
                 records_new: 0,
@@ -404,6 +411,16 @@ pub fn import_file(
         Ok(started) => started,
         Err(skipped) => return Ok(*skipped),
     };
+    // Behind a proven prefix the surface is settled already: the index holds
+    // the one the prefix named, persisted with its rows. The report names it
+    // from the start, and every appended record must repeat it, as it would
+    // have to in a whole-file read.
+    let settled = (resume.start > 0)
+        .then(|| stored_surface(store, &file.session_id))
+        .flatten();
+    if let Some(surface) = &settled {
+        writer.resume_surface(surface.clone());
+    }
     let stop = |writer: &SessionWriter, line: u64, reason: &str| {
         writer.abandon(format!(
             "{reason} (stream line {line}); {} earlier batches stay committed",
@@ -417,7 +434,7 @@ pub fn import_file(
     // The bytes to be read must agree on their surface before the first batch
     // can commit that label to the canonical row and the fill-once discovered
     // identity; the check stays per line below in case the file grows.
-    let mut surface = match file_surface(&mut snapshot, &context)? {
+    let mut surface = match file_surface(&mut snapshot, &context, settled)? {
         Ok(surface) => surface,
         Err((line, reason)) => return Ok(stop(&writer, resume.lines + line as u64, reason)),
     };
@@ -682,7 +699,7 @@ mod snapshot_tests {
         fs::write(&source, original).unwrap();
         let mut snapshot = snapshot_source(&source, &fs::metadata(&source).unwrap()).unwrap();
         assert_eq!(
-            file_surface(&mut snapshot, &context("session"))
+            file_surface(&mut snapshot, &context("session"), None)
                 .unwrap()
                 .unwrap()
                 .as_deref(),
@@ -700,7 +717,7 @@ mod snapshot_tests {
         assert_eq!(imported_bytes, original);
         let mut next = snapshot_source(&source, &fs::metadata(&source).unwrap()).unwrap();
         assert!(
-            file_surface(&mut next, &context("session"))
+            file_surface(&mut next, &context("session"), None)
                 .unwrap()
                 .is_err()
         );

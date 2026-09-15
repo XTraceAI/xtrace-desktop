@@ -784,6 +784,14 @@ impl SessionWriter {
         }
     }
 
+    /// Resume behind a surface the index already holds for this session. It
+    /// is persisted, so the report names it from the start; records behind
+    /// the resume point carry it like a header's and must agree with it.
+    pub fn resume_surface(&mut self, surface: String) {
+        self.context.source_surface = Some(surface.clone());
+        self.result.source_surface = Some(surface);
+    }
+
     /// Whether every record-revealed label is known; until then each batch
     /// is inspected for the labels still missing.
     pub fn labels_complete(&self) -> bool {
