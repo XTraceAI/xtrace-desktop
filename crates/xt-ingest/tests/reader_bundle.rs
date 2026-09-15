@@ -70,13 +70,6 @@ fn object_ids_are_computed_as_git_computes_them() {
             git_object_id(root).unwrap(),
             "68fae95406169ee7c2a60dd95cbe974f88d6a7e1"
         );
-        // Bytecode caches are not part of the tree, as Git never holds them.
-        fs::create_dir(root.join("__pycache__")).unwrap();
-        fs::write(root.join("__pycache__/a.cpython-312.pyc"), "cache").unwrap();
-        assert_eq!(
-            git_object_id(root).unwrap(),
-            "68fae95406169ee7c2a60dd95cbe974f88d6a7e1"
-        );
         // A symlink is neither a file nor a directory: refused, not hashed.
         std::os::unix::fs::symlink("a.py", root.join("link.py")).unwrap();
         assert!(
@@ -84,6 +77,11 @@ fn object_ids_are_computed_as_git_computes_them() {
                 .unwrap_err()
                 .contains("neither a file nor a directory")
         );
+        fs::remove_file(root.join("link.py")).unwrap();
+        // A bytecode cache could run code the pin never covered: refused.
+        fs::create_dir(root.join("sub/__pycache__")).unwrap();
+        fs::write(root.join("sub/__pycache__/b.cpython-312.pyc"), "cache").unwrap();
+        assert!(git_object_id(root).unwrap_err().contains("bytecode cache"));
     }
 }
 
@@ -149,11 +147,12 @@ fn an_edited_incomplete_or_foreign_bundle_is_refused() {
     let extra = fresh("extra");
     fs::write(extra.join(&scripts).join("session_title_shadow.py"), "").unwrap();
     assert!(mismatch(&extra).contains("differs"));
-    // A bytecode cache left by an interpreter changes nothing.
+    // A bytecode cache left by an interpreter is refused: Python would load
+    // it in place of a module whose recorded size and time it matches.
     let cached = fresh("cached");
     fs::create_dir(cached.join(&scripts).join("__pycache__")).unwrap();
     fs::write(cached.join(&scripts).join("__pycache__/x.pyc"), "cache").unwrap();
-    assert!(verify_bundle(&pin, &cached).is_ok());
+    assert!(mismatch(&cached).contains("bytecode cache"));
     // No bundle at all, and a bundle whose script is missing.
     assert!(mismatch(&copies.join("absent")).contains("entity not found"));
     // A pin that does not name the scripts tree cannot vouch for the modules

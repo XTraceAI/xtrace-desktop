@@ -47,13 +47,20 @@ pub fn run() {
                 std::env::var_os("XTRACE_NATIVE_HOME"),
                 std::env::var_os("XTRACE_PYTHON"),
             )?;
-            let native_home = options.native_home.clone();
             let python = options.python.clone();
-            let state = state::AppState::build(options, || {
-                app.path()
-                    .app_data_dir()
-                    .map_err(|_| state::StateError::InvalidOption)
-            })?;
+            let state = state::AppState::build(
+                options,
+                || {
+                    app.path()
+                        .app_data_dir()
+                        .map_err(|_| state::StateError::InvalidOption)
+                },
+                || {
+                    app.path()
+                        .home_dir()
+                        .map_err(|_| state::StateError::InvalidOption)
+                },
+            )?;
             let publish: native_index::Publish = {
                 let handle = app.handle().clone();
                 Arc::new(move |status: &dto::NativeIndexStatus| {
@@ -62,21 +69,11 @@ pub fn run() {
                     let _ = handle.emit(NATIVE_INDEX_EVENT, status);
                 })
             };
-            let index = match state.database_path() {
+            let index = match (state.database_path(), state.native_home()) {
                 // Fixture startup never selects live data: nothing is indexed.
-                None => native_index::NativeIndex::disabled(
-                    "fixture mode uses a disposable database",
-                    publish,
-                ),
-                Some(db) => native_index::NativeIndex::start(
+                (Some(db), Some(home)) => native_index::NativeIndex::start(
                     native_index::NativeIndexOptions {
-                        home: match native_home {
-                            Some(home) => home,
-                            None => app
-                                .path()
-                                .home_dir()
-                                .map_err(|_| state::StateError::InvalidOption)?,
-                        },
+                        home: home.to_path_buf(),
                         db: db.to_path_buf(),
                         bundle: app
                             .path()
@@ -85,6 +82,10 @@ pub fn run() {
                             .join(native_index::BUNDLE_RESOURCE),
                         python,
                     },
+                    publish,
+                ),
+                _ => native_index::NativeIndex::disabled(
+                    "fixture mode uses a disposable database",
                     publish,
                 ),
             };

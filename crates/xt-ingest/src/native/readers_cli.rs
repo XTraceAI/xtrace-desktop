@@ -233,8 +233,8 @@ pub fn verify_pin(pin: &Pin, plugin_root: &Path) -> Result<PinnedProducer, Reade
 /// source the pin lists must be present with exactly the pinned Git object
 /// identity, computed here the way Git computes it (a blob's bytes, a tree's
 /// sorted entries with their modes), so a bundle that was edited, that lost a
-/// module or gained one, or that carries another producer's files is refused
-/// without Git being installed. The pin must list the scripts tree itself,
+/// module or gained one, that holds a bytecode cache, or that carries another
+/// producer's files is refused without Git being installed. The pin must list the scripts tree itself,
 /// since the readers import sibling modules from it.
 pub fn verify_bundle(pin: &Pin, root: &Path) -> Result<PinnedProducer, ReaderError> {
     let scripts = format!("{}/scripts", pin.plugin_root);
@@ -269,9 +269,8 @@ pub fn verify_bundle(pin: &Pin, root: &Path) -> Result<PinnedProducer, ReaderErr
 /// disk, as `git hash-object` and `git write-tree` would compute it: the
 /// lowercase hex SHA-1 of the object header and its content. A directory's
 /// entries are sorted as Git sorts them (a subdirectory as if its name ended
-/// in `/`), regular files carry mode 100644 or 100755 by their executable
-/// bit, and Python bytecode caches are skipped, since Git never holds them.
-/// A symlink or any other entry kind is refused.
+/// in `/`), and regular files carry mode 100644 or 100755 by their executable
+/// bit. A Python bytecode cache, a symlink or any other entry kind is refused.
 pub fn git_object_id(path: &Path) -> Result<String, String> {
     fn hex(hash: &[u8]) -> String {
         hash.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -299,8 +298,14 @@ pub fn git_object_id(path: &Path) -> Result<String, String> {
         for entry in std::fs::read_dir(path).map_err(|error| error.kind().to_string())? {
             let entry = entry.map_err(|error| error.kind().to_string())?;
             let name = entry.file_name();
+            // Python loads a cache whose recorded source size and time match
+            // the module beside it, so bytecode the pin never covered could
+            // run from one; a bundle that holds a cache is refused outright.
             if name == "__pycache__" {
-                continue;
+                return Err(format!(
+                    "{} holds a bytecode cache, which the pin never covers",
+                    entry.path().display()
+                ));
             }
             let kind = entry
                 .file_type()

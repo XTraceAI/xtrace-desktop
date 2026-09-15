@@ -21,6 +21,7 @@ fn fixture_mode_data_dir_override_wins_and_live_store_persists() {
             ..Default::default()
         },
         || panic!("default path must not be resolved"),
+        || Ok(root.path().join("home")),
     )
     .unwrap();
     assert_eq!(state.app_info().data_dir, path.to_str().unwrap());
@@ -35,7 +36,8 @@ fn fixture_mode_data_dir_override_wins_and_live_store_persists() {
     state.shutdown();
     assert!(matches!(state.db_counts(), Err(StateError::Closed)));
     assert!(path.join("xtrace.db").exists());
-    AppState::build(StartupOptions::default(), || Ok(path)).unwrap();
+    let home = root.path().join("home");
+    AppState::build(StartupOptions::default(), || Ok(path), || Ok(home)).unwrap();
 }
 
 #[test]
@@ -63,6 +65,7 @@ fn fixture_mode_is_disabled_without_debug_feature() {
             ..Default::default()
         },
         || panic!("fixture must not resolve live directory"),
+        || panic!("fixture must not resolve the home directory"),
     );
     assert!(matches!(result, Err(StateError::FixtureDisabled)));
 }
@@ -79,6 +82,7 @@ fn fixture_mode_builds_isolated_database_and_generated_export_parity() {
                 ..Default::default()
             },
             || panic!("fixture must not resolve live directory"),
+            || panic!("fixture must not resolve the home directory"),
         )
         .unwrap()
     };
@@ -122,6 +126,7 @@ fn fixture_mode_rejects_skeletons_and_invalid_ids_without_live_reads() {
                 ..Default::default()
             },
             || panic!("fixture must not resolve live directory"),
+            || panic!("fixture must not resolve the home directory"),
         );
         assert!(matches!(result, Err(StateError::FixtureInvalid)));
     }
@@ -136,4 +141,56 @@ fn fixture_mode_non_unicode_selection_fails_before_live_startup() {
         StartupOptions::parse(None, Some(value), []),
         Err(StateError::InvalidOption)
     ));
+}
+
+#[test]
+fn a_data_directory_inside_the_native_history_is_refused_before_anything_is_written() {
+    // The database destination is validated against the native home before
+    // the directory is created or SQLite opens: nothing lands in `.claude`.
+    let root = tempfile::TempDir::new().unwrap();
+    let home = root.path().join("home");
+    std::fs::create_dir_all(home.join(".claude/projects")).unwrap();
+    let inside = home.join(".claude/xtrace-data");
+    let result = AppState::build(
+        StartupOptions {
+            data_dir: Some(inside.clone()),
+            native_home: Some(home.clone()),
+            ..Default::default()
+        },
+        || panic!("an explicit data directory needs no default"),
+        || panic!("an explicit home needs no default"),
+    );
+    assert!(
+        matches!(result, Err(StateError::IndexDestination(reason)) if reason.contains("native history")),
+        "{:?}",
+        result.err()
+    );
+    assert!(
+        !inside.exists(),
+        "no directory was created inside the native history"
+    );
+    assert!(
+        std::fs::read_dir(home.join(".claude"))
+            .unwrap()
+            .all(|entry| entry.unwrap().file_name() == "projects"),
+        "no database files were written into the native history"
+    );
+    // The same home with a data directory beside it opens normally.
+    let beside = root.path().join("data");
+    let state = AppState::build(
+        StartupOptions {
+            data_dir: Some(beside.clone()),
+            native_home: Some(home.clone()),
+            ..Default::default()
+        },
+        || panic!("an explicit data directory needs no default"),
+        || panic!("an explicit home needs no default"),
+    )
+    .unwrap();
+    assert_eq!(state.native_home(), Some(home.as_path()));
+    assert_eq!(
+        state.database_path(),
+        Some(beside.join("xtrace.db").as_path())
+    );
+    state.shutdown();
 }
