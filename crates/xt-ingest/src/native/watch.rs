@@ -285,10 +285,11 @@ impl Tailer {
     /// rebuild path.
     #[doc(hidden)]
     pub fn inject_watcher_error(&self, reason: &str) {
-        self.shared.update(|state| state.delivered += 1);
-        let _ = self
-            .control
-            .send(Message::Fs(Err(notify::Error::generic(reason))));
+        let control = self.control.clone();
+        self.shared.update(|state| {
+            state.delivered += 1;
+            let _ = control.send(Message::Fs(Err(notify::Error::generic(reason))));
+        });
     }
 
     /// Deliver a synthetic removal event for `path`, as the platform would
@@ -297,22 +298,18 @@ impl Tailer {
         let event =
             notify::Event::new(notify::EventKind::Remove(notify::event::RemoveKind::Folder))
                 .add_path(path.to_path_buf());
-        self.shared.update(|state| state.delivered += 1);
-        let _ = self.control.send(Message::Fs(Ok(event)));
+        let control = self.control.clone();
+        self.shared.update(|state| {
+            state.delivered += 1;
+            let _ = control.send(Message::Fs(Ok(event)));
+        });
     }
 
-    /// Count a synthetic removal event for `path` as delivered now, but
-    /// queue it only when the returned closure is called: a callback
-    /// descheduled between counting and queueing (for tests).
-    pub fn inject_removed_late(&self, path: &Path) -> Box<dyn FnOnce() + Send> {
-        let event =
-            notify::Event::new(notify::EventKind::Remove(notify::event::RemoveKind::Folder))
-                .add_path(path.to_path_buf());
-        self.shared.update(|state| state.delivered += 1);
-        let control = self.control.clone();
-        Box::new(move || {
-            let _ = control.send(Message::Fs(Ok(event)));
-        })
+    /// Queue a stop request without waiting for the worker; `stop` still
+    /// waits for it. Changes delivered before the request is honored are
+    /// reconciled first.
+    pub fn request_stop(&self) {
+        let _ = self.control.send(Message::Stop);
     }
 
     pub fn stop(mut self) {
@@ -537,9 +534,10 @@ impl Worker {
         }
     }
 
-    /// Before a stop is honored, take every counted delivery off the queue:
-    /// an event a callback had counted but not yet queued when the stop was
-    /// queued still reaches the index before shutdown.
+    /// Before a stop is honored, take every counted delivery off the queue.
+    /// Counting and queueing happen under one lock, so every event counted
+    /// is already queued: nothing is waited for, and an event delivered
+    /// before the stop is honored still reaches the index before shutdown.
     fn drain_counted(&mut self, rx: &Receiver<Message>, dirty: &mut Dirty) {
         loop {
             let delivered = self
@@ -551,7 +549,7 @@ impl Worker {
             if self.consumed >= delivered {
                 return;
             }
-            match rx.recv_timeout(self.config.debounce) {
+            match rx.try_recv() {
                 Ok(Message::Fs(event)) => {
                     self.consumed += 1;
                     if let Some(error) = classify(
@@ -816,10 +814,14 @@ impl Worker {
         let events = self.events.clone();
         let shared = Arc::clone(&self.shared);
         let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-            // Counted before it is queued, so the worker can never have
-            // taken more off the queue than was delivered.
-            shared.update(|state| state.delivered += 1);
-            let _ = events.send(Message::Fs(event));
+            // Counted and queued under the one lock: an event counted is an
+            // event queued, so the worker drains every counted delivery
+            // without waiting, and can never have taken more off the queue
+            // than was delivered.
+            shared.update(|state| {
+                state.delivered += 1;
+                let _ = events.send(Message::Fs(event));
+            });
         });
         match watcher {
             Ok(watcher) => {

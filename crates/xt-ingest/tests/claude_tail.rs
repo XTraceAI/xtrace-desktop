@@ -12,8 +12,8 @@
 //! omit or duplicate a record, an appended scan reports the surface the index
 //! holds and stops a record that disagrees with it, a root created after its
 //! watches were decided is watched and scanned again before ready, a root the
-//! platform reports removed is registered again, an event counted before a
-//! stop is reconciled before it, a symlinked home is followed for the fallback
+//! platform reports removed is registered again, an event delivered before a
+//! stop is honored is reconciled first, a symlinked home is followed for the fallback
 //! watch, the Cursor hook's state pins are watched, sources are never modified, storage stays metadata-only, and zero-position locators from the
 //! initial importer migrate to checkpoints by one full replay.
 use rusqlite::Connection;
@@ -1530,13 +1530,11 @@ fn claude_tail_registers_a_root_again_after_the_platform_reports_it_removed() {
 }
 
 #[test]
-fn claude_tail_reconciles_an_event_counted_before_a_stop_but_queued_after_it() {
-    // A watcher callback counts an event, is descheduled, and a stop request
-    // reaches the queue before the event itself, while the worker is about
-    // to drain (here: still in the initial scan's last probe): the event was
-    // received before the stop and is still reconciled before the tailer
-    // stops. A stop landing inside a drain ends the drain at once, which is
-    // where the counted event would otherwise be dropped.
+fn claude_tail_reconciles_an_event_delivered_before_a_stop_is_honored() {
+    // A stop request and, right behind it, an event reach the queue while
+    // the worker is about to drain (here: still in the initial scan's last
+    // probe). A stop landing inside a drain ends the drain at once; the
+    // event delivered before the stop is honored is still reconciled first.
     let temp = tempfile::TempDir::new().unwrap();
     let home = Home::new(temp.path());
     fs::write(home.file(A), body(A, 0..2)).unwrap();
@@ -1549,15 +1547,9 @@ fn claude_tail_reconciles_an_event_counted_before_a_stop_but_queued_after_it() {
     });
     let (tailer, events) = home.start(Some(probe));
     scanned_rx.recv_timeout(WAIT).expect("initial scan done");
-    let queue = tailer.inject_removed_late(&home.root.join(".claude/projects"));
-    let late = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(30));
-        queue();
-    });
-    // The stop is queued first, the counted event 30 ms later, both before
-    // the worker leaves the probe and drains.
+    tailer.request_stop();
+    tailer.inject_removed(&home.root.join(".claude/projects"));
     tailer.stop();
-    late.join().unwrap();
     assert!(
         events.reconciled().iter().any(|event| matches!(
             event,
@@ -1566,7 +1558,7 @@ fn claude_tail_reconciles_an_event_counted_before_a_stop_but_queued_after_it() {
                 ..
             }
         )),
-        "the event counted before the stop was reconciled: {:?}",
+        "the event delivered before the stop was honored was reconciled: {:?}",
         events.0.lock().unwrap()
     );
 }
