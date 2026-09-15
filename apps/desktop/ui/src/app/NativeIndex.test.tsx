@@ -151,6 +151,26 @@ it('polls a transient status until it settles, so a ready event that precedes th
   vi.useRealTimers();
 });
 
+it('reconciles the data queries when the first status seen is already settled', async () => {
+  // The counts query can answer mid-scan just before a status that is
+  // already ready, after the one-time event was lost: the first settled
+  // status refetches them once.
+  const source: DataSource = {
+    kind: 'native',
+    appInfo: async () => exported.app_info,
+    dbCounts: vi.fn(async () => exported.db_counts),
+    nativeIndexStatus: vi.fn(async () => ready),
+    subscribe: async () => () => {},
+  };
+  mount(source);
+  await screen.findByText('Ready (3 reconciliations)');
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  expect(source.dbCounts).toHaveBeenCalledTimes(2);
+  expect(source.nativeIndexStatus).toHaveBeenCalledTimes(1);
+});
+
 it('shows the disabled fixture index without inventing hosts', async () => {
   const { FixtureDataSource } = await import('../data/FixtureDataSource');
   mount(new FixtureDataSource(exported));

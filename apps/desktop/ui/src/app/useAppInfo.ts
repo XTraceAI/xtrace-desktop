@@ -31,15 +31,25 @@ export function useNativeIndexStatus() {
     refetchInterval: (query) => (isTransientIndexStatus(query.state.data) ? 1000 : false),
   });
   // A lost `ready` event also carried the invalidation of the data queries:
-  // when polling sees the status settle, invalidate what the event would have.
-  const wasTransient = useRef(false);
-  const transient = isTransientIndexStatus(query.data);
+  // when the status is first seen settled, or seen to settle after polling,
+  // invalidate what the event would have. (The counts query may have answered
+  // mid-scan just before a first response that is already settled.)
+  const seen = useRef<'none' | 'transient' | 'settled'>('none');
+  const observed =
+    query.data === undefined
+      ? 'none'
+      : isTransientIndexStatus(query.data)
+        ? 'transient'
+        : 'settled';
   useEffect(() => {
-    if (wasTransient.current && !transient)
+    if (observed === 'none') return;
+    if (observed === 'settled' && seen.current !== 'settled')
       for (const prefix of eventPrefixes[events.nativeIndexStatus])
-        void client.invalidateQueries({ queryKey: [prefix] });
-    wasTransient.current = transient;
-  }, [transient, client]);
+        // The status query itself was just observed; only the data it describes is refetched.
+        if (prefix !== queryKeys.nativeIndex[0])
+          void client.invalidateQueries({ queryKey: [prefix] });
+    seen.current = observed;
+  }, [observed, client]);
   return query;
 }
 export function useDbCounts() {
