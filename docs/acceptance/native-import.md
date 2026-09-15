@@ -152,8 +152,7 @@ the existing writer.
   as does a diagnostic it raised that a later pass neither repeated nor resolved by
   importing the session at its very path (a directory's diagnostic is never resolved
   by what was imported below it),
-  a session the initial scan could not import fully keeps that failure even if a
-  later pass imported it (the source may have been replaced in between, and what the
+  a session the initial scan imported that a later pass could not read reads partial, the earlier counts carried and the later failure as its rejection; a session the initial scan could not import fully keeps that failure even if a later pass imported it (the source may have been replaced in between, and what the
   failure left unread is then gone; the counts still add up), a host the initial
   scan could not scan at all (a reader, runtime or pin failure, or an incomplete
   status with no session or diagnostic to say why) stays incomplete even if a later
@@ -183,9 +182,7 @@ the existing writer.
   the final freshness is live and every scan was complete, so a root that could not
   be watched after readiness still fails the run. An event that cannot be written
   (the consumer of the stream is gone) stops the tailer and exits 1 with the reason
-  on stderr, so the watcher never runs on with no observable output. Ctrl-C ends an
-  unbounded run through the tailer's stop, after its final reconciliation, also
-  with a single runtime worker. App-wide orchestration (start order, UI events,
+  on stderr, so the watcher never runs on with no observable output. Ctrl-C ends an unbounded run through the tailer's stop, after its final reconciliation, also with a single runtime worker. Both bounds are armed before the tailer starts: `--for` elapsing or Ctrl-C arriving during the initial scan stops the tailer once that scan is done, reconciling what it received, and the run exits 1 as not ready. App-wide orchestration (start order, UI events,
   scheduling) belongs to ING-13.
 - Scope kept out: scheduling frameworks, plugin delivery, cloud synchronization,
   full-content storage, automatic historical-identity repair and UI. The importer's

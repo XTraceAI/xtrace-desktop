@@ -130,6 +130,8 @@ pub struct TailStatus {
     /// Watches installed so far; a replaced root counts again.
     pub watch_installs: u64,
     pub last_error: Option<String>,
+    /// The worker has stopped (after a stop request, or on its own).
+    pub stopped: bool,
 }
 
 enum Message {
@@ -253,6 +255,7 @@ impl Tailer {
                 .map(|path| path.to_string_lossy().into_owned())
                 .collect(),
             watch_installs: state.watch_installs,
+            stopped: state.stopped,
             last_error: state.last_error.clone(),
         }
     }
@@ -353,7 +356,9 @@ impl Drop for Tailer {
 /// the earlier pass could not import fully keeps that failure even if the
 /// later pass imported it, since the source may have been replaced in
 /// between and what the failure left unread is then gone (the counts still
-/// add up); a host the earlier pass could not scan at all (its reader or
+/// add up); a session the earlier pass imported that the later pass could
+/// not read reads partial, the earlier counts carried and the later failure
+/// as its rejection, since its rows stay indexed; a host the earlier pass could not scan at all (its reader or
 /// runtime failed, its pin mismatched, or it was incomplete with no session
 /// or diagnostic to say why) stays incomplete even if the later pass
 /// completed, since what the failed pass missed may be gone, while an
@@ -401,6 +406,21 @@ fn carry_counts(earlier: &HostReport, mut later: HostReport) -> HostReport {
                 }
                 SessionOutcome::Skipped { .. } => {}
             }
+        }
+        // The later pass could not read a session the earlier pass had
+        // imported (unreadable since, say): its rows stay indexed, so the
+        // merged result is partial, the earlier counts carried and the later
+        // failure as its rejection, rather than a skip that hides the rows.
+        if let (Some((new, enriched)), SessionOutcome::Skipped { reason }) =
+            (counted, &session.outcome)
+        {
+            let reason = reason.clone();
+            session.outcome = SessionOutcome::Partial {
+                records_new: new,
+                records_enriched: enriched,
+                records_dropped: 0,
+                rejections: vec![format!("startup pass skipped: {reason}")],
+            };
         }
         let failed_earlier = earlier.sessions.iter().find(|known| {
             known.native_session_id == session.native_session_id
@@ -1339,6 +1359,38 @@ mod tests {
         );
         let later = host(HostStatus::Complete, None, vec![], vec![]);
         assert_eq!(carry_counts(&earlier, later).status, HostStatus::Incomplete);
+        // A session the earlier pass imported that the later pass skipped:
+        // partial, the earlier counts carried, the later failure kept.
+        let earlier = host(
+            HostStatus::Complete,
+            None,
+            vec![],
+            vec![session("/h/p/s.jsonl", imported())],
+        );
+        let later = host(
+            HostStatus::Incomplete,
+            None,
+            vec![],
+            vec![session(
+                "/h/p/s.jsonl",
+                SessionOutcome::Skipped {
+                    reason: "file could not be read: PermissionDenied".into(),
+                },
+            )],
+        );
+        let merged = carry_counts(&earlier, later);
+        assert_eq!(merged.status, HostStatus::Incomplete);
+        assert_eq!(
+            merged.sessions[0].outcome,
+            SessionOutcome::Partial {
+                records_new: 2,
+                records_enriched: 0,
+                records_dropped: 0,
+                rejections: vec![
+                    "startup pass skipped: file could not be read: PermissionDenied".into()
+                ],
+            }
+        );
         // A diagnostic the later pass neither repeated nor resolved stays,
         // and keeps the host incomplete.
         let earlier = host(

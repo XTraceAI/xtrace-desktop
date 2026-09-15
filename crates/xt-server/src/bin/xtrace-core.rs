@@ -222,10 +222,13 @@ fn import_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static
 /// before the initial scan, changes queued meanwhile are reconciled before
 /// `ready`, then each burst of changes is reconciled live. Prints one JSON
 /// line per event. `--once` exits after `ready`; `--for` exits after the given
-/// seconds; otherwise it runs until interrupted. Exits 0 when the final
-/// freshness is live and every scan was complete, 2 otherwise. An event that
-/// cannot be written (the consumer of the stream is gone) stops the tailer and
-/// fails the run, so the watcher never runs on with no observable output.
+/// seconds; otherwise it runs until interrupted. Both bounds cover the startup
+/// too: `--for` elapsing or Ctrl-C arriving during the initial scan stops the
+/// tailer once that scan is done, reconciling what it received, and the run
+/// exits 1 as not ready. Exits 0 when the final freshness is live and every
+/// scan was complete, 2 otherwise. An event that cannot be written (the
+/// consumer of the stream is gone) stops the tailer and fails the run, so the
+/// watcher never runs on with no observable output.
 fn watch_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static str> {
     use std::sync::{
         Arc, Mutex,
@@ -286,6 +289,21 @@ fn watch_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static 
             }
         }) as Box<dyn Fn(TailEvent) + Send>
     };
+    // The bound on the run is armed before the tailer starts, so it covers
+    // the startup: `--for` elapsing or Ctrl-C arriving during the initial
+    // scan stops the tailer once that scan is done instead of running on or
+    // killing the process with changes received and unreconciled.
+    match options.duration {
+        Some(None) => {}
+        Some(Some(seconds)) => {
+            let stop = stop_tx.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(seconds));
+                let _ = stop.send(());
+            });
+        }
+        None => ctrlc_wait(stop_tx.clone()),
+    }
     let tailer = Tailer::start(
         store,
         WatchConfig {
@@ -299,19 +317,24 @@ fn watch_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static 
         },
         sink,
     );
-    let ready = tailer.wait_ready(Duration::from_secs(u64::MAX / 4));
+    let ready = loop {
+        if let Some(ready) = tailer.wait_ready(Duration::from_millis(200)) {
+            break Some(ready);
+        }
+        if tailer.status().stopped {
+            break None;
+        }
+        match stop_rx.try_recv() {
+            Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break None,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+    };
     if ready.is_none() {
+        tailer.stop();
         return Err("Native watcher stopped before it was ready");
     }
-    match options.duration {
-        Some(None) => {}
-        Some(Some(seconds)) => {
-            let _ = stop_rx.recv_timeout(Duration::from_secs(seconds));
-        }
-        None => {
-            ctrlc_wait(stop_tx);
-            let _ = stop_rx.recv();
-        }
+    if options.duration != Some(None) {
+        let _ = stop_rx.recv();
     }
     tailer.stop();
     if output_failed.load(Ordering::SeqCst) {
