@@ -19,7 +19,7 @@ use std::{
 use xt_ingest::native::{
     CancelToken, HostStatus, ImportRequest, ProducerSource, ScanMode, SessionOutcome,
     import_native,
-    readers_cli::read_pin,
+    readers_cli::{ReaderError, read_pin, resolve_python_within},
     scan_native, scan_native_observed,
     watch::{TailEvent, Tailer, WatchConfig},
 };
@@ -350,4 +350,92 @@ fn a_claude_scan_cancelled_between_files_keeps_what_it_read() {
     assert_eq!(report.hosts[0].status, HostStatus::Complete);
     assert_eq!(store.counts().unwrap().sessions, 3);
     assert_eq!(store.counts().unwrap().records, 3);
+}
+
+/// A fake interpreter that never answers the version probe; it records its
+/// process ID at `pid_file` (baked in: probes inherit the real environment).
+fn hung_probe_python(root: &Path, pid_file: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let script = root.join("python3-hung-probe");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\necho $$ > \"{}\"\nexec sleep 1000\n",
+            pid_file.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+fn pid_at(path: &Path) -> i32 {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        if let Ok(text) = fs::read_to_string(path)
+            && let Ok(pid) = text.trim().parse()
+        {
+            return pid;
+        }
+        assert!(Instant::now() < deadline, "the process never started");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn an_interpreter_probe_that_never_answers_is_bounded_and_cancellable() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let pid_file = temp.path().join("probe.pid");
+    let python = hung_probe_python(temp.path(), &pid_file);
+    // Bounded: a probe still running at the deadline is killed and reported.
+    // The probe runs on its own thread so the fake's start (a shell under
+    // load can take a while) is awaited independently of the deadline.
+    let result = std::thread::scope(|scope| {
+        let probe = scope.spawn(|| {
+            let started = Instant::now();
+            let result =
+                resolve_python_within(Some(python.as_os_str()), None, Duration::from_secs(3));
+            (result, started.elapsed())
+        });
+        let pid = pid_at(&pid_file);
+        let (result, elapsed) = probe.join().unwrap();
+        assert!(!alive(pid), "the timed-out probe was not reaped");
+        assert!(elapsed < Duration::from_secs(10), "{elapsed:?}");
+        result
+    });
+    assert!(
+        matches!(&result, Err(ReaderError::MissingRuntime(reason)) if reason.contains("did not finish within 3s")),
+        "{result:?}"
+    );
+    fs::remove_file(&pid_file).unwrap();
+    // Cancellable: a cancel during the probe kills it at once.
+    let cancel = CancelToken::new();
+    let result = std::thread::scope(|scope| {
+        let probe = scope.spawn(|| {
+            resolve_python_within(
+                Some(python.as_os_str()),
+                Some(&cancel),
+                Duration::from_secs(60),
+            )
+        });
+        let pid = pid_at(&pid_file);
+        let started = Instant::now();
+        cancel.cancel();
+        let result = probe.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(!alive(pid), "the cancelled probe was not reaped");
+        result
+    });
+    assert!(matches!(result, Err(ReaderError::Cancelled)), "{result:?}");
+    fs::remove_file(&pid_file).unwrap();
+    // A cancelled token refuses the next probe without starting it.
+    assert!(matches!(
+        resolve_python_within(
+            Some(python.as_os_str()),
+            Some(&cancel),
+            Duration::from_secs(60)
+        ),
+        Err(ReaderError::Cancelled)
+    ));
+    assert!(!pid_file.exists());
 }

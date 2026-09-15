@@ -117,7 +117,10 @@ fn indexes_a_synthetic_home_publishes_typed_status_and_reconciles_appends() {
             plugin_version: pin["plugin_version"].as_str().unwrap().to_owned(),
         }
     );
-    let ready = wait_for(&index, |s| s.phase == NativeIndexPhase::Ready);
+    // Discovery for the status runs beside the initial scan; both finish.
+    let ready = wait_for(&index, |s| {
+        s.phase == NativeIndexPhase::Ready && s.python != PythonRuntime::Resolving
+    });
     assert_eq!(ready.freshness, NativeFreshness::Live);
     let claude = host(&ready, "claude");
     assert_eq!(claude.state, NativeHostState::Complete, "{ready:?}");
@@ -133,6 +136,7 @@ fn indexes_a_synthetic_home_publishes_typed_status_and_reconciles_appends() {
             PythonRuntime::Missing { .. } => {
                 assert_eq!(reader.state, NativeHostState::MissingRuntime, "{reader:?}")
             }
+            PythonRuntime::Resolving => unreachable!("waited for discovery"),
         }
     }
     let store = Store::open(&db).unwrap();
@@ -217,7 +221,9 @@ fn a_missing_interpreter_and_a_missing_bundle_are_reported_while_claude_indexes(
         },
         publish,
     );
-    let ready = wait_for(&index, |s| s.phase == NativeIndexPhase::Ready);
+    let ready = wait_for(&index, |s| {
+        s.phase == NativeIndexPhase::Ready && s.python != PythonRuntime::Resolving
+    });
     assert!(
         matches!(&ready.python, PythonRuntime::Missing { reason } if reason.contains("python"))
     );
@@ -285,6 +291,71 @@ fn a_hung_reader_does_not_hold_shutdown_and_is_reaped() {
     assert_eq!(index.status().phase, NativeIndexPhase::Stopped);
     // Killed and reaped: no process by that ID remains.
     assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+}
+
+/// A fake interpreter that never answers the version probe; it records its
+/// process ID under `root` (the path is baked in: probes inherit the real
+/// environment, not the indexed home's).
+fn hung_probe_python(root: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let script = root.join("python3-hung-probe");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\necho $$ > \"{}\"\nexec sleep 1000\n",
+            root.join("probe.pid").display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+#[test]
+fn an_interpreter_that_never_answers_its_probe_blocks_neither_startup_nor_shutdown() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = synthetic_home(temp.path());
+    fs::create_dir_all(home.join(".codex/sessions")).unwrap();
+    let python = hung_probe_python(temp.path());
+    let (publish, _) = recorder();
+    let started = Instant::now();
+    let index = NativeIndex::start(
+        NativeIndexOptions {
+            home: home.clone(),
+            db: temp.path().join("xtrace.db"),
+            bundle: bundle(),
+            python: Some(python.into_os_string()),
+        },
+        publish,
+    );
+    // Startup does not wait for the probe; the status says it is resolving.
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(index.status().python, PythonRuntime::Resolving);
+    let deadline = Instant::now() + WAIT;
+    let pid: i32 = loop {
+        if let Ok(text) = fs::read_to_string(temp.path().join("probe.pid"))
+            && let Ok(pid) = text.trim().parse()
+        {
+            break pid;
+        }
+        assert!(Instant::now() < deadline, "the probe never started");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    // Claude is indexed meanwhile: the Codex scan waits on its own probe,
+    // which the shutdown below kills as well.
+    let ready = wait_for(&index, |s| {
+        host(s, "claude").state == NativeHostState::Complete
+    });
+    assert_eq!(host(&ready, "claude").records_new, 2);
+    let started = Instant::now();
+    assert!(index.shutdown());
+    assert!(started.elapsed() < Duration::from_secs(3));
+    // Every probe registered with the token was killed and reaped.
+    let gone = Instant::now() + Duration::from_secs(5);
+    while unsafe { libc::kill(pid, 0) } == 0 {
+        assert!(Instant::now() < gone, "the hung probe survived shutdown");
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[test]

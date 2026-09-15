@@ -464,8 +464,15 @@ fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host
             );
         }
     }
-    let python = match readers_cli::discover_python(request.python) {
+    let python = match readers_cli::discover_python(request.python, request.cancel) {
         Ok(python) => python,
+        Err(ReaderError::Cancelled) => {
+            return HostReport::unavailable(
+                host,
+                HostStatus::Cancelled,
+                "scan cancelled while the interpreter was probed",
+            );
+        }
         Err(error) => {
             return HostReport::unavailable(host, HostStatus::MissingRuntime, error.to_string());
         }

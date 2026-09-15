@@ -98,14 +98,6 @@ impl NativeIndex {
             Ok(store) => store,
             Err(_) => return Self::disabled("the index database could not be opened", publish),
         };
-        let python = match discover_python(options.python.as_deref()) {
-            Ok(path) => PythonRuntime::Available {
-                path: path.to_string_lossy().into_owned(),
-            },
-            Err(error) => PythonRuntime::Missing {
-                reason: error.to_string(),
-            },
-        };
         let pin = parse_pin(PIN);
         let readers = match pin
             .as_ref()
@@ -121,7 +113,7 @@ impl NativeIndex {
         let status = Arc::new(Mutex::new(NativeIndexStatus {
             phase: NativeIndexPhase::Scanning,
             freshness: NativeFreshness::Unknown,
-            python: python.clone(),
+            python: PythonRuntime::Resolving,
             readers,
             hosts: HOSTS.iter().map(|host| pending(*host)).collect(),
             reconciles: 0,
@@ -192,12 +184,37 @@ impl NativeIndex {
                 // An interpreter the user named is used as named, qualified
                 // or not; otherwise each reader scan discovers again, so one
                 // installed later is found without a restart.
-                python: options.python,
+                python: options.python.clone(),
                 debounce: DEBOUNCE,
                 probe: Some(probe),
             },
             sink,
         );
+        // Discovery for the status runs beside the initial scan, never on
+        // the caller's thread: every probe is bounded, and registered with
+        // the tailer's token so shutdown kills one that is still running.
+        {
+            let status = Arc::clone(&status);
+            let publish = Arc::clone(&publish);
+            let cancel = tailer.cancel_token();
+            let named = options.python;
+            std::thread::Builder::new()
+                .name("xtrace-native-python".into())
+                .spawn(move || {
+                    let resolved = match discover_python(named.as_deref(), Some(&cancel)) {
+                        Ok(path) => PythonRuntime::Available {
+                            path: path.to_string_lossy().into_owned(),
+                        },
+                        Err(error) => PythonRuntime::Missing {
+                            reason: error.to_string(),
+                        },
+                    };
+                    let mut current = lock(&status);
+                    current.python = resolved;
+                    publish(&current);
+                })
+                .expect("spawn the interpreter discovery thread");
+        }
         Self {
             tailer: Mutex::new(Some(tailer)),
             status,

@@ -137,7 +137,9 @@ function NativeIndexSummary({ status }: { status: NativeIndexStatus }) {
       <dd>
         {status.python.state === 'available'
           ? status.python.path
-          : `Unavailable: ${status.python.reason}`}
+          : status.python.state === 'resolving'
+            ? 'Resolving…'
+            : `Unavailable: ${status.python.reason}`}
       </dd>
       <dt>Readers</dt>
       <dd>

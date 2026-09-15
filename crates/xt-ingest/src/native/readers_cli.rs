@@ -18,6 +18,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 use xt_store::Host;
 
@@ -366,20 +367,29 @@ const KNOWN_PYTHON_DIRS: &[&str] = &[
 #[cfg(not(target_os = "macos"))]
 const KNOWN_PYTHON_DIRS: &[&str] = &["~/.local/bin"];
 
+/// How long an interpreter may take to answer the version probe. A runtime
+/// that cannot print its version within this is not one the readers can
+/// use; the probe is killed and the candidate reported.
+pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Select the interpreter: an explicit executable or `PYTHON` is probed as
 /// named; otherwise `python3` on `PATH`, then in each known install directory,
 /// the first that qualifies. Every reason a candidate did not qualify is
-/// reported when none did.
-pub fn discover_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError> {
+/// reported when none did. Probes are bounded and, with a token, cancellable.
+pub fn discover_python(
+    explicit: Option<&OsStr>,
+    cancel: Option<&CancelToken>,
+) -> Result<OsString, ReaderError> {
     let named = explicit
         .map(OsStr::to_os_string)
         .or_else(|| std::env::var_os("PYTHON").filter(|value| !value.is_empty()));
     if let Some(named) = named {
-        return resolve_python(Some(&named));
+        return resolve_python(Some(&named), cancel);
     }
     let mut reasons = Vec::new();
-    match resolve_python(None) {
+    match resolve_python(None, cancel) {
         Ok(python) => return Ok(python),
+        Err(ReaderError::Cancelled) => return Err(ReaderError::Cancelled),
         Err(error) => reasons.push(format!("python3 on PATH: {error}")),
     }
     let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -393,8 +403,9 @@ pub fn discover_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError
         if !candidate.is_file() {
             continue;
         }
-        match resolve_python(Some(candidate.as_os_str())) {
+        match resolve_python(Some(candidate.as_os_str()), cancel) {
             Ok(python) => return Ok(python),
+            Err(ReaderError::Cancelled) => return Err(ReaderError::Cancelled),
             Err(error) => reasons.push(format!("{}: {error}", candidate.display())),
         }
     }
@@ -402,8 +413,21 @@ pub fn discover_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError
 }
 
 /// Select the interpreter: an explicit executable, else `PYTHON`, else `python3`.
-/// It must be 3.10+ and must not strip assertions.
-pub fn resolve_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError> {
+/// It must be 3.10+ and must not strip assertions. The probe is killed after
+/// `PROBE_TIMEOUT`, and at once by a cancel of the token.
+pub fn resolve_python(
+    explicit: Option<&OsStr>,
+    cancel: Option<&CancelToken>,
+) -> Result<OsString, ReaderError> {
+    resolve_python_within(explicit, cancel, PROBE_TIMEOUT)
+}
+
+/// `resolve_python` with an explicit probe bound (tests shorten it).
+pub fn resolve_python_within(
+    explicit: Option<&OsStr>,
+    cancel: Option<&CancelToken>,
+    timeout: Duration,
+) -> Result<OsString, ReaderError> {
     let python = explicit
         .map(OsStr::to_os_string)
         .or_else(|| std::env::var_os("PYTHON").filter(|value| !value.is_empty()))
@@ -427,7 +451,10 @@ pub fn resolve_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError>
             .map_err(|_| ReaderError::MissingRuntime("current directory unavailable".into()))?,
         &std::env::var_os("PATH").unwrap_or_default(),
     )?;
-    let probe = Command::new(&python)
+    if cancel.is_some_and(CancelToken::is_cancelled) {
+        return Err(ReaderError::Cancelled);
+    }
+    let mut probe = Command::new(&python)
         .env_remove("PYTHONOPTIMIZE")
         .env_remove("PYTHONHOME")
         .env_remove("PYTHONPATH")
@@ -436,9 +463,37 @@ pub fn resolve_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError>
             "-c",
             "import sys; print(sys.version_info >= (3, 10) and sys.flags.optimize == 0)",
         ])
-        .output()
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
         .map_err(|_| ReaderError::MissingRuntime("python3 is not executable".into()))?;
-    if !probe.status.success() || String::from_utf8_lossy(&probe.stdout).trim() != "True" {
+    let mut stdout = probe
+        .stdout
+        .take()
+        .ok_or_else(|| ReaderError::MissingRuntime("probe output is unavailable".into()))?;
+    // The answer is one short line, read after exit: a probe that floods its
+    // output would fill the pipe and stall, which the deadline then ends.
+    let slot: ChildSlot = Arc::new(Mutex::new(Some(probe)));
+    if let Some(cancel) = cancel {
+        cancel.register(&slot);
+    }
+    let awaited = await_child(&slot, Some(Instant::now() + timeout));
+    if let Some(cancel) = cancel {
+        cancel.unregister(&slot);
+    }
+    let (status, timed_out) = awaited?;
+    if cancel.is_some_and(CancelToken::is_cancelled) && !status.success() {
+        return Err(ReaderError::Cancelled);
+    }
+    if timed_out {
+        return Err(ReaderError::MissingRuntime(format!(
+            "interpreter probe did not finish within {timeout:?}"
+        )));
+    }
+    let mut answer = String::new();
+    let _ = std::io::Read::read_to_string(&mut stdout, &mut answer);
+    if !status.success() || answer.trim() != "True" {
         return Err(ReaderError::MissingRuntime(
             "python3 must be 3.10 or newer with assertions enabled".into(),
         ));
@@ -446,19 +501,22 @@ pub fn resolve_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError>
     Ok(python)
 }
 
-/// Cancels reader execution from another thread: a reader not yet started
-/// is refused, and the one running is killed (its process reaped by the
-/// thread consuming it) so a producer that never returns cannot hold the
-/// caller. Cancellation is permanent for the token.
+/// Cancels reader execution from another thread: a reader (or interpreter
+/// probe) not yet started is refused, and every one running is killed (its
+/// process reaped by the thread awaiting it) so a producer that never
+/// returns cannot hold the caller. Cancellation is permanent for the token.
 #[derive(Clone, Default)]
 pub struct CancelToken(Arc<CancelState>);
+
+type ChildSlot = Arc<Mutex<Option<Child>>>;
 
 #[derive(Default)]
 struct CancelState {
     cancelled: AtomicBool,
-    /// The child running now, shared with its handle so a cancel that lands
-    /// while it runs kills exactly that process; taken by the handle at exit.
-    active: Mutex<Option<Arc<Mutex<Option<Child>>>>>,
+    /// The children running now, shared with their handles so a cancel that
+    /// lands while they run kills exactly those processes; each is removed
+    /// by the thread that reaped it.
+    active: Mutex<Vec<ChildSlot>>,
 }
 
 impl CancelToken {
@@ -470,8 +528,8 @@ impl CancelToken {
         self.0.cancelled.load(Ordering::SeqCst)
     }
 
-    /// Refuse readers from now on and kill the one running, if any. The flag
-    /// and the active child change under one lock, so a reader registering
+    /// Refuse children from now on and kill those running. The flag and the
+    /// active list change under one lock, so a child registering
     /// concurrently is killed as well.
     pub fn cancel(&self) {
         let active = self
@@ -480,7 +538,7 @@ impl CancelToken {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.0.cancelled.store(true, Ordering::SeqCst);
-        if let Some(slot) = active.as_ref() {
+        for slot in active.iter() {
             let mut child = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(child) = child.as_mut() {
                 // A process that already exited is left for its handle to reap.
@@ -489,15 +547,15 @@ impl CancelToken {
         }
     }
 
-    /// Register the spawned child, killing it at once if a cancel landed
+    /// Register a spawned child, killing it at once if a cancel landed
     /// between the caller's check and the spawn.
-    fn register(&self, slot: &Arc<Mutex<Option<Child>>>) {
+    fn register(&self, slot: &ChildSlot) {
         let mut active = self
             .0
             .active
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *active = Some(Arc::clone(slot));
+        active.push(Arc::clone(slot));
         if self.0.cancelled.load(Ordering::SeqCst)
             && let Some(child) = slot
                 .lock()
@@ -508,12 +566,44 @@ impl CancelToken {
         }
     }
 
-    fn unregister(&self) {
+    fn unregister(&self, slot: &ChildSlot) {
         self.0
             .active
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
+            .retain(|known| !Arc::ptr_eq(known, slot));
+    }
+}
+
+/// Await a registered child: the slot is unlocked between polls, so a cancel
+/// can kill the process meanwhile, and a child still running at `deadline`
+/// is killed too. Returns the exit status and whether the deadline killed it.
+fn await_child(
+    slot: &ChildSlot,
+    deadline: Option<Instant>,
+) -> Result<(std::process::ExitStatus, bool), ReaderError> {
+    let mut timed_out = false;
+    loop {
+        let mut guard = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let child = guard
+            .as_mut()
+            .ok_or_else(|| ReaderError::Failed("child process was already reaped".into()))?;
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok((status, timed_out)),
+            Ok(None) => {
+                if !timed_out && deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                    timed_out = true;
+                    let _ = child.kill();
+                }
+            }
+            Err(_) => {
+                return Err(ReaderError::Failed(
+                    "child process could not be awaited".into(),
+                ));
+            }
+        }
+        drop(guard);
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -521,7 +611,7 @@ impl CancelToken {
 /// stdout line by line, then waits here; stderr (static diagnostics only) is
 /// drained concurrently.
 pub struct ReaderHandle {
-    child: Arc<Mutex<Option<Child>>>,
+    child: ChildSlot,
     cancel: Option<CancelToken>,
     stderr: std::thread::JoinHandle<Vec<u8>>,
 }
@@ -581,7 +671,7 @@ pub fn spawn_reader(
         let _ = std::io::Read::read_to_end(&mut stderr, &mut bytes);
         bytes
     });
-    let child = Arc::new(Mutex::new(Some(child)));
+    let child: ChildSlot = Arc::new(Mutex::new(Some(child)));
     if let Some(cancel) = cancel {
         cancel.register(&child);
     }
@@ -605,28 +695,9 @@ impl ReaderHandle {
         // The child stays registered, and the slot unlocked between polls,
         // until it has exited: a reader that closed its stream but runs on
         // can still be killed by a cancel while it is awaited here.
-        let status = loop {
-            let mut slot = self
-                .child
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let child = slot
-                .as_mut()
-                .ok_or_else(|| ReaderError::Failed("reader process was already reaped".into()))?;
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) => {}
-                Err(_) => {
-                    return Err(ReaderError::Failed(
-                        "reader process could not be awaited".into(),
-                    ));
-                }
-            }
-            drop(slot);
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        };
+        let (status, _) = await_child(&self.child, None)?;
         if let Some(cancel) = &self.cancel {
-            cancel.unregister();
+            cancel.unregister(&self.child);
         }
         let cancelled = self.cancel.as_ref().is_some_and(CancelToken::is_cancelled);
         let stderr = self.stderr.join().unwrap_or_default();

@@ -376,6 +376,13 @@ impl Tailer {
         self.cancel.cancel();
     }
 
+    /// The token the worker's readers and interpreter probes register with,
+    /// so a caller's own child processes (an interpreter discovery, say) are
+    /// cancelled together with the tailer.
+    pub fn cancel_token(&self) -> CancelToken {
+        self.cancel.clone()
+    }
+
     /// Cancel, stop, and wait at most `bound` for the worker to end. Returns
     /// false if it had not ended within the bound (it is then left behind,
     /// its reader already killed, and ends with the process).

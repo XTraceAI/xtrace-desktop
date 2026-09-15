@@ -777,7 +777,7 @@ fn an_explicit_relative_interpreter_path_is_anchored_before_the_reader_changes_d
             .trim_start_matches('/')
     );
     assert!(Path::new(&relative).is_relative());
-    let resolved = resolve_python(Some(std::ffi::OsStr::new(&relative))).unwrap();
+    let resolved = resolve_python(Some(std::ffi::OsStr::new(&relative)), None).unwrap();
     let resolved = Path::new(&resolved);
     assert!(resolved.is_absolute(), "{resolved:?}");
     assert_eq!(
@@ -786,7 +786,8 @@ fn an_explicit_relative_interpreter_path_is_anchored_before_the_reader_changes_d
     );
     // Bare names also become absolute before the child changes directory.
     assert!(
-        Path::new(&resolve_python(Some(std::ffi::OsStr::new("python3"))).unwrap()).is_absolute()
+        Path::new(&resolve_python(Some(std::ffi::OsStr::new("python3")), None).unwrap())
+            .is_absolute()
     );
 }
 

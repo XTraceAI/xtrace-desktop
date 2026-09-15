@@ -86,6 +86,9 @@ pub enum NativeFreshness {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PythonRuntime {
+    /// Discovery runs beside the initial scan; the reader hosts' own scans
+    /// resolve the interpreter themselves meanwhile.
+    Resolving,
     /// The interpreter the reader hosts run with, as found at startup.
     Available { path: String },
     /// Claude indexing continues; Codex and Cursor report the missing runtime.
