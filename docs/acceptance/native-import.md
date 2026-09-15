@@ -155,7 +155,8 @@ the existing writer.
   failure left unread is then gone; the counts still add up), and a host stays
   incomplete around any of these. After ready, the tailer is idle only once every
   change delivered to it, also one delivered while a reconciliation ran, has been
-  reconciled. A root that appears during a pass, after its
+  taken off its queue and reconciled (the delivery count and the idle flag change
+  under one lock). A root that appears during a pass, after its
   watches were decided, is watched after the scan and its host scanned again, until
   a pass finds every root watched, so no change below a root falls between its
   enumeration and its watch. Event kinds are never trusted: any path under a host

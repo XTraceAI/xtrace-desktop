@@ -141,7 +141,13 @@ enum Message {
 struct State {
     ready: Option<Readiness>,
     freshness: Option<Freshness>,
+    /// True only while every event delivered so far has been taken off the
+    /// queue and reconciled: the delivery count below and this flag change
+    /// under the one lock, so a waiter never sees idle with a delivered
+    /// event unprocessed.
     idle: bool,
+    /// Filesystem events (and injected ones) handed to the worker's queue.
+    delivered: u64,
     reconciles: u64,
     /// Each watched root with the identity of the directory the watch was
     /// installed on, so a root replaced at the same path is watched again.
@@ -279,6 +285,7 @@ impl Tailer {
     /// rebuild path.
     #[doc(hidden)]
     pub fn inject_watcher_error(&self, reason: &str) {
+        self.shared.update(|state| state.delivered += 1);
         let _ = self
             .control
             .send(Message::Fs(Err(notify::Error::generic(reason))));
@@ -290,6 +297,7 @@ impl Tailer {
         let event =
             notify::Event::new(notify::EventKind::Remove(notify::event::RemoveKind::Folder))
                 .add_path(path.to_path_buf());
+        self.shared.update(|state| state.delivered += 1);
         let _ = self.control.send(Message::Fs(Ok(event)));
     }
 
@@ -467,6 +475,9 @@ struct Worker {
     watcher: Option<RecommendedWatcher>,
     /// Roots whose watch an event may have dropped, re-registered next.
     lost: Vec<PathBuf>,
+    /// Filesystem events taken off the queue so far; idle only once it has
+    /// caught up with the events delivered.
+    consumed: u64,
 }
 
 impl Worker {
@@ -492,7 +503,16 @@ impl Worker {
             events,
             watcher: None,
             lost: Vec::new(),
+            consumed: 0,
         }
+    }
+
+    /// Publish idle only if every delivered event has been taken off the
+    /// queue, under the lock the delivery count changes under.
+    fn publish_idle(&self) {
+        let consumed = self.consumed;
+        self.shared
+            .update(|state| state.idle = state.delivered == consumed);
     }
 
     /// The roots watched now, for classifying events against them.
@@ -532,7 +552,7 @@ impl Worker {
         let mut stopped = false;
         loop {
             let mut dirty = Dirty::default();
-            drain(
+            self.consumed += drain(
                 &rx,
                 self.config.debounce,
                 &mut dirty,
@@ -578,9 +598,10 @@ impl Worker {
                 freshness: self.freshness(),
                 report,
             };
+            let consumed = self.consumed;
             self.shared.update(|state| {
                 state.ready = Some(readiness.clone());
-                state.idle = true;
+                state.idle = state.delivered == consumed;
             });
             (self.sink)(TailEvent::Ready(readiness));
             // Live: each burst, after a quiet period, reconciles its hosts.
@@ -600,6 +621,7 @@ impl Worker {
                     // that arrive within one quiet period, reach the index.
                     Message::Stop => dirty.stop = true,
                     Message::Fs(event) => {
+                        self.consumed += 1;
                         if let Some(error) = classify(
                             event,
                             &mut dirty,
@@ -611,7 +633,7 @@ impl Worker {
                         }
                     }
                 }
-                drain(
+                self.consumed += drain(
                     &rx,
                     self.config.debounce,
                     &mut dirty,
@@ -645,13 +667,13 @@ impl Worker {
                     break;
                 }
                 // A change delivered while the reconciliation ran is still
-                // queued: the worker is idle only once the queue is empty, so
-                // a waiter never wakes with a delivered change unprocessed.
+                // queued, or about to be: the worker is idle only once it has
+                // taken every delivered event off the queue (a count that
+                // changes under the same lock as the flag), so a waiter never
+                // wakes with a delivered change unprocessed.
                 match rx.try_recv() {
                     Ok(message) => pending = Some(message),
-                    Err(std::sync::mpsc::TryRecvError::Empty) => {
-                        self.shared.update(|state| state.idle = true)
-                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => self.publish_idle(),
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
                 }
             }
@@ -723,7 +745,11 @@ impl Worker {
     /// creation is seen and it gets its own watch on the next reconciliation.
     fn register(&mut self) {
         let events = self.events.clone();
+        let shared = Arc::clone(&self.shared);
         let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+            // Counted before it is queued, so the worker can never have
+            // taken more off the queue than was delivered.
+            shared.update(|state| state.delivered += 1);
             let _ = events.send(Message::Fs(event));
         });
         match watcher {
@@ -1087,7 +1113,8 @@ fn classify(
     }
 }
 
-/// Collect queued events until the channel stays quiet for `debounce`.
+/// Collect queued events until the channel stays quiet for `debounce`;
+/// returns how many filesystem events were taken off the queue.
 fn drain(
     rx: &Receiver<Message>,
     debounce: Duration,
@@ -1095,19 +1122,21 @@ fn drain(
     config: &WatchConfig,
     homes: &[PathBuf],
     watched: &[PathBuf],
-) {
+) -> u64 {
+    let mut consumed = 0;
     loop {
         match rx.recv_timeout(debounce) {
             Ok(Message::Fs(event)) => {
+                consumed += 1;
                 if let Some(error) = classify(event, dirty, config, homes, watched) {
                     dirty.watcher_failed = Some(error);
                 }
             }
             Ok(Message::Stop) | Err(RecvTimeoutError::Disconnected) => {
                 dirty.stop = true;
-                return;
+                return consumed;
             }
-            Err(RecvTimeoutError::Timeout) => return,
+            Err(RecvTimeoutError::Timeout) => return consumed,
         }
     }
 }
