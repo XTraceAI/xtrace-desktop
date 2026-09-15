@@ -1,7 +1,12 @@
 //! The headless `import-native` command: a JSON report on stdout, exit 0 only
 //! when every requested host imported completely, 2 for an explicit gap.
 use serde_json::Value;
-use std::{fs, io::Write, process::Command};
+use std::{
+    fs,
+    io::{BufRead, BufReader, Read, Write},
+    process::{Child, Command, ExitStatus, Stdio},
+    time::{Duration, Instant},
+};
 
 fn core() -> Command {
     Command::new(env!("CARGO_BIN_EXE_xtrace-core"))
@@ -297,4 +302,148 @@ fn watch_native_once_reports_ready_and_resumes_on_the_next_run() {
         let output = core().args(&args).output().unwrap();
         assert_eq!(output.status.code(), Some(1), "{args:?}");
     }
+}
+
+/// A synthetic Claude home with one two-record transcript; returns the home,
+/// the transcript path and the index path.
+fn synthetic_home(
+    temp: &std::path::Path,
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    let home = temp.join("home");
+    let project = home.join(".claude/projects/-Users-synthetic");
+    fs::create_dir_all(&project).unwrap();
+    let transcript = project.join(format!("{WATCH_SESSION}.jsonl"));
+    fs::write(&transcript, watch_record(1) + &watch_record(2)).unwrap();
+    (home, transcript, temp.join("index.sqlite"))
+}
+
+const WATCH_SESSION: &str = "00000000-0000-4000-8000-00000000c1b1";
+
+fn watch_record(index: u32) -> String {
+    format!(
+        "{{\"uuid\":\"45454545-4545-4545-8545-{index:012}\",\"type\":\"user\",\"sessionId\":\"{WATCH_SESSION}\",\"entrypoint\":\"cli\",\"timestamp\":\"2026-09-07T12:00:0{index}Z\",\"message\":{{\"role\":\"user\",\"content\":\"turn {index}\"}}}}\n"
+    )
+}
+
+/// Wait for the child to exit, killing it and failing if it has not within
+/// `limit`, so a hung watcher fails the test instead of hanging it.
+fn exit_within(child: &mut Child, limit: Duration) -> ExitStatus {
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status;
+        }
+        if started.elapsed() > limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("the watcher did not exit within {limit:?}");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn watch_native_stops_and_fails_when_its_event_stream_cannot_be_written() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (home, transcript, db) = synthetic_home(temp.path());
+    let mut child = core()
+        .args(["watch-native", "--db"])
+        .arg(&db)
+        .arg("--home")
+        .arg(&home)
+        .args(["--host", "claude", "--for", "120"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let mut first = String::new();
+    reader.read_line(&mut first).unwrap();
+    let ready: Value = serde_json::from_str(&first).unwrap();
+    assert_eq!(ready["event"], "ready");
+    // The consumer goes away (as with `| head -1`); the next event cannot be
+    // written, which stops the watcher long before `--for` elapses and
+    // fails the run, instead of running on with no observable output.
+    drop(reader);
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&transcript)
+        .unwrap()
+        .write_all(watch_record(3).as_bytes())
+        .unwrap();
+    let status = exit_within(&mut child, Duration::from_secs(60));
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+    assert_eq!(status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("Could not write the event stream"),
+        "{stderr}"
+    );
+    // The change that could not be reported was still indexed before the stop.
+    assert_eq!(
+        xt_store::Store::open(&db)
+            .unwrap()
+            .records(WATCH_SESSION)
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn watch_native_stops_cleanly_on_ctrl_c_with_a_single_runtime_worker() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (home, _transcript, db) = synthetic_home(temp.path());
+    // One runtime worker, as on a single-core host: the main thread waits
+    // while the signal listener runs on that worker, so the interrupt still
+    // reaches the tailer and it stops after its final reconciliation.
+    let mut child = core()
+        .env("TOKIO_WORKER_THREADS", "1")
+        .args(["watch-native", "--db"])
+        .arg(&db)
+        .arg("--home")
+        .arg(&home)
+        .args(["--host", "claude"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let mut first = String::new();
+    reader.read_line(&mut first).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&first).unwrap()["event"],
+        "ready"
+    );
+    assert!(
+        Command::new("kill")
+            .args(["-INT", &child.id().to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let status = exit_within(&mut child, Duration::from_secs(60));
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "the interrupt stopped the tailer instead of killing the process: {stderr}"
+    );
+    let mut rest = String::new();
+    reader.read_to_string(&mut rest).unwrap();
+    let last: Value = serde_json::from_str(rest.lines().last().unwrap()).unwrap();
+    assert_eq!(last["event"], "stopped");
+    assert_eq!(last["freshness"], "live");
 }

@@ -223,7 +223,9 @@ fn import_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static
 /// `ready`, then each burst of changes is reconciled live. Prints one JSON
 /// line per event. `--once` exits after `ready`; `--for` exits after the given
 /// seconds; otherwise it runs until interrupted. Exits 0 when the final
-/// freshness is live and every scan was complete, 2 otherwise.
+/// freshness is live and every scan was complete, 2 otherwise. An event that
+/// cannot be written (the consumer of the stream is gone) stops the tailer and
+/// fails the run, so the watcher never runs on with no observable output.
 fn watch_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static str> {
     use std::sync::{
         Arc, Mutex,
@@ -237,11 +239,16 @@ fn watch_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static 
     let complete = Arc::new(AtomicBool::new(true));
     let live = Arc::new(AtomicBool::new(false));
     let output = Arc::new(Mutex::new(io::stdout()));
+    let output_failed = Arc::new(AtomicBool::new(false));
+    // Ends the wait below: Ctrl-C, or an event that could not be written.
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
     let sink = {
-        let (complete, live, output) = (
+        let (complete, live, output, output_failed, stop) = (
             Arc::clone(&complete),
             Arc::clone(&live),
             Arc::clone(&output),
+            Arc::clone(&output_failed),
+            stop_tx.clone(),
         );
         Box::new(move |event: TailEvent| {
             // Freshness is taken from every event, so a root that could not
@@ -265,11 +272,17 @@ fn watch_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static 
                     live.store(*freshness == Freshness::Live, Ordering::SeqCst);
                 }
             }
-            if let Ok(text) = serde_json::to_string(&event)
-                && let Ok(mut out) = output.lock()
-            {
-                let _ = writeln!(out, "{text}");
-                let _ = out.flush();
+            let written = serde_json::to_string(&event)
+                .ok()
+                .and_then(|text| {
+                    let mut out = output.lock().ok()?;
+                    writeln!(out, "{text}").ok()?;
+                    out.flush().ok()
+                })
+                .is_some();
+            if !written {
+                output_failed.store(true, Ordering::SeqCst);
+                let _ = stop.send(());
             }
         }) as Box<dyn Fn(TailEvent) + Send>
     };
@@ -292,14 +305,18 @@ fn watch_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static 
     }
     match options.duration {
         Some(None) => {}
-        Some(Some(seconds)) => std::thread::sleep(Duration::from_secs(seconds)),
+        Some(Some(seconds)) => {
+            let _ = stop_rx.recv_timeout(Duration::from_secs(seconds));
+        }
         None => {
-            let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
             ctrlc_wait(stop_tx);
             let _ = stop_rx.recv();
         }
     }
     tailer.stop();
+    if output_failed.load(Ordering::SeqCst) {
+        return Err("Could not write the event stream");
+    }
     if !(live.load(Ordering::SeqCst) && complete.load(Ordering::SeqCst)) {
         std::process::exit(2);
     }
