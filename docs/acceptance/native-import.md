@@ -167,7 +167,7 @@ the existing writer.
   the final freshness is live and every scan was complete, so a root that could not
   be watched after readiness still fails the run. An event that cannot be written
   (the consumer of the stream is gone) stops the tailer and exits 1 with the reason
-  on stderr, so the watcher never runs on with no observable output. Ctrl-C ends an unbounded run through the tailer's stop, after its final reconciliation, also with a single runtime worker. Both bounds are armed before the tailer starts: `--for` elapsing or Ctrl-C arriving during the initial scan stops the tailer once that scan is done, reconciling what it received, and the run exits 1 as not ready (also when readiness and the bound fall within the same wait step). App-wide orchestration (start order, UI events,
+  on stderr, so the watcher never runs on with no observable output. Ctrl-C ends an unbounded run through the tailer's stop, after its final reconciliation, also with a single runtime worker. Both bounds are armed before the tailer starts: `--for` elapsing or Ctrl-C arriving during the initial scan stops the tailer once that scan is done, reconciling what it received, and the run exits 1 as not ready (also when readiness and the bound fall within the same wait step). The bound waits for the scan in progress: a pinned reader that never returns is not interrupted, and the command waits with it; cancelling an in-flight reader belongs to ING-13's orchestration. App-wide orchestration (start order, UI events,
   scheduling) belongs to ING-13.
 - Scope kept out: scheduling frameworks, plugin delivery, cloud synchronization,
   full-content storage, automatic historical-identity repair and UI. The importer's
