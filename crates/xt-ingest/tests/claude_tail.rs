@@ -882,3 +882,44 @@ fn claude_tail_refreshes_a_checkpoint_after_proving_an_unchanged_file_by_its_who
     assert!(scan_native(&mut store, &request, ScanMode::Resume).complete());
     assert_eq!(checkpoint(&store, &path).unwrap().0, generation);
 }
+
+#[test]
+fn claude_tail_rebuilds_its_watches_after_a_watcher_error() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    fs::write(home.file(A), body(A, 0..2)).unwrap();
+    let (tailer, events) = home.start(None);
+    tailer.wait_ready(WAIT).expect("ready");
+    let installs = tailer.status().watch_installs;
+    let seen = tailer.status().reconciles;
+    // The platform reports an error: whatever watch it lost is dropped, every
+    // host is rescanned, the roots are watched again and freshness is live
+    // once more; the error stays on record.
+    tailer.inject_watcher_error("synthetic watch loss");
+    let seen = settle(&tailer, seen);
+    let status = tailer.status();
+    assert!(status.watch_installs > installs, "{status:?}");
+    assert_eq!(status.freshness, Freshness::Live, "{status:?}");
+    assert!(
+        status
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("synthetic watch loss")),
+        "{status:?}"
+    );
+    assert!(
+        events.reconciled().iter().any(|event| matches!(
+            event,
+            TailEvent::Reconciled {
+                trigger: xt_ingest::native::watch::Trigger::Rescan,
+                ..
+            }
+        )),
+        "the error triggered a rescan"
+    );
+    // Changes below the rebuilt watch still arrive.
+    home.append(A, &line(2, A));
+    settle(&tailer, seen);
+    assert_eq!(records(&home.store(), A), 3);
+    tailer.stop();
+}

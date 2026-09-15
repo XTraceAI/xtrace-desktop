@@ -264,6 +264,15 @@ impl Tailer {
         })
     }
 
+    /// Deliver a watcher error as the platform would, for tests of the
+    /// rebuild path.
+    #[doc(hidden)]
+    pub fn inject_watcher_error(&self, reason: &str) {
+        let _ = self
+            .control
+            .send(Message::Fs(Err(notify::Error::generic(reason))));
+    }
+
     pub fn stop(mut self) {
         let _ = self.control.send(Message::Stop);
         if let Some(worker) = self.worker.take() {
@@ -286,6 +295,8 @@ struct Dirty {
     hosts: Vec<Host>,
     rescan: bool,
     stop: bool,
+    /// The watcher reported an error: some installed watch may be lost.
+    watcher_failed: Option<String>,
 }
 
 impl Dirty {
@@ -367,8 +378,10 @@ impl Worker {
                 &mut dirty,
                 &self.config,
                 &self.homes,
-                &self.shared,
             );
+            if let Some(reason) = dirty.watcher_failed.take() {
+                self.rebuild_watches(reason);
+            }
             // Changes received before a stop request are still reconciled.
             if !dirty.hosts.is_empty() {
                 let hosts = dirty.hosts.clone();
@@ -421,7 +434,7 @@ impl Worker {
                     Message::Fs(event) => {
                         if let Some(error) = classify(event, &mut dirty, &self.config, &self.homes)
                         {
-                            self.shared.update(|state| state.last_error = Some(error));
+                            dirty.watcher_failed = Some(error);
                         }
                     }
                 }
@@ -431,8 +444,10 @@ impl Worker {
                     &mut dirty,
                     &self.config,
                     &self.homes,
-                    &self.shared,
                 );
+                if let Some(reason) = dirty.watcher_failed.take() {
+                    self.rebuild_watches(reason);
+                }
                 if !dirty.hosts.is_empty() {
                     let hosts = dirty.hosts.clone();
                     let reconciled = self.reconcile(&hosts);
@@ -529,10 +544,39 @@ impl Worker {
         }
     }
 
+    /// The watcher reported an error, so any installed watch may be lost:
+    /// every watch is dropped and freshness degraded until the next pass
+    /// installs them again (a rescan of every host follows the error).
+    fn rebuild_watches(&mut self, reason: String) {
+        let watched = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .watched
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        if let Some(watcher) = self.watcher.as_mut() {
+            for path in &watched {
+                let _ = watcher.unwatch(path);
+            }
+        }
+        let reason = format!("watcher reported an error: {reason}");
+        self.shared.update(|state| {
+            state.watched.clear();
+            state.freshness = Some(Freshness::Degraded {
+                reason: reason.clone(),
+            });
+            state.last_error = Some(reason);
+        });
+    }
+
     fn ensure_watches(&mut self) {
         let Some(watcher) = self.watcher.as_mut() else {
             return;
         };
+        let mut failed = false;
         // A watched root that vanished, or that is no longer the directory
         // the watch was installed on (deleted and recreated at the same path
         // before this pass), is forgotten and its watch dropped: a platform
@@ -572,6 +616,7 @@ impl Worker {
                     "{} could not be watched: it is absent or not a directory",
                     root.path.display()
                 );
+                failed = true;
                 self.shared.update(|state| {
                     state.freshness = Some(Freshness::Degraded {
                         reason: reason.clone(),
@@ -592,6 +637,7 @@ impl Worker {
                 }),
                 Err(error) => {
                     let reason = format!("{} could not be watched: {error}", root.path.display());
+                    failed = true;
                     self.shared.update(|state| {
                         state.freshness = Some(Freshness::Degraded {
                             reason: reason.clone(),
@@ -600,6 +646,12 @@ impl Worker {
                     });
                 }
             }
+        }
+        // Freshness reflects the current watches: every root covered again
+        // after a rebuild or a late arrival makes the tailer live again.
+        if !failed {
+            self.shared
+                .update(|state| state.freshness = Some(Freshness::Live));
         }
     }
 }
@@ -744,13 +796,12 @@ fn drain(
     dirty: &mut Dirty,
     config: &WatchConfig,
     homes: &[PathBuf],
-    shared: &Shared,
 ) {
     loop {
         match rx.recv_timeout(debounce) {
             Ok(Message::Fs(event)) => {
                 if let Some(error) = classify(event, dirty, config, homes) {
-                    shared.update(|state| state.last_error = Some(error));
+                    dirty.watcher_failed = Some(error);
                 }
             }
             Ok(Message::Stop) | Err(RecvTimeoutError::Disconnected) => {

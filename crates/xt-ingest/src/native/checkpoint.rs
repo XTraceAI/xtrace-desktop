@@ -11,8 +11,10 @@
 //!   that many bytes and the whole prefix digests to the recorded value. A
 //!   file whose length and change time both still match is proven unchanged
 //!   by the cheaper trailing digest alone (every write moves the change time,
-//!   which no ordinary tool sets back); a file whose change time moved is
-//!   proven by the whole prefix even when its length did not. A different
+//!   which no ordinary tool sets back), but only once the checkpoint was
+//!   recorded a couple of seconds after that change time, so a coarse clock
+//!   cannot hide a later write in the same tick; otherwise, and whenever the
+//!   change time moved, the whole prefix is proven even at equal length. A different
 //!   inode is a replacement, a shorter file a truncation, a differing digest an
 //!   in-place rewrite: each starts a new generation and the file is read from
 //!   the beginning again.
@@ -56,6 +58,12 @@ pub const TAIL_DIGEST_LEN: u64 = 4096;
 /// Coarse source clocks and the producer's own update stamps may lag the scan
 /// instant; a host scan asks this much further back than its generation.
 pub const HOST_SCAN_MARGIN_MS: i64 = 2_000;
+
+/// A change time equal to the checkpoint's proves nothing by itself on a
+/// filesystem whose clock is coarse: a rewrite in the same tick keeps it. It
+/// counts only once the checkpoint was recorded this long after that change
+/// time, so any later write must land in a later tick.
+pub const CTIME_SETTLE_MS: i64 = 2_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -212,9 +220,15 @@ pub fn resume_point(
     if identity.len < position || tail_len > position || tail_len > TAIL_DIGEST_LEN {
         return Ok(fresh(ResumeBasis::Truncated));
     }
-    if identity.len == position && identity.ctime_ns == ctime_ns {
-        // Nothing was written to the inode since the checkpoint and nothing
-        // would be read: the trailing bytes alone decide, cheaply.
+    let settled = checkpoint
+        .updated_at
+        .saturating_sub(ctime_ns.saturating_div(1_000_000))
+        >= CTIME_SETTLE_MS;
+    if identity.len == position && identity.ctime_ns == ctime_ns && settled {
+        // Nothing was written to the inode since the checkpoint (its change
+        // time had settled well before the checkpoint was recorded, so even a
+        // coarse clock would show a later write) and nothing would be read:
+        // the trailing bytes alone decide, cheaply.
         source.seek(SeekFrom::Start(position - tail_len))?;
         let mut tail = vec![0u8; usize::try_from(tail_len).unwrap_or(0)];
         source.read_exact(&mut tail)?;
@@ -230,9 +244,9 @@ pub fn resume_point(
             refresh: false,
         });
     }
-    // Bytes follow the position, or the inode was written to since the
-    // checkpoint: every byte before the position is proven before any of what
-    // follows is read, and the running digest continues over it.
+    // Bytes follow the position, or the inode was (or may have been) written
+    // to since the checkpoint: every byte before the position is proven before
+    // any of what follows is read, and the running digest continues over it.
     source.seek(SeekFrom::Start(0))?;
     let mut prefix = Sha256::new();
     let mut window = TailWindow::default();
@@ -724,12 +738,21 @@ mod tests {
             8,
             2,
         );
+        // Recorded in the same tick as the change time (a coarse clock could
+        // hide a rewrite): still proven by the whole prefix.
         let mut source = fs::File::open(&path).unwrap();
-        let cheap = resume_point(Some(&refreshed), &mut source, &rewritten_same).unwrap();
+        let unsettled = resume_point(Some(&refreshed), &mut source, &rewritten_same).unwrap();
+        assert_eq!(unsettled.basis, ResumeBasis::Unchanged);
+        assert!(unsettled.refresh, "an unsettled change time is no proof");
+        // Recorded well after the change time: the cheap proof applies.
+        let mut settled = refreshed.clone();
+        settled.updated_at = rewritten_same.ctime_ns / 1_000_000 + CTIME_SETTLE_MS;
+        let mut source = fs::File::open(&path).unwrap();
+        let cheap = resume_point(Some(&settled), &mut source, &rewritten_same).unwrap();
         assert_eq!(cheap.basis, ResumeBasis::Unchanged);
         assert!(
             !cheap.refresh,
-            "the refreshed checkpoint proves the file cheaply"
+            "a settled checkpoint proves the file cheaply"
         );
         // The first byte rewritten in place, length and trailing bytes kept:
         // caught by the change time and the whole-prefix digest.
