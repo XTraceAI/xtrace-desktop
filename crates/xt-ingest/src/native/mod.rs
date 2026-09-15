@@ -130,7 +130,7 @@ impl HostReport {
     }
 }
 
-fn all_imported(sessions: &[SessionResult]) -> bool {
+pub(crate) fn all_imported(sessions: &[SessionResult]) -> bool {
     sessions
         .iter()
         .all(|session| matches!(session.outcome, SessionOutcome::Imported { .. }))

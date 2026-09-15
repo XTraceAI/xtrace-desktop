@@ -14,7 +14,8 @@
 //! degraded and says so; it never reports ready as if it were live.
 
 use super::{
-    HostReport, ImportReport, ImportRequest, ScanMode, SessionOutcome, scan_native_observed,
+    HostReport, HostStatus, ImportReport, ImportRequest, ScanMode, SessionOutcome, all_imported,
+    scan_native_observed,
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
@@ -77,7 +78,8 @@ pub struct Readiness {
     pub freshness: Freshness,
     /// The initial scan, with every host reconciled during startup replaced by
     /// its reconciliation, the records the initial scan indexed counted in
-    /// and a session it indexed that the reconciliation no longer saw kept.
+    /// and a session it indexed that the reconciliation no longer saw kept
+    /// (a host stays incomplete around such a session that was not imported).
     pub report: ImportReport,
 }
 
@@ -301,7 +303,9 @@ impl Drop for Tailer {
 /// passes imported reports the sum of their new and enriched records, under
 /// the later pass's status, and a session the later pass no longer saw (its
 /// file renamed or removed since) stays as the earlier pass reported it, its
-/// records being indexed. The report then reads the same whether or not the
+/// records being indexed; a host whose retained session was not imported
+/// stays incomplete, as the earlier pass reported it, so the report never
+/// reads complete around a gap. The report then reads the same whether or not the
 /// platform also delivered an event for a change made just before the watch
 /// was registered (FSEvents may), which queues a second pass that finds the
 /// file unchanged.
@@ -350,6 +354,9 @@ fn carry_counts(earlier: &HostReport, mut later: HostReport) -> HostReport {
         if !seen {
             later.sessions.push(known.clone());
         }
+    }
+    if later.status == HostStatus::Complete && !all_imported(&later.sessions) {
+        later.status = HostStatus::Incomplete;
     }
     later
 }

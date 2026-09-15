@@ -2,7 +2,7 @@
 //! watcher is registered before the initial scan, changes made during the scan
 //! reach the index before ready with no later event (a session the initial
 //! scan indexed and a later pass no longer saw stays in the readiness
-//! report), live appends, completed
+//! report, and keeps it incomplete if it was not imported), live appends, completed
 //! partial lines, new files and coalesced directory events converge within
 //! seconds, truncation, replacement, restart and a failed transaction never
 //! omit or duplicate a record, an appended scan reports the surface the index
@@ -361,6 +361,77 @@ fn claude_tail_ready_keeps_a_session_the_initial_scan_indexed_and_a_later_pass_n
         sessions
             .iter()
             .any(|s| s.native_session_id.as_deref() == Some(gone.as_str()))
+    );
+    tailer.stop();
+}
+
+#[test]
+fn claude_tail_ready_stays_incomplete_around_a_retained_session_that_was_not_imported() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    // A carries a record without a UUID, which the scan drops: partial.
+    let mut broken: serde_json::Value = serde_json::from_str(line(2, A).trim()).unwrap();
+    broken.as_object_mut().unwrap().remove("uuid");
+    fs::write(home.file(A), body(A, 0..2) + &broken.to_string() + "\n").unwrap();
+    fs::write(home.file(B), body(B, 0..2)).unwrap();
+    // A is removed right after its import, so the startup reconciliation
+    // that its removal queues no longer sees it and reports complete.
+    let probe: xt_ingest::native::watch::Probe = {
+        let file = home.file(A);
+        Arc::new(move |point: ProbePoint<'_>| {
+            if let ProbePoint::FileScanned(path) = point
+                && path == file
+            {
+                fs::remove_file(path).unwrap();
+            }
+        })
+    };
+    let (tailer, events) = home.start(Some(probe));
+    let ready = tailer.wait_ready(WAIT).expect("ready");
+    assert_eq!(ready.freshness, Freshness::Live, "{ready:?}");
+    assert!(
+        events.reconciled().iter().any(|event| matches!(
+            event,
+            TailEvent::Reconciled {
+                trigger: xt_ingest::native::watch::Trigger::Startup,
+                ..
+            }
+        )),
+        "the removal was reconciled before ready: {ready:?}"
+    );
+    let store = home.store();
+    assert_eq!(records(&store, A), 2);
+    assert_eq!(records(&store, B), 2);
+    // The retained partial session keeps the host, and the report, incomplete.
+    let claude = &ready.report.hosts[0];
+    assert_eq!(claude.status, HostStatus::Incomplete, "{ready:?}");
+    assert!(!ready.report.complete());
+    let outcome = |id: &str| {
+        claude
+            .sessions
+            .iter()
+            .find(|session| session.native_session_id.as_deref() == Some(id))
+            .unwrap_or_else(|| panic!("{id} is missing from the readiness report: {ready:?}"))
+            .outcome
+            .clone()
+    };
+    assert!(
+        matches!(
+            outcome(A),
+            SessionOutcome::Partial {
+                records_new: 2,
+                records_dropped: 1,
+                ..
+            }
+        ),
+        "{ready:?}"
+    );
+    assert_eq!(
+        outcome(B),
+        SessionOutcome::Imported {
+            records_new: 2,
+            records_enriched: 0
+        }
     );
     tailer.stop();
 }
