@@ -1,6 +1,8 @@
 //! Incremental scanning and live tailing of native Claude history: the
 //! watcher is registered before the initial scan, changes made during the scan
-//! reach the index before ready with no later event, live appends, completed
+//! reach the index before ready with no later event (a session the initial
+//! scan indexed and a later pass no longer saw stays in the readiness
+//! report), live appends, completed
 //! partial lines, new files and coalesced directory events converge within
 //! seconds, truncation, replacement, restart and a failed transaction never
 //! omit or duplicate a record, an appended scan reports the surface the index
@@ -296,6 +298,70 @@ fn claude_tail_watches_before_scanning_and_reconciles_changes_made_during_the_sc
         let path = home.file(session);
         assert_eq!(checkpoint(&store, &path).unwrap().1, file_len(&path));
     }
+    tailer.stop();
+}
+
+#[test]
+fn claude_tail_ready_keeps_a_session_the_initial_scan_indexed_and_a_later_pass_no_longer_saw() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    fs::write(home.file(A), body(A, 0..3)).unwrap();
+    fs::write(home.file(B), body(B, 0..2)).unwrap();
+    // The first file scanned is removed right after its import: the change
+    // queues a startup reconciliation that no longer sees it.
+    let removed: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
+    let probe: xt_ingest::native::watch::Probe = {
+        let removed = Arc::clone(&removed);
+        Arc::new(move |point: ProbePoint<'_>| {
+            if let ProbePoint::FileScanned(path) = point {
+                let mut removed = removed.lock().unwrap();
+                if removed.is_none() {
+                    fs::remove_file(path).unwrap();
+                    *removed = Some(path.to_path_buf());
+                }
+            }
+        })
+    };
+    let (tailer, events) = home.start(Some(probe));
+    let ready = tailer.wait_ready(WAIT).expect("ready");
+    assert_eq!(ready.freshness, Freshness::Live, "{ready:?}");
+    let removed = removed.lock().unwrap().clone().expect("a file was scanned");
+    let gone = removed.file_stem().unwrap().to_str().unwrap().to_owned();
+    assert!(
+        events.reconciled().iter().any(|event| matches!(
+            event,
+            TailEvent::Reconciled {
+                trigger: xt_ingest::native::watch::Trigger::Startup,
+                ..
+            }
+        )),
+        "the removal was reconciled before ready: {ready:?}"
+    );
+    // History is kept, and the readiness report still names the removed
+    // session with the records the initial scan indexed.
+    let store = home.store();
+    assert_eq!(records(&store, A), 3);
+    assert_eq!(records(&store, B), 2);
+    let sessions = &ready.report.hosts[0].sessions;
+    for id in [A, B] {
+        let session = sessions
+            .iter()
+            .find(|session| session.native_session_id.as_deref() == Some(id))
+            .unwrap_or_else(|| panic!("{id} is missing from the readiness report: {ready:?}"));
+        assert_eq!(
+            session.outcome,
+            SessionOutcome::Imported {
+                records_new: records(&store, id),
+                records_enriched: 0
+            },
+            "{id}: {ready:?}"
+        );
+    }
+    assert!(
+        sessions
+            .iter()
+            .any(|s| s.native_session_id.as_deref() == Some(gone.as_str()))
+    );
     tailer.stop();
 }
 

@@ -76,7 +76,8 @@ pub struct Readiness {
     #[serde(flatten)]
     pub freshness: Freshness,
     /// The initial scan, with every host reconciled during startup replaced by
-    /// its reconciliation, the records the initial scan indexed counted in.
+    /// its reconciliation, the records the initial scan indexed counted in
+    /// and a session it indexed that the reconciliation no longer saw kept.
     pub report: ImportReport,
 }
 
@@ -298,7 +299,9 @@ impl Drop for Tailer {
 /// A host's startup reconciliation stands in the readiness report for its
 /// initial scan, with the records that scan indexed counted in: a session both
 /// passes imported reports the sum of their new and enriched records, under
-/// the later pass's status. The report then reads the same whether or not the
+/// the later pass's status, and a session the later pass no longer saw (its
+/// file renamed or removed since) stays as the earlier pass reported it, its
+/// records being indexed. The report then reads the same whether or not the
 /// platform also delivered an event for a change made just before the watch
 /// was registered (FSEvents may), which queues a second pass that finds the
 /// file unchanged.
@@ -338,6 +341,14 @@ fn carry_counts(earlier: &HostReport, mut later: HostReport) -> HostReport {
                 }
                 SessionOutcome::Skipped { .. } => {}
             }
+        }
+    }
+    for known in &earlier.sessions {
+        let seen = later.sessions.iter().any(|session| {
+            session.native_session_id == known.native_session_id && session.path == known.path
+        });
+        if !seen {
+            later.sessions.push(known.clone());
         }
     }
     later
