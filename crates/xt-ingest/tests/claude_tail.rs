@@ -12,8 +12,9 @@
 //! omit or duplicate a record, an appended scan reports the surface the index
 //! holds and stops a record that disagrees with it, a root created after its
 //! watches were decided is watched and scanned again before ready, a root the
-//! platform reports removed is registered again, the Cursor hook's state pins
-//! are watched, sources are never modified, storage stays metadata-only, and zero-position locators from the
+//! platform reports removed is registered again, an event counted before a
+//! stop is reconciled before it, a symlinked home is followed for the fallback
+//! watch, the Cursor hook's state pins are watched, sources are never modified, storage stays metadata-only, and zero-position locators from the
 //! initial importer migrate to checkpoints by one full replay.
 use rusqlite::Connection;
 use serde_json::json;
@@ -1150,7 +1151,13 @@ fn claude_tail_watches_a_root_that_appears_later_before_enumerating_it() {
     assert_eq!(ready.report.hosts[0].status, HostStatus::MissingSource);
     assert_eq!(
         tailer.status().watched,
-        vec![home.root.to_string_lossy().into_owned()]
+        vec![
+            home.root
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        ]
     );
     let seen = tailer.status().reconciles;
     // The root appears with a first session: the home watch sees it, the new
@@ -1256,7 +1263,7 @@ fn claude_tail_watches_the_cursor_parent_so_a_sibling_root_is_seen_when_it_appea
         tailer.status().watched,
         vec![
             // The home, without recursion, for the absent hook state pins.
-            spelled(&root),
+            spelled(&root.canonicalize().unwrap()),
             spelled(&root.join(".cursor")),
             spelled(&root.join(".cursor/projects"))
         ]
@@ -1519,6 +1526,79 @@ fn claude_tail_registers_a_root_again_after_the_platform_reports_it_removed() {
     fs::write(home.file(C), body(C, 0..1)).unwrap();
     settle(&tailer, seen);
     assert_eq!(records(&home.store(), C), 1);
+    tailer.stop();
+}
+
+#[test]
+fn claude_tail_reconciles_an_event_counted_before_a_stop_but_queued_after_it() {
+    // A watcher callback counts an event, is descheduled, and a stop request
+    // is queued before the event itself: the event was received before the
+    // stop and is still reconciled before the tailer stops.
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    fs::write(home.file(A), body(A, 0..2)).unwrap();
+    let (tailer, events) = home.start(None);
+    tailer.wait_ready(WAIT).expect("ready");
+    let before = events.reconciled().len();
+    let queue = tailer.inject_removed_late(&home.root.join(".claude/projects"));
+    let late = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(30));
+        queue();
+    });
+    tailer.stop();
+    late.join().unwrap();
+    assert!(
+        events.reconciled().len() > before,
+        "the event counted before the stop was reconciled: {:?}",
+        events.0.lock().unwrap().len()
+    );
+}
+
+#[test]
+fn claude_tail_follows_an_accepted_symlinked_home_for_the_fallback_watch() {
+    // The home itself may be an alias (unlike a source root): with no root
+    // yet, the fallback watch goes on the directory the alias names.
+    let temp = tempfile::TempDir::new().unwrap();
+    let real = temp.path().join("real-home");
+    fs::create_dir_all(&real).unwrap();
+    let alias = temp.path().join("home");
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    let events = Events::default();
+    let sink = {
+        let events = events.clone();
+        Box::new(move |event: TailEvent| events.0.lock().unwrap().push(event))
+            as Box<dyn Fn(TailEvent) + Send>
+    };
+    let tailer = Tailer::start(
+        Store::open(temp.path().join("index.sqlite")).unwrap(),
+        WatchConfig {
+            home: alias.clone(),
+            hosts: vec![Host::Claude],
+            pin: repo().join(".plugin-pin"),
+            plugin_root: None,
+            python: None,
+            debounce: Duration::from_millis(100),
+            probe: None,
+        },
+        sink,
+    );
+    let ready = tailer.wait_ready(WAIT).expect("ready");
+    assert_eq!(ready.freshness, Freshness::Live, "{ready:?}");
+    let watched = tailer.status().watched;
+    assert!(
+        watched.contains(&real.canonicalize().unwrap().to_string_lossy().into_owned()),
+        "{watched:?}"
+    );
+    // The first root appearing through the alias is seen and imported.
+    let seen = tailer.status().reconciles;
+    let project = alias.join(".claude/projects/-Users-fixture");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(project.join(format!("{A}.jsonl")), body(A, 0..2)).unwrap();
+    settle(&tailer, seen);
+    assert_eq!(
+        records(&Store::open(temp.path().join("index.sqlite")).unwrap(), A),
+        2
+    );
     tailer.stop();
 }
 

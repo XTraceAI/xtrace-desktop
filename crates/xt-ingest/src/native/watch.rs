@@ -301,6 +301,20 @@ impl Tailer {
         let _ = self.control.send(Message::Fs(Ok(event)));
     }
 
+    /// Count a synthetic removal event for `path` as delivered now, but
+    /// queue it only when the returned closure is called: a callback
+    /// descheduled between counting and queueing (for tests).
+    pub fn inject_removed_late(&self, path: &Path) -> Box<dyn FnOnce() + Send> {
+        let event =
+            notify::Event::new(notify::EventKind::Remove(notify::event::RemoveKind::Folder))
+                .add_path(path.to_path_buf());
+        self.shared.update(|state| state.delivered += 1);
+        let control = self.control.clone();
+        Box::new(move || {
+            let _ = control.send(Message::Fs(Ok(event)));
+        })
+    }
+
     pub fn stop(mut self) {
         let _ = self.control.send(Message::Stop);
         if let Some(worker) = self.worker.take() {
@@ -523,6 +537,39 @@ impl Worker {
         }
     }
 
+    /// Before a stop is honored, take every counted delivery off the queue:
+    /// an event a callback had counted but not yet queued when the stop was
+    /// queued still reaches the index before shutdown.
+    fn drain_counted(&mut self, rx: &Receiver<Message>, dirty: &mut Dirty) {
+        loop {
+            let delivered = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .delivered;
+            if self.consumed >= delivered {
+                return;
+            }
+            match rx.recv_timeout(self.config.debounce) {
+                Ok(Message::Fs(event)) => {
+                    self.consumed += 1;
+                    if let Some(error) = classify(
+                        event,
+                        dirty,
+                        &self.config,
+                        &self.homes,
+                        &self.watched_roots(),
+                    ) {
+                        dirty.watcher_failed = Some(error);
+                    }
+                }
+                Ok(Message::Stop) => {}
+                Err(_) => return,
+            }
+        }
+    }
+
     /// Publish idle only if every delivered event has been taken off the
     /// queue, under the lock the delivery count changes under.
     fn publish_idle(&self) {
@@ -576,6 +623,9 @@ impl Worker {
                 &self.homes,
                 &self.watched_roots(),
             );
+            if dirty.stop {
+                self.drain_counted(&rx, &mut dirty);
+            }
             if let Some(reason) = dirty.watcher_failed.take() {
                 self.rebuild_watches(reason);
             }
@@ -657,6 +707,9 @@ impl Worker {
                     &self.homes,
                     &self.watched_roots(),
                 );
+                if dirty.stop {
+                    self.drain_counted(&rx, &mut dirty);
+                }
                 if let Some(reason) = dirty.watcher_failed.take() {
                     self.rebuild_watches(reason);
                 }
@@ -971,7 +1024,10 @@ fn directory_identity(path: &Path) -> Option<(u64, u64)> {
 /// itself is watched without recursion when a host root is absent, so the
 /// root's creation is noticed.
 fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
-    fn add(roots: &mut Vec<WatchRoot>, home: &Path, host: Host, candidates: &[PathBuf]) {
+    // The home may be an accepted alias (a symlinked home directory), unlike
+    // a source root: the fallback watch goes on the directory it names.
+    let fallback = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    fn add(roots: &mut Vec<WatchRoot>, fallback: &Path, host: Host, candidates: &[PathBuf]) {
         for candidate in candidates {
             if candidate.is_dir() {
                 if !roots.iter().any(|root| root.path == *candidate) {
@@ -984,9 +1040,9 @@ fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
                 return;
             }
         }
-        if !roots.iter().any(|root| root.path == home) {
+        if !roots.iter().any(|root| root.path == fallback) {
             roots.push(WatchRoot {
-                path: home.to_path_buf(),
+                path: fallback.to_path_buf(),
                 recursive: false,
                 host: None,
             });
@@ -997,13 +1053,13 @@ fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
         match host {
             Host::Claude => add(
                 &mut roots,
-                home,
+                &fallback,
                 *host,
                 &[home.join(".claude/projects"), home.join(".claude")],
             ),
             Host::Codex => add(
                 &mut roots,
-                home,
+                &fallback,
                 *host,
                 &[home.join(".codex/sessions"), home.join(".codex")],
             ),
@@ -1016,7 +1072,7 @@ fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
                 if chats.is_dir() || projects.is_dir() {
                     for root in [chats, projects] {
                         if root.is_dir() {
-                            add(&mut roots, home, *host, &[root]);
+                            add(&mut roots, &fallback, *host, &[root]);
                         }
                     }
                     if parent.is_dir() && !roots.iter().any(|root| root.path == parent) {
@@ -1027,7 +1083,7 @@ fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
                         });
                     }
                 } else {
-                    add(&mut roots, home, *host, &[parent]);
+                    add(&mut roots, &fallback, *host, &[parent]);
                 }
                 // The hook's state pins fold into a Cursor session's clock and
                 // stamp, and change on their own: their directory is watched
@@ -1035,12 +1091,12 @@ fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
                 // recursion) until it appears.
                 let pins = home.join(".config/memhub-plugin/cursorflush");
                 if pins.is_dir() {
-                    add(&mut roots, home, *host, &[pins]);
+                    add(&mut roots, &fallback, *host, &[pins]);
                 } else {
                     let ancestor = [home.join(".config/memhub-plugin"), home.join(".config")]
                         .into_iter()
                         .find(|dir| dir.is_dir())
-                        .unwrap_or_else(|| home.to_path_buf());
+                        .unwrap_or_else(|| fallback.clone());
                     if !roots.iter().any(|root| root.path == ancestor) {
                         roots.push(WatchRoot {
                             path: ancestor,
@@ -1248,11 +1304,12 @@ mod tests {
             .iter()
             .map(|root| (root.path.clone(), root.recursive))
             .collect::<Vec<_>>();
+        let fallback = home.canonicalize().unwrap();
         assert_eq!(
             described,
             vec![
                 (home.join(".claude/projects"), true),
-                (home.to_path_buf(), false)
+                (fallback.clone(), false)
             ]
         );
         // One Cursor root present: it is watched recursively and the parent
@@ -1269,7 +1326,7 @@ mod tests {
                 (home.join(".cursor/projects"), true),
                 (home.join(".cursor"), false),
                 // The hook's state pins: absent, so the home stands in.
-                (home.to_path_buf(), false)
+                (fallback.clone(), false)
             ]
         );
         // The pin directory's nearest existing ancestor stands in without

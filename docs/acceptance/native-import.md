@@ -123,8 +123,10 @@ the existing writer.
 - **Watching.** `xt_ingest::native::watch::Tailer` registers a recursive `notify`
   watcher (FSEvents on macOS, inotify on Linux) on each existing host root before the
   initial scan; an absent root is covered by a non-recursive watch on its nearest
-  existing ancestor (the `.cursor` parent, or the home) so its creation is seen, and a
-  root that appeared is watched before the reconciliation that first enumerates it.
+  existing ancestor (the `.cursor` parent, or the home; a symlinked home, accepted
+  unlike a source-root alias, is followed to the directory it names) so its creation
+  is seen, and a root that appeared is watched before the reconciliation that first
+  enumerates it.
   The Cursor hook's state pin directory (`.config/memhub-plugin/cursorflush`), whose
   pins fold into a session's clock and stamp and change on their own, is watched like
   a root, through its nearest existing ancestor until it appears; like the host
@@ -157,7 +159,8 @@ the existing writer.
   reason kept, and a host stays incomplete around any of these. After ready, the tailer is idle only once every
   change delivered to it, also one delivered while a reconciliation ran, has been
   taken off its queue and reconciled (the delivery count and the idle flag change
-  under one lock). A root that appears during a pass, after its
+  under one lock), and a stop request is honored only once every event counted
+  before it has been taken off the queue and reconciled. A root that appears during a pass, after its
   watches were decided, is watched after the scan and its host scanned again, until
   a pass finds every root watched, so no change below a root falls between its
   enumeration and its watch. Event kinds are never trusted: any path under a host
