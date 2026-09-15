@@ -2,7 +2,8 @@
 //! watcher is registered before the initial scan, changes made during the scan
 //! reach the index before ready with no later event (a session the initial
 //! scan indexed and a later pass no longer saw stays in the readiness
-//! report, and keeps it incomplete if it was not imported), live appends, completed
+//! report, as does a diagnostic it raised, and each keeps the report
+//! incomplete), live appends, completed
 //! partial lines, new files and coalesced directory events converge within
 //! seconds, truncation, replacement, restart and a failed transaction never
 //! omit or duplicate a record, an appended scan reports the surface the index
@@ -432,6 +433,65 @@ fn claude_tail_ready_stays_incomplete_around_a_retained_session_that_was_not_imp
             records_new: 2,
             records_enriched: 0
         }
+    );
+    tailer.stop();
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_tail_ready_keeps_a_diagnostic_the_later_pass_no_longer_saw() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    fs::write(home.file(A), body(A, 0..2)).unwrap();
+    // A project directory the scan cannot read: a discovery diagnostic and
+    // no session for the transcript below it.
+    let locked = home.root.join(".claude/projects/-Users-locked");
+    fs::create_dir_all(&locked).unwrap();
+    fs::write(locked.join(format!("{C}.jsonl")), body(C, 0..1)).unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    // Right after A is scanned the directory is removed (made readable
+    // first), so the startup reconciliation its removal queues sees neither
+    // the directory nor its transcript and reports complete.
+    let probe: xt_ingest::native::watch::Probe = {
+        let locked = locked.clone();
+        Arc::new(move |point: ProbePoint<'_>| {
+            if matches!(point, ProbePoint::FileScanned(_)) && locked.exists() {
+                fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+                fs::remove_dir_all(&locked).unwrap();
+            }
+        })
+    };
+    let (tailer, events) = home.start(Some(probe));
+    let ready = tailer.wait_ready(WAIT).expect("ready");
+    assert_eq!(ready.freshness, Freshness::Live, "{ready:?}");
+    assert!(
+        events.reconciled().iter().any(|event| matches!(
+            event,
+            TailEvent::Reconciled {
+                trigger: xt_ingest::native::watch::Trigger::Startup,
+                ..
+            }
+        )),
+        "the removal was reconciled before ready: {ready:?}"
+    );
+    let store = home.store();
+    assert_eq!(records(&store, A), 2);
+    assert_eq!(
+        records(&store, C),
+        0,
+        "the locked transcript was never read"
+    );
+    // The diagnostic stays, and keeps the host and the report incomplete.
+    let claude = &ready.report.hosts[0];
+    assert_eq!(claude.status, HostStatus::Incomplete, "{ready:?}");
+    assert!(!ready.report.complete());
+    assert!(
+        claude
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.path.as_deref() == Some(&*locked.to_string_lossy())),
+        "{ready:?}"
     );
     tailer.stop();
 }

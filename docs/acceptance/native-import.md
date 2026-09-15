@@ -143,7 +143,9 @@ the existing writer.
   also delivered an event for a change made just before the watch was registered
   (FSEvents may). A session the initial scan indexed that a later pass no longer saw (its file
   renamed or removed meanwhile) stays in the readiness report as it was imported,
-  and a host stays incomplete around such a session that was not imported. A root that appears during a pass, after its
+  as does a diagnostic it raised that a later pass neither repeated nor resolved,
+  and a host stays incomplete around such a session that was not imported or such
+  a diagnostic. A root that appears during a pass, after its
   watches were decided, is watched after the scan and its host scanned again, until
   a pass finds every root watched, so no change below a root falls between its
   enumeration and its watch. Event kinds are never trusted: any path under a host

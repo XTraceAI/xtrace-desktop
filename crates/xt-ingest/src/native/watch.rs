@@ -78,8 +78,9 @@ pub struct Readiness {
     pub freshness: Freshness,
     /// The initial scan, with every host reconciled during startup replaced by
     /// its reconciliation, the records the initial scan indexed counted in
-    /// and a session it indexed that the reconciliation no longer saw kept
-    /// (a host stays incomplete around such a session that was not imported).
+    /// and a session it indexed, or a diagnostic it raised, that the
+    /// reconciliation no longer saw kept (a host stays incomplete around such
+    /// a session that was not imported, or such a diagnostic).
     pub report: ImportReport,
 }
 
@@ -303,9 +304,12 @@ impl Drop for Tailer {
 /// passes imported reports the sum of their new and enriched records, under
 /// the later pass's status, and a session the later pass no longer saw (its
 /// file renamed or removed since) stays as the earlier pass reported it, its
-/// records being indexed; a host whose retained session was not imported
-/// stays incomplete, as the earlier pass reported it, so the report never
-/// reads complete around a gap. The report then reads the same whether or not the
+/// records being indexed; a diagnostic of the earlier pass that the later
+/// pass neither repeated nor resolved (by importing a session at or below
+/// its path) stays as well; and a host with a retained session that was not
+/// imported, or a retained diagnostic, stays incomplete, as the earlier pass
+/// reported it, so the report never reads complete around a gap. The report
+/// then reads the same whether or not the
 /// platform also delivered an event for a change made just before the watch
 /// was registered (FSEvents may), which queues a second pass that finds the
 /// file unchanged.
@@ -355,7 +359,27 @@ fn carry_counts(earlier: &HostReport, mut later: HostReport) -> HostReport {
             later.sessions.push(known.clone());
         }
     }
-    if later.status == HostStatus::Complete && !all_imported(&later.sessions) {
+    for diagnostic in &earlier.diagnostics {
+        let repeated = later
+            .diagnostics
+            .iter()
+            .any(|known| known.path == diagnostic.path);
+        let resolved = diagnostic.path.as_deref().is_some_and(|named| {
+            later.sessions.iter().any(|session| {
+                matches!(session.outcome, SessionOutcome::Imported { .. })
+                    && session
+                        .path
+                        .as_deref()
+                        .is_some_and(|path| Path::new(path).starts_with(named))
+            })
+        });
+        if !repeated && !resolved {
+            later.diagnostics.push(diagnostic.clone());
+        }
+    }
+    if later.status == HostStatus::Complete
+        && (!all_imported(&later.sessions) || !later.diagnostics.is_empty())
+    {
         later.status = HostStatus::Incomplete;
     }
     later
