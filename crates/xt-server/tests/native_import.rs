@@ -263,6 +263,10 @@ fn watch_native_once_reports_ready_and_resumes_on_the_next_run() {
     )
     .unwrap();
     assert_eq!(ready["report"]["hosts"][0]["sessions"][0]["records_new"], 1);
+    assert_eq!(
+        ready["report"]["hosts"][0]["sessions"][0]["source_surface"],
+        "cli"
+    );
     // `--replay` on the one-shot import rereads everything and adds nothing.
     let output = core()
         .args(["import-native", "--db"])
@@ -275,6 +279,7 @@ fn watch_native_once_reports_ready_and_resumes_on_the_next_run() {
     assert!(output.status.success());
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["hosts"][0]["sessions"][0]["records_new"], 0);
+    assert_eq!(report["hosts"][0]["sessions"][0]["source_surface"], "cli");
     // Usage errors stay explicit.
     for args in [
         vec![

@@ -474,6 +474,17 @@ fn claude_tail_restart_resumes_from_checkpoints_without_rereading_or_duplicating
         }
     );
     assert_eq!(
+        claude
+            .sessions
+            .iter()
+            .find(|result| result.native_session_id.as_deref() == Some(B))
+            .unwrap()
+            .source_surface
+            .as_deref(),
+        Some("cli"),
+        "an untouched file still reports its stored surface"
+    );
+    assert_eq!(
         outcome(C),
         SessionOutcome::Imported {
             records_new: 1,
@@ -592,10 +603,16 @@ fn claude_tail_migrates_zero_position_locators_by_one_full_replay() {
         0,
         "the locator stays a zero-position locator"
     );
-    // Proven unchanged: the next scan touches nothing.
+    // Proven unchanged: the next scan touches nothing, and still reports the
+    // session's stored surface.
     let report = scan_native(&mut store, &request, ScanMode::Resume);
     assert!(report.complete());
     assert_eq!(records(&store, A), 3);
+    assert_eq!(
+        report.hosts[0].sessions[0].source_surface.as_deref(),
+        Some("cli"),
+        "an unchanged file reports the surface the index holds"
+    );
     // A replay rereads everything and still adds nothing.
     let report = scan_native(&mut store, &request, ScanMode::Replay);
     assert!(report.complete());

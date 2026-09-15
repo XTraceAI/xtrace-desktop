@@ -376,10 +376,17 @@ pub fn import_file(
                 format!("checkpoint could not be refreshed: {error}"),
             ));
         }
+        // The report names the surface the index already holds for the
+        // session, so an unchanged file reads the same as when it was imported.
+        let source_surface = store
+            .session(&file.session_id)
+            .ok()
+            .flatten()
+            .and_then(|stored| stored.meta.surface);
         return Ok(SessionResult {
             native_session_id: Some(file.session_id.clone()),
             conversation_id: Some(file.session_id.clone()),
-            source_surface: None,
+            source_surface,
             path: Some(file.path.to_string_lossy().into_owned()),
             outcome: SessionOutcome::Imported {
                 records_new: 0,
