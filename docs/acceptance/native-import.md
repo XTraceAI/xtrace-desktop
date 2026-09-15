@@ -90,13 +90,18 @@ the existing writer.
   that ran it and to the inventory of sessions it covered: each session's path with
   its update clock and the identity of the file behind it (size, change time,
   device and inode, observed without following aliases). The next scan by the same
-  producer first inventories the host with a headers-only producer run; only if
-  every session older than the cutoff is in the recorded inventory, unchanged in
-  every respect, does it pass the instant, less a 2 s margin for coarse clocks, as
-  the producer's `--since`. A session restored or moved in with an old clock, one
-  replaced or rewritten with its clock preserved, one whose file cannot be
-  identified, an inventory that cannot be taken, or a different producer (a moved
-  pin) all mean a full scan. A scan with any gap (skipped or partial
+  producer first inventories the host with a headers-only producer run and stamps
+  every session before the producer reads anything; only if every session older
+  than the cutoff is in the recorded inventory, unchanged in every respect, does it
+  pass the instant, less a 2 s margin for coarse clocks, as the producer's
+  `--since`. A session restored or moved in with an old clock, one replaced or
+  rewritten with its clock preserved, one whose file cannot be identified, an
+  inventory that cannot be taken, or a different producer (a moved pin) all mean a
+  full scan. A completed scan records as covered only the sessions whose file is
+  the same after the scan as it was before the producer ran; one replaced
+  meanwhile, one that appeared meanwhile, or one that cannot be identified is left
+  out and read again next time, and without a pre-scan inventory no generation is
+  recorded. A scan with any gap (skipped or partial
   session, diagnostic, producer failure) leaves the old generation in place, so the
   next scan repeats its whole range. Per-session reader locators stay at zero.
 - **Migration.** An index written by the initial importer holds zero-position

@@ -422,6 +422,36 @@ pub fn stamp(home: &Path, header_path: &str, mtime: f64) -> Option<SourceStamp> 
     })
 }
 
+/// Stamp every inventoried session (path with the producer's clock).
+pub fn stamp_all(
+    home: &Path,
+    inventory: &BTreeMap<String, f64>,
+) -> BTreeMap<String, Option<SourceStamp>> {
+    inventory
+        .iter()
+        .map(|(path, mtime)| (path.clone(), stamp(home, path, *mtime)))
+        .collect()
+}
+
+/// What a completed scan may vouch for: every session whose file is the same
+/// after the scan as it was before the producer ran. A session replaced or
+/// rewritten meanwhile (even with its clock preserved), one that appeared
+/// meanwhile, or one that cannot be identified on either side is left out,
+/// so the next scan reads it again.
+pub fn covered_after_scan(
+    before: &BTreeMap<String, Option<SourceStamp>>,
+    after: &BTreeMap<String, Option<SourceStamp>>,
+) -> BTreeMap<String, SourceStamp> {
+    before
+        .iter()
+        .filter_map(|(path, pre)| {
+            let pre = pre.as_ref()?;
+            let post = after.get(path)?.as_ref()?;
+            (pre == post).then(|| (path.clone(), pre.clone()))
+        })
+        .collect()
+}
+
 /// One inventory entry: a session's path with its clock and file identity.
 pub fn inventory_key(path: &str, stamp: &SourceStamp) -> String {
     format!(
@@ -846,6 +876,40 @@ mod tests {
             }),
         );
         assert!(generation.cutoff_covers(&current));
+    }
+
+    #[test]
+    fn a_completed_scan_vouches_only_for_sessions_unchanged_across_it() {
+        let stamp = |ctime_ns: i64, ino: u64| {
+            Some(SourceStamp {
+                mtime: 1.0,
+                size: 10,
+                ctime_ns,
+                dev: 1,
+                ino,
+            })
+        };
+        let before: BTreeMap<String, Option<SourceStamp>> = [
+            ("same".to_owned(), stamp(1, 1)),
+            ("rewritten".to_owned(), stamp(1, 2)),
+            ("replaced".to_owned(), stamp(1, 3)),
+            ("removed".to_owned(), stamp(1, 4)),
+            ("unidentified".to_owned(), None),
+        ]
+        .into_iter()
+        .collect();
+        let after: BTreeMap<String, Option<SourceStamp>> = [
+            ("same".to_owned(), stamp(1, 1)),
+            ("rewritten".to_owned(), stamp(2, 2)),
+            ("replaced".to_owned(), stamp(1, 9)),
+            ("appeared".to_owned(), stamp(1, 5)),
+            ("unidentified".to_owned(), stamp(1, 6)),
+        ]
+        .into_iter()
+        .collect();
+        let covered = covered_after_scan(&before, &after);
+        assert_eq!(covered.keys().collect::<Vec<_>>(), vec!["same"]);
+        assert_eq!(covered["same"], stamp(1, 1).unwrap());
     }
 
     #[cfg(unix)]

@@ -18,7 +18,10 @@ pub mod stream;
 pub mod watch;
 
 use crate::writer::{MAX_BATCH_RECORDS, WriteBatch, write_batch};
-use checkpoint::{SourceStamp, host_scan_checkpoint, host_scan_generation, host_scan_since, stamp};
+use checkpoint::{
+    covered_after_scan, host_scan_checkpoint, host_scan_generation, host_scan_since, stamp,
+    stamp_all,
+};
 use readers_cli::ReaderOptions;
 use readers_cli::{ReaderDiagnostic, ReaderError};
 use serde::Serialize;
@@ -381,25 +384,20 @@ fn import_reader_host(
         ScanMode::Resume => host_scan_generation(store, host, request.home, &producer.commit),
         ScanMode::Replay => None,
     };
-    let mut current: Option<BTreeMap<String, Option<SourceStamp>>> = None;
-    let mut since = None;
-    if let Some(generation) = generation
-        && let Ok(inventory) = readers_cli::inventory(&python, &producer, host, request.home)
-    {
-        // Each inventoried session is stamped with its file's own identity,
-        // so a replacement or rewrite that preserved the clock is caught.
-        let inventory = inventory
-            .into_iter()
-            .map(|(path, mtime)| {
-                let stamped = stamp(request.home, &path, mtime);
-                (path, stamped)
-            })
-            .collect::<BTreeMap<_, _>>();
-        if generation.cutoff_covers(&inventory) {
-            since = host_scan_since(generation.started_at_ms);
+    // The source set is inventoried and every session stamped with its file's
+    // identity before the producer reads anything: the cutoff may skip only
+    // sessions the last gapless scan covered, unchanged in every respect, and
+    // only sessions whose identity is the same after this scan as before it
+    // can be recorded as covered by it.
+    let before = readers_cli::inventory(&python, &producer, host, request.home)
+        .ok()
+        .map(|inventory| stamp_all(request.home, &inventory));
+    let since = match (&generation, &before) {
+        (Some(generation), Some(before)) if generation.cutoff_covers(before) => {
+            host_scan_since(generation.started_at_ms)
         }
-        current = Some(inventory);
-    }
+        _ => None,
+    };
     let (mut stdout, handle) = match readers_cli::spawn_reader(
         &python,
         &producer,
@@ -433,41 +431,37 @@ fn import_reader_host(
             Err(error) => Some(Err(error)),
         }
     });
-    let mut seen: BTreeMap<String, f64> = BTreeMap::new();
-    let mut report = import_reader_lines_observed(
-        store,
-        host,
-        detail,
-        lines,
-        request.observed_at,
-        move || handle.finish(),
-        &mut |header| {
-            seen.insert(header.path.clone(), header.mtime);
-        },
-    );
+    let mut report =
+        import_reader_lines(store, host, detail, lines, request.observed_at, move || {
+            handle.finish()
+        });
     // Only a scan that covered every session becomes the next generation; a
     // scan with any gap leaves the old one, so the next scan repeats its
-    // range. A scan behind a cutoff covered the inventoried source set; a
-    // full scan covered every session it saw. A session whose file cannot be
-    // identified is left out, so the next scan reads it again.
-    let covered: BTreeMap<String, SourceStamp> = match (&since, current) {
-        (Some(_), Some(inventory)) => inventory
-            .into_iter()
-            .filter_map(|(path, stamped)| stamped.map(|stamped| (path, stamped)))
-            .collect(),
-        _ => seen
-            .into_iter()
-            .filter_map(|(path, mtime)| stamp(request.home, &path, mtime).map(|s| (path, s)))
-            .collect(),
-    };
+    // range. It vouches for every inventoried session whose file is still
+    // the one stamped before the producer ran; a session replaced meanwhile,
+    // one that appeared meanwhile, or one that cannot be identified is left
+    // out and read again next time. Without a pre-scan inventory nothing can
+    // be vouched for, so no generation is recorded.
+    let after = before.as_ref().map(|before| {
+        before
+            .iter()
+            .map(|(path, pre)| {
+                let post = pre
+                    .as_ref()
+                    .and_then(|pre| stamp(request.home, path, pre.mtime));
+                (path.clone(), post)
+            })
+            .collect::<BTreeMap<_, _>>()
+    });
     if report.status == HostStatus::Complete
+        && let (Some(before), Some(after)) = (&before, &after)
         && let Err(error) = store.record_native_checkpoint(&host_scan_checkpoint(
             host,
             request.home,
             request.observed_at,
             &producer.commit,
             &producer.plugin_version,
-            &covered,
+            &covered_after_scan(before, after),
         ))
     {
         report.status = HostStatus::Incomplete;
@@ -492,24 +486,6 @@ pub fn import_reader_lines<I, F>(
     lines: I,
     observed_at: i64,
     finish: F,
-) -> HostReport
-where
-    I: IntoIterator<Item = std::io::Result<String>>,
-    F: FnOnce() -> Result<readers_cli::ReaderOutcome, ReaderError>,
-{
-    import_reader_lines_observed(store, host, detail, lines, observed_at, finish, &mut |_| {})
-}
-
-/// `import_reader_lines` with an observer for every decoded session header,
-/// so a caller can record which sessions the stream covered.
-pub fn import_reader_lines_observed<I, F>(
-    store: &mut Store,
-    host: Host,
-    detail: String,
-    lines: I,
-    observed_at: i64,
-    finish: F,
-    on_header: &mut dyn FnMut(&stream::SessionHeader),
 ) -> HostReport
 where
     I: IntoIterator<Item = std::io::Result<String>>,
@@ -566,7 +542,6 @@ where
         };
         match event {
             stream::StreamEvent::Session(header) => {
-                on_header(&header);
                 if let Some(previous) = active.take() {
                     complete(store, previous, observed_at, &mut sessions);
                 }
