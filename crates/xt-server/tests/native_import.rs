@@ -242,13 +242,19 @@ fn watch_native_once_reports_ready_and_resumes_on_the_next_run() {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    assert_eq!(lines[0]["event"], "ready");
-    assert_eq!(lines[0]["freshness"], "live");
-    assert_eq!(lines[0]["report"]["hosts"][0]["status"], "complete");
-    assert_eq!(
-        lines[0]["report"]["hosts"][0]["sessions"][0]["records_new"],
-        2
-    );
+    // A `startup` reconciliation may precede `ready` (the platform may report
+    // a change made just before the watch); the readiness report counts both.
+    let ready_of = |lines: &[Value]| {
+        lines
+            .iter()
+            .find(|line| line["event"] == "ready")
+            .cloned()
+            .unwrap_or_else(|| panic!("no ready event: {lines:?}"))
+    };
+    let ready = ready_of(&lines);
+    assert_eq!(ready["freshness"], "live");
+    assert_eq!(ready["report"]["hosts"][0]["status"], "complete");
+    assert_eq!(ready["report"]["hosts"][0]["sessions"][0]["records_new"], 2);
     assert_eq!(lines.last().unwrap()["event"], "stopped");
     assert_eq!(lines.last().unwrap()["freshness"], "live");
     // Appended offline; the next run reads only the new record.
@@ -260,13 +266,11 @@ fn watch_native_once_reports_ready_and_resumes_on_the_next_run() {
         .unwrap();
     let output = run();
     assert!(output.status.success());
-    let ready: Value = serde_json::from_str(
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .next()
-            .unwrap(),
-    )
-    .unwrap();
+    let lines: Vec<Value> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let ready = ready_of(&lines);
     assert_eq!(ready["report"]["hosts"][0]["sessions"][0]["records_new"], 1);
     assert_eq!(
         ready["report"]["hosts"][0]["sessions"][0]["source_surface"],

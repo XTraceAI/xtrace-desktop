@@ -427,6 +427,65 @@ fn conformance_native_import() {
                 }
             ))
     );
+    // A store-backed Cursor session's `meta.json` rewritten in place with the
+    // same bytes and its clock put back: the store itself is untouched and the
+    // producer's clock for the session unchanged, but the sidecar's change
+    // time moved, so the cutoff cannot cover the session and a full scan
+    // reads it again; once settled, the cutoff covers it once more.
+    let meta =
+        home.join(".cursor/chats/19ee0000fixture0/00000000-0000-4000-8000-000000000183/meta.json");
+    let meta_bytes = fs::read(&meta).unwrap();
+    let meta_clock = fs::metadata(&meta).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    fs::write(&meta, &meta_bytes).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&meta)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(meta_clock))
+        .unwrap();
+    let cursor_of = |report: &xt_ingest::native::ImportReport| {
+        report
+            .hosts
+            .iter()
+            .find(|host| host.host == Host::Cursor)
+            .unwrap()
+            .clone()
+    };
+    let sidecar = cursor_of(&import_native(&mut store, &request_now()));
+    assert_eq!(sidecar.status, HostStatus::Complete, "{sidecar:?}");
+    assert!(
+        sidecar
+            .detail
+            .as_deref()
+            .is_some_and(|detail| !detail.contains("sessions modified since")),
+        "a clock-preserving sidecar rewrite forces a full scan: {sidecar:?}"
+    );
+    assert!(
+        sidecar.sessions.iter().any(|session| {
+            session.native_session_id.as_deref() == Some("00000000-0000-4000-8000-000000000183")
+                && !matches!(session.outcome, SessionOutcome::Skipped { .. })
+        }),
+        "the session behind the rewritten sidecar is read: {sidecar:?}"
+    );
+    settle();
+    assert!(
+        cursor_of(&import_native(&mut store, &request_now()))
+            .detail
+            .as_deref()
+            .is_some_and(|detail| !detail.contains("sessions modified since")),
+        "one more full scan records a settled generation"
+    );
+    settle();
+    let covered = cursor_of(&import_native(&mut store, &request_now()));
+    assert_eq!(covered.status, HostStatus::Complete, "{covered:?}");
+    assert!(
+        covered
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("sessions modified since")),
+        "the rewritten sidecar is covered again: {covered:?}"
+    );
     // A relative spelling of the same home reaches the readers anchored: they
     // change into the home and receive it as HOME, so a relative value would
     // resolve beneath itself and report a complete, empty import.

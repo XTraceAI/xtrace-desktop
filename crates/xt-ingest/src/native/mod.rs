@@ -391,7 +391,7 @@ fn import_reader_host(
     // can be recorded as covered by it.
     let before = readers_cli::inventory(&python, &producer, host, request.home)
         .ok()
-        .map(|inventory| stamp_all(request.home, &inventory));
+        .map(|inventory| stamp_all(request.home, host, &inventory));
     let since = match (&generation, &before) {
         (Some(generation), Some(before)) if generation.cutoff_covers(before) => {
             host_scan_since(generation.started_at_ms)
@@ -448,7 +448,7 @@ fn import_reader_host(
             .map(|(path, pre)| {
                 let post = pre
                     .as_ref()
-                    .and_then(|pre| stamp(request.home, path, pre.mtime));
+                    .and_then(|pre| stamp(request.home, host, path, pre.mtime));
                 (path.clone(), post)
             })
             .collect::<BTreeMap<_, _>>()

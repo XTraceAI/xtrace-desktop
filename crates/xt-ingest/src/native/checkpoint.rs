@@ -403,17 +403,19 @@ impl HostScan {
                     self.inventory.contains(&inventory_key(path, stamp))
                         && self
                             .started_at_ms
-                            .saturating_sub(stamp.ctime_ns.saturating_div(1_000_000))
+                            .saturating_sub(stamp.latest_ctime_ns().saturating_div(1_000_000))
                             >= CTIME_SETTLE_MS
                 })
             })
     }
 }
 
-/// What identifies one session's file at a point in time: the producer's
-/// update clock plus the file's size, change time, device and inode as this
-/// crate observes them. A replacement or rewrite that preserves the clock
-/// still moves the change time and, for a replacement, the inode.
+/// What identifies one session's source at a point in time: the producer's
+/// update clock plus the size, change time, device and inode of the file
+/// behind the header path and of every sidecar the producer's own revision
+/// covers, as this crate observes them. A replacement or rewrite that
+/// preserves the clock still moves the change time and, for a replacement,
+/// the inode.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SourceStamp {
     pub mtime: f64,
@@ -421,12 +423,95 @@ pub struct SourceStamp {
     pub ctime_ns: i64,
     pub dev: u64,
     pub ino: u64,
+    /// Each sidecar present, in a fixed order.
+    pub sidecars: Vec<Sidecar>,
 }
 
-/// Stamp the file behind a producer header path (absolute, or `$HOME/…` as
+/// The identity of one sidecar of a session's source.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Sidecar {
+    pub label: String,
+    pub size: u64,
+    pub ctime_ns: i64,
+    pub dev: u64,
+    pub ino: u64,
+}
+
+impl SourceStamp {
+    /// The latest change time among the file and its sidecars: the one a
+    /// coarse clock must have settled before a generation can vouch for it.
+    pub fn latest_ctime_ns(&self) -> i64 {
+        self.sidecars
+            .iter()
+            .map(|sidecar| sidecar.ctime_ns)
+            .fold(self.ctime_ns, i64::max)
+    }
+}
+
+/// The files the producer's revision covers besides the header path, whose
+/// clocks its header clock also folds in: a store's WAL, rollback journal
+/// and `meta.json` sidecar, and a Cursor session's hook state pin under the
+/// home. Each present one is identified like the file itself; an absent one
+/// is simply not listed, and one present but not a regular file leaves the
+/// session unidentified.
+fn sidecars(home: &Path, host: Host, path: &Path) -> Option<Vec<Sidecar>> {
+    let name = path.file_name()?.to_str()?;
+    let mut candidates: Vec<(String, std::path::PathBuf)> = Vec::new();
+    if name == "store.db" {
+        for sidecar in ["store.db-wal", "store.db-journal", "meta.json"] {
+            candidates.push((sidecar.to_owned(), path.with_file_name(sidecar)));
+        }
+    }
+    if host == Host::Cursor {
+        let sid = if name == "store.db" {
+            path.parent()?.file_name()?.to_str()?
+        } else {
+            path.file_stem()?.to_str()?
+        };
+        if is_uuid(sid) {
+            candidates.push((
+                format!("cursorflush/{sid}.json"),
+                home.join(".config/memhub-plugin/cursorflush")
+                    .join(format!("{sid}.json")),
+            ));
+        }
+    }
+    let mut present = Vec::new();
+    for (label, candidate) in candidates {
+        match fs::symlink_metadata(&candidate) {
+            Ok(metadata) if metadata.is_file() => {
+                let identity = FileIdentity::of(&metadata);
+                present.push(Sidecar {
+                    label,
+                    size: metadata.len(),
+                    ctime_ns: identity.ctime_ns,
+                    dev: identity.dev,
+                    ino: identity.ino,
+                });
+            }
+            Ok(_) => return None,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return None,
+        }
+    }
+    Some(present)
+}
+
+fn is_uuid(text: &str) -> bool {
+    text.len() == 36
+        && text.bytes().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
+
+/// Stamp the source behind a producer header path (absolute, or `$HOME/…` as
 /// the fixture goldens spell it), without following an alias. `None` when it
 /// cannot be identified, which counts as not covered.
-pub fn stamp(home: &Path, header_path: &str, mtime: f64) -> Option<SourceStamp> {
+pub fn stamp(home: &Path, host: Host, header_path: &str, mtime: f64) -> Option<SourceStamp> {
     let path = match header_path.strip_prefix("$HOME/") {
         Some(relative) => home.join(relative),
         None => {
@@ -438,7 +523,7 @@ pub fn stamp(home: &Path, header_path: &str, mtime: f64) -> Option<SourceStamp> 
             }
         }
     };
-    let metadata = fs::symlink_metadata(path).ok()?;
+    let metadata = fs::symlink_metadata(&path).ok()?;
     if !metadata.is_file() {
         return None;
     }
@@ -449,17 +534,19 @@ pub fn stamp(home: &Path, header_path: &str, mtime: f64) -> Option<SourceStamp> 
         ctime_ns: identity.ctime_ns,
         dev: identity.dev,
         ino: identity.ino,
+        sidecars: sidecars(home, host, &path)?,
     })
 }
 
 /// Stamp every inventoried session (path with the producer's clock).
 pub fn stamp_all(
     home: &Path,
+    host: Host,
     inventory: &BTreeMap<String, f64>,
 ) -> BTreeMap<String, Option<SourceStamp>> {
     inventory
         .iter()
-        .map(|(path, mtime)| (path.clone(), stamp(home, path, *mtime)))
+        .map(|(path, mtime)| (path.clone(), stamp(home, host, path, *mtime)))
         .collect()
 }
 
@@ -482,10 +569,22 @@ pub fn covered_after_scan(
         .collect()
 }
 
-/// One inventory entry: a session's path with its clock and file identity.
+/// One inventory entry: a session's path with its clock, its file identity
+/// and its sidecars' identities.
 pub fn inventory_key(path: &str, stamp: &SourceStamp) -> String {
+    let sidecars = stamp
+        .sidecars
+        .iter()
+        .map(|sidecar| {
+            format!(
+                "{}@{}@{}@{}:{}",
+                sidecar.label, sidecar.size, sidecar.ctime_ns, sidecar.dev, sidecar.ino
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(";");
     format!(
-        "{path}@{}@{}@{}@{}:{}",
+        "{path}@{}@{}@{}@{}:{}@{sidecars}",
         stamp.mtime, stamp.size, stamp.ctime_ns, stamp.dev, stamp.ino
     )
 }
@@ -816,6 +915,7 @@ mod tests {
                 ctime_ns: 20,
                 dev: 3,
                 ino: 4,
+                sidecars: Vec::new(),
             },
         )]
         .into_iter()
@@ -836,7 +936,7 @@ mod tests {
                 started_at_ms: 5,
                 producer_commit: "abc".into(),
                 producer_version: "0.55.0".into(),
-                inventory: vec!["$HOME/.codex/sessions/a.jsonl@1.5@10@20@3:4".into()],
+                inventory: vec!["$HOME/.codex/sessions/a.jsonl@1.5@10@20@3:4@".into()],
             })
         );
         // The generation counts only for the producer that ran the scan.
@@ -864,6 +964,7 @@ mod tests {
             ctime_ns: 5,
             dev: 1,
             ino: 2,
+            sidecars: Vec::new(),
         };
         let generation = HostScan {
             started_at_ms: 1_788_782_400_000,
@@ -964,6 +1065,7 @@ mod tests {
                 ctime_ns,
                 dev: 1,
                 ino,
+                sidecars: Vec::new(),
             })
         };
         let before: BTreeMap<String, Option<SourceStamp>> = [
@@ -997,26 +1099,113 @@ mod tests {
         let sessions = home.join(".codex/sessions");
         fs::create_dir_all(&sessions).unwrap();
         fs::write(sessions.join("a.jsonl"), b"{}\n").unwrap();
-        let stamped = stamp(home, "$HOME/.codex/sessions/a.jsonl", 1.5).unwrap();
+        let stamped = stamp(home, Host::Codex, "$HOME/.codex/sessions/a.jsonl", 1.5).unwrap();
         assert_eq!((stamped.mtime, stamped.size), (1.5, 3));
         assert!(stamped.ino != 0 && stamped.ctime_ns != 0);
         // Rewritten in place with the same bytes: the change time moved.
         std::thread::sleep(std::time::Duration::from_millis(20));
         fs::write(sessions.join("a.jsonl"), b"{}\n").unwrap();
-        let rewritten = stamp(home, "$HOME/.codex/sessions/a.jsonl", 1.5).unwrap();
+        let rewritten = stamp(home, Host::Codex, "$HOME/.codex/sessions/a.jsonl", 1.5).unwrap();
         assert_ne!(rewritten.ctime_ns, stamped.ctime_ns);
         assert_eq!(rewritten.ino, stamped.ino);
         // Replaced: another inode.
         fs::write(sessions.join("b.jsonl"), b"{}\n").unwrap();
         fs::rename(sessions.join("b.jsonl"), sessions.join("a.jsonl")).unwrap();
-        let replaced = stamp(home, "$HOME/.codex/sessions/a.jsonl", 1.5).unwrap();
+        let replaced = stamp(home, Host::Codex, "$HOME/.codex/sessions/a.jsonl", 1.5).unwrap();
         assert_ne!(replaced.ino, stamped.ino);
         // The producer's own absolute spelling identifies the same file.
-        let absolute = stamp(home, sessions.join("a.jsonl").to_str().unwrap(), 1.5).unwrap();
+        let absolute = stamp(
+            home,
+            Host::Codex,
+            sessions.join("a.jsonl").to_str().unwrap(),
+            1.5,
+        )
+        .unwrap();
         assert_eq!(absolute, replaced);
         // Missing, or an alias: unidentified.
-        assert!(stamp(home, "$HOME/.codex/sessions/missing.jsonl", 1.5).is_none());
+        assert!(
+            stamp(
+                home,
+                Host::Codex,
+                "$HOME/.codex/sessions/missing.jsonl",
+                1.5
+            )
+            .is_none()
+        );
         std::os::unix::fs::symlink(sessions.join("a.jsonl"), sessions.join("alias.jsonl")).unwrap();
-        assert!(stamp(home, "$HOME/.codex/sessions/alias.jsonl", 1.5).is_none());
+        assert!(stamp(home, Host::Codex, "$HOME/.codex/sessions/alias.jsonl", 1.5).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stamps_cover_every_sidecar_the_producer_reads_with_a_store() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path();
+        let sid = "00000000-0000-4000-8000-0000000000c5";
+        let chat = home.join(".cursor/chats/h/").join(sid);
+        fs::create_dir_all(&chat).unwrap();
+        fs::write(chat.join("store.db"), b"store").unwrap();
+        fs::write(chat.join("meta.json"), b"{}\n").unwrap();
+        let path = format!("$HOME/.cursor/chats/h/{sid}/store.db");
+        let stamped = stamp(home, Host::Cursor, &path, 1.5).unwrap();
+        assert_eq!(stamped.sidecars.len(), 1, "{stamped:?}");
+        assert_eq!(
+            (stamped.sidecars[0].label.as_str(), stamped.sidecars[0].size),
+            ("meta.json", 3)
+        );
+        // The sidecar rewritten with the same bytes (its clock put back by
+        // the caller): the store is untouched, but the stamp moved.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(chat.join("meta.json"), b"{}\n").unwrap();
+        let rewritten = stamp(home, Host::Cursor, &path, 1.5).unwrap();
+        assert_eq!(
+            (rewritten.ino, rewritten.ctime_ns),
+            (stamped.ino, stamped.ctime_ns)
+        );
+        assert_ne!(rewritten, stamped);
+        assert_ne!(
+            inventory_key(&path, &rewritten),
+            inventory_key(&path, &stamped)
+        );
+        assert_eq!(rewritten.latest_ctime_ns(), rewritten.sidecars[0].ctime_ns);
+        assert!(rewritten.latest_ctime_ns() > stamped.latest_ctime_ns());
+        // A WAL appearing, and the hook's state pin: each is one more sidecar.
+        fs::write(chat.join("store.db-wal"), b"wal").unwrap();
+        assert_eq!(
+            stamp(home, Host::Cursor, &path, 1.5)
+                .unwrap()
+                .sidecars
+                .len(),
+            2
+        );
+        let pins = home.join(".config/memhub-plugin/cursorflush");
+        fs::create_dir_all(&pins).unwrap();
+        fs::write(pins.join(format!("{sid}.json")), b"{}").unwrap();
+        let pinned = stamp(home, Host::Cursor, &path, 1.5).unwrap();
+        assert_eq!(pinned.sidecars.len(), 3, "{pinned:?}");
+        assert!(pinned.sidecars[2].label.starts_with("cursorflush/"));
+        // A transcript session carries only the pin; a Codex path none.
+        let transcript = home.join(".cursor/projects/p/agent-transcripts").join(sid);
+        fs::create_dir_all(&transcript).unwrap();
+        fs::write(transcript.join(format!("{sid}.jsonl")), b"{}\n").unwrap();
+        let transcript_path =
+            format!("$HOME/.cursor/projects/p/agent-transcripts/{sid}/{sid}.jsonl");
+        assert_eq!(
+            stamp(home, Host::Cursor, &transcript_path, 1.5)
+                .unwrap()
+                .sidecars
+                .len(),
+            1
+        );
+        assert!(
+            stamp(home, Host::Codex, &transcript_path, 1.5)
+                .unwrap()
+                .sidecars
+                .is_empty()
+        );
+        // A sidecar that is an alias leaves the session unidentified.
+        fs::remove_file(chat.join("meta.json")).unwrap();
+        std::os::unix::fs::symlink(chat.join("store.db"), chat.join("meta.json")).unwrap();
+        assert!(stamp(home, Host::Cursor, &path, 1.5).is_none());
     }
 }
