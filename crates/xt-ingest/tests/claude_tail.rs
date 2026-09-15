@@ -1344,8 +1344,22 @@ fn claude_tail_registers_a_root_again_after_the_platform_reports_it_removed() {
     assert_eq!(after.freshness, Freshness::Live);
     // The re-registered watch reports later changes.
     fs::write(home.file(B), body(B, 0..3)).unwrap();
-    settle(&tailer, seen);
+    let seen = settle(&tailer, seen);
     assert_eq!(records(&home.store(), B), 3);
+    // A removal reported at the home itself names no host, yet takes every
+    // root with it: the roots are registered again and their hosts
+    // reconciled all the same.
+    let before = tailer.status();
+    tailer.inject_removed(&home.root);
+    let seen = settle(&tailer, seen);
+    let after = tailer.status();
+    assert!(
+        after.watch_installs > before.watch_installs,
+        "the root was registered again after its ancestor was reported removed: {after:?}"
+    );
+    fs::write(home.file(C), body(C, 0..1)).unwrap();
+    settle(&tailer, seen);
+    assert_eq!(records(&home.store(), C), 1);
     tailer.stop();
 }
 

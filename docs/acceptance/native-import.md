@@ -133,9 +133,10 @@ the existing writer.
   watched root that vanished, or that was deleted and recreated at the same path
   (its directory identity changed), is forgotten and watched again, so a watch tied
   to the old directory never leaves the replacement unwatched; a root the platform
-  reports removed, renamed or recreated (or an ancestor of one) is registered again
-  whatever its identity says, since a watch that dies with its directory (inotify)
-  may see the inode reused by the recreation. A watcher error drops
+  reports removed, renamed or recreated (or an ancestor of one, the home itself
+  included) is registered again whatever its identity says, and its host reconciled,
+  since a watch that dies with its directory (inotify) may see the inode reused by
+  the recreation. A watcher error drops
   every watch, degrades freshness and rescans every host; the roots are watched again
   on that pass and freshness is live again only once every root is covered. Changes
   queued during the scan

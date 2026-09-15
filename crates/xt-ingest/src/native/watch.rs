@@ -576,6 +576,12 @@ impl Worker {
                     self.rebuild_watches(reason);
                 }
                 self.lost.append(&mut dirty.lost_watches);
+                // A lost watch is registered again even when the event that
+                // lost it named no host (the home itself replaced, say), and
+                // the host whose root it is, is reconciled.
+                for host in self.ensure_watches() {
+                    dirty.mark(host);
+                }
                 if !dirty.hosts.is_empty() {
                     let hosts = dirty.hosts.clone();
                     let reconciled = self.reconcile(&hosts);
