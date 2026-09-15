@@ -106,8 +106,8 @@ the existing writer.
   2 s before the generation started (so a
   coarse filesystem clock cannot hide a rewrite in the same tick), does it pass the
   instant, less a 2 s margin for coarse clocks, as the producer's `--since`. A session restored or moved in with an old clock, one replaced or
-  rewritten with its clock preserved, one whose file cannot be identified, an
-  inventory that cannot be taken, or a different producer (a moved pin) all mean a
+  rewritten with its clock preserved, one whose file cannot be identified (every
+  file, on a platform without inodes), an inventory that cannot be taken, or a different producer (a moved pin) all mean a
   full scan. A completed scan records as covered only the sessions whose file is
   the same after the scan as it was before the producer ran; one replaced
   meanwhile, one that appeared meanwhile, or one that cannot be identified is left

@@ -437,7 +437,40 @@ pub struct Sidecar {
     pub ino: u64,
 }
 
+impl Sidecar {
+    /// A sidecar's identity; none where the platform cannot name its inode.
+    fn of(label: String, size: u64, identity: &FileIdentity) -> Option<Self> {
+        if !identity.known {
+            return None;
+        }
+        Some(Self {
+            label,
+            size,
+            ctime_ns: identity.ctime_ns,
+            dev: identity.dev,
+            ino: identity.ino,
+        })
+    }
+}
+
 impl SourceStamp {
+    /// A stamp from an observed identity; none where the platform cannot
+    /// name the inode, so such a session is never covered and every scan of
+    /// it is a full one, as the transcript checkpoint never resumes there.
+    fn of(mtime: f64, size: u64, identity: &FileIdentity, sidecars: Vec<Sidecar>) -> Option<Self> {
+        if !identity.known {
+            return None;
+        }
+        Some(Self {
+            mtime,
+            size,
+            ctime_ns: identity.ctime_ns,
+            dev: identity.dev,
+            ino: identity.ino,
+            sidecars,
+        })
+    }
+
     /// The latest change time among the file and its sidecars: the one a
     /// coarse clock must have settled before a generation can vouch for it.
     pub fn latest_ctime_ns(&self) -> i64 {
@@ -480,14 +513,11 @@ fn sidecars(home: &Path, host: Host, path: &Path) -> Option<Vec<Sidecar>> {
     for (label, candidate) in candidates {
         match fs::symlink_metadata(&candidate) {
             Ok(metadata) if metadata.is_file() => {
-                let identity = FileIdentity::of(&metadata);
-                present.push(Sidecar {
+                present.push(Sidecar::of(
                     label,
-                    size: metadata.len(),
-                    ctime_ns: identity.ctime_ns,
-                    dev: identity.dev,
-                    ino: identity.ino,
-                });
+                    metadata.len(),
+                    &FileIdentity::of(&metadata),
+                )?);
             }
             Ok(_) => return None,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -527,15 +557,13 @@ pub fn stamp(home: &Path, host: Host, header_path: &str, mtime: f64) -> Option<S
     if !metadata.is_file() {
         return None;
     }
-    let identity = FileIdentity::of(&metadata);
-    Some(SourceStamp {
+    let sidecars = sidecars(home, host, &path)?;
+    SourceStamp::of(
         mtime,
-        size: metadata.len(),
-        ctime_ns: identity.ctime_ns,
-        dev: identity.dev,
-        ino: identity.ino,
-        sidecars: sidecars(home, host, &path)?,
-    })
+        metadata.len(),
+        &FileIdentity::of(&metadata),
+        sidecars,
+    )
 }
 
 /// Stamp every inventoried session (path with the producer's clock).
@@ -1134,6 +1162,25 @@ mod tests {
         );
         std::os::unix::fs::symlink(sessions.join("a.jsonl"), sessions.join("alias.jsonl")).unwrap();
         assert!(stamp(home, Host::Codex, "$HOME/.codex/sessions/alias.jsonl", 1.5).is_none());
+    }
+
+    #[test]
+    fn an_identity_the_platform_cannot_name_never_stamps() {
+        let unknown = FileIdentity {
+            dev: 0,
+            ino: 0,
+            ctime_ns: 0,
+            len: 3,
+            known: false,
+        };
+        assert!(SourceStamp::of(1.5, 3, &unknown, Vec::new()).is_none());
+        assert!(Sidecar::of("meta.json".into(), 3, &unknown).is_none());
+        let known = FileIdentity {
+            known: true,
+            ..unknown
+        };
+        assert!(SourceStamp::of(1.5, 3, &known, Vec::new()).is_some());
+        assert!(Sidecar::of("meta.json".into(), 3, &known).is_some());
     }
 
     #[cfg(unix)]
