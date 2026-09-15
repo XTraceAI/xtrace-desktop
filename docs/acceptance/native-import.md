@@ -2,8 +2,10 @@
 
 `xtrace-core import-native` performs an initial import of Claude, Codex and Cursor
 history into the existing local index. It needs no installed capture plugin or
-cloud login. Codex/Cursor use a supplied checkout of the shared readers named by
-`.plugin-pin`; bundled reader delivery and automatic app integration are later work.
+cloud login. Codex/Cursor use the shared readers named by `.plugin-pin`: the CLI
+runs them from a supplied checkout verified through Git; the app runs them from
+its bundled copy of the pinned sources, verified by object identity without Git
+(see [app integration](#app-integration)).
 
 ```sh
 xtrace-core import-native --db PATH --home DIR [--host claude|codex|cursor]... \
@@ -63,8 +65,21 @@ the existing writer.
   Separate files with contradictory identities remain explicit conflicts; changing
   source files does not automatically replace historical index identities.
 - Reader code executes from a temporary export of the verified Git commit, excluding
-  ignored Python files/caches. On Unix, the probed interpreter is resolved to an
-  absolute path before changing the reader's working directory.
+  ignored Python files/caches, or, for the bundled copy, in place from a tree whose
+  every pinned object (the scripts tree, `readers/`, `readers_cli.py`,
+  `cursor_flush.py`) hashes to the pinned Git identity (blob bytes; tree entries
+  with their modes, sorted as Git sorts them; bytecode caches ignored, symlinks
+  refused): an edited, incomplete or foreign bundle is a pin mismatch, never
+  executed. On Unix, the probed interpreter is resolved to an absolute path before
+  changing the reader's working directory. With no interpreter named, `python3` on
+  `PATH` is tried first, then the install directories a GUI process's `PATH` does
+  not reach (Homebrew, MacPorts, `~/.local/bin`); every candidate must be 3.10+
+  with assertions enabled, and the reasons none qualified are reported together.
+- A cancelled scan (`CancelToken`) kills the reader running and reaps it; the
+  sessions it completed stay committed, the session it had open is reported as
+  ended early without a cursor, hosts not yet read are reported `cancelled`, and
+  a Claude scan ends between files, its checkpoints kept. Nothing a cancelled
+  scan wrote is in doubt; the next scan reads the rest.
 - These checks do not provide a security boundary against another local process
   concurrently replacing ancestor directories. Directory-handle-relative traversal
   is not implemented. Source file bytes are never intentionally modified by import.
@@ -159,20 +174,67 @@ the existing writer.
   or a root that cannot be watched leaves freshness `degraded` with the reason; the
   tailer still scans and reports ready, never silently as live. A stop request lets
   changes already received, and any that arrive within one quiet period, reach the
-  index before the tailer stops. Restarting resumes from checkpoints: only appended
-  input is read.
+  index before the tailer stops. A shutdown (`Tailer::shutdown`) cancels instead:
+  the scan in progress is cancelled as above and the worker joined within a bound;
+  a worker that does not end within it is left behind with its reader already
+  killed. Restarting resumes from checkpoints: only appended input is read.
 - `xtrace-core watch-native --db PATH --home DIR [--once | --for SECONDS]` runs the
   tailer headlessly and prints one JSON line per event (`ready`, `reconciled`,
   `stopped`), each carrying the freshness as of that moment; it exits 0 only when
   the final freshness is live and every scan was complete, so a root that could not
   be watched after readiness still fails the run. An event that cannot be written
   (the consumer of the stream is gone) stops the tailer and exits 1 with the reason
-  on stderr, so the watcher never runs on with no observable output. Ctrl-C ends an unbounded run through the tailer's stop, after its final reconciliation, also with a single runtime worker. Both bounds are armed before the tailer starts: `--for` elapsing or Ctrl-C arriving during the initial scan stops the tailer once that scan is done, reconciling what it received, and the run exits 1 as not ready (also when readiness and the bound fall within the same wait step). The bound waits for the scan in progress: a pinned reader that never returns is not interrupted, and the command waits with it; cancelling an in-flight reader belongs to ING-13's orchestration. App-wide orchestration (start order, UI events,
-  scheduling) belongs to ING-13.
+  on stderr, so the watcher never runs on with no observable output. Ctrl-C ends an unbounded run through the tailer's stop, after its final reconciliation, also with a single runtime worker. Both bounds are armed before the tailer starts: `--for` elapsing or Ctrl-C arriving during the initial scan stops the tailer once that scan is done, reconciling what it received, and the run exits 1 as not ready (also when readiness and the bound fall within the same wait step). The CLI's bound is the graceful stop: it waits for the scan in progress, so a pinned reader that never returns holds the command (the app cancels instead; see below).
 - Scope kept out: scheduling frameworks, plugin delivery, cloud synchronization,
   full-content storage, automatic historical-identity repair and UI. The importer's
   per-file safety checks remain as documented above; the tailer adds no traversal
   boundary against a hostile local process.
+
+## App integration
+
+- **Startup.** XTrace Desktop starts the tailer in its `setup` hook, after opening
+  the application database, over the user's home (`XTRACE_NATIVE_HOME` overrides
+  it for synthetic homes) for Claude, Codex and Cursor, with a second connection
+  to the same database (`xtrace.db` under the data directory), the bundled readers
+  and a 250 ms quiet period. Fixture mode (`--fixture`, `XTRACE_FIXTURE`) starts
+  no index: its database is disposable. A data directory inside a native source
+  root or the Cursor hook state area, or aliased to one, disables the index with
+  the reason (the CLI's destination validation, shared), so the index's writes
+  never read as source changes; so does a database that cannot be opened.
+- **Bundled readers.** The pinned `plugins/memhub/scripts` tree, with the
+  producer's `LICENSE` and `NOTICE`, is vendored under `vendor/agent-plugins`
+  (`sh scripts/vendor-readers.sh` refreshes it from a checkout) and bundled as the
+  `agent-plugins` app resource. The pin is compiled into the app; at startup the
+  bundle is verified against it as above and the status reports the pinned commit
+  and plugin version, or the reason it is unavailable. An installed plugin, a
+  checkout or Git are never consulted.
+- **Interpreter.** `XTRACE_PYTHON` names the interpreter and is used as named;
+  otherwise it is discovered as above at startup, for the status, and again on
+  every Codex/Cursor scan, so one installed later is found without a restart.
+  A missing interpreter is reported in the status and by each Codex/Cursor scan
+  as `missing_runtime` with the reasons; Claude indexing is unaffected. Resolving
+  the interactive login shell's environment (for interpreters reachable only
+  through it) is separate work; naming the interpreter is the workaround.
+- **Status and events.** `native_index_status` returns the typed
+  `NativeIndexStatus`: `phase` (`disabled` with reason, `scanning`, `ready`,
+  `stopped`), `freshness` (`unknown`, `live`, `degraded` with reason), `python`,
+  `readers`, one entry per host (`pending`, `complete`, `incomplete`,
+  `missing_source`, `missing_runtime`, `pin_mismatch`, `reader_failed`,
+  `cancelled`; the detail; sessions imported/partial/skipped; records new/enriched;
+  diagnostics count), `reconciles` and `files_scanned`. Every change is published
+  as `native-index://status` with the same payload: readiness, each
+  reconciliation (a host a pass did not touch keeps its last scan), progress
+  during the initial scan (at most every 250 ms) and the stop. Source paths stay
+  out of it. Settings shows it; the shell invalidates its data queries on it.
+- **Shutdown.** On the app's exit event the index is shut down before the
+  database closes: the scan in progress is cancelled, a reader still running is
+  killed and reaped, and the worker is awaited for at most 3 s; the final status
+  reads `stopped`. A reader that never returns cannot hold the exit. What the
+  cancelled scan committed stays; the next launch resumes Claude behind its
+  checkpoints and reads Codex/Cursor whole.
+- Scope kept out: dashboard metrics and the Sessions screen (they read the same
+  index later), plugin delivery, cloud synchronization, a login-shell resolver,
+  and any second parser, scheduler, database or capture path.
 
 ## Verification
 
@@ -184,15 +246,24 @@ the existing writer.
 | Native locators              | Position remains zero for repeated, older and tied observations; old development offsets reset safely; empty undiscovered sessions create no locator; historical records survive shorter/empty replacements.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Storage ownership            | Mismatched host/native/conversation/surface/start facts reject before writes; existing batch atomicity and retention checks remain in force.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Source and executable safety | Database/source aliases reject before mutation; opened-file replacement and short-copy rejection; fixed snapshot under append; ignored Python modules excluded; stable interpreter selection.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| Pinned conformance           | All four inventoried tests execute, including the real pinned reader-to-index import, deduplication and unchanged-source evidence.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Bundled readers              | `reader_bundle` suite: Git object identities computed as Git computes them (blob, executable blob, subtree, root; caches ignored; symlinks refused); the vendored tree is the pinned objects without Git; edited, incomplete, extra-module, absent and pin-without-tree bundles are refused; a verified bundle reads a host in place.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Cancellation                 | `reader_cancel` suite: a hung pinned reader (fake interpreter) is killed and reaped on cancel, its completed session stays and the open one is ended early, the next host is not started; a tailer shut down during a hung initial scan ends within its bound publishing only `stopped`; cancel then graceful stop does not wait; a pre-cancelled scan reads nothing; a Claude scan cancelled between files keeps what it read and the next scan completes without duplicates.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| App lifecycle                | `native_index` suite (app crate): a synthetic home indexes to ready with typed status, appends reconcile live, restart resumes without rereading, shutdown is prompt and final; a data directory inside the sources disables the index with the reason; a named interpreter that does not qualify and an absent bundle are reported while Claude indexes; a hung reader does not hold shutdown and is reaped; the compiled pin parses and the status serializes with tagged variants.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Pinned conformance           | All five inventoried tests execute, including the real pinned reader-to-index import, deduplication, unchanged-source evidence and the bundled readers' byte equality and same-index import.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 ```sh
-cargo test -p xt-ingest --test claude_fs --test native --locked
+cargo test -p xt-ingest --test claude_fs --test native --test reader_bundle --test reader_cancel --locked
 cargo test -p xt-store --test completed_scan --locked
 cargo test -p xt-server --test native_import --locked
+cargo test -p xtrace-desktop --test native_index --locked
 node scripts/ci/run-hook.mjs plugin-conformance
 pnpm check:native --base FULL_REVIEWED_BASE_SHA
 ```
+
+The built app is validated by hand against synthetic homes with no plugin
+configuration or cloud credentials: `XTRACE_DATA_DIR`, `XTRACE_NATIVE_HOME` and,
+for the hung-reader case, `XTRACE_PYTHON` pointing at a fake interpreter; the
+database rows, source hashes and the Settings status are the evidence.
 
 Use synthetic fixtures. Record the exact source/base, actual macOS version and
 results in the PR. The portable Unix invalid-name helper test runs on macOS; the

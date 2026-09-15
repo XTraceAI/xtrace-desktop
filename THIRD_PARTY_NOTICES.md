@@ -7540,6 +7540,7 @@ limitations under the License.
 - cargo: cpufeatures@0.2.17
 - cargo: crypto-common@0.1.7
 - cargo: digest@0.10.7
+- cargo: sha1@0.10.6
 - cargo: sha2@0.10.9
 
 ```text
@@ -9697,6 +9698,7 @@ DEALINGS IN THE SOFTWARE.
 
 ## MIT OR Apache-2.0
 
+- cargo: sha1@0.10.6
 - cargo: sha2@0.10.9
 
 ```text
@@ -14780,6 +14782,7 @@ limitations under the License.
 - cargo: cpufeatures@0.2.17
 - cargo: crypto-common@0.1.7
 - cargo: digest@0.10.7
+- cargo: sha1@0.10.6
 - cargo: sha2@0.10.9
 
 ```text

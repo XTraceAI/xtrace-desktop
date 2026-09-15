@@ -185,20 +185,23 @@ fn clock_ms() -> Result<i64, &'static str> {
 /// report; exits 0 when every requested host imported completely, 2 when a host
 /// or session was unavailable, unreadable or incomplete.
 fn import_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static str> {
-    use xt_ingest::native::{ImportRequest, ScanMode, scan_native};
+    use xt_ingest::native::{ImportRequest, ProducerSource, ScanMode, scan_native};
     let options = parse_native_options(args, false)?;
     let observed_at = clock_ms()?;
-    validate_index_destination(&options.db, &options.home)?;
+    xt_ingest::native::validate_index_destination(&options.db, &options.home)?;
     let mut store = Store::open(&options.db).map_err(|_| "Could not open the index database")?;
     let report = scan_native(
         &mut store,
         &ImportRequest {
             home: &options.home,
             hosts: &options.hosts,
-            pin: &options.pin,
-            plugin_root: options.plugin_root.as_deref(),
+            producer: &ProducerSource::Checkout {
+                pin: options.pin.clone(),
+                plugin_root: options.plugin_root.clone(),
+            },
             python: options.python.as_deref(),
             observed_at,
+            cancel: None,
         },
         if options.replay {
             ScanMode::Replay
@@ -235,9 +238,12 @@ fn watch_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static 
         atomic::{AtomicBool, Ordering},
     };
     use std::time::Duration;
-    use xt_ingest::native::watch::{Freshness, TailEvent, Tailer, WatchConfig};
+    use xt_ingest::native::{
+        ProducerSource,
+        watch::{Freshness, TailEvent, Tailer, WatchConfig},
+    };
     let options = parse_native_options(args, true)?;
-    validate_index_destination(&options.db, &options.home)?;
+    xt_ingest::native::validate_index_destination(&options.db, &options.home)?;
     let store = Store::open(&options.db).map_err(|_| "Could not open the index database")?;
     let complete = Arc::new(AtomicBool::new(true));
     let live = Arc::new(AtomicBool::new(false));
@@ -309,8 +315,10 @@ fn watch_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static 
         WatchConfig {
             home: options.home.clone(),
             hosts: options.hosts.clone(),
-            pin: options.pin.clone(),
-            plugin_root: options.plugin_root.clone(),
+            producer: ProducerSource::Checkout {
+                pin: options.pin.clone(),
+                plugin_root: options.plugin_root.clone(),
+            },
             python: options.python.clone(),
             debounce: Duration::from_millis(250),
             probe: None,
@@ -359,101 +367,4 @@ fn ctrlc_wait(stop: std::sync::mpsc::Sender<()>) {
         let _ = tokio::signal::ctrl_c().await;
         let _ = stop.send(());
     });
-}
-
-/// Validate before SQLite can create tables or sidecars. Existing hardlinks are
-/// rejected because an alternate name can otherwise alias native history.
-fn validate_index_destination(
-    db: &std::path::Path,
-    home: &std::path::Path,
-) -> Result<(), &'static str> {
-    fn resolved(path: &std::path::Path) -> std::io::Result<PathBuf> {
-        match path.canonicalize() {
-            Ok(path) => Ok(path),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                if std::fs::symlink_metadata(path).is_ok() {
-                    return Err(error);
-                }
-                let parent = path
-                    .parent()
-                    .filter(|p| !p.as_os_str().is_empty())
-                    .unwrap_or(std::path::Path::new("."));
-                Ok(resolved(parent)?.join(path.file_name().ok_or(error)?))
-            }
-            Err(error) => Err(error),
-        }
-    }
-    fn reject_reverse_aliases(
-        root: &std::path::Path,
-        destinations: &[PathBuf],
-    ) -> Result<(), &'static str> {
-        let metadata = match std::fs::symlink_metadata(root) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(_) => return Err("Cannot inspect native source aliases"),
-        };
-        if metadata.file_type().is_symlink() {
-            let target =
-                std::fs::read_link(root).map_err(|_| "Cannot inspect native source alias")?;
-            let target = resolved(
-                &root
-                    .parent()
-                    .unwrap_or(std::path::Path::new("."))
-                    .join(target),
-            )
-            .map_err(|_| "Cannot resolve native source alias")?;
-            if destinations.iter().any(|path| path.starts_with(&target)) {
-                return Err("Native source alias points at index destination");
-            }
-        } else if metadata.is_dir() {
-            for entry in
-                std::fs::read_dir(root).map_err(|_| "Cannot inspect native source aliases")?
-            {
-                reject_reverse_aliases(
-                    &entry
-                        .map_err(|_| "Cannot inspect native source entry")?
-                        .path(),
-                    destinations,
-                )?;
-            }
-        }
-        Ok(())
-    }
-    let mut destinations = Vec::new();
-    // The host history directories, and the hook state area the Cursor watch
-    // covers: an index there would feed its own writes back as changes.
-    let roots = [".claude", ".codex", ".cursor", ".config/memhub-plugin"]
-        .map(|name| resolved(&home.join(name)));
-    for suffix in ["", "-wal", "-shm", "-journal"] {
-        let mut name = db.as_os_str().to_os_string();
-        name.push(suffix);
-        let path = PathBuf::from(name);
-        let target = resolved(&path).map_err(|_| "Cannot verify index destination")?;
-        destinations.push(target.clone());
-        for root in &roots {
-            if target.starts_with(
-                root.as_ref()
-                    .map_err(|_| "Cannot verify native source root")?,
-            ) {
-                return Err("Index database must be outside native history directories");
-            }
-        }
-        #[cfg(unix)]
-        if let Ok(metadata) = std::fs::metadata(&path) {
-            use std::os::unix::fs::MetadataExt;
-            if metadata.nlink() > 1 {
-                return Err("Index database or sidecar has multiple hard links");
-            }
-        }
-    }
-    for source in [
-        ".claude/projects",
-        ".codex/sessions",
-        ".cursor/chats",
-        ".cursor/projects",
-        ".config/memhub-plugin/cursorflush",
-    ] {
-        reject_reverse_aliases(&home.join(source), &destinations)?;
-    }
-    Ok(())
 }

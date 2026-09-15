@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, expect, it, vi } from 'vitest';
-import exported from '../../fixtures/F1.json';
+import fixture from '../../fixtures/F1.json';
 import { DataProvider } from '../data/DataProvider';
 import type { DataSource } from '../data/DataSource';
 import { FixtureDataSource } from '../data/FixtureDataSource';
@@ -9,6 +9,9 @@ import { ThemeProvider } from '../theme/ThemeProvider';
 import { Search } from '../kit/Search';
 import { AppRoutes } from './AppRoutes';
 import { Shell } from './Shell';
+import type { FixtureExport } from '../data/generated/FixtureExport';
+// JSON imports widen literal unions; the export is the generated shape.
+const exported = fixture as FixtureExport;
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => false }));
 afterEach(() => {
   cleanup();
@@ -73,6 +76,7 @@ it('shows native metadata failure safely, retries, and preserves native drag exc
       .mockRejectedValueOnce(new Error('backend-specific detail'))
       .mockResolvedValue(exported.app_info),
     dbCounts: async () => exported.db_counts,
+    nativeIndexStatus: async () => exported.native_index,
     subscribe: async () => () => {},
   };
   vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');

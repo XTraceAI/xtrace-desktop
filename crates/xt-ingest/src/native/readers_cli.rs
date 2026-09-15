@@ -1,14 +1,23 @@
-//! Running the pinned shared readers. The producer is exactly the checkout named
-//! by `.plugin-pin`: HEAD and every listed reader source object are verified
-//! before the script runs. The readers see a disposable-looking environment
+//! Running the pinned shared readers. The producer is exactly the sources
+//! named by `.plugin-pin`: either a developer checkout, whose HEAD and every
+//! listed reader source object are verified through Git, or the copy bundled
+//! with the app, whose files are verified by computing the same Git object
+//! identities without Git. The readers see a disposable-looking environment
 //! rooted at the requested home, no inherited interpreter overrides, and their
 //! stdout is the shared stream; their stderr carries static diagnostic codes.
+//! A running reader can be cancelled: its process is killed and reaped, and
+//! what it had streamed stays committed.
 
 use serde::{Deserialize, Serialize};
+use sha1::{Digest, Sha1};
 use std::{
     ffi::{OsStr, OsString},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Child, Command},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use xt_store::Host;
 
@@ -27,8 +36,39 @@ pub struct PinnedProducer {
     pub commit: String,
     pub plugin_version: String,
     pub script: PathBuf,
-    // Keep the immutable-source export alive through reader execution.
-    _snapshot: std::sync::Arc<tempfile::TempDir>,
+    // Keep a checkout's immutable-source export alive through reader
+    // execution; a bundle runs in place.
+    _snapshot: Option<Arc<tempfile::TempDir>>,
+}
+
+/// Where the pinned producer's sources are.
+#[derive(Clone, Debug)]
+pub enum ProducerSource {
+    /// A developer checkout at the pinned commit, verified through Git; the
+    /// readers run from a temporary export of the committed objects.
+    Checkout {
+        pin: PathBuf,
+        plugin_root: Option<PathBuf>,
+    },
+    /// A copy of the pinned sources laid out as in the producer repository
+    /// (the app's bundled readers), verified by object identity without Git;
+    /// the readers run in place.
+    Bundle { pin: Pin, root: PathBuf },
+}
+
+impl ProducerSource {
+    /// Verify the sources against the pin and locate the reader script.
+    pub fn producer(&self) -> Result<PinnedProducer, ReaderError> {
+        match self {
+            Self::Checkout { pin, plugin_root } => {
+                let root = plugin_root.as_deref().ok_or_else(|| {
+                    ReaderError::PinMismatch("no pinned plugin root was supplied".into())
+                })?;
+                verify_pin(&read_pin(pin)?, root)
+            }
+            Self::Bundle { pin, root } => verify_bundle(pin, root),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -42,6 +82,9 @@ pub enum ReaderError {
     MissingRuntime(String),
     PinMismatch(String),
     Failed(String),
+    /// The caller cancelled the reader: it was not started, or it was killed
+    /// and reaped. What it had streamed before is not in doubt.
+    Cancelled,
 }
 
 impl std::fmt::Display for ReaderError {
@@ -50,6 +93,7 @@ impl std::fmt::Display for ReaderError {
             Self::MissingRuntime(reason) => write!(f, "python runtime unavailable: {reason}"),
             Self::PinMismatch(reason) => write!(f, "pinned producer unavailable: {reason}"),
             Self::Failed(reason) => write!(f, "reader failed: {reason}"),
+            Self::Cancelled => write!(f, "reader cancelled"),
         }
     }
 }
@@ -65,7 +109,12 @@ fn hex40(value: &str) -> bool {
 pub fn read_pin(path: &Path) -> Result<Pin, ReaderError> {
     let text = std::fs::read_to_string(path)
         .map_err(|_| ReaderError::PinMismatch(".plugin-pin is unreadable".into()))?;
-    let pin: Pin = serde_json::from_str(&text)
+    parse_pin(&text)
+}
+
+/// Parse the pin file's text (the app compiles the pin in).
+pub fn parse_pin(text: &str) -> Result<Pin, ReaderError> {
+    let pin: Pin = serde_json::from_str(text)
         .map_err(|_| ReaderError::PinMismatch(".plugin-pin is not the expected JSON".into()))?;
     if !hex40(&pin.commit)
         || pin.reader_sources.is_empty()
@@ -174,8 +223,182 @@ pub fn verify_pin(pin: &Pin, plugin_root: &Path) -> Result<PinnedProducer, Reade
         commit: pin.commit.clone(),
         plugin_version: pin.plugin_version.clone(),
         script,
-        _snapshot: std::sync::Arc::new(snapshot),
+        _snapshot: Some(Arc::new(snapshot)),
     })
+}
+
+/// Resolve the pinned reader script inside a bundled copy of the producer's
+/// sources at `root`, laid out as in the producer repository. Every reader
+/// source the pin lists must be present with exactly the pinned Git object
+/// identity, computed here the way Git computes it (a blob's bytes, a tree's
+/// sorted entries with their modes), so a bundle that was edited, that lost a
+/// module or gained one, or that carries another producer's files is refused
+/// without Git being installed. The pin must list the scripts tree itself,
+/// since the readers import sibling modules from it.
+pub fn verify_bundle(pin: &Pin, root: &Path) -> Result<PinnedProducer, ReaderError> {
+    let scripts = format!("{}/scripts", pin.plugin_root);
+    if !pin.reader_sources.contains_key(&scripts) {
+        return Err(ReaderError::PinMismatch(
+            "the pin does not name the bundled scripts tree".into(),
+        ));
+    }
+    for (path, expected) in &pin.reader_sources {
+        let actual = git_object_id(&root.join(path)).map_err(|reason| {
+            ReaderError::PinMismatch(format!("bundled reader source {path}: {reason}"))
+        })?;
+        if &actual != expected {
+            return Err(ReaderError::PinMismatch(format!(
+                "bundled reader source differs: {path}"
+            )));
+        }
+    }
+    let script = root.join(&scripts).join("readers_cli.py");
+    if !script.is_file() {
+        return Err(ReaderError::PinMismatch("readers_cli.py is absent".into()));
+    }
+    Ok(PinnedProducer {
+        commit: pin.commit.clone(),
+        plugin_version: pin.plugin_version.clone(),
+        script,
+        _snapshot: None,
+    })
+}
+
+/// The Git object identity of a regular file (blob) or directory (tree) on
+/// disk, as `git hash-object` and `git write-tree` would compute it: the
+/// lowercase hex SHA-1 of the object header and its content. A directory's
+/// entries are sorted as Git sorts them (a subdirectory as if its name ended
+/// in `/`), regular files carry mode 100644 or 100755 by their executable
+/// bit, and Python bytecode caches are skipped, since Git never holds them.
+/// A symlink or any other entry kind is refused.
+pub fn git_object_id(path: &Path) -> Result<String, String> {
+    fn hex(hash: &[u8]) -> String {
+        hash.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+    fn object(kind: &str, content: &[u8]) -> Vec<u8> {
+        let mut hasher = Sha1::new();
+        hasher.update(format!("{kind} {}\0", content.len()).as_bytes());
+        hasher.update(content);
+        hasher.finalize().to_vec()
+    }
+    fn raw(path: &Path) -> Result<Vec<u8>, String> {
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|error| format!("{} ({})", error.kind(), path.display()))?;
+        if metadata.is_file() {
+            let content = std::fs::read(path).map_err(|error| error.kind().to_string())?;
+            return Ok(object("blob", &content));
+        }
+        if !metadata.is_dir() {
+            return Err(format!(
+                "{} is neither a file nor a directory",
+                path.display()
+            ));
+        }
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(path).map_err(|error| error.kind().to_string())? {
+            let entry = entry.map_err(|error| error.kind().to_string())?;
+            let name = entry.file_name();
+            if name == "__pycache__" {
+                continue;
+            }
+            let kind = entry
+                .file_type()
+                .map_err(|error| error.kind().to_string())?;
+            let name = name
+                .to_str()
+                .ok_or_else(|| "entry name is not UTF-8".to_owned())?
+                .to_owned();
+            let (mode, sort_key) = if kind.is_dir() {
+                ("40000", format!("{name}/"))
+            } else if kind.is_file() {
+                (
+                    if executable(&entry.path()) {
+                        "100755"
+                    } else {
+                        "100644"
+                    },
+                    name.clone(),
+                )
+            } else {
+                return Err(format!(
+                    "{} is neither a file nor a directory",
+                    entry.path().display()
+                ));
+            };
+            entries.push((sort_key, mode, name, raw(&entry.path())?));
+        }
+        entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+        let mut content = Vec::new();
+        for (_, mode, name, id) in entries {
+            content.extend_from_slice(format!("{mode} {name}\0").as_bytes());
+            content.extend_from_slice(&id);
+        }
+        Ok(object("tree", &content))
+    }
+    raw(path).map(|id| hex(&id))
+}
+
+#[cfg(unix)]
+fn executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata()
+        .is_ok_and(|meta| meta.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn executable(_: &Path) -> bool {
+    false
+}
+
+/// Install directories a GUI process's `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`
+/// under launchd) does not reach, tried after `PATH` when no interpreter was
+/// named: Homebrew on Apple silicon and Intel, MacPorts, and the user's own
+/// `bin` (pipx, uv). Resolving the interactive login shell's environment is
+/// separate work; naming the interpreter (`XTRACE_PYTHON` in the app,
+/// `--python`/`PYTHON` for the CLI) overrides the search.
+#[cfg(target_os = "macos")]
+const KNOWN_PYTHON_DIRS: &[&str] = &[
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/opt/local/bin",
+    "~/.local/bin",
+];
+#[cfg(not(target_os = "macos"))]
+const KNOWN_PYTHON_DIRS: &[&str] = &["~/.local/bin"];
+
+/// Select the interpreter: an explicit executable or `PYTHON` is probed as
+/// named; otherwise `python3` on `PATH`, then in each known install directory,
+/// the first that qualifies. Every reason a candidate did not qualify is
+/// reported when none did.
+pub fn discover_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError> {
+    let named = explicit
+        .map(OsStr::to_os_string)
+        .or_else(|| std::env::var_os("PYTHON").filter(|value| !value.is_empty()));
+    if let Some(named) = named {
+        return resolve_python(Some(&named));
+    }
+    let mut reasons = Vec::new();
+    match resolve_python(None) {
+        Ok(python) => return Ok(python),
+        Err(error) => reasons.push(format!("python3 on PATH: {error}")),
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    for directory in KNOWN_PYTHON_DIRS {
+        let directory = match (directory.strip_prefix("~/"), &home) {
+            (Some(rest), Some(home)) => home.join(rest),
+            (Some(_), None) => continue,
+            (None, _) => PathBuf::from(directory),
+        };
+        let candidate = directory.join("python3");
+        if !candidate.is_file() {
+            continue;
+        }
+        match resolve_python(Some(candidate.as_os_str())) {
+            Ok(python) => return Ok(python),
+            Err(error) => reasons.push(format!("{}: {error}", candidate.display())),
+        }
+    }
+    Err(ReaderError::MissingRuntime(reasons.join("; ")))
 }
 
 /// Select the interpreter: an explicit executable, else `PYTHON`, else `python3`.
@@ -223,11 +446,83 @@ pub fn resolve_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError>
     Ok(python)
 }
 
+/// Cancels reader execution from another thread: a reader not yet started
+/// is refused, and the one running is killed (its process reaped by the
+/// thread consuming it) so a producer that never returns cannot hold the
+/// caller. Cancellation is permanent for the token.
+#[derive(Clone, Default)]
+pub struct CancelToken(Arc<CancelState>);
+
+#[derive(Default)]
+struct CancelState {
+    cancelled: AtomicBool,
+    /// The child running now, shared with its handle so a cancel that lands
+    /// while it runs kills exactly that process; taken by the handle at exit.
+    active: Mutex<Option<Arc<Mutex<Option<Child>>>>>,
+}
+
+impl CancelToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.cancelled.load(Ordering::SeqCst)
+    }
+
+    /// Refuse readers from now on and kill the one running, if any. The flag
+    /// and the active child change under one lock, so a reader registering
+    /// concurrently is killed as well.
+    pub fn cancel(&self) {
+        let active = self
+            .0
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.0.cancelled.store(true, Ordering::SeqCst);
+        if let Some(slot) = active.as_ref() {
+            let mut child = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(child) = child.as_mut() {
+                // A process that already exited is left for its handle to reap.
+                let _ = child.kill();
+            }
+        }
+    }
+
+    /// Register the spawned child, killing it at once if a cancel landed
+    /// between the caller's check and the spawn.
+    fn register(&self, slot: &Arc<Mutex<Option<Child>>>) {
+        let mut active = self
+            .0
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *active = Some(Arc::clone(slot));
+        if self.0.cancelled.load(Ordering::SeqCst)
+            && let Some(child) = slot
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_mut()
+        {
+            let _ = child.kill();
+        }
+    }
+
+    fn unregister(&self) {
+        self.0
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+    }
+}
+
 /// A running pinned reader's exit half: the caller consumes the returned
 /// stdout line by line, then waits here; stderr (static diagnostics only) is
 /// drained concurrently.
 pub struct ReaderHandle {
-    child: std::process::Child,
+    child: Arc<Mutex<Option<Child>>>,
+    cancel: Option<CancelToken>,
     stderr: std::thread::JoinHandle<Vec<u8>>,
 }
 
@@ -242,13 +537,18 @@ pub struct ReaderOutcome {
 /// Start the pinned reader for one host over `home`, reading every session it
 /// discovers. Only the shared stream on stdout and static diagnostic codes on
 /// stderr are consumed; a crash surfaces as a bounded failure text, never as
-/// imported data.
+/// imported data. A cancelled token refuses the start; a cancel while the
+/// reader runs kills it, which ends the stream, and `finish` reports it.
 pub fn spawn_reader(
     python: &OsStr,
     producer: &PinnedProducer,
     host: Host,
     home: &Path,
+    cancel: Option<&CancelToken>,
 ) -> Result<(std::io::BufReader<std::process::ChildStdout>, ReaderHandle), ReaderError> {
+    if cancel.is_some_and(CancelToken::is_cancelled) {
+        return Err(ReaderError::Cancelled);
+    }
     let mut child = Command::new(python)
         .arg(&producer.script)
         .args(["--host", host.as_str()])
@@ -281,10 +581,15 @@ pub fn spawn_reader(
         let _ = std::io::Read::read_to_end(&mut stderr, &mut bytes);
         bytes
     });
+    let child = Arc::new(Mutex::new(Some(child)));
+    if let Some(cancel) = cancel {
+        cancel.register(&child);
+    }
     Ok((
         std::io::BufReader::new(stdout),
         ReaderHandle {
             child,
+            cancel: cancel.cloned(),
             stderr: drain,
         },
     ))
@@ -292,12 +597,38 @@ pub fn spawn_reader(
 
 impl ReaderHandle {
     /// Wait for the reader after its stdout has been consumed to its end and
-    /// classify its diagnostics and exit status.
-    pub fn finish(mut self) -> Result<ReaderOutcome, ReaderError> {
-        let status = self
-            .child
-            .wait()
-            .map_err(|_| ReaderError::Failed("reader process could not be awaited".into()))?;
+    /// classify its diagnostics and exit status. The process is always
+    /// reaped here, killed or not; a cancelled reader that did not exit
+    /// normally reports `Cancelled`, one that had exited normally before the
+    /// cancel landed reports its outcome, since its stream was complete.
+    pub fn finish(self) -> Result<ReaderOutcome, ReaderError> {
+        // The child stays registered, and the slot unlocked between polls,
+        // until it has exited: a reader that closed its stream but runs on
+        // can still be killed by a cancel while it is awaited here.
+        let status = loop {
+            let mut slot = self
+                .child
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let child = slot
+                .as_mut()
+                .ok_or_else(|| ReaderError::Failed("reader process was already reaped".into()))?;
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {}
+                Err(_) => {
+                    return Err(ReaderError::Failed(
+                        "reader process could not be awaited".into(),
+                    ));
+                }
+            }
+            drop(slot);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        if let Some(cancel) = &self.cancel {
+            cancel.unregister();
+        }
+        let cancelled = self.cancel.as_ref().is_some_and(CancelToken::is_cancelled);
         let stderr = self.stderr.join().unwrap_or_default();
         let stderr = String::from_utf8_lossy(&stderr);
         let mut diagnostics = Vec::new();
@@ -326,6 +657,7 @@ impl ReaderHandle {
         let complete = match status.code() {
             Some(0) => true,
             Some(2) => false,
+            _ if cancelled => return Err(ReaderError::Cancelled),
             code => {
                 return Err(ReaderError::Failed(format!(
                     "reader exited with status {}: {}",

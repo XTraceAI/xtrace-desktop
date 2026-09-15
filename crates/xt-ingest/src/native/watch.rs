@@ -12,10 +12,17 @@
 //! coalesced event marks its host dirty, and the reconciliation decides what
 //! actually changed. A watcher that cannot be registered leaves the tailer
 //! degraded and says so; it never reports ready as if it were live.
+//!
+//! Stopping is graceful by default: changes already delivered are reconciled
+//! first. A shutdown cancels instead: the reader running is killed and reaped,
+//! a Claude scan ends between files, and the worker is joined within a
+//! bound, so a producer that never returns cannot hold the process that
+//! is exiting. What a cancelled scan had committed stays; the next scan
+//! reads the rest.
 
 use super::{
-    HostReport, HostStatus, ImportReport, ImportRequest, ScanMode, SessionOutcome, all_imported,
-    scan_native_observed,
+    CancelToken, HostReport, HostStatus, ImportReport, ImportRequest, ProducerSource, ScanMode,
+    SessionOutcome, all_imported, scan_native_observed,
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
@@ -32,15 +39,20 @@ use std::{
 };
 use xt_store::{Host, Store};
 
+/// How long a dropped tailer waits for its cancelled worker to finish before
+/// leaving the thread behind.
+pub const SHUTDOWN_BOUND: Duration = Duration::from_secs(5);
+
 pub struct WatchConfig {
     pub home: PathBuf,
     pub hosts: Vec<Host>,
-    pub pin: PathBuf,
-    pub plugin_root: Option<PathBuf>,
+    /// Where the pinned producer's sources are, for the reader hosts.
+    pub producer: ProducerSource,
     pub python: Option<OsString>,
     /// Quiet period after the last event before a burst is reconciled.
     pub debounce: Duration,
-    /// Instrumentation for tests: called at the named points on the worker.
+    /// Instrumentation: called at the named points on the worker (tests, and
+    /// progress reporting during the initial scan).
     pub probe: Option<Probe>,
 }
 
@@ -208,7 +220,19 @@ impl Shared {
 pub struct Tailer {
     control: Sender<Message>,
     shared: Arc<Shared>,
+    cancel: CancelToken,
+    /// Signalled when the worker thread ends, however it ends, so a join can
+    /// be bounded.
+    finished: Receiver<()>,
     worker: Option<JoinHandle<()>>,
+}
+
+/// Sends on drop, so the worker's end is signalled even if it panicked.
+struct Finished(Sender<()>);
+impl Drop for Finished {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
 }
 
 impl Tailer {
@@ -217,21 +241,29 @@ impl Tailer {
     /// The store is owned by the worker thread from here on.
     pub fn start(store: Store, config: WatchConfig, sink: Box<dyn Fn(TailEvent) + Send>) -> Self {
         let (tx, rx) = mpsc::channel();
+        let (finished_tx, finished) = mpsc::channel();
         let shared = Arc::new(Shared {
             state: Mutex::new(State::default()),
             changed: Condvar::new(),
         });
+        let cancel = CancelToken::new();
         let worker = {
             let shared = Arc::clone(&shared);
             let tx = tx.clone();
+            let cancel = cancel.clone();
             std::thread::Builder::new()
                 .name("xtrace-native-tail".into())
-                .spawn(move || Worker::new(store, config, sink, shared, tx).run(rx))
+                .spawn(move || {
+                    let _finished = Finished(finished_tx);
+                    Worker::new(store, config, sink, shared, tx, cancel).run(rx)
+                })
                 .expect("spawn the native tail worker")
         };
         Self {
             control: tx,
             shared,
+            cancel,
+            finished,
             worker: Some(worker),
         }
     }
@@ -327,20 +359,49 @@ impl Tailer {
         let _ = self.control.send(Message::Stop);
     }
 
+    /// Stop gracefully: changes delivered before the request are reconciled
+    /// first, and the scan in progress runs to its end. A reader that never
+    /// returns holds this call; `shutdown` cancels instead.
     pub fn stop(mut self) {
         let _ = self.control.send(Message::Stop);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
     }
+
+    /// Cancel the scan in progress and every later one: the reader running is
+    /// killed and reaped, a Claude scan ends between files, and each host not
+    /// read completely is reported as cancelled. What was committed stays.
+    pub fn cancel(&self) {
+        self.cancel.cancel();
+    }
+
+    /// Cancel, stop, and wait at most `bound` for the worker to end. Returns
+    /// false if it had not ended within the bound (it is then left behind,
+    /// its reader already killed, and ends with the process).
+    pub fn shutdown(mut self, bound: Duration) -> bool {
+        self.shutdown_in_place(bound)
+    }
+
+    fn shutdown_in_place(&mut self, bound: Duration) -> bool {
+        self.cancel.cancel();
+        let _ = self.control.send(Message::Stop);
+        let Some(worker) = self.worker.take() else {
+            return true;
+        };
+        match self.finished.recv_timeout(bound) {
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => {
+                let _ = worker.join();
+                true
+            }
+            Err(RecvTimeoutError::Timeout) => false,
+        }
+    }
 }
 
 impl Drop for Tailer {
     fn drop(&mut self) {
-        let _ = self.control.send(Message::Stop);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+        self.shutdown_in_place(SHUTDOWN_BOUND);
     }
 }
 
@@ -498,7 +559,10 @@ fn carry_counts(earlier: &HostReport, mut later: HostReport) -> HostReport {
     // carried by those, retained or resolved above, not by the status.
     let failed_earlier = matches!(
         earlier.status,
-        HostStatus::ReaderFailed | HostStatus::MissingRuntime | HostStatus::PinMismatch
+        HostStatus::ReaderFailed
+            | HostStatus::MissingRuntime
+            | HostStatus::PinMismatch
+            | HostStatus::Cancelled
     ) || (earlier.status == HostStatus::Incomplete
         && earlier.sessions.is_empty()
         && earlier.diagnostics.is_empty());
@@ -559,6 +623,7 @@ struct Worker {
     /// Filesystem events taken off the queue so far; idle only once it has
     /// caught up with the events delivered.
     consumed: u64,
+    cancel: CancelToken,
 }
 
 impl Worker {
@@ -568,6 +633,7 @@ impl Worker {
         sink: Box<dyn Fn(TailEvent) + Send>,
         shared: Arc<Shared>,
         events: Sender<Message>,
+        cancel: CancelToken,
     ) -> Self {
         let mut homes = vec![config.home.clone()];
         if let Ok(resolved) = config.home.canonicalize()
@@ -585,6 +651,7 @@ impl Worker {
             watcher: None,
             lost: Vec::new(),
             consumed: 0,
+            cancel,
         }
     }
 
@@ -871,10 +938,10 @@ impl Worker {
         let request = ImportRequest {
             home: &self.config.home,
             hosts,
-            pin: &self.config.pin,
-            plugin_root: self.config.plugin_root.as_deref(),
+            producer: &self.config.producer,
             python: self.config.python.as_deref(),
             observed_at: now_ms(),
+            cancel: Some(&self.cancel),
         };
         scan_native_observed(&mut self.store, &request, ScanMode::Resume, observer)
     }
@@ -1474,8 +1541,10 @@ mod tests {
         let config = WatchConfig {
             home: home.clone(),
             hosts: vec![Host::Claude],
-            pin: PathBuf::from("/pin"),
-            plugin_root: None,
+            producer: ProducerSource::Checkout {
+                pin: PathBuf::from("/pin"),
+                plugin_root: None,
+            },
             python: None,
             debounce: Duration::from_millis(1),
             probe: None,

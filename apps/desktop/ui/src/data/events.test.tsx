@@ -2,11 +2,14 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import exported from '../../fixtures/F1.json';
+import fixture from '../../fixtures/F1.json';
 import { DataProvider, useData } from './DataProvider';
 import { FixtureDataSource } from './FixtureDataSource';
 import type { DataSource } from './DataSource';
 import { events } from './ipc-names';
+import type { FixtureExport } from './generated/FixtureExport';
+// JSON imports widen literal unions; the export is the generated shape.
+const exported = fixture as FixtureExport;
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -118,6 +121,7 @@ it('balances delayed async subscriptions under StrictMode and cancels pending in
     kind: 'fixture',
     appInfo: async () => exported.app_info,
     dbCounts: async () => exported.db_counts,
+    nativeIndexStatus: async () => exported.native_index,
     subscribe: vi.fn((_event, listener) => {
       const done = deferred<() => void>();
       const stop = vi.fn();

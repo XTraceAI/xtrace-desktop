@@ -10,7 +10,7 @@ use std::{
     process::Command,
 };
 use xt_ingest::native::{
-    HostStatus, ImportRequest, SessionOutcome, import_native, import_reader_lines,
+    HostStatus, ImportRequest, ProducerSource, SessionOutcome, import_native, import_reader_lines,
     readers_cli::ReaderOutcome,
 };
 use xt_store::{Host, SessionSource, Store};
@@ -343,10 +343,13 @@ fn reader_hosts_report_missing_sources_runtime_and_pin_explicitly() {
         &ImportRequest {
             home: &empty,
             hosts: &[Host::Codex, Host::Cursor],
-            pin: &pin,
-            plugin_root: None,
+            producer: &ProducerSource::Checkout {
+                pin: pin.clone(),
+                plugin_root: None,
+            },
             python: None,
             observed_at: 1,
+            cancel: None,
         },
     );
     assert!(
@@ -364,10 +367,13 @@ fn reader_hosts_report_missing_sources_runtime_and_pin_explicitly() {
         &ImportRequest {
             home: &home,
             hosts: &[Host::Codex],
-            pin: &pin,
-            plugin_root: None,
+            producer: &ProducerSource::Checkout {
+                pin: pin.clone(),
+                plugin_root: None,
+            },
             python: Some(missing.as_os_str()),
             observed_at: 1,
+            cancel: None,
         },
     );
     assert_eq!(
@@ -382,10 +388,13 @@ fn reader_hosts_report_missing_sources_runtime_and_pin_explicitly() {
         &ImportRequest {
             home: &home,
             hosts: &[Host::Codex],
-            pin: &pin,
-            plugin_root: None,
+            producer: &ProducerSource::Checkout {
+                pin: pin.clone(),
+                plugin_root: None,
+            },
             python: None,
             observed_at: 1,
+            cancel: None,
         },
     );
     assert_eq!(
@@ -430,10 +439,13 @@ fn reader_hosts_report_missing_sources_runtime_and_pin_explicitly() {
         &ImportRequest {
             home: &home,
             hosts: &[Host::Codex],
-            pin: &pin,
-            plugin_root: Some(&checkout.join("plugins/memhub")),
+            producer: &ProducerSource::Checkout {
+                pin: pin.clone(),
+                plugin_root: Some(checkout.join("plugins/memhub")),
+            },
             python: None,
             observed_at: 1,
+            cancel: None,
         },
     );
     assert_eq!(
@@ -1156,10 +1168,13 @@ fn inaccessible_reader_roots_are_not_reported_missing() {
             &ImportRequest {
                 home: &home,
                 hosts: &[host],
-                pin: &repo().join(".plugin-pin"),
-                plugin_root: None,
+                producer: &ProducerSource::Checkout {
+                    pin: repo().join(".plugin-pin"),
+                    plugin_root: None,
+                },
                 python: None,
                 observed_at: 1,
+                cancel: None,
             },
         );
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();

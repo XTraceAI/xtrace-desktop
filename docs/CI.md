@@ -89,7 +89,9 @@ See the [runner image](https://github.com/actions/runner-images/blob/main/images
 validated against: the public `agent-plugins` repository, a full commit SHA,
 the plugin root, the plugin's release version and the Git object IDs of the
 reader sources the Desktop index will consume (`readers/`, `readers_cli.py`,
-`cursor_flush.py`). `node scripts/ci/plugin-pin.mjs commit` prints a field;
+`cursor_flush.py`, and the whole `scripts` tree they import from, which the app
+bundles as `vendor/agent-plugins` and verifies by the same object identities
+without Git). `node scripts/ci/plugin-pin.mjs commit` prints a field;
 `scripts/ci/plugin-pin.test.mjs` rejects malformed pins in hosted CI.
 
 `scripts/ci/plugin-conformance.sh` owns the pinned checkout, the environment
@@ -120,11 +122,13 @@ The inventory currently requires:
 | `conformance_plugin_transport`     | The pinned decoder and token client against the headless binary: initialize, SSE `tools/list`, token mint/list/delete, notification and empty-import rejection.                                                        |
 | `conformance_native_reader_stream` | The pinned `readers_cli.py` over the fixture catalog's synthetic native Codex/Cursor files ([F18 and F20](FIXTURES.md)); see [acceptance](acceptance/plugin-conformance.md).                                           |
 | `conformance_native_import`        | The complete native import through the pinned readers into a disposable index: identity and counts per session, a repeated run adds nothing, source bytes unchanged; see [native import](acceptance/native-import.md). |
+| `conformance_bundled_readers`      | The bundled reader sources are byte for byte the pinned commit's scripts tree and notices, and read F18 in place, without a checkout or Git, to the same index as the verified checkout.                               |
 
 Record in the PR the pin commit printed by the hook and the `executed N of N`
 line with its test names. Every producer release train that Desktop adopts
 updates `.plugin-pin`, the release workflow's producer `ref`, the reader source
-object IDs and, when the reader stream changes on purpose, the fixture goldens
+object IDs, the bundled copy (`sh scripts/vendor-readers.sh`, then the printed
+scripts tree ID in the pin) and, when the reader stream changes on purpose, the fixture goldens
 (`python3 scripts/conformance/test-reader-stream.py --write-golden`, then review
 the diff). A pin whose readers emit a different stream fails the reader test
 until the golden and the consumer are updated together.

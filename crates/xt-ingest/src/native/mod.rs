@@ -18,6 +18,7 @@ pub mod stream;
 pub mod watch;
 
 use crate::writer::{MAX_BATCH_RECORDS, WriteBatch, write_batch};
+pub use readers_cli::{CancelToken, ProducerSource};
 use readers_cli::{ReaderDiagnostic, ReaderError};
 use serde::Serialize;
 use std::{
@@ -49,13 +50,15 @@ pub struct ImportRequest<'a> {
     /// cursor key see one absolute spelling.
     pub home: &'a Path,
     pub hosts: &'a [Host],
-    /// The pin file naming the producer; required for Codex and Cursor.
-    pub pin: &'a Path,
-    /// The pinned plugin root (`<checkout>/plugins/memhub`); required for Codex and Cursor.
-    pub plugin_root: Option<&'a Path>,
+    /// Where the pinned producer's sources are; used for Codex and Cursor.
+    pub producer: &'a ProducerSource,
     pub python: Option<&'a OsStr>,
     /// UTC milliseconds recorded as the observation time of this import.
     pub observed_at: i64,
+    /// Cancels the scan: a reader running is killed, a host not yet scanned or
+    /// a Claude file not yet read is left for the next scan, and each is
+    /// reported as cancelled. What was committed before stays.
+    pub cancel: Option<&'a CancelToken>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -70,6 +73,9 @@ pub enum HostStatus {
     MissingRuntime,
     PinMismatch,
     ReaderFailed,
+    /// The scan was cancelled before this host was read completely: the
+    /// sessions listed were imported, the rest wait for the next scan.
+    Cancelled,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -182,15 +188,20 @@ pub fn scan_native_observed(
     let request = &ImportRequest {
         home: &home,
         hosts: request.hosts,
-        pin: request.pin,
-        plugin_root: request.plugin_root,
+        producer: request.producer,
         python: request.python,
         observed_at: request.observed_at,
+        cancel: request.cancel,
     };
     let hosts = request
         .hosts
         .iter()
         .map(|host| match host {
+            _ if cancelled(request) => HostReport::unavailable(
+                *host,
+                HostStatus::Cancelled,
+                "scan cancelled before this host was read",
+            ),
             Host::Claude => import_claude(store, request, mode, observer),
             Host::Codex | Host::Cursor => import_reader_host(store, request, *host),
             Host::Other => HostReport::unavailable(
@@ -201,6 +212,98 @@ pub fn scan_native_observed(
         })
         .collect();
     ImportReport { hosts }
+}
+
+fn cancelled(request: &ImportRequest<'_>) -> bool {
+    request.cancel.is_some_and(CancelToken::is_cancelled)
+}
+
+/// Refuse an index destination inside the native sources it would index, or
+/// aliased to them, before SQLite can create the database or its sidecars
+/// there: the index's own writes must never read as source changes, and an
+/// alternate name (an existing hard link) must not alias native history.
+pub fn validate_index_destination(db: &Path, home: &Path) -> Result<(), &'static str> {
+    fn resolved(path: &Path) -> std::io::Result<PathBuf> {
+        match path.canonicalize() {
+            Ok(path) => Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if std::fs::symlink_metadata(path).is_ok() {
+                    return Err(error);
+                }
+                let parent = path
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new("."));
+                Ok(resolved(parent)?.join(path.file_name().ok_or(error)?))
+            }
+            Err(error) => Err(error),
+        }
+    }
+    fn reject_reverse_aliases(root: &Path, destinations: &[PathBuf]) -> Result<(), &'static str> {
+        let metadata = match std::fs::symlink_metadata(root) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(_) => return Err("Cannot inspect native source aliases"),
+        };
+        if metadata.file_type().is_symlink() {
+            let target =
+                std::fs::read_link(root).map_err(|_| "Cannot inspect native source alias")?;
+            let target = resolved(&root.parent().unwrap_or(Path::new(".")).join(target))
+                .map_err(|_| "Cannot resolve native source alias")?;
+            if destinations.iter().any(|path| path.starts_with(&target)) {
+                return Err("Native source alias points at index destination");
+            }
+        } else if metadata.is_dir() {
+            for entry in
+                std::fs::read_dir(root).map_err(|_| "Cannot inspect native source aliases")?
+            {
+                reject_reverse_aliases(
+                    &entry
+                        .map_err(|_| "Cannot inspect native source entry")?
+                        .path(),
+                    destinations,
+                )?;
+            }
+        }
+        Ok(())
+    }
+    let mut destinations = Vec::new();
+    // The host history directories, and the hook state area the Cursor watch
+    // covers: an index there would feed its own writes back as changes.
+    let roots = [".claude", ".codex", ".cursor", ".config/memhub-plugin"]
+        .map(|name| resolved(&home.join(name)));
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let mut name = db.as_os_str().to_os_string();
+        name.push(suffix);
+        let path = PathBuf::from(name);
+        let target = resolved(&path).map_err(|_| "Cannot verify index destination")?;
+        destinations.push(target.clone());
+        for root in &roots {
+            if target.starts_with(
+                root.as_ref()
+                    .map_err(|_| "Cannot verify native source root")?,
+            ) {
+                return Err("Index database must be outside native history directories");
+            }
+        }
+        #[cfg(unix)]
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.nlink() > 1 {
+                return Err("Index database or sidecar has multiple hard links");
+            }
+        }
+    }
+    for source in [
+        ".claude/projects",
+        ".codex/sessions",
+        ".cursor/chats",
+        ".cursor/projects",
+        ".config/memhub-plugin/cursorflush",
+    ] {
+        reject_reverse_aliases(&home.join(source), &destinations)?;
+    }
+    Ok(())
 }
 
 /// The readers change into the home and receive it as `HOME`, so a relative
@@ -274,7 +377,12 @@ fn import_claude(
         }
     };
     let mut sessions = Vec::new();
+    let mut interrupted = false;
     for file in files {
+        if cancelled(request) {
+            interrupted = true;
+            break;
+        }
         match claude_fs::import_file(store, &file, request.observed_at, mode) {
             Ok(result) => sessions.push(result),
             Err(error) => {
@@ -295,15 +403,20 @@ fn import_claude(
         }
         observer(&file.path);
     }
-    let status = if diagnostics.is_empty() && all_imported(&sessions) {
-        HostStatus::Complete
+    let (status, detail) = if interrupted {
+        (
+            HostStatus::Cancelled,
+            Some("scan cancelled before every transcript was read".to_owned()),
+        )
+    } else if diagnostics.is_empty() && all_imported(&sessions) {
+        (HostStatus::Complete, None)
     } else {
-        HostStatus::Incomplete
+        (HostStatus::Incomplete, None)
     };
     HostReport {
         host: Host::Claude,
         status,
-        detail: None,
+        detail,
         diagnostics,
         sessions,
     }
@@ -351,26 +464,28 @@ fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host
             );
         }
     }
-    let python = match readers_cli::resolve_python(request.python) {
+    let python = match readers_cli::discover_python(request.python) {
         Ok(python) => python,
         Err(error) => {
             return HostReport::unavailable(host, HostStatus::MissingRuntime, error.to_string());
         }
     };
-    let producer = match request
-        .plugin_root
-        .ok_or_else(|| ReaderError::PinMismatch("no pinned plugin root was supplied".into()))
-        .and_then(|root| {
-            readers_cli::read_pin(request.pin).and_then(|pin| readers_cli::verify_pin(&pin, root))
-        }) {
+    let producer = match request.producer.producer() {
         Ok(producer) => producer,
         Err(error) => {
             return HostReport::unavailable(host, HostStatus::PinMismatch, error.to_string());
         }
     };
     let (mut stdout, handle) =
-        match readers_cli::spawn_reader(&python, &producer, host, request.home) {
+        match readers_cli::spawn_reader(&python, &producer, host, request.home, request.cancel) {
             Ok(spawned) => spawned,
+            Err(ReaderError::Cancelled) => {
+                return HostReport::unavailable(
+                    host,
+                    HostStatus::Cancelled,
+                    "scan cancelled before the reader started",
+                );
+            }
             Err(error) => {
                 return HostReport::unavailable(host, HostStatus::ReaderFailed, error.to_string());
             }
@@ -576,6 +691,13 @@ where
         }
     }
     let (status, detail, diagnostics) = match (stream_failure, outcome) {
+        // A cancelled reader's stream ends wherever the kill landed: that end
+        // is the cancellation, not a stream failure.
+        (_, Err(ReaderError::Cancelled)) => (
+            HostStatus::Cancelled,
+            "reader cancelled before it finished; sessions it completed stay committed".into(),
+            Vec::new(),
+        ),
         (Some(failure), _) => (HostStatus::ReaderFailed, failure, Vec::new()),
         (None, Err(error)) => (HostStatus::ReaderFailed, error.to_string(), Vec::new()),
         (None, Ok(run)) => {

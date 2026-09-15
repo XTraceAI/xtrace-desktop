@@ -2,6 +2,15 @@
 use xtrace_desktop::dto::FixtureExport;
 use xtrace_desktop::state::{AppState, StartupOptions, StateError};
 
+/// Fixture startup never indexes live data: the shell export carries the
+/// disabled index the app reports in fixture mode.
+#[cfg(all(debug_assertions, feature = "fixtures"))]
+fn expected_native_index() -> xtrace_desktop::dto::NativeIndexStatus {
+    use std::sync::Arc;
+    use xtrace_desktop::native_index::NativeIndex;
+    NativeIndex::disabled("fixture mode uses a disposable database", Arc::new(|_| {})).status()
+}
+
 #[test]
 fn fixture_mode_data_dir_override_wins_and_live_store_persists() {
     let root = tempfile::TempDir::new().unwrap();
@@ -9,7 +18,7 @@ fn fixture_mode_data_dir_override_wins_and_live_store_persists() {
     let state = AppState::build(
         StartupOptions {
             data_dir: Some(path.clone()),
-            fixture: None,
+            ..Default::default()
         },
         || panic!("default path must not be resolved"),
     )
@@ -50,8 +59,8 @@ fn fixture_mode_options_have_explicit_precedence_and_validation() {
 fn fixture_mode_is_disabled_without_debug_feature() {
     let result = AppState::build(
         StartupOptions {
-            data_dir: None,
             fixture: Some("F1".into()),
+            ..Default::default()
         },
         || panic!("fixture must not resolve live directory"),
     );
@@ -67,6 +76,7 @@ fn fixture_mode_builds_isolated_database_and_generated_export_parity() {
             StartupOptions {
                 data_dir: Some(root.path().into()),
                 fixture: Some("F1".into()),
+                ..Default::default()
             },
             || panic!("fixture must not resolve live directory"),
         )
@@ -82,6 +92,7 @@ fn fixture_mode_builds_isolated_database_and_generated_export_parity() {
     let exported = serde_json::to_value(FixtureExport {
         app_info,
         db_counts: first.db_counts().unwrap(),
+        native_index: expected_native_index(),
     })
     .unwrap();
     let expected: serde_json::Value =
@@ -107,8 +118,8 @@ fn fixture_mode_rejects_skeletons_and_invalid_ids_without_live_reads() {
     for fixture in ["F2", "F20", "../F1", "F999"] {
         let result = AppState::build(
             StartupOptions {
-                data_dir: None,
                 fixture: Some(fixture.into()),
+                ..Default::default()
             },
             || panic!("fixture must not resolve live directory"),
         );

@@ -126,6 +126,21 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                     listening: false,
                 },
                 db_counts: database.store().counts()?.try_into()?,
+                native_index: xtrace_desktop::dto::NativeIndexStatus {
+                    phase: xtrace_desktop::dto::NativeIndexPhase::Disabled {
+                        reason: "fixture mode uses a disposable database".into(),
+                    },
+                    freshness: xtrace_desktop::dto::NativeFreshness::Unknown,
+                    python: xtrace_desktop::dto::PythonRuntime::Missing {
+                        reason: "not resolved: the index is disabled".into(),
+                    },
+                    readers: xtrace_desktop::dto::ReaderBundle::Unavailable {
+                        reason: "not verified: the index is disabled".into(),
+                    },
+                    hosts: Vec::new(),
+                    reconciles: 0,
+                    files_scanned: 0,
+                },
             };
             serde_json::to_string_pretty(&export)?
         } else {

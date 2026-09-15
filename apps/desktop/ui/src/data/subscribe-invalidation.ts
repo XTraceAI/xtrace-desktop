@@ -10,6 +10,7 @@ export const eventPrefixes: Record<DataEvent, readonly string[]> = {
   [events.hostConnected]: ['app', ...ingest],
   [events.fireReceived]: ['fires', 'rules'],
   [events.prsRefreshed]: ['prs', 'gh'],
+  [events.nativeIndexStatus]: ['native', ...ingest],
 };
 
 export function subscribeInvalidation(

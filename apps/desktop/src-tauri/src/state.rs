@@ -27,6 +27,12 @@ pub enum StateError {
 pub struct StartupOptions {
     pub data_dir: Option<PathBuf>,
     pub fixture: Option<String>,
+    /// The home the native index reads (`XTRACE_NATIVE_HOME`); the user's
+    /// home otherwise.
+    pub native_home: Option<PathBuf>,
+    /// The interpreter for the Codex/Cursor readers (`XTRACE_PYTHON`);
+    /// discovered otherwise.
+    pub python: Option<std::ffi::OsString>,
 }
 impl StartupOptions {
     /// Arguments take precedence over the environment; duplicate flags fail.
@@ -63,13 +69,37 @@ impl StartupOptions {
         {
             return Err(StateError::InvalidOption);
         }
-        Ok(Self { data_dir, fixture })
+        Ok(Self {
+            data_dir,
+            fixture,
+            native_home: None,
+            python: None,
+        })
+    }
+
+    /// Read the native index overrides from the environment; an empty value
+    /// is invalid, like the other options.
+    pub fn with_native_environment(
+        mut self,
+        native_home: Option<std::ffi::OsString>,
+        python: Option<std::ffi::OsString>,
+    ) -> Result<Self, StateError> {
+        if native_home.as_ref().is_some_and(|v| v.is_empty())
+            || python.as_ref().is_some_and(|v| v.is_empty())
+        {
+            return Err(StateError::InvalidOption);
+        }
+        self.native_home = native_home.map(PathBuf::from);
+        self.python = python;
+        Ok(self)
     }
 }
 
 pub struct AppState {
     database: Mutex<Option<Database>>,
     info: AppInfo,
+    /// The live database file; none in fixture mode, whose database is disposable.
+    db_path: Option<PathBuf>,
 }
 
 struct Database {
@@ -93,14 +123,16 @@ impl AppState {
             None => default_dir()?,
         };
         std::fs::create_dir_all(&data_dir)?;
-        let store = Store::open(data_dir.join("xtrace.db"))?;
-        Self::from_store(store, data_dir, None, None)
+        let db_path = data_dir.join("xtrace.db");
+        let store = Store::open(&db_path)?;
+        Self::from_store(store, data_dir, None, None, Some(db_path))
     }
     fn from_store(
         store: Store,
         data_dir: PathBuf,
         fixture: Option<String>,
         directory: Option<tempfile::TempDir>,
+        db_path: Option<PathBuf>,
     ) -> Result<Self, StateError> {
         let info = AppInfo {
             name: "XTrace Desktop".into(),
@@ -116,6 +148,7 @@ impl AppState {
                 _fixture_directory: directory,
             })),
             info,
+            db_path,
         })
     }
     #[cfg(all(debug_assertions, feature = "fixtures"))]
@@ -145,6 +178,7 @@ impl AppState {
             directory.path().to_owned(),
             Some(id),
             Some(directory),
+            None,
         )
     }
     #[cfg(not(all(debug_assertions, feature = "fixtures")))]
@@ -153,6 +187,10 @@ impl AppState {
     }
     pub fn app_info(&self) -> AppInfo {
         self.info.clone()
+    }
+    /// The live database the native index writes to; none in fixture mode.
+    pub fn database_path(&self) -> Option<&std::path::Path> {
+        self.db_path.as_deref()
     }
     pub fn db_counts(&self) -> Result<DbCounts, StateError> {
         self.database

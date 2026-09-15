@@ -9,6 +9,14 @@ export function useAppInfo() {
     enabled: source.kind !== 'preview',
   });
 }
+export function useNativeIndexStatus() {
+  const { source } = useData();
+  return useQuery({
+    queryKey: queryKeys.nativeIndex,
+    queryFn: () => source.nativeIndexStatus(),
+    enabled: source.kind !== 'preview',
+  });
+}
 export function useDbCounts() {
   const { source } = useData();
   return useQuery({

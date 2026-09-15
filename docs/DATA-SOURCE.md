@@ -4,7 +4,7 @@ The shell reads app metadata and database counts through `DataSource`. It does n
 
 ## Selecting a source
 
-Native Tauri always selects `TauriDataSource`, including when `VITE_XTRACE_FIXTURE` is set. Its `appInfo()` and `dbCounts()` methods invoke the existing `app_info` and `db_counts` commands. Command and event names live in `src/data/ipc-names.ts`; components import the generated types and use query hooks rather than calling IPC.
+Native Tauri always selects `TauriDataSource`, including when `VITE_XTRACE_FIXTURE` is set. Its `appInfo()`, `dbCounts()` and `nativeIndexStatus()` methods invoke the `app_info`, `db_counts` and `native_index_status` commands; the last returns the generated `NativeIndexStatus` (phase, freshness, interpreter, bundled readers and each host's last scan), which the app also publishes on every change as the `native-index://status` event. Command and event names live in `src/data/ipc-names.ts`; components import the generated types and use query hooks rather than calling IPC.
 
 For a browser fixture preview:
 
@@ -19,18 +19,19 @@ The fixture adapter is dynamically imported only inside a Vite `DEV` condition. 
 
 ## Queries and events
 
-`DataProvider` owns one active QueryClient for the window's selected source. Replacing the source remounts the query runtime, creating an isolated client and fresh query observers and warning state. Queries use a one-second stale time, no automatic retry, and no focus refetch. The shell's metadata consumers share `['app', 'info']` and `['database', 'counts']`, so reading the same data in the sidebar and Settings shares a cache entry. Refresh explicitly refetches both.
+`DataProvider` owns one active QueryClient for the window's selected source. Replacing the source remounts the query runtime, creating an isolated client and fresh query observers and warning state. Queries use a one-second stale time, no automatic retry, and no focus refetch. The shell's metadata consumers share `['app', 'info']`, `['database', 'counts']` and `['native', 'index']`, so reading the same data in the sidebar and Settings shares a cache entry. Refresh explicitly refetches the first two; the index status refreshes on its own event.
 
 The provider registers each event once per mounted lifecycle. A single 500ms window starts with the first event; matching query prefixes are collected in a set. Continuous imports therefore refresh at bounded intervals rather than postponing refresh indefinitely.
 
-| Event                        | Query prefixes invalidated                        |
-| ---------------------------- | ------------------------------------------------- |
-| `ingest://import-received`   | `database`, `metrics`, `sessions`, `hosts`        |
-| `ingest://backfill-progress` | `database`, `metrics`, `sessions`, `hosts`        |
-| `ingest://turn-completed`    | `database`, `metrics`, `sessions`, `hosts`        |
-| `ingest://host-connected`    | `app`, `database`, `metrics`, `sessions`, `hosts` |
-| `rulebook://fire-received`   | `fires`, `rules`                                  |
-| `prs://refreshed`            | `prs`, `gh`                                       |
+| Event                        | Query prefixes invalidated                           |
+| ---------------------------- | ---------------------------------------------------- |
+| `ingest://import-received`   | `database`, `metrics`, `sessions`, `hosts`           |
+| `ingest://backfill-progress` | `database`, `metrics`, `sessions`, `hosts`           |
+| `ingest://turn-completed`    | `database`, `metrics`, `sessions`, `hosts`           |
+| `ingest://host-connected`    | `app`, `database`, `metrics`, `sessions`, `hosts`    |
+| `rulebook://fire-received`   | `fires`, `rules`                                     |
+| `prs://refreshed`            | `prs`, `gh`                                          |
+| `native-index://status`      | `native`, `database`, `metrics`, `sessions`, `hosts` |
 
 These are structural query-key prefixes, not wildcard strings. Future screen queries must include all input dimensions, including range, in their keys. Tests exercise a harness query with reversed request completion; the old range's result cannot replace the current range. No metric query method or output is introduced by this shell.
 

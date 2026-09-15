@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import type { DataSource } from './DataSource';
 import type { AppInfo } from './generated/AppInfo';
 import type { DbCounts } from './generated/DbCounts';
+import type { NativeIndexStatus } from './generated/NativeIndexStatus';
 import { commands, type DataEvent } from './ipc-names';
 
 export class TauriDataSource implements DataSource {
@@ -12,6 +13,9 @@ export class TauriDataSource implements DataSource {
   }
   dbCounts() {
     return invoke<DbCounts>(commands.dbCounts);
+  }
+  nativeIndexStatus() {
+    return invoke<NativeIndexStatus>(commands.nativeIndexStatus);
   }
   subscribe(event: DataEvent, listener: () => void) {
     return listen(event, listener);

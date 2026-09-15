@@ -31,7 +31,7 @@ use std::{
     time::Duration,
 };
 use xt_ingest::native::{
-    HostStatus, ImportRequest, ScanMode, SessionOutcome,
+    HostStatus, ImportRequest, ProducerSource, ScanMode, SessionOutcome,
     checkpoint::{Generation, file_key},
     scan_native,
     watch::{Freshness, ProbePoint, TailEvent, Tailer, WatchConfig},
@@ -137,8 +137,10 @@ impl Home {
             WatchConfig {
                 home: self.root.clone(),
                 hosts: vec![Host::Claude],
-                pin: repo().join(".plugin-pin"),
-                plugin_root: None,
+                producer: ProducerSource::Checkout {
+                    pin: repo().join(".plugin-pin"),
+                    plugin_root: None,
+                },
                 python: None,
                 debounce: Duration::from_millis(100),
                 probe,
@@ -945,10 +947,13 @@ fn claude_tail_migrates_zero_position_locators_by_one_full_replay() {
     let request = ImportRequest {
         home: &home.root,
         hosts: &[Host::Claude],
-        pin: &repo().join(".plugin-pin"),
-        plugin_root: None,
+        producer: &ProducerSource::Checkout {
+            pin: repo().join(".plugin-pin"),
+            plugin_root: None,
+        },
         python: None,
         observed_at: 1,
+        cancel: None,
     };
     assert!(scan_native(&mut store, &request, ScanMode::Replay).complete());
     store
@@ -1013,10 +1018,13 @@ fn claude_tail_appended_records_report_and_must_repeat_the_stored_surface() {
     let request = ImportRequest {
         home: &home.root,
         hosts: &[Host::Claude],
-        pin: &repo().join(".plugin-pin"),
-        plugin_root: None,
+        producer: &ProducerSource::Checkout {
+            pin: repo().join(".plugin-pin"),
+            plugin_root: None,
+        },
         python: None,
         observed_at: 1,
+        cancel: None,
     };
     assert!(scan_native(&mut store, &request, ScanMode::Resume).complete());
     assert_eq!(
@@ -1133,8 +1141,10 @@ fn claude_tail_reports_a_watcher_failure_as_degraded_never_silent_ready() {
         WatchConfig {
             home: absent.clone(),
             hosts: vec![Host::Claude],
-            pin: repo().join(".plugin-pin"),
-            plugin_root: None,
+            producer: ProducerSource::Checkout {
+                pin: repo().join(".plugin-pin"),
+                plugin_root: None,
+            },
             python: None,
             debounce: Duration::from_millis(100),
             probe: None,
@@ -1273,8 +1283,10 @@ fn claude_tail_watches_the_cursor_parent_so_a_sibling_root_is_seen_when_it_appea
         WatchConfig {
             home: root.clone(),
             hosts: vec![Host::Cursor],
-            pin: repo().join(".plugin-pin"),
-            plugin_root: None,
+            producer: ProducerSource::Checkout {
+                pin: repo().join(".plugin-pin"),
+                plugin_root: None,
+            },
             python: None,
             debounce: Duration::from_millis(100),
             probe: None,
@@ -1336,8 +1348,10 @@ fn claude_tail_watches_the_cursor_hook_state_pins_so_a_pin_change_is_reconciled(
         WatchConfig {
             home: root.clone(),
             hosts: vec![Host::Cursor],
-            pin: repo().join(".plugin-pin"),
-            plugin_root: None,
+            producer: ProducerSource::Checkout {
+                pin: repo().join(".plugin-pin"),
+                plugin_root: None,
+            },
             python: None,
             debounce: Duration::from_millis(100),
             probe: None,
@@ -1466,10 +1480,13 @@ fn claude_tail_refreshes_a_checkpoint_after_proving_an_unchanged_file_by_its_who
     let request = ImportRequest {
         home: &home.root,
         hosts: &[Host::Claude],
-        pin: &repo().join(".plugin-pin"),
-        plugin_root: None,
+        producer: &ProducerSource::Checkout {
+            pin: repo().join(".plugin-pin"),
+            plugin_root: None,
+        },
         python: None,
         observed_at: 1,
+        cancel: None,
     };
     assert!(scan_native(&mut store, &request, ScanMode::Resume).complete());
     let ctime_of = |generation: &Generation| {
@@ -1624,8 +1641,10 @@ fn claude_tail_follows_an_accepted_symlinked_home_for_the_fallback_watch() {
         WatchConfig {
             home: alias.clone(),
             hosts: vec![Host::Claude],
-            pin: repo().join(".plugin-pin"),
-            plugin_root: None,
+            producer: ProducerSource::Checkout {
+                pin: repo().join(".plugin-pin"),
+                plugin_root: None,
+            },
             python: None,
             debounce: Duration::from_millis(100),
             probe: None,
