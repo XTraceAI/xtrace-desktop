@@ -164,7 +164,10 @@ impl Events {
     }
 }
 
-const WAIT: Duration = Duration::from_secs(10);
+/// An upper bound, not an expectation: the platform delivers events within
+/// milliseconds, but a loaded machine (other test binaries, other builds)
+/// can stretch a reconciliation or an event's delivery well past that.
+const WAIT: Duration = Duration::from_secs(45);
 
 /// Wait for a reconciliation newer than `after`, then for the worker to stay
 /// idle with no newer reconciliation for a quiet period, so a burst the
@@ -175,7 +178,7 @@ fn settle(tailer: &Tailer, after: u64) -> u64 {
         "no reconciliation within {WAIT:?}: {:?}",
         tailer.status()
     );
-    for _ in 0..40 {
+    for _ in 0..90 {
         let seen = tailer.status().reconciles;
         std::thread::sleep(Duration::from_millis(400));
         let status = tailer.status();
