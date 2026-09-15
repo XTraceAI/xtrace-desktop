@@ -457,25 +457,26 @@ pub fn resolve_python_within(
     if cancel.is_some_and(CancelToken::is_cancelled) {
         return Err(ReaderError::Cancelled);
     }
-    let mut probe = Command::new(&python)
-        .env_remove("PYTHONOPTIMIZE")
-        .env_remove("PYTHONHOME")
-        .env_remove("PYTHONPATH")
-        .env_remove("PYTHONSTARTUP")
-        .args([
-            "-c",
-            "import sys; print(sys.version_info >= (3, 10) and sys.flags.optimize == 0)",
-        ])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|_| {
-            ReaderError::MissingRuntime(format!(
-                "{} is not executable",
-                Path::new(&python).display()
-            ))
-        })?;
+    let mut probe = spawn_grouped(
+        Command::new(&python)
+            .env_remove("PYTHONOPTIMIZE")
+            .env_remove("PYTHONHOME")
+            .env_remove("PYTHONPATH")
+            .env_remove("PYTHONSTARTUP")
+            .args([
+                "-c",
+                "import sys; print(sys.version_info >= (3, 10) and sys.flags.optimize == 0)",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null()),
+    )
+    .map_err(|_| {
+        ReaderError::MissingRuntime(format!(
+            "{} is not executable",
+            Path::new(&python).display()
+        ))
+    })?;
     let mut stdout = probe
         .stdout
         .take()
@@ -551,7 +552,7 @@ impl CancelToken {
             let mut child = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(child) = child.as_mut() {
                 // A process that already exited is left for its handle to reap.
-                let _ = child.kill();
+                terminate(child);
             }
         }
     }
@@ -571,7 +572,7 @@ impl CancelToken {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .as_mut()
         {
-            let _ = child.kill();
+            terminate(child);
         }
     }
 
@@ -582,6 +583,37 @@ impl CancelToken {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .retain(|known| !Arc::ptr_eq(known, slot));
     }
+}
+
+/// Kill a child and, on Unix, every process in the group it leads: readers
+/// and probes are started as group leaders, so an interpreter launcher that
+/// spawned the real interpreter without replacing itself cannot leave it
+/// behind holding the stream (a descendant that left the group on its own is
+/// beyond this). A child already reaped is left alone: its group ID may be
+/// another's by now.
+fn terminate(child: &mut Child) {
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        return;
+    }
+    #[cfg(unix)]
+    if let Ok(pid) = i32::try_from(child.id()) {
+        // SAFETY: a plain signal to the unreaped child's own process group.
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+}
+
+/// Start `command` as the leader of its own process group on Unix, so a
+/// cancel or deadline can terminate everything it spawned.
+fn spawn_grouped(command: &mut Command) -> std::io::Result<Child> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    command.spawn()
 }
 
 /// Await a registered child: the slot is unlocked between polls, so a cancel
@@ -602,7 +634,7 @@ fn await_child(
             Ok(None) => {
                 if !timed_out && deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                     timed_out = true;
-                    let _ = child.kill();
+                    terminate(child);
                 }
             }
             Err(_) => {
@@ -648,25 +680,26 @@ pub fn spawn_reader(
     if cancel.is_some_and(CancelToken::is_cancelled) {
         return Err(ReaderError::Cancelled);
     }
-    let mut child = Command::new(python)
-        .arg(&producer.script)
-        .args(["--host", host.as_str()])
-        .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("HOME", home)
-        .env("USERPROFILE", home)
-        .env("XDG_CONFIG_HOME", home.join(".config"))
-        .env("CODEX_HOME", home.join(".codex"))
-        .env("PYTHONNOUSERSITE", "1")
-        .env("PYTHONDONTWRITEBYTECODE", "1")
-        .env("PYTHONUTF8", "1")
-        .env("NO_PROXY", "*")
-        .current_dir(home)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|_| ReaderError::Failed("reader process could not start".into()))?;
+    let mut child = spawn_grouped(
+        Command::new(python)
+            .arg(&producer.script)
+            .args(["--host", host.as_str()])
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", home)
+            .env("USERPROFILE", home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("CODEX_HOME", home.join(".codex"))
+            .env("PYTHONNOUSERSITE", "1")
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .env("PYTHONUTF8", "1")
+            .env("NO_PROXY", "*")
+            .current_dir(home)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped()),
+    )
+    .map_err(|_| ReaderError::Failed("reader process could not start".into()))?;
     let stdout = child
         .stdout
         .take()

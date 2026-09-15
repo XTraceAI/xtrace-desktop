@@ -439,3 +439,105 @@ fn an_interpreter_probe_that_never_answers_is_bounded_and_cancellable() {
     ));
     assert!(!pid_file.exists());
 }
+
+/// A fake interpreter that is a launcher: it starts the real work in a
+/// child it waits for, without replacing itself, so a plain kill of the
+/// launcher would leave the descendant holding the reader's stream. Records
+/// both process IDs under `root`; as the reader the worker streams one
+/// session then hangs, as the probe the launcher answers itself.
+fn launcher_python(root: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let worker = root.join("launcher-worker.sh");
+    let lines = [
+        header(FIRST),
+        record(FIRST, 0),
+        record(FIRST, 1),
+        header(SECOND),
+    ]
+    .iter()
+    .map(|line| format!("printf '%s\\n' '{line}'\n"))
+    .collect::<String>();
+    fs::write(
+        &worker,
+        format!(
+            "#!/bin/sh\necho $$ > \"{}\"\n{lines}exec sleep 1000\n",
+            root.join("worker.pid").display()
+        ),
+    )
+    .unwrap();
+    let script = root.join("python3-launcher");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = \"-c\" ]; then echo True; exit 0; fi\n\
+             echo $$ > \"{}\"\n/bin/sh \"{}\" &\nwait\n",
+            root.join("launcher.pid").display(),
+            worker.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+#[test]
+fn cancelling_a_reader_launcher_takes_the_descendant_holding_the_stream_with_it() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let python = launcher_python(temp.path());
+    let home = codex_home(temp.path());
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let producer = bundle();
+    let cancel = CancelToken::new();
+    let (report, launcher, worker) = std::thread::scope(|scope| {
+        let scan = scope.spawn(|| {
+            import_native(
+                &mut store,
+                &ImportRequest {
+                    home: &home,
+                    hosts: &[Host::Codex],
+                    producer: &producer,
+                    python: Some(python.as_os_str()),
+                    observed_at: 1,
+                    cancel: Some(&cancel),
+                },
+            )
+        });
+        let launcher = pid_at(&temp.path().join("launcher.pid"));
+        let worker = pid_at(&temp.path().join("worker.pid"));
+        assert!(alive(launcher) && alive(worker));
+        let started = Instant::now();
+        cancel.cancel();
+        let report = scan.join().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the scan returned only after {:?}: the descendant kept the stream",
+            started.elapsed()
+        );
+        (report, launcher, worker)
+    });
+    assert!(!alive(launcher), "the launcher was not reaped");
+    // The descendant is not this process's child, so it cannot be reaped
+    // here; killed with its group, it is gone (or a zombie of init) shortly.
+    let gone = Instant::now() + Duration::from_secs(5);
+    while unsafe { libc::kill(worker, 0) } == 0 {
+        let zombie = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &worker.to_string()])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().starts_with('Z'))
+            .unwrap_or(false);
+        if zombie {
+            break;
+        }
+        assert!(
+            Instant::now() < gone,
+            "the descendant survived the group kill"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let codex = &report.hosts[0];
+    assert_eq!(codex.status, HostStatus::Cancelled, "{report:?}");
+    assert!(matches!(
+        codex.sessions[0].outcome,
+        SessionOutcome::Imported { records_new: 2, .. }
+    ));
+}
