@@ -28,10 +28,13 @@ fn batch<'a>(context: &'a SourceContext, records: &'a [ParsedRecord]) -> WriteBa
         declared_host: None,
         records,
         title: Some("Synthetic title"),
+        cwd: None,
+        git_branch: None,
         keep_content: true,
         observed_at: 10,
         receipt: None,
         cursor: None,
+        discovery: None,
     }
 }
 fn content(sql: &Connection) -> (Option<String>, Option<String>, Option<String>) {

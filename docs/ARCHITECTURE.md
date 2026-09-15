@@ -12,6 +12,11 @@ writer used by `xt-server` for durable local imports. The server acknowledges
 only committed records and receipt evidence; see the [server guide](SERVER.md)
 and [import contract](wire-contract.md). Metrics and indexing are the default,
 with full-content archival available only through a saved opt-in.
+`xt-ingest::native` performs the initial import of native history: Claude JSONL
+is read directly, Codex and Cursor through the shared readers pinned by
+`.plugin-pin`, all as one header-plus-records stream into the same writer; see
+[native import](acceptance/native-import.md). Incremental scanning and watching
+are separate work.
 The native app exposes `app_info` and `db_counts`, but does not start the capture
 server automatically. Production metric calculation, product data queries,
 host watchers/backfill and the remaining subsystem behavior are separate work.
@@ -22,7 +27,7 @@ or compiling placeholder does not establish implemented behavior.
 | Path                      | Subsystem responsibility                                                                             |
 | ------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `crates/xt-store/`        | Storage, canonical schema, migrations, and transactional writes.                                     |
-| `crates/xt-ingest/`       | Normalization, parsers, source cursors, and backfill into the canonical writer.                      |
+| `crates/xt-ingest/`       | Normalization, parsers, native source import through the pinned readers, and the canonical writer.   |
 | `crates/xt-server/`       | Guarded loopback HTTP/MCP endpoints and the headless core interface.                                 |
 | `crates/xt-metrics/`      | Metric definitions, SQL views, aggregation, and shared result DTOs.                                  |
 | `crates/xt-probes/`       | Host/plugin discovery, executable environment resolution, and `gh`/Git probes.                       |

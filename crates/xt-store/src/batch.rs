@@ -31,6 +31,9 @@ pub struct IngestBatch<'a> {
     /// Writer mode: rejected identities contribute no source or receipt evidence.
     pub evidence_policy: EvidencePolicy,
     pub cursor: Option<&'a SourceCursor>,
+    /// A discovered identity that fills under this batch's transaction, so a
+    /// rejected batch leaves no label behind.
+    pub discovery: Option<&'a crate::ingest::DiscoveredSession>,
 }
 
 impl<'a> IngestBatch<'a> {
@@ -51,6 +54,7 @@ impl<'a> IngestBatch<'a> {
             receipt_replay: ReceiptReplay::Reject,
             evidence_policy: EvidencePolicy::RequireAll,
             cursor: None,
+            discovery: None,
         }
     }
 }
@@ -77,8 +81,9 @@ pub enum EvidencePolicy {
     AcceptedOnly,
 }
 
-/// Positions are monotonically nondecreasing within a source/key. A reader that
-/// needs to represent a new/truncated source generation must use a distinct key.
+/// Incremental positions are monotonically nondecreasing within a source/key.
+/// Initial native imports retain locators at position zero; generation-aware
+/// incremental positions belong to the eventual incremental consumer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceCursor {
     pub source: SessionSource,
@@ -162,6 +167,28 @@ impl Store {
                 "batch facts must belong to its canonical session",
             ));
         }
+        if batch.discovery.is_some_and(|discovery| {
+            discovery.host != batch.session.host
+                || discovery
+                    .conversation_id
+                    .as_deref()
+                    .is_some_and(|id| id != batch.session.session_id)
+                || batch.session.native_session_id.as_deref()
+                    != Some(discovery.native_session_id.as_str())
+                || discovery
+                    .surface
+                    .as_ref()
+                    .zip(batch.session.surface.as_ref())
+                    .is_some_and(|(a, b)| a != b)
+                || discovery
+                    .started_at_ms
+                    .zip(batch.session.started_at_ms)
+                    .is_some_and(|(a, b)| a != b)
+        }) {
+            return Err(Error::InvalidInput(
+                "discovery must belong to the batch session",
+            ));
+        }
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -172,6 +199,9 @@ impl Store {
             batch.receipt.is_some() && batch.evidence_policy == EvidencePolicy::AcceptedOnly;
         if provisional {
             transaction.execute_batch("SAVEPOINT destination_import")?;
+        }
+        if let Some(discovery) = batch.discovery {
+            ingest::observe_discovered_session(&transaction, discovery)?;
         }
         let session_changed =
             write::upsert_session(&transaction, batch.session, keep_content, batch.namespace)?;
@@ -308,6 +338,35 @@ impl Store {
             "SELECT source,cursor_key,position,updated_at FROM source_cursors WHERE source=?1 AND cursor_key=?2",
             params![source,key], |row| Ok(SourceCursor { source: row.get(0)?, cursor_key: row.get(1)?, position: row.get(2)?, updated_at: row.get(3)? }),
         ).optional()?)
+    }
+}
+
+impl Store {
+    /// Retain a native source locator without claiming an incremental resume
+    /// position. Initial imports always read from the beginning. Empty scans
+    /// may reset an existing locator but never create a new one.
+    pub fn record_native_source_locator(
+        &mut self,
+        cursor: &SourceCursor,
+        create: bool,
+    ) -> Result<()> {
+        if !matches!(
+            cursor.source,
+            SessionSource::Transcript | SessionSource::ReadersCli
+        ) {
+            return Err(Error::InvalidInput(
+                "native locator requires a native source",
+            ));
+        }
+        self.connection.execute(
+            "INSERT INTO source_cursors(source,cursor_key,position,updated_at)
+             SELECT ?1,?2,0,?3 WHERE ?4 OR EXISTS (
+                 SELECT 1 FROM source_cursors WHERE source=?1 AND cursor_key=?2)
+             ON CONFLICT(source,cursor_key) DO UPDATE SET position=0,
+                 updated_at=max(source_cursors.updated_at,excluded.updated_at)",
+            params![cursor.source, cursor.cursor_key, cursor.updated_at, create],
+        )?;
+        Ok(())
     }
 }
 

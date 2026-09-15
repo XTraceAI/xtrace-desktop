@@ -152,25 +152,7 @@ impl Store {
     /// fill once; conflicting non-null values fail. A newer probe can change
     /// completeness, while a stale result cannot replace the current status.
     pub fn observe_discovered_session(&mut self, discovery: &DiscoveredSession) -> Result<()> {
-        let changed = self.connection.execute(
-            "INSERT INTO discovered_sessions(host,native_session_id,conversation_id,surface,started_at_ms,last_observed_at,discovery_complete)
-             VALUES (?1,?2,?3,?4,?5,?6,?7)
-             ON CONFLICT(host,native_session_id) DO UPDATE SET
-                 conversation_id=coalesce(conversation_id,excluded.conversation_id),
-                 surface=coalesce(surface,excluded.surface),started_at_ms=coalesce(started_at_ms,excluded.started_at_ms),
-                 discovery_complete=CASE WHEN excluded.last_observed_at >= last_observed_at THEN excluded.discovery_complete ELSE discovery_complete END,
-                 last_observed_at=max(last_observed_at,excluded.last_observed_at)
-             WHERE (conversation_id IS NULL OR excluded.conversation_id IS NULL OR conversation_id=excluded.conversation_id)
-                 AND (surface IS NULL OR excluded.surface IS NULL OR surface=excluded.surface)
-                 AND (started_at_ms IS NULL OR excluded.started_at_ms IS NULL OR started_at_ms=excluded.started_at_ms)",
-            params![discovery.host, discovery.native_session_id, discovery.conversation_id, discovery.surface, discovery.started_at_ms, discovery.last_observed_at, discovery.discovery_complete],
-        )?;
-        if changed == 0 {
-            return Err(Error::InvalidInput(
-                "conflicting discovered session identity",
-            ));
-        }
-        Ok(())
+        observe_discovered_session(&self.connection, discovery)
     }
 
     pub fn discovered_sessions(&self, host: Host) -> Result<Vec<DiscoveredSession>> {
@@ -322,4 +304,31 @@ pub(crate) fn insert_or_match_receipt(
     }
     insert_receipt(connection, receipt, submitted)?;
     Ok(true)
+}
+
+/// The discovered-session upsert shared by direct observation and the batch
+/// transaction, so a batch can fill an identity atomically with its rows.
+pub(crate) fn observe_discovered_session(
+    connection: &Connection,
+    discovery: &DiscoveredSession,
+) -> Result<()> {
+    let changed = connection.execute(
+        "INSERT INTO discovered_sessions(host,native_session_id,conversation_id,surface,started_at_ms,last_observed_at,discovery_complete)
+         VALUES (?1,?2,?3,?4,?5,?6,?7)
+         ON CONFLICT(host,native_session_id) DO UPDATE SET
+             conversation_id=coalesce(conversation_id,excluded.conversation_id),
+             surface=coalesce(surface,excluded.surface),started_at_ms=coalesce(started_at_ms,excluded.started_at_ms),
+             discovery_complete=CASE WHEN excluded.last_observed_at >= last_observed_at THEN excluded.discovery_complete ELSE discovery_complete END,
+             last_observed_at=max(last_observed_at,excluded.last_observed_at)
+         WHERE (conversation_id IS NULL OR excluded.conversation_id IS NULL OR conversation_id=excluded.conversation_id)
+             AND (surface IS NULL OR excluded.surface IS NULL OR surface=excluded.surface)
+             AND (started_at_ms IS NULL OR excluded.started_at_ms IS NULL OR started_at_ms=excluded.started_at_ms)",
+        params![discovery.host, discovery.native_session_id, discovery.conversation_id, discovery.surface, discovery.started_at_ms, discovery.last_observed_at, discovery.discovery_complete],
+    )?;
+    if changed == 0 {
+        return Err(Error::InvalidInput(
+            "conflicting discovered session identity",
+        ));
+    }
+    Ok(())
 }

@@ -5,4 +5,6 @@
 
 pub mod canonical;
 
+pub mod native;
+
 pub mod writer;

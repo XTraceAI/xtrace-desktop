@@ -303,7 +303,15 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--write-golden", action="store_true")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--materialize", type=Path,
+                        help="lay out one fixture's native inputs under this home directory and exit")
+    parser.add_argument("--only", default="F18", help="fixture id for --materialize")
     args = parser.parse_args()
+    if args.materialize is not None:
+        spec_path = args.fixtures.resolve() / args.only / "input" / "native" / "native.json"
+        materialize(json.loads(spec_path.read_text(encoding="utf-8")), args.materialize.resolve())
+        print(f"materialized {args.only} native inputs under {args.materialize}")
+        return 0
     pin = read_pin(args.pin)
     try:
         with tempfile.TemporaryDirectory(prefix="xtrace-reader-plugin-") as directory:

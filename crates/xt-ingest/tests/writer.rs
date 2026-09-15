@@ -49,10 +49,13 @@ fn request<'a>(
         declared_host: None,
         records,
         title: Some("synthetic title"),
+        cwd: None,
+        git_branch: None,
         keep_content: false,
         observed_at: 100,
         receipt,
         cursor: None,
+        discovery: None,
     }
 }
 
