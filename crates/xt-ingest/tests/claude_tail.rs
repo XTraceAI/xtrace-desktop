@@ -744,3 +744,55 @@ fn claude_tail_watches_the_cursor_parent_so_a_sibling_root_is_seen_when_it_appea
     );
     tailer.stop();
 }
+
+#[test]
+fn claude_tail_reconciles_changes_received_before_a_stop_request() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    fs::write(home.file(A), body(A, 0..2)).unwrap();
+    // The first live reconciliation is held for a moment so a further change
+    // and the stop request both queue behind it.
+    let holding = Arc::new(AtomicBool::new(false));
+    let held = Arc::new(AtomicBool::new(false));
+    let probe: xt_ingest::native::watch::Probe = {
+        let (holding, held) = (Arc::clone(&holding), Arc::clone(&held));
+        Arc::new(move |point: ProbePoint<'_>| {
+            if matches!(point, ProbePoint::Reconciling(_))
+                && holding.load(Ordering::SeqCst)
+                && !held.swap(true, Ordering::SeqCst)
+            {
+                std::thread::sleep(Duration::from_millis(600));
+            }
+        })
+    };
+    let (tailer, events) = home.start(Some(probe));
+    tailer.wait_ready(WAIT).expect("ready");
+    holding.store(true, Ordering::SeqCst);
+    home.append(A, &line(2, A));
+    let started = std::time::Instant::now();
+    while !held.load(Ordering::SeqCst) {
+        assert!(
+            started.elapsed() < WAIT,
+            "the held reconciliation never started"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Received while the worker is busy, then stopped: both must land.
+    home.append(A, &line(3, A));
+    std::thread::sleep(Duration::from_millis(150));
+    tailer.stop();
+    let store = home.store();
+    assert_eq!(
+        records(&store, A),
+        4,
+        "a change received before the stop is indexed"
+    );
+    assert_eq!(
+        checkpoint(&store, &home.file(A)).unwrap().1,
+        file_len(&home.file(A))
+    );
+    assert!(matches!(
+        events.0.lock().unwrap().last(),
+        Some(TailEvent::Stopped)
+    ));
+}

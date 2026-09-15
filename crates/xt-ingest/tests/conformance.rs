@@ -244,6 +244,74 @@ fn conformance_native_import() {
             "{host:?}"
         );
     }
+    // A Codex session restored into the tree with an old clock, older than
+    // the cutoff: the cutoff would skip it, so the inventory check forces a
+    // full scan and the session is read. Once it is gone again, the cutoff is
+    // safe once more.
+    let rollout = home.join(".codex/sessions/2026/09/07");
+    let original = fs::read_dir(&rollout)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
+        .unwrap();
+    let restored = rollout.join(
+        original
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .replace("000000000181", "000000000191"),
+    );
+    fs::write(
+        &restored,
+        fs::read_to_string(&original)
+            .unwrap()
+            .replace("000000000181", "000000000191"),
+    )
+    .unwrap();
+    let old_clock =
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+    fs::File::options()
+        .write(true)
+        .open(&restored)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(old_clock))
+        .unwrap();
+    let with_restored = import_native(&mut store, &request);
+    let codex = with_restored
+        .hosts
+        .iter()
+        .find(|host| host.host == Host::Codex)
+        .unwrap();
+    assert!(
+        codex
+            .detail
+            .as_deref()
+            .is_some_and(|detail| !detail.contains("sessions modified since")),
+        "a session older than the cutoff that the scan never covered forces a full scan: {codex:?}"
+    );
+    assert!(
+        codex.sessions.iter().any(|session| {
+            session.native_session_id.as_deref() == Some("00000000-0000-4000-8000-000000000191")
+                && !matches!(session.outcome, SessionOutcome::Skipped { .. })
+        }),
+        "the restored session is read: {codex:?}"
+    );
+    fs::remove_file(&restored).unwrap();
+    let after_removal = import_native(&mut store, &request);
+    let codex = after_removal
+        .hosts
+        .iter()
+        .find(|host| host.host == Host::Codex)
+        .unwrap();
+    assert_eq!(codex.status, HostStatus::Complete, "{codex:?}");
+    assert!(
+        codex
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("sessions modified since")),
+        "every older session is covered again: {codex:?}"
+    );
     assert!(
         again
             .hosts

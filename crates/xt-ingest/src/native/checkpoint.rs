@@ -21,11 +21,15 @@
 //! - A reader host (Codex, Cursor) is scanned through the pinned producer,
 //!   which can skip sessions it saw modified before an instant (`--since`).
 //!   The generation is the instant a scan that covered every session started,
-//!   bound to the producer that ran it; a later scan by the same producer asks
-//!   for everything modified since then, less a margin for coarse timestamps,
-//!   while a different producer (a moved pin) starts with a full scan, since
-//!   it may discover sessions the old one did not. A scan that left any gap
-//!   does not advance the instant.
+//!   bound to the producer that ran it and to the inventory of sessions (path
+//!   and update clock) that scan covered. A later scan by the same producer
+//!   first inventories the host with a headers-only run; only if every session
+//!   older than the cutoff is in the recorded inventory, unchanged, does it ask
+//!   for everything modified since the instant, less a margin for coarse
+//!   timestamps. A session restored or moved in with an old clock, a changed
+//!   older session, an inventory that could not be taken, or a different
+//!   producer (a moved pin) all mean a full scan. A scan that left any gap
+//!   does not advance the generation.
 //!
 //! The zero-position rows of `source_cursors` stay plain locators. Only a
 //! checkpoint authorizes skipping input, and it commits together with the rows
@@ -35,6 +39,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, Read, Seek, SeekFrom},
     path::Path,
@@ -64,12 +69,14 @@ pub enum Generation {
         tail_sha256: String,
         lines: u64,
     },
-    /// One host scan through the pinned reader: the instant it started and
-    /// the producer (pinned commit and plugin version) that ran it.
+    /// One host scan through the pinned reader: the instant it started, the
+    /// producer (pinned commit and plugin version) that ran it, and the
+    /// sessions it covered, each as `path@mtime`.
     HostScan {
         started_at_ms: i64,
         producer_commit: String,
         producer_version: String,
+        inventory: Vec<String>,
     },
 }
 
@@ -336,14 +343,48 @@ pub fn host_scan_key(host: Host, home: &Path) -> String {
     format!("scan:{}:{}", host.as_str(), home.display())
 }
 
-/// The instant the last gapless scan of `host` by this very producer started,
-/// if any. A generation left by another producer proves nothing for this one.
+/// The last gapless scan of a host by one producer: when it started and what
+/// it covered.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostScan {
+    pub started_at_ms: i64,
+    pub inventory: BTreeSet<String>,
+}
+
+impl HostScan {
+    /// The producer's cutoff for this generation, in the seconds its session
+    /// clocks use: everything modified at or after it is read again.
+    pub fn cutoff_secs(&self) -> f64 {
+        self.started_at_ms.saturating_sub(HOST_SCAN_MARGIN_MS) as f64 / 1000.0
+    }
+
+    /// Whether asking only for sessions modified since the cutoff can skip
+    /// nothing unknown: every session of the current source set that the
+    /// cutoff would skip must be in the recorded inventory with the same
+    /// clock. A restored or moved-in session with an old clock is not.
+    pub fn cutoff_covers(&self, current: &BTreeMap<String, f64>) -> bool {
+        let cutoff = self.cutoff_secs();
+        current
+            .iter()
+            .filter(|(_, mtime)| **mtime < cutoff)
+            .all(|(path, mtime)| self.inventory.contains(&inventory_key(path, *mtime)))
+    }
+}
+
+/// One inventory entry: a session's path with its update clock.
+pub fn inventory_key(path: &str, mtime: f64) -> String {
+    format!("{path}@{mtime}")
+}
+
+/// The last gapless scan of `host` by this very producer, if any. A generation
+/// left by another producer, or by an older shape without an inventory,
+/// proves nothing for this one.
 pub fn host_scan_generation(
     store: &Store,
     host: Host,
     home: &Path,
     producer_commit: &str,
-) -> Option<i64> {
+) -> Option<HostScan> {
     let checkpoint = store
         .native_checkpoint(SessionSource::ReadersCli, &host_scan_key(host, home))
         .ok()??;
@@ -351,8 +392,12 @@ pub fn host_scan_generation(
         Generation::HostScan {
             started_at_ms,
             producer_commit: recorded,
+            inventory,
             ..
-        } if recorded == producer_commit => Some(started_at_ms),
+        } if recorded == producer_commit => Some(HostScan {
+            started_at_ms,
+            inventory: inventory.into_iter().collect(),
+        }),
         _ => None,
     }
 }
@@ -372,6 +417,7 @@ pub fn host_scan_checkpoint(
     started_at_ms: i64,
     producer_commit: &str,
     producer_version: &str,
+    inventory: &BTreeMap<String, f64>,
 ) -> NativeCheckpoint {
     NativeCheckpoint {
         source: SessionSource::ReadersCli,
@@ -380,6 +426,10 @@ pub fn host_scan_checkpoint(
             started_at_ms,
             producer_commit: producer_commit.to_owned(),
             producer_version: producer_version.to_owned(),
+            inventory: inventory
+                .iter()
+                .map(|(path, mtime)| inventory_key(path, *mtime))
+                .collect(),
         })
         .expect("generation serializes"),
         position: 0,
@@ -411,17 +461,24 @@ mod tests {
         assert_eq!(Generation::parse(&json), Some(file));
         assert_eq!(
             Generation::parse(
-                r#"{"kind":"host_scan","started_at_ms":5,"producer_commit":"c","producer_version":"0.55.0"}"#
+                r#"{"kind":"host_scan","started_at_ms":5,"producer_commit":"c","producer_version":"0.55.0","inventory":["p@1.5"]}"#
             ),
             Some(Generation::HostScan {
                 started_at_ms: 5,
                 producer_commit: "c".into(),
-                producer_version: "0.55.0".into()
+                producer_version: "0.55.0".into(),
+                inventory: vec!["p@1.5".into()],
             })
         );
-        // An older shape without the producer is not a generation this build trusts.
+        // Older shapes without the producer or the inventory are not trusted.
         assert_eq!(
             Generation::parse(r#"{"kind":"host_scan","started_at_ms":5}"#),
+            None
+        );
+        assert_eq!(
+            Generation::parse(
+                r#"{"kind":"host_scan","started_at_ms":5,"producer_commit":"c","producer_version":"v"}"#
+            ),
             None
         );
         assert_eq!(Generation::parse(r#"{"kind":"future","x":1}"#), None);
@@ -502,7 +559,7 @@ mod tests {
         // A generation this build does not understand proves nothing.
         let mut foreign = checkpoint.clone();
         foreign.generation =
-            r#"{"kind":"host_scan","started_at_ms":1,"producer_commit":"c","producer_version":"v"}"#
+            r#"{"kind":"host_scan","started_at_ms":1,"producer_commit":"c","producer_version":"v","inventory":[]}"#
                 .into();
         assert_eq!(
             resume_point(Some(&foreign), &mut source, &replaced)
@@ -608,8 +665,17 @@ mod tests {
             host_scan_since(1_788_782_400_000).as_deref(),
             Some("2026-09-07T11:59:58.000Z")
         );
-        let checkpoint =
-            host_scan_checkpoint(Host::Codex, Path::new("/home/x"), 5, "abc", "0.55.0");
+        let covered: BTreeMap<String, f64> = [("$HOME/.codex/sessions/a.jsonl".to_owned(), 1.5)]
+            .into_iter()
+            .collect();
+        let checkpoint = host_scan_checkpoint(
+            Host::Codex,
+            Path::new("/home/x"),
+            5,
+            "abc",
+            "0.55.0",
+            &covered,
+        );
         assert_eq!(checkpoint.cursor_key, "scan:codex:/home/x");
         assert_eq!(checkpoint.source, SessionSource::ReadersCli);
         assert_eq!(
@@ -617,16 +683,16 @@ mod tests {
             Some(Generation::HostScan {
                 started_at_ms: 5,
                 producer_commit: "abc".into(),
-                producer_version: "0.55.0".into()
+                producer_version: "0.55.0".into(),
+                inventory: vec!["$HOME/.codex/sessions/a.jsonl@1.5".into()],
             })
         );
         // The generation counts only for the producer that ran the scan.
         let mut store = Store::open_in_memory().unwrap();
         store.record_native_checkpoint(&checkpoint).unwrap();
-        assert_eq!(
-            host_scan_generation(&store, Host::Codex, Path::new("/home/x"), "abc"),
-            Some(5)
-        );
+        let generation =
+            host_scan_generation(&store, Host::Codex, Path::new("/home/x"), "abc").unwrap();
+        assert_eq!(generation.started_at_ms, 5);
         assert_eq!(
             host_scan_generation(&store, Host::Codex, Path::new("/home/x"), "moved"),
             None,
@@ -636,5 +702,35 @@ mod tests {
             host_scan_generation(&store, Host::Cursor, Path::new("/home/x"), "abc"),
             None
         );
+    }
+
+    #[test]
+    fn a_cutoff_is_used_only_when_every_older_session_is_in_the_inventory() {
+        let generation = HostScan {
+            started_at_ms: 1_788_782_400_000,
+            inventory: [inventory_key("old", 1_700_000_000.0)]
+                .into_iter()
+                .collect(),
+        };
+        let cutoff = generation.cutoff_secs();
+        assert_eq!(cutoff, 1_788_782_398.0);
+        let mut current: BTreeMap<String, f64> = BTreeMap::new();
+        // Nothing older than the cutoff: safe.
+        current.insert("new".into(), cutoff + 10.0);
+        assert!(generation.cutoff_covers(&current));
+        // An older session the scan covered, unchanged: safe.
+        current.insert("old".into(), 1_700_000_000.0);
+        assert!(generation.cutoff_covers(&current));
+        // The same older session with another clock: not covered.
+        current.insert("old".into(), 1_700_000_001.0);
+        assert!(!generation.cutoff_covers(&current));
+        current.insert("old".into(), 1_700_000_000.0);
+        // An older session the scan never saw (restored, moved in): not covered.
+        current.insert("restored".into(), 1_600_000_000.0);
+        assert!(!generation.cutoff_covers(&current));
+        // A session at the cutoff itself is read again anyway.
+        current.remove("restored");
+        current.insert("edge".into(), cutoff);
+        assert!(generation.cutoff_covers(&current));
     }
 }

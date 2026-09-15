@@ -19,8 +19,10 @@ pub mod watch;
 
 use crate::writer::{MAX_BATCH_RECORDS, WriteBatch, write_batch};
 use checkpoint::{host_scan_checkpoint, host_scan_generation, host_scan_since};
+use readers_cli::ReaderOptions;
 use readers_cli::{ReaderDiagnostic, ReaderError};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::{
     ffi::OsStr,
     path::{Component, Path, PathBuf},
@@ -371,18 +373,39 @@ fn import_reader_host(
     };
     // The generation of the last gapless scan lets the producer skip sessions
     // it saw modified before it; without one, every session is read again.
-    let since = match mode {
-        ScanMode::Resume => host_scan_generation(store, host, request.home, &producer.commit)
-            .and_then(host_scan_since),
+    // A cutoff may skip only sessions the last gapless scan by this producer
+    // already covered, unchanged: the current source set is inventoried first
+    // (headers only), and an older session it does not know, an inventory
+    // that cannot be taken, or another producer all mean a full scan.
+    let generation = match mode {
+        ScanMode::Resume => host_scan_generation(store, host, request.home, &producer.commit),
         ScanMode::Replay => None,
     };
-    let (mut stdout, handle) =
-        match readers_cli::spawn_reader(&python, &producer, host, request.home, since.as_deref()) {
-            Ok(spawned) => spawned,
-            Err(error) => {
-                return HostReport::unavailable(host, HostStatus::ReaderFailed, error.to_string());
-            }
-        };
+    let mut current: Option<BTreeMap<String, f64>> = None;
+    let mut since = None;
+    if let Some(generation) = generation
+        && let Ok(inventory) = readers_cli::inventory(&python, &producer, host, request.home)
+    {
+        if generation.cutoff_covers(&inventory) {
+            since = host_scan_since(generation.started_at_ms);
+        }
+        current = Some(inventory);
+    }
+    let (mut stdout, handle) = match readers_cli::spawn_reader(
+        &python,
+        &producer,
+        host,
+        request.home,
+        ReaderOptions {
+            since: since.as_deref(),
+            metadata_only: false,
+        },
+    ) {
+        Ok(spawned) => spawned,
+        Err(error) => {
+            return HostReport::unavailable(host, HostStatus::ReaderFailed, error.to_string());
+        }
+    };
     let detail = match &since {
         Some(since) => format!(
             "pinned producer {} (memhub {}); sessions modified since {since}",
@@ -401,12 +424,26 @@ fn import_reader_host(
             Err(error) => Some(Err(error)),
         }
     });
-    let mut report =
-        import_reader_lines(store, host, detail, lines, request.observed_at, move || {
-            handle.finish()
-        });
+    let mut seen: BTreeMap<String, f64> = BTreeMap::new();
+    let mut report = import_reader_lines_observed(
+        store,
+        host,
+        detail,
+        lines,
+        request.observed_at,
+        move || handle.finish(),
+        &mut |header| {
+            seen.insert(header.path.clone(), header.mtime);
+        },
+    );
     // Only a scan that covered every session becomes the next generation; a
-    // scan with any gap leaves the old one, so the next scan repeats its range.
+    // scan with any gap leaves the old one, so the next scan repeats its
+    // range. A scan behind a cutoff covered the inventoried source set; a
+    // full scan covered every session it saw.
+    let covered = match (&since, current) {
+        (Some(_), Some(inventory)) => inventory,
+        _ => seen,
+    };
     if report.status == HostStatus::Complete
         && let Err(error) = store.record_native_checkpoint(&host_scan_checkpoint(
             host,
@@ -414,6 +451,7 @@ fn import_reader_host(
             request.observed_at,
             &producer.commit,
             &producer.plugin_version,
+            &covered,
         ))
     {
         report.status = HostStatus::Incomplete;
@@ -438,6 +476,24 @@ pub fn import_reader_lines<I, F>(
     lines: I,
     observed_at: i64,
     finish: F,
+) -> HostReport
+where
+    I: IntoIterator<Item = std::io::Result<String>>,
+    F: FnOnce() -> Result<readers_cli::ReaderOutcome, ReaderError>,
+{
+    import_reader_lines_observed(store, host, detail, lines, observed_at, finish, &mut |_| {})
+}
+
+/// `import_reader_lines` with an observer for every decoded session header,
+/// so a caller can record which sessions the stream covered.
+pub fn import_reader_lines_observed<I, F>(
+    store: &mut Store,
+    host: Host,
+    detail: String,
+    lines: I,
+    observed_at: i64,
+    finish: F,
+    on_header: &mut dyn FnMut(&stream::SessionHeader),
 ) -> HostReport
 where
     I: IntoIterator<Item = std::io::Result<String>>,
@@ -494,6 +550,7 @@ where
         };
         match event {
             stream::StreamEvent::Session(header) => {
+                on_header(&header);
                 if let Some(previous) = active.take() {
                     complete(store, previous, observed_at, &mut sessions);
                 }

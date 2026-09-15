@@ -51,6 +51,8 @@ pub enum ProbePoint<'a> {
     FileScanned(&'a Path),
     /// The initial scan is done; queued changes are reconciled next.
     InitialScanDone,
+    /// A reconciliation of these hosts is about to run.
+    Reconciling(&'a [Host]),
 }
 
 /// Whether live changes reach the index.
@@ -352,6 +354,29 @@ impl Worker {
                 &self.homes,
                 &self.shared,
             );
+            // Changes received before a stop request are still reconciled.
+            if !dirty.hosts.is_empty() {
+                let hosts = dirty.hosts.clone();
+                let reconciled = self.reconcile(&hosts);
+                for host in &reconciled.hosts {
+                    match report
+                        .hosts
+                        .iter_mut()
+                        .find(|known| known.host == host.host)
+                    {
+                        Some(known) => *known = host.clone(),
+                        None => report.hosts.push(host.clone()),
+                    }
+                }
+                self.finished(
+                    if dirty.rescan {
+                        Trigger::Rescan
+                    } else {
+                        Trigger::Startup
+                    },
+                    reconciled,
+                );
+            }
             if dirty.stop {
                 stopped = true;
                 break;
@@ -359,26 +384,6 @@ impl Worker {
             if dirty.hosts.is_empty() {
                 break;
             }
-            let hosts = dirty.hosts.clone();
-            let reconciled = self.reconcile(&hosts);
-            for host in &reconciled.hosts {
-                match report
-                    .hosts
-                    .iter_mut()
-                    .find(|known| known.host == host.host)
-                {
-                    Some(known) => *known = host.clone(),
-                    None => report.hosts.push(host.clone()),
-                }
-            }
-            self.finished(
-                if dirty.rescan {
-                    Trigger::Rescan
-                } else {
-                    Trigger::Startup
-                },
-                reconciled,
-            );
         }
         if !stopped {
             let readiness = Readiness {
@@ -395,7 +400,9 @@ impl Worker {
                 self.shared.update(|state| state.idle = false);
                 let mut dirty = Dirty::default();
                 match message {
-                    Message::Stop => break,
+                    // A stop still lets already-delivered changes, and any
+                    // that arrive within one quiet period, reach the index.
+                    Message::Stop => dirty.stop = true,
                     Message::Fs(event) => {
                         if let Some(error) = classify(event, &mut dirty, &self.config, &self.homes)
                         {
@@ -411,9 +418,6 @@ impl Worker {
                     &self.homes,
                     &self.shared,
                 );
-                if dirty.stop {
-                    break;
-                }
                 if !dirty.hosts.is_empty() {
                     let hosts = dirty.hosts.clone();
                     let reconciled = self.reconcile(&hosts);
@@ -425,6 +429,9 @@ impl Worker {
                         },
                         reconciled,
                     );
+                }
+                if dirty.stop {
+                    break;
                 }
                 self.shared.update(|state| state.idle = true);
             }
@@ -445,6 +452,7 @@ impl Worker {
     /// pass is watched *before* it is enumerated, so a file created below it
     /// after enumeration still produces an event.
     fn reconcile(&mut self, hosts: &[Host]) -> ImportReport {
+        self.probe(ProbePoint::Reconciling(hosts));
         self.ensure_watches();
         self.scan(hosts, &mut |_| {})
     }
