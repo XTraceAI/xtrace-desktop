@@ -36,7 +36,8 @@ pub struct IngestBatch<'a> {
     pub discovery: Option<&'a crate::ingest::DiscoveredSession>,
     /// Resume progress that commits with this batch's rows and never without
     /// them: the position through the input these rows came from, bound to
-    /// the source generation it was read under.
+    /// the source generation it was read under. A batch without records
+    /// cannot carry one; progress no rows carry is recorded on its own.
     pub checkpoint: Option<&'a NativeCheckpoint>,
 }
 
@@ -184,6 +185,11 @@ impl Store {
         {
             return Err(Error::InvalidInput(
                 "batch facts must belong to its canonical session",
+            ));
+        }
+        if batch.checkpoint.is_some() && batch.records.is_empty() {
+            return Err(Error::InvalidInput(
+                "a checkpoint commits only with the records it covers",
             ));
         }
         if batch.discovery.is_some_and(|discovery| {
@@ -349,7 +355,8 @@ impl Store {
             advance_cursor(&transaction, cursor)?;
         }
         // Progress advances only past input every record of which was stored;
-        // a batch with a rejected or dropped record keeps the earlier checkpoint.
+        // a batch with a rejected or dropped record keeps the earlier checkpoint
+        // (and a batch without records was refused above).
         if let Some(checkpoint) = batch.checkpoint
             && outcome
                 .records

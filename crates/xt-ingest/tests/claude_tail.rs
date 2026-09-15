@@ -7,8 +7,8 @@
 //! seconds, truncation, replacement, restart and a failed transaction never
 //! omit or duplicate a record, an appended scan reports the surface the index
 //! holds and stops a record that disagrees with it, a root created after its
-//! watches were decided is watched and scanned again before ready, sources
-//! are never modified, storage stays metadata-only, and zero-position locators from the
+//! watches were decided is watched and scanned again before ready, the Cursor
+//! hook's state pins are watched, sources are never modified, storage stays metadata-only, and zero-position locators from the
 //! initial importer migrate to checkpoints by one full replay.
 use rusqlite::Connection;
 use serde_json::json;
@@ -957,6 +957,8 @@ fn claude_tail_watches_the_cursor_parent_so_a_sibling_root_is_seen_when_it_appea
     assert_eq!(
         tailer.status().watched,
         vec![
+            // The home, without recursion, for the absent hook state pins.
+            spelled(&root),
             spelled(&root.join(".cursor")),
             spelled(&root.join(".cursor/projects"))
         ]
@@ -983,6 +985,58 @@ fn claude_tail_watches_the_cursor_parent_so_a_sibling_root_is_seen_when_it_appea
         HostStatus::PinMismatch,
         "{report:?}"
     );
+    tailer.stop();
+}
+
+#[test]
+fn claude_tail_watches_the_cursor_hook_state_pins_so_a_pin_change_is_reconciled() {
+    // The hook's state pins fold into a Cursor session's clock and stamp and
+    // change on their own, after the session's files stop changing.
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path().join("home");
+    fs::create_dir_all(root.join(".cursor/projects")).unwrap();
+    let events = Events::default();
+    let sink = {
+        let events = events.clone();
+        Box::new(move |event: TailEvent| events.0.lock().unwrap().push(event))
+            as Box<dyn Fn(TailEvent) + Send>
+    };
+    let tailer = Tailer::start(
+        Store::open(temp.path().join("index.sqlite")).unwrap(),
+        WatchConfig {
+            home: root.clone(),
+            hosts: vec![Host::Cursor],
+            pin: repo().join(".plugin-pin"),
+            plugin_root: None,
+            python: None,
+            debounce: Duration::from_millis(100),
+            probe: None,
+        },
+        sink,
+    );
+    let ready = tailer.wait_ready(WAIT).expect("ready");
+    assert_eq!(ready.freshness, Freshness::Live, "{ready:?}");
+    let spelled = |path: &Path| path.to_string_lossy().into_owned();
+    let pins = root.join(".config/memhub-plugin/cursorflush");
+    let pin = pins.join("00000000-0000-4000-8000-0000000000c6.json");
+    // No `.config` yet: the home watch stands in for the pin directory. Its
+    // appearance, with a first pin, is reported, the host is reconciled and
+    // the directory gains its own recursive watch.
+    let seen = tailer.status().reconciles;
+    fs::create_dir_all(&pins).unwrap();
+    fs::write(&pin, b"{}").unwrap();
+    let seen = settle(&tailer, seen);
+    let watched = tailer.status().watched;
+    assert!(watched.contains(&spelled(&pins)), "{watched:?}");
+    // A pin rewritten on its own, with nothing under `.cursor` touched, is
+    // reconciled through that watch.
+    fs::write(&pin, b"{\"usage\":1}").unwrap();
+    settle(&tailer, seen);
+    let last = events.reconciled();
+    let TailEvent::Reconciled { report, .. } = last.last().unwrap() else {
+        unreachable!()
+    };
+    assert_eq!(report.hosts[0].host, Host::Cursor);
     tailer.stop();
 }
 

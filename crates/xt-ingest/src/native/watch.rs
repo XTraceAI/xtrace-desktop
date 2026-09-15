@@ -850,6 +850,26 @@ fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
                 } else {
                     add(&mut roots, home, *host, &[parent]);
                 }
+                // The hook's state pins fold into a Cursor session's clock and
+                // stamp, and change on their own: their directory is watched
+                // like a root, or its nearest existing ancestor (without
+                // recursion) until it appears.
+                let pins = home.join(".config/memhub-plugin/cursorflush");
+                if pins.is_dir() {
+                    add(&mut roots, home, *host, &[pins]);
+                } else {
+                    let ancestor = [home.join(".config/memhub-plugin"), home.join(".config")]
+                        .into_iter()
+                        .find(|dir| dir.is_dir())
+                        .unwrap_or_else(|| home.to_path_buf());
+                    if !roots.iter().any(|root| root.path == ancestor) {
+                        roots.push(WatchRoot {
+                            path: ancestor,
+                            recursive: false,
+                            host: None,
+                        });
+                    }
+                }
             }
             Host::Other => {}
         }
@@ -858,13 +878,22 @@ fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
 }
 
 /// The host a changed path belongs to, by its position under the home (in
-/// any spelling the platform may report it).
+/// any spelling the platform may report it). The Cursor hook's state pins
+/// under `.config/memhub-plugin/cursorflush` belong to Cursor, as do that
+/// directory's ancestors appearing.
 fn host_of(homes: &[PathBuf], path: &Path) -> Option<Host> {
     let relative = homes.iter().find_map(|home| path.strip_prefix(home).ok())?;
-    match relative.components().next()?.as_os_str().to_str()? {
+    let mut components = relative
+        .components()
+        .map(|component| component.as_os_str().to_str());
+    match components.next()?? {
         ".claude" => Some(Host::Claude),
         ".codex" => Some(Host::Codex),
         ".cursor" => Some(Host::Cursor),
+        ".config" => match components.next() {
+            None | Some(Some("memhub-plugin")) => Some(Host::Cursor),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -989,8 +1018,53 @@ mod tests {
             described,
             vec![
                 (home.join(".cursor/projects"), true),
-                (home.join(".cursor"), false)
+                (home.join(".cursor"), false),
+                // The hook's state pins: absent, so the home stands in.
+                (home.to_path_buf(), false)
             ]
         );
+        // The pin directory's nearest existing ancestor stands in without
+        // recursion until it appears; then it is watched like a root.
+        std::fs::create_dir_all(home.join(".config")).unwrap();
+        let described = |roots: Vec<WatchRoot>| {
+            roots
+                .into_iter()
+                .map(|root| (root.path, root.recursive, root.host))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            described(watch_roots(home, &[Host::Cursor])).last(),
+            Some(&(home.join(".config"), false, None))
+        );
+        std::fs::create_dir_all(home.join(".config/memhub-plugin")).unwrap();
+        assert_eq!(
+            described(watch_roots(home, &[Host::Cursor])).last(),
+            Some(&(home.join(".config/memhub-plugin"), false, None))
+        );
+        std::fs::create_dir_all(home.join(".config/memhub-plugin/cursorflush")).unwrap();
+        assert_eq!(
+            described(watch_roots(home, &[Host::Cursor])).last(),
+            Some(&(
+                home.join(".config/memhub-plugin/cursorflush"),
+                true,
+                Some(Host::Cursor)
+            ))
+        );
+        // Pins and their directory's ancestors classify as Cursor; other
+        // configuration does not.
+        let homes = vec![home.to_path_buf()];
+        assert_eq!(
+            host_of(
+                &homes,
+                &home.join(".config/memhub-plugin/cursorflush/x.json")
+            ),
+            Some(Host::Cursor)
+        );
+        assert_eq!(
+            host_of(&homes, &home.join(".config/memhub-plugin")),
+            Some(Host::Cursor)
+        );
+        assert_eq!(host_of(&homes, &home.join(".config")), Some(Host::Cursor));
+        assert_eq!(host_of(&homes, &home.join(".config/gh/hosts.yml")), None);
     }
 }

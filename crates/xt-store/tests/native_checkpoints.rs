@@ -132,3 +132,22 @@ fn a_checkpoint_commits_only_with_the_rows_it_covers() {
     );
     assert_eq!(db.store().records("s").unwrap().len(), 2);
 }
+
+#[test]
+fn a_batch_without_records_cannot_carry_a_checkpoint() {
+    let mut db = TempDb::empty().unwrap();
+    let session = SessionMeta::new("s", "claude", SessionSource::Transcript);
+    let key = "claude:/home/.claude/projects/p/s.jsonl";
+    let progress = checkpoint(key, r#"{"kind":"file","ino":7}"#, 120, 10);
+    let mut empty = IngestBatch::new(&session, &[], true);
+    empty.checkpoint = Some(&progress);
+    assert!(db.store_mut().apply_ingest_batch(&empty).is_err());
+    assert!(
+        db.store()
+            .native_checkpoint(SessionSource::Transcript, key)
+            .unwrap()
+            .is_none(),
+        "no row was stored, so no progress was recorded"
+    );
+    assert!(db.store().session("s").unwrap().is_none());
+}
