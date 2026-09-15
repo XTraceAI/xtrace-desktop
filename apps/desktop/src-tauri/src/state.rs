@@ -25,14 +25,18 @@ pub enum StateError {
     /// indexes (or aliased to it); nothing is created there.
     #[error("data directory cannot hold the index: {0}")]
     IndexDestination(&'static str),
+    /// The native home must exist: the watcher covers absent roots through
+    /// their nearest existing ancestor, and the home is the last of those.
+    #[error("native home is not an existing directory")]
+    NativeHome,
 }
 
 #[derive(Default)]
 pub struct StartupOptions {
     pub data_dir: Option<PathBuf>,
     pub fixture: Option<String>,
-    /// The home the native index reads (`XTRACE_NATIVE_HOME`); the user's
-    /// home otherwise.
+    /// The home the native index reads (`XTRACE_NATIVE_HOME`, an existing
+    /// directory); the user's home otherwise.
     pub native_home: Option<PathBuf>,
     /// The interpreter for the Codex/Cursor readers (`XTRACE_PYTHON`);
     /// discovered otherwise.
@@ -136,6 +140,9 @@ impl AppState {
             Some(path) => path,
             None => default_home()?,
         };
+        if !native_home.is_dir() {
+            return Err(StateError::NativeHome);
+        }
         let db_path = data_dir.join("xtrace.db");
         xt_ingest::native::validate_index_destination(&db_path, &native_home)
             .map_err(StateError::IndexDestination)?;

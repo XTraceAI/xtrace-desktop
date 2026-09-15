@@ -15,6 +15,7 @@ fn expected_native_index() -> xtrace_desktop::dto::NativeIndexStatus {
 fn fixture_mode_data_dir_override_wins_and_live_store_persists() {
     let root = tempfile::TempDir::new().unwrap();
     let path = root.path().join("explicit");
+    std::fs::create_dir_all(root.path().join("home")).unwrap();
     let state = AppState::build(
         StartupOptions {
             data_dir: Some(path.clone()),
@@ -218,4 +219,26 @@ fn an_unreadable_project_directory_does_not_prevent_startup() {
     let state = built.unwrap();
     assert_eq!(state.native_home(), Some(home.as_path()));
     state.shutdown();
+}
+
+#[test]
+fn a_native_home_that_does_not_exist_is_refused_at_startup() {
+    // An absent home could not be watched (there is no ancestor to cover
+    // it), so the index would stay degraded and empty; refuse it instead.
+    let root = tempfile::TempDir::new().unwrap();
+    let result = AppState::build(
+        StartupOptions {
+            data_dir: Some(root.path().join("data")),
+            native_home: Some(root.path().join("absent-home")),
+            ..Default::default()
+        },
+        || panic!("an explicit data directory needs no default"),
+        || panic!("an explicit home needs no default"),
+    );
+    assert!(
+        matches!(result, Err(StateError::NativeHome)),
+        "{:?}",
+        result.err()
+    );
+    assert!(!root.path().join("data").exists());
 }

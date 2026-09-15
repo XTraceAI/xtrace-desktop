@@ -21,7 +21,7 @@ pnpm tauri dev
 This launches the native shell. Close another XTrace instance first: a second
 launch focuses the existing app. The app indexes the native history under your
 home at launch (metadata only, into its own database) and keeps it current;
-`XTRACE_NATIVE_HOME=DIR` indexes a synthetic home instead, `XTRACE_PYTHON=EXE`
+`XTRACE_NATIVE_HOME=DIR` indexes a synthetic home (an existing directory) instead, `XTRACE_PYTHON=EXE`
 names the interpreter for the Codex/Cursor readers, and `XTRACE_DATA_DIR=DIR`
 relocates the database. Settings shows the index status. See
 [architecture](ARCHITECTURE.md) for implemented and planned boundaries.

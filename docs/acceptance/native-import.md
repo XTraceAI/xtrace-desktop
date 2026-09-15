@@ -205,7 +205,8 @@ the existing writer.
 
 - **Startup.** XTrace Desktop starts the tailer in its `setup` hook, after opening
   the application database, over the user's home (`XTRACE_NATIVE_HOME` overrides
-  it for synthetic homes) for Claude, Codex and Cursor, with a second connection
+  it for synthetic homes and must be an existing directory, since an absent home
+  has no ancestor the watcher could cover) for Claude, Codex and Cursor, with a second connection
   to the same database (`xtrace.db` under the data directory), the bundled readers
   and a 250 ms quiet period. Fixture mode (`--fixture`, `XTRACE_FIXTURE`) starts
   no index: its database is disposable. A data directory inside a native source
