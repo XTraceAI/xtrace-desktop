@@ -411,13 +411,13 @@ pub fn import_file(
         Ok(started) => started,
         Err(skipped) => return Ok(*skipped),
     };
-    // Behind a proven prefix the surface is settled already: the index holds
-    // the one the prefix named, persisted with its rows. The report names it
-    // from the start, and every appended record must repeat it, as it would
-    // have to in a whole-file read.
-    let settled = (resume.start > 0)
-        .then(|| stored_surface(store, &file.session_id))
-        .flatten();
+    // For a session the index knows, the surface is settled already: the
+    // index holds the one its records named, persisted with its rows. The
+    // report names it from the start, whether the file is read behind its
+    // checkpoint or whole again (replaced, truncated, rewritten, replayed),
+    // and every record read must repeat it, as it would have to in the first
+    // read of a file.
+    let settled = stored_surface(store, &file.session_id);
     if let Some(surface) = &settled {
         writer.resume_surface(surface.clone());
     }

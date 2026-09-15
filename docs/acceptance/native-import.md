@@ -87,10 +87,10 @@ the existing writer.
   generation and the file is read from the beginning again. Records dedupe by UUID, so
   a new generation costs a re-read, never a gap or a duplicate. History is kept when a
   source shrinks. A partial trailing line is never consumed; the checkpoint stops before
-  it and the completed line is read next time. A file proven unchanged, or read behind
-  its checkpoint, is reported with the surface the index holds for its session, and a
-  record behind the checkpoint that names another surface stops the file as it would
-  in a whole-file read.
+  it and the completed line is read next time. A file whose session the index knows is
+  reported with the surface the index holds, whether proven unchanged, read behind its
+  checkpoint or read whole again (replaced, truncated, rewritten, replayed), and a
+  record that names another surface stops the file as in the first read of a file.
 - A reader host's generation is the instant of its last scan that covered every
   session (`scan:<host>:<home>`), bound to the pinned producer commit and version
   that ran it and to the inventory of sessions it covered: each session's path with

@@ -1094,6 +1094,28 @@ fn claude_tail_appended_records_report_and_must_repeat_the_stored_surface() {
     );
     assert_eq!(records(&store, A), 5);
     assert_eq!(checkpoint(&store, &path).unwrap().1, file_len(&path));
+    // The file rewritten whole with records naming no surface (a new
+    // generation, read from the beginning), and a replay: both still report
+    // the surface the index holds.
+    let unlabeled = (0..5)
+        .map(|index| {
+            let mut record: serde_json::Value =
+                serde_json::from_str(line(index, A).trim()).unwrap();
+            record.as_object_mut().unwrap().remove("entrypoint");
+            record.to_string() + "\n"
+        })
+        .collect::<String>();
+    fs::write(&path, unlabeled).unwrap();
+    for mode in [ScanMode::Resume, ScanMode::Replay] {
+        let report = scan_native(&mut store, &request, mode);
+        assert!(report.complete(), "{report:?}");
+        assert_eq!(
+            report.hosts[0].sessions[0].source_surface.as_deref(),
+            Some("cli"),
+            "a whole read of a known session reports the surface the index holds: {report:?}"
+        );
+    }
+    assert_eq!(records(&store, A), 5);
 }
 
 #[test]
