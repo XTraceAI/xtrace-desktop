@@ -371,3 +371,44 @@ fn the_compiled_pin_parses_and_the_status_serializes_with_tagged_variants() {
     assert_eq!(value["readers"]["state"], "unavailable");
     assert_eq!(value["hosts"], json!([]));
 }
+
+/// Runs in a child process of this test binary (see the test below), where
+/// the environment can carry a stale `PYTHON` without racing other tests.
+#[test]
+fn discovery_child_ignores_the_inherited_python_variable() {
+    if std::env::var_os("XTRACE_TEST_DISCOVERY_CHILD").is_none() {
+        return;
+    }
+    use xt_ingest::native::readers_cli::{ReaderError, discover_python};
+    let stale = std::env::var("PYTHON").unwrap();
+    match discover_python(None, None) {
+        Ok(path) => assert_ne!(path.to_string_lossy(), stale),
+        Err(ReaderError::MissingRuntime(reason)) => {
+            assert!(!reason.contains(&stale), "{reason}");
+            assert!(reason.contains("python3 on PATH"), "{reason}");
+        }
+        Err(other) => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn an_inherited_python_variable_does_not_narrow_desktop_discovery() {
+    // The desktop honors only XTRACE_PYTHON; a `PYTHON` a shell exported is
+    // not a choice, so discovery still tries PATH and the known directories.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "discovery_child_ignores_the_inherited_python_variable",
+            "--nocapture",
+        ])
+        .env("XTRACE_TEST_DISCOVERY_CHILD", "1")
+        .env("PYTHON", "/nonexistent/xtrace-python3")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

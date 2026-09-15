@@ -157,6 +157,9 @@ fn parse_native_options(
     }
     let plugin_root =
         plugin_root.or_else(|| std::env::var_os("AGENT_PLUGINS_DIR").map(PathBuf::from));
+    // The CLI honors the conventional `PYTHON` variable; the library does not
+    // read it, so a desktop process inheriting one is unaffected.
+    let python = python.or_else(|| std::env::var_os("PYTHON").filter(|value| !value.is_empty()));
     let pin = pin.unwrap_or_else(|| PathBuf::from(".plugin-pin"));
     Ok(NativeOptions {
         db,

@@ -213,7 +213,9 @@ the existing writer.
   and plugin version, or the reason it is unavailable. An installed plugin, a
   checkout or Git are never consulted.
 - **Interpreter.** `XTRACE_PYTHON` names the interpreter and is used as named;
-  otherwise it is discovered as above. The discovery that fills the status runs
+  otherwise it is discovered as above (a `PYTHON` variable the app inherits is
+  not a choice: the library reads no environment variable, only the CLI honors
+  `PYTHON`). The discovery that fills the status runs
   on its own thread beside the initial scan, never on the startup hook (the
   status reads `resolving` until it answers), and its probes register with the
   tailer's cancel token, so shutdown kills one still running; each Codex/Cursor

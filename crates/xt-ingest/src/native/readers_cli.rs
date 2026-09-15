@@ -356,7 +356,9 @@ fn executable(_: &Path) -> bool {
 /// named: Homebrew on Apple silicon and Intel, MacPorts, and the user's own
 /// `bin` (pipx, uv). Resolving the interactive login shell's environment is
 /// separate work; naming the interpreter (`XTRACE_PYTHON` in the app,
-/// `--python`/`PYTHON` for the CLI) overrides the search.
+/// `--python` or `PYTHON` for the CLI, which reads that variable itself)
+/// overrides the search. The library reads no environment variable for this:
+/// a `PYTHON` a desktop process happens to inherit is not a choice.
 #[cfg(target_os = "macos")]
 const KNOWN_PYTHON_DIRS: &[&str] = &[
     "/opt/homebrew/bin",
@@ -372,19 +374,16 @@ const KNOWN_PYTHON_DIRS: &[&str] = &["~/.local/bin"];
 /// use; the probe is killed and the candidate reported.
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Select the interpreter: an explicit executable or `PYTHON` is probed as
-/// named; otherwise `python3` on `PATH`, then in each known install directory,
-/// the first that qualifies. Every reason a candidate did not qualify is
-/// reported when none did. Probes are bounded and, with a token, cancellable.
+/// Select the interpreter: an explicit executable is probed as named;
+/// otherwise `python3` on `PATH`, then in each known install directory, the
+/// first that qualifies. Every reason a candidate did not qualify is reported
+/// when none did. Probes are bounded and, with a token, cancellable.
 pub fn discover_python(
     explicit: Option<&OsStr>,
     cancel: Option<&CancelToken>,
 ) -> Result<OsString, ReaderError> {
-    let named = explicit
-        .map(OsStr::to_os_string)
-        .or_else(|| std::env::var_os("PYTHON").filter(|value| !value.is_empty()));
-    if let Some(named) = named {
-        return resolve_python(Some(&named), cancel);
+    if explicit.is_some() {
+        return resolve_python(explicit, cancel);
     }
     let mut reasons = Vec::new();
     match resolve_python(None, cancel) {
@@ -412,9 +411,9 @@ pub fn discover_python(
     Err(ReaderError::MissingRuntime(reasons.join("; ")))
 }
 
-/// Select the interpreter: an explicit executable, else `PYTHON`, else `python3`.
-/// It must be 3.10+ and must not strip assertions. The probe is killed after
-/// `PROBE_TIMEOUT`, and at once by a cancel of the token.
+/// Probe the named interpreter, or `python3` on `PATH`. It must be 3.10+ and
+/// must not strip assertions. The probe is killed after `PROBE_TIMEOUT`, and
+/// at once by a cancel of the token.
 pub fn resolve_python(
     explicit: Option<&OsStr>,
     cancel: Option<&CancelToken>,
@@ -430,7 +429,6 @@ pub fn resolve_python_within(
 ) -> Result<OsString, ReaderError> {
     let python = explicit
         .map(OsStr::to_os_string)
-        .or_else(|| std::env::var_os("PYTHON").filter(|value| !value.is_empty()))
         .unwrap_or_else(|| OsString::from("python3"));
     // The reader runs with the imported home as its working directory, so an
     // explicit relative path (as opposed to a bare command name found on PATH)
@@ -467,7 +465,12 @@ pub fn resolve_python_within(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|_| ReaderError::MissingRuntime("python3 is not executable".into()))?;
+        .map_err(|_| {
+            ReaderError::MissingRuntime(format!(
+                "{} is not executable",
+                Path::new(&python).display()
+            ))
+        })?;
     let mut stdout = probe
         .stdout
         .take()
@@ -494,9 +497,10 @@ pub fn resolve_python_within(
     let mut answer = String::new();
     let _ = std::io::Read::read_to_string(&mut stdout, &mut answer);
     if !status.success() || answer.trim() != "True" {
-        return Err(ReaderError::MissingRuntime(
-            "python3 must be 3.10 or newer with assertions enabled".into(),
-        ));
+        return Err(ReaderError::MissingRuntime(format!(
+            "{} must be Python 3.10 or newer with assertions enabled",
+            Path::new(&python).display()
+        )));
     }
     Ok(python)
 }

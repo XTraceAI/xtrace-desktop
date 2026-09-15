@@ -487,3 +487,30 @@ fn watch_native_reports_a_bound_reached_during_startup_as_not_ready() {
         2
     );
 }
+
+#[test]
+fn the_cli_honors_the_python_variable_for_reader_hosts() {
+    // A nonexistent interpreter named by PYTHON is what the reader hosts
+    // report, not a discovered one: the variable is the CLI's explicit choice.
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    fs::create_dir_all(home.join(".codex/sessions")).unwrap();
+    let output = core()
+        .args(["import-native", "--db"])
+        .arg(temp.path().join("index.sqlite"))
+        .arg("--home")
+        .arg(&home)
+        .args(["--host", "codex"])
+        .env("PYTHON", "/nonexistent/xtrace-python3")
+        .env_remove("AGENT_PLUGINS_DIR")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let codex = &report["hosts"][0];
+    assert_eq!(codex["status"], "missing_runtime", "{report}");
+    assert!(
+        codex["detail"].as_str().unwrap().contains("xtrace-python3"),
+        "{report}"
+    );
+}
