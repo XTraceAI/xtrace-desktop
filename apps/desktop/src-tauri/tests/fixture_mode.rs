@@ -194,3 +194,28 @@ fn a_data_directory_inside_the_native_history_is_refused_before_anything_is_writ
     );
     state.shutdown();
 }
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_project_directory_does_not_prevent_startup() {
+    use std::os::unix::fs::PermissionsExt;
+    // A source-access problem is the index's to report, not a startup failure.
+    let root = tempfile::TempDir::new().unwrap();
+    let home = root.path().join("home");
+    let sealed = home.join(".claude/projects/-repo-sealed");
+    std::fs::create_dir_all(&sealed).unwrap();
+    std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let built = AppState::build(
+        StartupOptions {
+            data_dir: Some(root.path().join("data")),
+            native_home: Some(home.clone()),
+            ..Default::default()
+        },
+        || panic!("an explicit data directory needs no default"),
+        || panic!("an explicit home needs no default"),
+    );
+    std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let state = built.unwrap();
+    assert_eq!(state.native_home(), Some(home.as_path()));
+    state.shutdown();
+}

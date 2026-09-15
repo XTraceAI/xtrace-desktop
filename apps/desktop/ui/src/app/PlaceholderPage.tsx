@@ -121,8 +121,14 @@ const freshnessText = (status: NativeIndexStatus) => {
   }
 };
 const hostText = (host: NativeIndexStatus['hosts'][number]) => {
-  const counts = `${host.sessions_imported} imported, ${host.sessions_partial} partial, ${host.sessions_skipped} skipped, ${host.records_new} new records`;
-  return host.detail ? `${host.state} · ${counts} · ${host.detail}` : `${host.state} · ${counts}`;
+  const parts = [
+    host.state,
+    `${host.sessions_imported} imported, ${host.sessions_partial} partial, ${host.sessions_skipped} skipped, ${host.records_new} new records`,
+  ];
+  if (host.diagnostics > 0)
+    parts.push(`${host.diagnostics} ${host.diagnostics === 1 ? 'diagnostic' : 'diagnostics'}`);
+  if (host.detail) parts.push(host.detail);
+  return parts.join(' · ');
 };
 
 /** The typed status the app publishes; every field is shown as reported, never invented. */

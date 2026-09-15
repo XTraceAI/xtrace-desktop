@@ -110,6 +110,42 @@ it('shows the typed native index status as reported and refreshes it on its even
   expect(source.nativeIndexStatus).toHaveBeenCalledTimes(2);
 });
 
+it('polls a transient status until it settles, so a ready event that precedes the listener is not lost', async () => {
+  vi.useFakeTimers();
+  const scanning: NativeIndexStatus = {
+    ...ready,
+    phase: { phase: 'scanning' },
+    python: { state: 'resolving' },
+    hosts: [],
+    reconciles: 0,
+  };
+  let status = scanning;
+  const source: DataSource = {
+    kind: 'native',
+    appInfo: async () => exported.app_info,
+    dbCounts: async () => exported.db_counts,
+    nativeIndexStatus: vi.fn(async () => status),
+    // No event ever arrives: the listener registered after the only `ready`.
+    subscribe: async () => () => {},
+  };
+  mount(source);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(50);
+  });
+  expect(screen.getByText('Scanning (2 Claude transcripts read)')).toBeTruthy();
+  status = ready;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1100);
+  });
+  expect(screen.getByText('Ready (3 reconciliations)')).toBeTruthy();
+  const settled = vi.mocked(source.nativeIndexStatus).mock.calls.length;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  expect(source.nativeIndexStatus).toHaveBeenCalledTimes(settled);
+  vi.useRealTimers();
+});
+
 it('shows the disabled fixture index without inventing hosts', async () => {
   const { FixtureDataSource } = await import('../data/FixtureDataSource');
   mount(new FixtureDataSource(exported));

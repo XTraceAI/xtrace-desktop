@@ -359,6 +359,35 @@ fn an_interpreter_that_never_answers_its_probe_blocks_neither_startup_nor_shutdo
 }
 
 #[test]
+fn an_unreadable_project_directory_is_reported_by_the_index_status() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = synthetic_home(temp.path());
+    let sealed = home.join(".claude/projects/-repo-sealed");
+    fs::create_dir_all(&sealed).unwrap();
+    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).unwrap();
+    let (publish, _) = recorder();
+    let index = NativeIndex::start(
+        NativeIndexOptions {
+            home: home.clone(),
+            db: temp.path().join("xtrace.db"),
+            bundle: bundle(),
+            python: None,
+        },
+        publish,
+    );
+    let ready = wait_for(&index, |s| s.phase == NativeIndexPhase::Ready);
+    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o755)).unwrap();
+    // The readable transcript is indexed; the sealed directory is a diagnostic
+    // that keeps the host incomplete, visible in the status.
+    let claude = host(&ready, "claude");
+    assert_eq!(claude.state, NativeHostState::Incomplete, "{ready:?}");
+    assert_eq!((claude.sessions_imported, claude.records_new), (1, 2));
+    assert!(claude.diagnostics >= 1, "{claude:?}");
+    assert!(index.shutdown());
+}
+
+#[test]
 fn the_compiled_pin_parses_and_the_status_serializes_with_tagged_variants() {
     use xt_ingest::native::readers_cli::parse_pin;
     assert!(parse_pin(PIN).is_ok());

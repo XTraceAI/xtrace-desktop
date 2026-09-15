@@ -222,6 +222,8 @@ fn cancelled(request: &ImportRequest<'_>) -> bool {
 /// aliased to them, before SQLite can create the database or its sidecars
 /// there: the index's own writes must never read as source changes, and an
 /// alternate name (an existing hard link) must not alias native history.
+/// Source entries the process cannot read are passed over, never a reason to
+/// refuse: the scan reports them as its own diagnostics.
 pub fn validate_index_destination(db: &Path, home: &Path) -> Result<(), &'static str> {
     fn resolved(path: &Path) -> std::io::Result<PathBuf> {
         match path.canonicalize() {
@@ -239,10 +241,21 @@ pub fn validate_index_destination(db: &Path, home: &Path) -> Result<(), &'static
             Err(error) => Err(error),
         }
     }
+    // An entry this process cannot read cannot hold an alias it would follow
+    // either (the importers diagnose what they cannot list), so such entries
+    // are passed over: a source-access problem is the scan's to report, not a
+    // reason to refuse the destination. An alias that is found is refused.
     fn reject_reverse_aliases(root: &Path, destinations: &[PathBuf]) -> Result<(), &'static str> {
         let metadata = match std::fs::symlink_metadata(root) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+                ) =>
+            {
+                return Ok(());
+            }
             Err(_) => return Err("Cannot inspect native source aliases"),
         };
         if metadata.file_type().is_symlink() {
@@ -254,15 +267,22 @@ pub fn validate_index_destination(db: &Path, home: &Path) -> Result<(), &'static
                 return Err("Native source alias points at index destination");
             }
         } else if metadata.is_dir() {
-            for entry in
-                std::fs::read_dir(root).map_err(|_| "Cannot inspect native source aliases")?
-            {
-                reject_reverse_aliases(
-                    &entry
-                        .map_err(|_| "Cannot inspect native source entry")?
-                        .path(),
-                    destinations,
-                )?;
+            let entries = match std::fs::read_dir(root) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    return Ok(());
+                }
+                Err(_) => return Err("Cannot inspect native source aliases"),
+            };
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                        continue;
+                    }
+                    Err(_) => return Err("Cannot inspect native source entry"),
+                };
+                reject_reverse_aliases(&entry.path(), destinations)?;
             }
         }
         Ok(())

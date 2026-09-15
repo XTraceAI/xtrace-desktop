@@ -48,10 +48,13 @@ the existing writer.
 
 ## Source safety and scope
 
-- The CLI validates database and SQLite-sidecar destinations before opening SQLite.
-  Paths inside native history and existing multiply-linked destinations are rejected.
-  Links in known native session directories pointing back at the index or its sidecars
-  are also rejected before opening SQLite.
+- The CLI and the app validate database and SQLite-sidecar destinations before
+  creating or opening SQLite. Paths inside native history and existing
+  multiply-linked destinations are rejected. Links in known native session
+  directories pointing back at the index or its sidecars are also rejected; an
+  entry there the process cannot read is passed over (it cannot be followed
+  either) and the scan reports it as a diagnostic, so a source-access problem
+  never prevents the app from starting.
 - Claude source roots, project aliases and transcript aliases are diagnosed instead
   of deliberately followed. Missing, unreadable and undecodable entries have explicit
   coverage results; blank session identities cannot enter discovery.
