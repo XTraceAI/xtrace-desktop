@@ -305,8 +305,9 @@ impl Drop for Tailer {
 /// the later pass's status, and a session the later pass no longer saw (its
 /// file renamed or removed since) stays as the earlier pass reported it, its
 /// records being indexed; a diagnostic of the earlier pass that the later
-/// pass neither repeated nor resolved (by importing a session at or below
-/// its path) stays as well; and a host with a retained session that was not
+/// pass neither repeated nor resolved (by importing the session at its very
+/// path; a directory's diagnostic is never resolved by what was imported
+/// below it, which need not be the source it hid) stays as well; and a host with a retained session that was not
 /// imported, or a retained diagnostic, stays incomplete, as the earlier pass
 /// reported it, so the report never reads complete around a gap. The report
 /// then reads the same whether or not the
@@ -364,15 +365,11 @@ fn carry_counts(earlier: &HostReport, mut later: HostReport) -> HostReport {
             .diagnostics
             .iter()
             .any(|known| known.path == diagnostic.path);
-        let resolved = diagnostic.path.as_deref().is_some_and(|named| {
-            later.sessions.iter().any(|session| {
+        let resolved = diagnostic.path.is_some()
+            && later.sessions.iter().any(|session| {
                 matches!(session.outcome, SessionOutcome::Imported { .. })
-                    && session
-                        .path
-                        .as_deref()
-                        .is_some_and(|path| Path::new(path).starts_with(named))
-            })
-        });
+                    && session.path == diagnostic.path
+            });
         if !repeated && !resolved {
             later.diagnostics.push(diagnostic.clone());
         }

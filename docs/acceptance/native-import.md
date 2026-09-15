@@ -143,7 +143,9 @@ the existing writer.
   also delivered an event for a change made just before the watch was registered
   (FSEvents may). A session the initial scan indexed that a later pass no longer saw (its file
   renamed or removed meanwhile) stays in the readiness report as it was imported,
-  as does a diagnostic it raised that a later pass neither repeated nor resolved,
+  as does a diagnostic it raised that a later pass neither repeated nor resolved by
+  importing the session at its very path (a directory's diagnostic is never resolved
+  by what was imported below it),
   and a host stays incomplete around such a session that was not imported or such
   a diagnostic. A root that appears during a pass, after its
   watches were decided, is watched after the scan and its host scanned again, until

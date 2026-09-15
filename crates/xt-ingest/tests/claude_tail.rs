@@ -451,14 +451,19 @@ fn claude_tail_ready_keeps_a_diagnostic_the_later_pass_no_longer_saw() {
     fs::write(locked.join(format!("{C}.jsonl")), body(C, 0..1)).unwrap();
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
     // Right after A is scanned the directory is removed (made readable
-    // first), so the startup reconciliation its removal queues sees neither
-    // the directory nor its transcript and reports complete.
+    // first) and recreated with another transcript, so the startup
+    // reconciliation its change queues imports that one below the same path
+    // and reports complete: the transcript the diagnostic hid is gone unread.
     let probe: xt_ingest::native::watch::Probe = {
         let locked = locked.clone();
+        let replaced = AtomicBool::new(false);
         Arc::new(move |point: ProbePoint<'_>| {
-            if matches!(point, ProbePoint::FileScanned(_)) && locked.exists() {
+            if matches!(point, ProbePoint::FileScanned(_)) && !replaced.swap(true, Ordering::SeqCst)
+            {
                 fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
                 fs::remove_dir_all(&locked).unwrap();
+                fs::create_dir_all(&locked).unwrap();
+                fs::write(locked.join(format!("{D}.jsonl")), body(D, 0..1)).unwrap();
             }
         })
     };
@@ -477,12 +482,14 @@ fn claude_tail_ready_keeps_a_diagnostic_the_later_pass_no_longer_saw() {
     );
     let store = home.store();
     assert_eq!(records(&store, A), 2);
+    assert_eq!(records(&store, D), 1, "the replacement was imported");
     assert_eq!(
         records(&store, C),
         0,
         "the locked transcript was never read"
     );
-    // The diagnostic stays, and keeps the host and the report incomplete.
+    // The diagnostic stays (what was imported below its path is not the
+    // source it hid), and keeps the host and the report incomplete.
     let claude = &ready.report.hosts[0];
     assert_eq!(claude.status, HostStatus::Incomplete, "{ready:?}");
     assert!(!ready.report.complete());
