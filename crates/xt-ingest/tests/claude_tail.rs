@@ -3,7 +3,9 @@
 //! reach the index before ready with no later event (a session the initial
 //! scan indexed and a later pass no longer saw stays in the readiness
 //! report, as does a diagnostic it raised, and each keeps the report
-//! incomplete), live appends, completed
+//! incomplete; a failure the replacement of its source cannot clear stands),
+//! live appends (the worker is idle only once every delivered change is
+//! reconciled), completed
 //! partial lines, new files and coalesced directory events converge within
 //! seconds, truncation, replacement, restart and a failed transaction never
 //! omit or duplicate a record, an appended scan reports the surface the index
@@ -501,6 +503,106 @@ fn claude_tail_ready_keeps_a_diagnostic_the_later_pass_no_longer_saw() {
             .any(|diagnostic| diagnostic.path.as_deref() == Some(&*locked.to_string_lossy())),
         "{ready:?}"
     );
+    tailer.stop();
+}
+
+#[test]
+fn claude_tail_ready_keeps_a_failure_the_replacement_of_its_source_cannot_clear() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    // A carries a record without a UUID, which the scan drops: partial.
+    let mut broken: serde_json::Value = serde_json::from_str(line(2, A).trim()).unwrap();
+    broken.as_object_mut().unwrap().remove("uuid");
+    fs::write(home.file(A), body(A, 0..2) + &broken.to_string() + "\n").unwrap();
+    // Right after its scan A is replaced by a clean transcript: the startup
+    // reconciliation imports the replacement fully, but what the failure
+    // left unread in the original is gone.
+    let probe: xt_ingest::native::watch::Probe = {
+        let file = home.file(A);
+        let replaced = AtomicBool::new(false);
+        Arc::new(move |point: ProbePoint<'_>| {
+            if matches!(point, ProbePoint::FileScanned(_)) && !replaced.swap(true, Ordering::SeqCst)
+            {
+                fs::write(&file, body(A, 0..3)).unwrap();
+            }
+        })
+    };
+    let (tailer, events) = home.start(Some(probe));
+    let ready = tailer.wait_ready(WAIT).expect("ready");
+    assert_eq!(ready.freshness, Freshness::Live, "{ready:?}");
+    assert!(
+        events.reconciled().iter().any(|event| matches!(
+            event,
+            TailEvent::Reconciled {
+                trigger: xt_ingest::native::watch::Trigger::Startup,
+                ..
+            }
+        )),
+        "the replacement was reconciled before ready: {ready:?}"
+    );
+    assert_eq!(records(&home.store(), A), 3, "the replacement is indexed");
+    // The failure stands in the readiness report, with the records both
+    // passes indexed counted, and keeps the host and the report incomplete.
+    let claude = &ready.report.hosts[0];
+    assert_eq!(claude.status, HostStatus::Incomplete, "{ready:?}");
+    assert!(!ready.report.complete());
+    assert!(
+        matches!(
+            claude.sessions[0].outcome,
+            SessionOutcome::Partial {
+                records_new: 3,
+                records_dropped: 1,
+                ..
+            }
+        ),
+        "{ready:?}"
+    );
+    tailer.stop();
+}
+
+#[test]
+fn claude_tail_is_idle_only_once_a_change_delivered_during_a_reconciliation_is_indexed() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    fs::write(home.file(A), body(A, 0..2)).unwrap();
+    // During the first live reconciliation a new transcript is written and
+    // its event delivered before that reconciliation ends.
+    let probe: xt_ingest::native::watch::Probe = {
+        let file = home.file(B);
+        let written = AtomicBool::new(false);
+        Arc::new(move |point: ProbePoint<'_>| {
+            if matches!(point, ProbePoint::Reconciling(_))
+                && file
+                    .parent()
+                    .unwrap()
+                    .join(format!("{A}.jsonl"))
+                    .metadata()
+                    .unwrap()
+                    .len()
+                    > body(A, 0..2).len() as u64
+                && !written.swap(true, Ordering::SeqCst)
+            {
+                fs::write(&file, body(B, 0..3)).unwrap();
+                std::thread::sleep(Duration::from_millis(600));
+            }
+        })
+    };
+    let (tailer, _events) = home.start(Some(probe));
+    tailer.wait_ready(WAIT).expect("ready");
+    let seen = tailer.status().reconciles;
+    home.append(A, &line(2, A));
+    // Idle means every delivered change was reconciled: when the waiter
+    // wakes for the first reconciliation, the second is done as well.
+    assert!(
+        tailer.wait_reconciled(seen + 1, WAIT),
+        "{:?}",
+        tailer.status()
+    );
+    let status = tailer.status();
+    assert!(status.reconciles >= seen + 2, "{status:?}");
+    let store = home.store();
+    assert_eq!(records(&store, A), 3);
+    assert_eq!(records(&store, B), 3);
     tailer.stop();
 }
 

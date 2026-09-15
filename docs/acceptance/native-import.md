@@ -150,8 +150,12 @@ the existing writer.
   as does a diagnostic it raised that a later pass neither repeated nor resolved by
   importing the session at its very path (a directory's diagnostic is never resolved
   by what was imported below it),
-  and a host stays incomplete around such a session that was not imported or such
-  a diagnostic. A root that appears during a pass, after its
+  a session the initial scan could not import fully keeps that failure even if a
+  later pass imported it (the source may have been replaced in between, and what the
+  failure left unread is then gone; the counts still add up), and a host stays
+  incomplete around any of these. After ready, the tailer is idle only once every
+  change delivered to it, also one delivered while a reconciliation ran, has been
+  reconciled. A root that appears during a pass, after its
   watches were decided, is watched after the scan and its host scanned again, until
   a pass finds every root watched, so no change below a root falls between its
   enumeration and its watch. Event kinds are never trusted: any path under a host

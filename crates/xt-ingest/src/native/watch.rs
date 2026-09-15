@@ -120,7 +120,8 @@ pub struct TailStatus {
     #[serde(flatten)]
     pub freshness: Freshness,
     pub ready: bool,
-    /// No event is being processed and none was pending when the worker last looked.
+    /// No event is being processed and none was queued when the worker last
+    /// looked, after its last reconciliation.
     pub idle: bool,
     /// Reconciliations completed so far: the initial scan, the startup
     /// passes and every later one.
@@ -317,7 +318,11 @@ impl Drop for Tailer {
 /// records being indexed; a diagnostic of the earlier pass that the later
 /// pass neither repeated nor resolved (by importing the session at its very
 /// path; a directory's diagnostic is never resolved by what was imported
-/// below it, which need not be the source it hid) stays as well; and a host with a retained session that was not
+/// below it, which need not be the source it hid) stays as well; a session
+/// the earlier pass could not import fully keeps that failure even if the
+/// later pass imported it, since the source may have been replaced in
+/// between and what the failure left unread is then gone (the counts still
+/// add up); and a host with a retained session that was not
 /// imported, or a retained diagnostic, stays incomplete, as the earlier pass
 /// reported it, so the report never reads complete around a gap. The report
 /// then reads the same whether or not the
@@ -360,6 +365,36 @@ fn carry_counts(earlier: &HostReport, mut later: HostReport) -> HostReport {
                 }
                 SessionOutcome::Skipped { .. } => {}
             }
+        }
+        let failed_earlier = earlier.sessions.iter().find(|known| {
+            known.native_session_id == session.native_session_id
+                && known.path == session.path
+                && !matches!(known.outcome, SessionOutcome::Imported { .. })
+        });
+        if let (
+            Some(known),
+            SessionOutcome::Imported {
+                records_new,
+                records_enriched,
+            },
+        ) = (failed_earlier, &session.outcome)
+        {
+            // The later pass imported what it saw, which need not be what
+            // the earlier failure left unread: the failure stands, with the
+            // records both passes indexed counted.
+            session.outcome = match &known.outcome {
+                SessionOutcome::Partial {
+                    records_dropped,
+                    rejections,
+                    ..
+                } => SessionOutcome::Partial {
+                    records_new: *records_new,
+                    records_enriched: *records_enriched,
+                    records_dropped: *records_dropped,
+                    rejections: rejections.clone(),
+                },
+                other => other.clone(),
+            };
         }
     }
     for known in &earlier.sessions {
@@ -549,7 +584,15 @@ impl Worker {
             });
             (self.sink)(TailEvent::Ready(readiness));
             // Live: each burst, after a quiet period, reconciles its hosts.
-            while let Ok(message) = rx.recv() {
+            let mut pending: Option<Message> = None;
+            loop {
+                let message = match pending.take() {
+                    Some(message) => message,
+                    None => match rx.recv() {
+                        Ok(message) => message,
+                        Err(_) => break,
+                    },
+                };
                 self.shared.update(|state| state.idle = false);
                 let mut dirty = Dirty::default();
                 match message {
@@ -601,7 +644,16 @@ impl Worker {
                 if dirty.stop {
                     break;
                 }
-                self.shared.update(|state| state.idle = true);
+                // A change delivered while the reconciliation ran is still
+                // queued: the worker is idle only once the queue is empty, so
+                // a waiter never wakes with a delivered change unprocessed.
+                match rx.try_recv() {
+                    Ok(message) => pending = Some(message),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        self.shared.update(|state| state.idle = true)
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                }
             }
         }
         self.shared.update(|state| {
