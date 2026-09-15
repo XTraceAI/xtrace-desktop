@@ -1,0 +1,17 @@
+name: Feature request
+description: Describe a user need and its expected outcome.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what prevents it today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected outcome
+      description: Describe the smallest useful behavior and how to verify it.
+    validations:
+      required: true

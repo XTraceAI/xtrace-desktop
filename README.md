@@ -1,6 +1,14 @@
 # XTrace Desktop
 
-XTrace Desktop is a macOS app for understanding work with coding agents. The current scaffold provides the buildable application shell, native sidebar window controls, Rust workspace, pinned toolchains and contribution files. The shell displays application information. The Rust workspace also provides a canonical SQLite storage library and a [synthetic fixture harness](docs/FIXTURES.md) for development tests; the app does not open that store or ingest data yet. Capture, metrics and other product subsystems remain unimplemented.
+XTrace Desktop is a macOS app for understanding work with coding agents. The
+current build includes the native shell, shared UI components and gallery,
+SQLite storage, and a headless importer for local Claude, Codex and Cursor history.
+The importer defaults to metadata-only storage and leaves source files unchanged.
+Automatic history indexing and real-data Dashboard/Sessions integration are still
+in development; launching the app does not yet import your history.
+
+There is no supported downloadable release yet. Build locally using the guide
+below; do not expect an installer or Homebrew cask to be available.
 
 Use macOS 14.0 or newer, Xcode command-line tools, Rust 1.94.1, Node 22.23.1 and pnpm 10.33.0:
 

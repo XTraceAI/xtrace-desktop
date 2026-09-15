@@ -1,0 +1,18 @@
+name: Bug report
+description: Report incorrect behavior with reproducible steps.
+title: '[Bug] '
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Include the app version or source commit and macOS version.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Prefer a synthetic example. Do not attach transcripts, credentials or local databases.
+    validations:
+      required: true
