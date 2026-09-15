@@ -18,7 +18,7 @@ pub mod stream;
 pub mod watch;
 
 use crate::writer::{MAX_BATCH_RECORDS, WriteBatch, write_batch};
-use checkpoint::{host_scan_checkpoint, host_scan_generation, host_scan_since};
+use checkpoint::{SourceStamp, host_scan_checkpoint, host_scan_generation, host_scan_since, stamp};
 use readers_cli::ReaderOptions;
 use readers_cli::{ReaderDiagnostic, ReaderError};
 use serde::Serialize;
@@ -381,11 +381,20 @@ fn import_reader_host(
         ScanMode::Resume => host_scan_generation(store, host, request.home, &producer.commit),
         ScanMode::Replay => None,
     };
-    let mut current: Option<BTreeMap<String, f64>> = None;
+    let mut current: Option<BTreeMap<String, Option<SourceStamp>>> = None;
     let mut since = None;
     if let Some(generation) = generation
         && let Ok(inventory) = readers_cli::inventory(&python, &producer, host, request.home)
     {
+        // Each inventoried session is stamped with its file's own identity,
+        // so a replacement or rewrite that preserved the clock is caught.
+        let inventory = inventory
+            .into_iter()
+            .map(|(path, mtime)| {
+                let stamped = stamp(request.home, &path, mtime);
+                (path, stamped)
+            })
+            .collect::<BTreeMap<_, _>>();
         if generation.cutoff_covers(&inventory) {
             since = host_scan_since(generation.started_at_ms);
         }
@@ -439,10 +448,17 @@ fn import_reader_host(
     // Only a scan that covered every session becomes the next generation; a
     // scan with any gap leaves the old one, so the next scan repeats its
     // range. A scan behind a cutoff covered the inventoried source set; a
-    // full scan covered every session it saw.
-    let covered = match (&since, current) {
-        (Some(_), Some(inventory)) => inventory,
-        _ => seen,
+    // full scan covered every session it saw. A session whose file cannot be
+    // identified is left out, so the next scan reads it again.
+    let covered: BTreeMap<String, SourceStamp> = match (&since, current) {
+        (Some(_), Some(inventory)) => inventory
+            .into_iter()
+            .filter_map(|(path, stamped)| stamped.map(|stamped| (path, stamped)))
+            .collect(),
+        _ => seen
+            .into_iter()
+            .filter_map(|(path, mtime)| stamp(request.home, &path, mtime).map(|s| (path, s)))
+            .collect(),
     };
     if report.status == HostStatus::Complete
         && let Err(error) = store.record_native_checkpoint(&host_scan_checkpoint(

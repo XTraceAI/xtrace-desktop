@@ -298,6 +298,67 @@ fn conformance_native_import() {
         "the restored session is read: {codex:?}"
     );
     fs::remove_file(&restored).unwrap();
+    // The original given an old clock, older than the cutoff: its stamp is
+    // new to the inventory, so one more full scan reads it; after that the
+    // cutoff covers it and the producer skips it.
+    let aged_clock =
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_100);
+    let age = |path: &Path| {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(aged_clock))
+            .unwrap();
+    };
+    age(&original);
+    let codex_of = |report: &xt_ingest::native::ImportReport| {
+        report
+            .hosts
+            .iter()
+            .find(|host| host.host == Host::Codex)
+            .unwrap()
+            .clone()
+    };
+    let aged = codex_of(&import_native(&mut store, &request));
+    assert_eq!(aged.status, HostStatus::Complete, "{aged:?}");
+    assert!(
+        aged.detail
+            .as_deref()
+            .is_some_and(|detail| !detail.contains("sessions modified since")),
+        "a session with a clock the inventory does not know is read in a full scan: {aged:?}"
+    );
+    assert_eq!(aged.sessions.len(), 1, "{aged:?}");
+    let skipped = codex_of(&import_native(&mut store, &request));
+    assert_eq!(skipped.status, HostStatus::Complete, "{skipped:?}");
+    assert!(
+        skipped
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("sessions modified since")),
+        "{skipped:?}"
+    );
+    assert!(
+        skipped.sessions.is_empty(),
+        "the covered old session is skipped behind the cutoff: {skipped:?}"
+    );
+    // Rewritten in place with the same bytes and the old clock put back (a
+    // synchronization tool's replacement): the change time moved, so the
+    // cutoff cannot cover it and a full scan reads it again.
+    let bytes = fs::read(&original).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    fs::write(&original, &bytes).unwrap();
+    age(&original);
+    let rewritten = codex_of(&import_native(&mut store, &request));
+    assert_eq!(rewritten.status, HostStatus::Complete, "{rewritten:?}");
+    assert!(
+        rewritten
+            .detail
+            .as_deref()
+            .is_some_and(|detail| !detail.contains("sessions modified since")),
+        "a clock-preserving rewrite forces a full scan: {rewritten:?}"
+    );
+    assert_eq!(rewritten.sessions.len(), 1, "{rewritten:?}");
     let after_removal = import_native(&mut store, &request);
     let codex = after_removal
         .hosts

@@ -800,3 +800,35 @@ fn claude_tail_reconciles_changes_received_before_a_stop_request() {
         })
     ));
 }
+
+#[test]
+fn claude_tail_watches_a_root_replaced_at_the_same_path_again() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    fs::write(home.file(A), body(A, 0..2)).unwrap();
+    let (tailer, _events) = home.start(None);
+    tailer.wait_ready(WAIT).expect("ready");
+    let store = home.store();
+    assert_eq!(records(&store, A), 2);
+    let installs = tailer.status().watch_installs;
+    let projects = home.root.join(".claude/projects");
+    // The whole projects root is deleted and recreated at the same path with
+    // a new session: the watch was tied to the old directory.
+    let seen = tailer.status().reconciles;
+    fs::remove_dir_all(&projects).unwrap();
+    fs::create_dir_all(&home.project).unwrap();
+    fs::write(home.file(B), body(B, 0..3)).unwrap();
+    let seen = settle(&tailer, seen);
+    assert_eq!(records(&store, B), 3);
+    assert!(
+        tailer.status().watch_installs > installs,
+        "the replacement root was watched again: {:?}",
+        tailer.status()
+    );
+    // A later file below the replacement is seen through the new watch.
+    fs::write(home.file(C), body(C, 0..1)).unwrap();
+    settle(&tailer, seen);
+    assert_eq!(records(&store, C), 1);
+    assert_eq!(records(&store, A), 2, "history is kept");
+    tailer.stop();
+}

@@ -21,15 +21,18 @@
 //! - A reader host (Codex, Cursor) is scanned through the pinned producer,
 //!   which can skip sessions it saw modified before an instant (`--since`).
 //!   The generation is the instant a scan that covered every session started,
-//!   bound to the producer that ran it and to the inventory of sessions (path
-//!   and update clock) that scan covered. A later scan by the same producer
-//!   first inventories the host with a headers-only run; only if every session
-//!   older than the cutoff is in the recorded inventory, unchanged, does it ask
-//!   for everything modified since the instant, less a margin for coarse
-//!   timestamps. A session restored or moved in with an old clock, a changed
-//!   older session, an inventory that could not be taken, or a different
-//!   producer (a moved pin) all mean a full scan. A scan that left any gap
-//!   does not advance the generation.
+//!   bound to the producer that ran it and to the inventory of sessions that
+//!   scan covered: each session's path with its update clock and the identity
+//!   of the file behind it (size, change time, device and inode, observed by
+//!   this crate). A later scan by the same producer first inventories the
+//!   host with a headers-only run; only if every session older than the
+//!   cutoff is in the recorded inventory, unchanged in every respect, does it
+//!   ask for everything modified since the instant, less a margin for coarse
+//!   timestamps. A session restored or moved in with an old clock, one
+//!   replaced or rewritten with its clock preserved (the change time and
+//!   inode give it away), one that cannot be identified, an inventory that
+//!   could not be taken, or a different producer (a moved pin) all mean a
+//!   full scan. A scan that left any gap does not advance the generation.
 //!
 //! The zero-position rows of `source_cursors` stay plain locators. Only a
 //! checkpoint authorizes skipping input, and it commits together with the rows
@@ -71,7 +74,7 @@ pub enum Generation {
     },
     /// One host scan through the pinned reader: the instant it started, the
     /// producer (pinned commit and plugin version) that ran it, and the
-    /// sessions it covered, each as `path@mtime`.
+    /// sessions it covered, each as `path@mtime@size@ctime_ns@dev:ino`.
     HostScan {
         started_at_ms: i64,
         producer_commit: String,
@@ -361,19 +364,70 @@ impl HostScan {
     /// Whether asking only for sessions modified since the cutoff can skip
     /// nothing unknown: every session of the current source set that the
     /// cutoff would skip must be in the recorded inventory with the same
-    /// clock. A restored or moved-in session with an old clock is not.
-    pub fn cutoff_covers(&self, current: &BTreeMap<String, f64>) -> bool {
+    /// clock and the same file identity. A restored or moved-in session with
+    /// an old clock is not; neither is one replaced or rewritten with its
+    /// clock preserved, nor one whose file cannot be identified.
+    pub fn cutoff_covers(&self, current: &BTreeMap<String, Option<SourceStamp>>) -> bool {
         let cutoff = self.cutoff_secs();
         current
             .iter()
-            .filter(|(_, mtime)| **mtime < cutoff)
-            .all(|(path, mtime)| self.inventory.contains(&inventory_key(path, *mtime)))
+            .filter(|(_, stamp)| stamp.as_ref().is_none_or(|stamp| stamp.mtime < cutoff))
+            .all(|(path, stamp)| {
+                stamp
+                    .as_ref()
+                    .is_some_and(|stamp| self.inventory.contains(&inventory_key(path, stamp)))
+            })
     }
 }
 
-/// One inventory entry: a session's path with its update clock.
-pub fn inventory_key(path: &str, mtime: f64) -> String {
-    format!("{path}@{mtime}")
+/// What identifies one session's file at a point in time: the producer's
+/// update clock plus the file's size, change time, device and inode as this
+/// crate observes them. A replacement or rewrite that preserves the clock
+/// still moves the change time and, for a replacement, the inode.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SourceStamp {
+    pub mtime: f64,
+    pub size: u64,
+    pub ctime_ns: i64,
+    pub dev: u64,
+    pub ino: u64,
+}
+
+/// Stamp the file behind a producer header path (absolute, or `$HOME/…` as
+/// the fixture goldens spell it), without following an alias. `None` when it
+/// cannot be identified, which counts as not covered.
+pub fn stamp(home: &Path, header_path: &str, mtime: f64) -> Option<SourceStamp> {
+    let path = match header_path.strip_prefix("$HOME/") {
+        Some(relative) => home.join(relative),
+        None => {
+            let path = Path::new(header_path);
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                home.join(path)
+            }
+        }
+    };
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    let identity = FileIdentity::of(&metadata);
+    Some(SourceStamp {
+        mtime,
+        size: metadata.len(),
+        ctime_ns: identity.ctime_ns,
+        dev: identity.dev,
+        ino: identity.ino,
+    })
+}
+
+/// One inventory entry: a session's path with its clock and file identity.
+pub fn inventory_key(path: &str, stamp: &SourceStamp) -> String {
+    format!(
+        "{path}@{}@{}@{}@{}:{}",
+        stamp.mtime, stamp.size, stamp.ctime_ns, stamp.dev, stamp.ino
+    )
 }
 
 /// The last gapless scan of `host` by this very producer, if any. A generation
@@ -417,7 +471,7 @@ pub fn host_scan_checkpoint(
     started_at_ms: i64,
     producer_commit: &str,
     producer_version: &str,
-    inventory: &BTreeMap<String, f64>,
+    inventory: &BTreeMap<String, SourceStamp>,
 ) -> NativeCheckpoint {
     NativeCheckpoint {
         source: SessionSource::ReadersCli,
@@ -428,7 +482,7 @@ pub fn host_scan_checkpoint(
             producer_version: producer_version.to_owned(),
             inventory: inventory
                 .iter()
-                .map(|(path, mtime)| inventory_key(path, *mtime))
+                .map(|(path, stamp)| inventory_key(path, stamp))
                 .collect(),
         })
         .expect("generation serializes"),
@@ -665,9 +719,18 @@ mod tests {
             host_scan_since(1_788_782_400_000).as_deref(),
             Some("2026-09-07T11:59:58.000Z")
         );
-        let covered: BTreeMap<String, f64> = [("$HOME/.codex/sessions/a.jsonl".to_owned(), 1.5)]
-            .into_iter()
-            .collect();
+        let covered: BTreeMap<String, SourceStamp> = [(
+            "$HOME/.codex/sessions/a.jsonl".to_owned(),
+            SourceStamp {
+                mtime: 1.5,
+                size: 10,
+                ctime_ns: 20,
+                dev: 3,
+                ino: 4,
+            },
+        )]
+        .into_iter()
+        .collect();
         let checkpoint = host_scan_checkpoint(
             Host::Codex,
             Path::new("/home/x"),
@@ -684,7 +747,7 @@ mod tests {
                 started_at_ms: 5,
                 producer_commit: "abc".into(),
                 producer_version: "0.55.0".into(),
-                inventory: vec!["$HOME/.codex/sessions/a.jsonl@1.5".into()],
+                inventory: vec!["$HOME/.codex/sessions/a.jsonl@1.5@10@20@3:4".into()],
             })
         );
         // The generation counts only for the producer that ran the scan.
@@ -706,31 +769,113 @@ mod tests {
 
     #[test]
     fn a_cutoff_is_used_only_when_every_older_session_is_in_the_inventory() {
+        let old = SourceStamp {
+            mtime: 1_700_000_000.0,
+            size: 100,
+            ctime_ns: 5,
+            dev: 1,
+            ino: 2,
+        };
         let generation = HostScan {
             started_at_ms: 1_788_782_400_000,
-            inventory: [inventory_key("old", 1_700_000_000.0)]
-                .into_iter()
-                .collect(),
+            inventory: [inventory_key("old", &old)].into_iter().collect(),
         };
         let cutoff = generation.cutoff_secs();
         assert_eq!(cutoff, 1_788_782_398.0);
-        let mut current: BTreeMap<String, f64> = BTreeMap::new();
+        let mut current: BTreeMap<String, Option<SourceStamp>> = BTreeMap::new();
         // Nothing older than the cutoff: safe.
-        current.insert("new".into(), cutoff + 10.0);
+        current.insert(
+            "new".into(),
+            Some(SourceStamp {
+                mtime: cutoff + 10.0,
+                ..old.clone()
+            }),
+        );
         assert!(generation.cutoff_covers(&current));
         // An older session the scan covered, unchanged: safe.
-        current.insert("old".into(), 1_700_000_000.0);
+        current.insert("old".into(), Some(old.clone()));
         assert!(generation.cutoff_covers(&current));
         // The same older session with another clock: not covered.
-        current.insert("old".into(), 1_700_000_001.0);
+        current.insert(
+            "old".into(),
+            Some(SourceStamp {
+                mtime: 1_700_000_001.0,
+                ..old.clone()
+            }),
+        );
         assert!(!generation.cutoff_covers(&current));
-        current.insert("old".into(), 1_700_000_000.0);
+        // Replaced or rewritten with its clock preserved: the change time or
+        // the inode differs, so it is not covered either.
+        current.insert(
+            "old".into(),
+            Some(SourceStamp {
+                ctime_ns: 6,
+                ..old.clone()
+            }),
+        );
+        assert!(!generation.cutoff_covers(&current));
+        current.insert(
+            "old".into(),
+            Some(SourceStamp {
+                ino: 9,
+                ..old.clone()
+            }),
+        );
+        assert!(!generation.cutoff_covers(&current));
+        current.insert("old".into(), Some(old.clone()));
         // An older session the scan never saw (restored, moved in): not covered.
-        current.insert("restored".into(), 1_600_000_000.0);
+        current.insert(
+            "restored".into(),
+            Some(SourceStamp {
+                mtime: 1_600_000_000.0,
+                ..old.clone()
+            }),
+        );
         assert!(!generation.cutoff_covers(&current));
-        // A session at the cutoff itself is read again anyway.
         current.remove("restored");
-        current.insert("edge".into(), cutoff);
+        // A session whose file cannot be identified: not covered.
+        current.insert("unknown".into(), None);
+        assert!(!generation.cutoff_covers(&current));
+        current.remove("unknown");
+        // A session at the cutoff itself is read again anyway.
+        current.insert(
+            "edge".into(),
+            Some(SourceStamp {
+                mtime: cutoff,
+                ..old
+            }),
+        );
         assert!(generation.cutoff_covers(&current));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stamps_identify_the_file_behind_a_producer_path_without_following_aliases() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path();
+        let sessions = home.join(".codex/sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        fs::write(sessions.join("a.jsonl"), b"{}\n").unwrap();
+        let stamped = stamp(home, "$HOME/.codex/sessions/a.jsonl", 1.5).unwrap();
+        assert_eq!((stamped.mtime, stamped.size), (1.5, 3));
+        assert!(stamped.ino != 0 && stamped.ctime_ns != 0);
+        // Rewritten in place with the same bytes: the change time moved.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(sessions.join("a.jsonl"), b"{}\n").unwrap();
+        let rewritten = stamp(home, "$HOME/.codex/sessions/a.jsonl", 1.5).unwrap();
+        assert_ne!(rewritten.ctime_ns, stamped.ctime_ns);
+        assert_eq!(rewritten.ino, stamped.ino);
+        // Replaced: another inode.
+        fs::write(sessions.join("b.jsonl"), b"{}\n").unwrap();
+        fs::rename(sessions.join("b.jsonl"), sessions.join("a.jsonl")).unwrap();
+        let replaced = stamp(home, "$HOME/.codex/sessions/a.jsonl", 1.5).unwrap();
+        assert_ne!(replaced.ino, stamped.ino);
+        // The producer's own absolute spelling identifies the same file.
+        let absolute = stamp(home, sessions.join("a.jsonl").to_str().unwrap(), 1.5).unwrap();
+        assert_eq!(absolute, replaced);
+        // Missing, or an alias: unidentified.
+        assert!(stamp(home, "$HOME/.codex/sessions/missing.jsonl", 1.5).is_none());
+        std::os::unix::fs::symlink(sessions.join("a.jsonl"), sessions.join("alias.jsonl")).unwrap();
+        assert!(stamp(home, "$HOME/.codex/sessions/alias.jsonl", 1.5).is_none());
     }
 }

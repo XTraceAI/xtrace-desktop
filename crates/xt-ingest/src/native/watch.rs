@@ -17,7 +17,7 @@ use super::{ImportReport, ImportRequest, ScanMode, scan_native_observed};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::{
-    collections::BTreeSet,
+    collections::BTreeMap,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::{
@@ -116,6 +116,8 @@ pub struct TailStatus {
     /// Reconciliations completed so far, the startup pass included.
     pub reconciles: u64,
     pub watched: Vec<String>,
+    /// Watches installed so far; a replaced root counts again.
+    pub watch_installs: u64,
     pub last_error: Option<String>,
 }
 
@@ -130,7 +132,10 @@ struct State {
     freshness: Option<Freshness>,
     idle: bool,
     reconciles: u64,
-    watched: BTreeSet<PathBuf>,
+    /// Each watched root with the identity of the directory the watch was
+    /// installed on, so a root replaced at the same path is watched again.
+    watched: BTreeMap<PathBuf, (u64, u64)>,
+    watch_installs: u64,
     last_error: Option<String>,
     stopped: bool,
 }
@@ -227,9 +232,10 @@ impl Tailer {
             reconciles: state.reconciles,
             watched: state
                 .watched
-                .iter()
+                .keys()
                 .map(|path| path.to_string_lossy().into_owned())
                 .collect(),
+            watch_installs: state.watch_installs,
             last_error: state.last_error.clone(),
         }
     }
@@ -527,21 +533,23 @@ impl Worker {
         let Some(watcher) = self.watcher.as_mut() else {
             return;
         };
-        // A watched root that vanished is forgotten, so the nearest existing
-        // ancestor takes over and the root is watched again once it returns
-        // (a platform whose watch dies with the directory would otherwise
-        // stay blind to it).
-        let vanished = self
+        // A watched root that vanished, or that is no longer the directory
+        // the watch was installed on (deleted and recreated at the same path
+        // before this pass), is forgotten and its watch dropped: a platform
+        // whose watch stays tied to the old inode would otherwise stay blind
+        // to the replacement. The nearest existing ancestor covers it until
+        // it is watched again below.
+        let stale = self
             .shared
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .watched
             .iter()
-            .filter(|path| !path.is_dir())
-            .cloned()
+            .filter(|(path, identity)| directory_identity(path) != Some(**identity))
+            .map(|(path, _)| path.clone())
             .collect::<Vec<_>>();
-        for path in vanished {
+        for path in stale {
             let _ = watcher.unwatch(&path);
             self.shared.update(|state| {
                 state.watched.remove(&path);
@@ -554,10 +562,24 @@ impl Worker {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .watched
-                .contains(&root.path);
+                .contains_key(&root.path);
             if already {
                 continue;
             }
+            let Some(identity) = directory_identity(&root.path) else {
+                // Nothing covers this root: not even its nearest ancestor exists.
+                let reason = format!(
+                    "{} could not be watched: it is absent or not a directory",
+                    root.path.display()
+                );
+                self.shared.update(|state| {
+                    state.freshness = Some(Freshness::Degraded {
+                        reason: reason.clone(),
+                    });
+                    state.last_error = Some(reason);
+                });
+                continue;
+            };
             let mode = if root.recursive {
                 RecursiveMode::Recursive
             } else {
@@ -565,7 +587,8 @@ impl Worker {
             };
             match watcher.watch(&root.path, mode) {
                 Ok(()) => self.shared.update(|state| {
-                    state.watched.insert(root.path.clone());
+                    state.watched.insert(root.path.clone(), identity);
+                    state.watch_installs += 1;
                 }),
                 Err(error) => {
                     let reason = format!("{} could not be watched: {error}", root.path.display());
@@ -584,6 +607,25 @@ impl Worker {
 struct WatchRoot {
     path: PathBuf,
     recursive: bool,
+}
+
+/// The device and inode of a directory, without following an alias; `None`
+/// when it is absent or not a directory. Platforms without inodes identify
+/// every directory alike, so only absence is detected there.
+fn directory_identity(path: &Path) -> Option<(u64, u64)> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.is_dir() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some((metadata.dev(), metadata.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        Some((0, 0))
+    }
 }
 
 /// The deepest existing directory covering each host's sources. The home
