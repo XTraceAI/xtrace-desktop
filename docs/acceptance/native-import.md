@@ -129,7 +129,10 @@ the existing writer.
   queued during the scan
   are coalesced (250 ms quiet period) and reconciled before `ready`, repeatedly until
   the queue is quiet, so an append or new file written during the scan with no later
-  event is indexed before ready. Event kinds are never trusted: any path under a host
+  event is indexed before ready; the readiness report counts what the initial scan and
+  those passes indexed together, so it reads the same whether or not the platform
+  also delivered an event for a change made just before the watch was registered
+  (FSEvents may). Event kinds are never trusted: any path under a host
   root, a directory-level or coalesced event, a rescan request or a watcher error
   marks the host dirty, and reconciliation re-enumerates it; an unchanged Claude file
   costs a stat and a 4 KiB read and touches the index not at all. Reader hosts

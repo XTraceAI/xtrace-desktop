@@ -252,6 +252,20 @@ fn claude_tail_watches_before_scanning_and_reconciles_changes_made_during_the_sc
     assert_eq!(records(&store, &touched_session), expected, "{ready:?}");
     assert_eq!(records(&store, C), 4, "{ready:?}");
     assert_eq!(records(&store, A) + records(&store, B), 6);
+    // The readiness report counts what the initial scan and the startup
+    // reconciliation indexed together: every row of the empty index came from
+    // one of them.
+    for session in &ready.report.hosts[0].sessions {
+        let id = session.native_session_id.as_deref().unwrap();
+        assert_eq!(
+            session.outcome,
+            SessionOutcome::Imported {
+                records_new: records(&store, id),
+                records_enriched: 0
+            },
+            "{id}: {ready:?}"
+        );
+    }
     assert!(
         events.reconciled().iter().any(|event| matches!(
             event,
@@ -465,7 +479,7 @@ fn claude_tail_restart_resumes_from_checkpoints_without_rereading_or_duplicating
             records_new: 1,
             records_enriched: 0
         },
-        "only the appended record is read after a restart"
+        "only the appended record is new after a restart"
     );
     assert_eq!(
         outcome(B),

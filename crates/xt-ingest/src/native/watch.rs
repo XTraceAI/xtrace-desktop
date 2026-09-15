@@ -13,7 +13,9 @@
 //! actually changed. A watcher that cannot be registered leaves the tailer
 //! degraded and says so; it never reports ready as if it were live.
 
-use super::{ImportReport, ImportRequest, ScanMode, scan_native_observed};
+use super::{
+    HostReport, ImportReport, ImportRequest, ScanMode, SessionOutcome, scan_native_observed,
+};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::{
@@ -71,7 +73,7 @@ pub struct Readiness {
     #[serde(flatten)]
     pub freshness: Freshness,
     /// The initial scan, with every host reconciled during startup replaced by
-    /// its reconciliation.
+    /// its reconciliation, the records the initial scan indexed counted in.
     pub report: ImportReport,
 }
 
@@ -290,6 +292,54 @@ impl Drop for Tailer {
     }
 }
 
+/// A host's startup reconciliation stands in the readiness report for its
+/// initial scan, with the records that scan indexed counted in: a session both
+/// passes imported reports the sum of their new and enriched records, under
+/// the later pass's status. The report then reads the same whether or not the
+/// platform also delivered an event for a change made just before the watch
+/// was registered (FSEvents may), which queues a second pass that finds the
+/// file unchanged.
+fn carry_counts(earlier: &HostReport, mut later: HostReport) -> HostReport {
+    for session in &mut later.sessions {
+        let counted = earlier
+            .sessions
+            .iter()
+            .find(|known| {
+                known.native_session_id == session.native_session_id && known.path == session.path
+            })
+            .and_then(|known| match &known.outcome {
+                SessionOutcome::Imported {
+                    records_new,
+                    records_enriched,
+                }
+                | SessionOutcome::Partial {
+                    records_new,
+                    records_enriched,
+                    ..
+                } => Some((*records_new, *records_enriched)),
+                SessionOutcome::Skipped { .. } => None,
+            });
+        if let Some((new, enriched)) = counted {
+            match &mut session.outcome {
+                SessionOutcome::Imported {
+                    records_new,
+                    records_enriched,
+                }
+                | SessionOutcome::Partial {
+                    records_new,
+                    records_enriched,
+                    ..
+                } => {
+                    *records_new += new;
+                    *records_enriched += enriched;
+                }
+                SessionOutcome::Skipped { .. } => {}
+            }
+        }
+    }
+    later
+}
+
 #[derive(Default)]
 struct Dirty {
     hosts: Vec<Host>,
@@ -392,7 +442,7 @@ impl Worker {
                         .iter_mut()
                         .find(|known| known.host == host.host)
                     {
-                        Some(known) => *known = host.clone(),
+                        Some(known) => *known = carry_counts(known, host.clone()),
                         None => report.hosts.push(host.clone()),
                     }
                 }
