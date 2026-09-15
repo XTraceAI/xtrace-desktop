@@ -46,3 +46,21 @@ fn a_readable_alias_and_a_destination_inside_the_sources_are_still_refused() {
         Err("Index database must be outside native history directories")
     );
 }
+
+#[test]
+fn an_unresolvable_source_root_does_not_refuse_a_destination_beside_the_home() {
+    // A dangling `.codex` alias and an untraversable `.config` are the
+    // scan's to report; a destination beside the home is still accepted, and
+    // one spelled inside the dangling root is still refused.
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = home_with_project(temp.path());
+    fs::remove_dir_all(home.join(".codex")).unwrap();
+    std::os::unix::fs::symlink(temp.path().join("absent-target"), home.join(".codex")).unwrap();
+    fs::create_dir_all(home.join(".config/memhub-plugin")).unwrap();
+    fs::set_permissions(home.join(".config"), fs::Permissions::from_mode(0o000)).unwrap();
+    let beside = validate_index_destination(&temp.path().join("data/xtrace.db"), &home);
+    let inside = validate_index_destination(&home.join(".codex/xtrace.db"), &home);
+    fs::set_permissions(home.join(".config"), fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(beside, Ok(()));
+    assert!(inside.is_err(), "{inside:?}");
+}

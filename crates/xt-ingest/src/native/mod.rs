@@ -289,22 +289,22 @@ pub fn validate_index_destination(db: &Path, home: &Path) -> Result<(), &'static
     }
     let mut destinations = Vec::new();
     // The host history directories, and the hook state area the Cursor watch
-    // covers: an index there would feed its own writes back as changes.
+    // covers: an index there would feed its own writes back as changes. A
+    // root that cannot be resolved (a dangling alias, a parent this process
+    // cannot traverse) is compared as spelled: nothing can be created inside
+    // such a root, and a source-access problem is the scan's to report, not
+    // a reason to refuse the destination.
+    let home_spelled = resolved(home).unwrap_or_else(|_| home.to_path_buf());
     let roots = [".claude", ".codex", ".cursor", ".config/memhub-plugin"]
-        .map(|name| resolved(&home.join(name)));
+        .map(|name| resolved(&home.join(name)).unwrap_or_else(|_| home_spelled.join(name)));
     for suffix in ["", "-wal", "-shm", "-journal"] {
         let mut name = db.as_os_str().to_os_string();
         name.push(suffix);
         let path = PathBuf::from(name);
         let target = resolved(&path).map_err(|_| "Cannot verify index destination")?;
         destinations.push(target.clone());
-        for root in &roots {
-            if target.starts_with(
-                root.as_ref()
-                    .map_err(|_| "Cannot verify native source root")?,
-            ) {
-                return Err("Index database must be outside native history directories");
-            }
+        if roots.iter().any(|root| target.starts_with(root)) {
+            return Err("Index database must be outside native history directories");
         }
         #[cfg(unix)]
         if let Ok(metadata) = std::fs::metadata(&path) {

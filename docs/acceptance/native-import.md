@@ -53,8 +53,9 @@ the existing writer.
   multiply-linked destinations are rejected. Links in known native session
   directories pointing back at the index or its sidecars are also rejected; an
   entry there the process cannot read is passed over (it cannot be followed
-  either) and the scan reports it as a diagnostic, so a source-access problem
-  never prevents the app from starting.
+  either), a source root that cannot be resolved (a dangling alias, an
+  untraversable parent) is compared as spelled, and the scan reports both as
+  diagnostics, so a source-access problem never prevents the app from starting.
 - Claude source roots, project aliases and transcript aliases are diagnosed instead
   of deliberately followed. Missing, unreadable and undecodable entries have explicit
   coverage results; blank session identities cannot enter discovery.

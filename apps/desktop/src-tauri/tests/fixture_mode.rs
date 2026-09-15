@@ -242,3 +242,25 @@ fn a_native_home_that_does_not_exist_is_refused_at_startup() {
     );
     assert!(!root.path().join("data").exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_source_root_alias_does_not_prevent_startup() {
+    // `~/.codex` pointing nowhere is the Codex scan's to report as missing.
+    let root = tempfile::TempDir::new().unwrap();
+    let home = root.path().join("home");
+    std::fs::create_dir_all(home.join(".claude/projects")).unwrap();
+    std::os::unix::fs::symlink(root.path().join("absent"), home.join(".codex")).unwrap();
+    let state = AppState::build(
+        StartupOptions {
+            data_dir: Some(root.path().join("data")),
+            native_home: Some(home.clone()),
+            ..Default::default()
+        },
+        || panic!("an explicit data directory needs no default"),
+        || panic!("an explicit home needs no default"),
+    )
+    .unwrap();
+    assert_eq!(state.native_home(), Some(home.as_path()));
+    state.shutdown();
+}
