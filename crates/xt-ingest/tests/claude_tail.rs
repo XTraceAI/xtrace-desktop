@@ -1589,6 +1589,22 @@ fn claude_tail_reconciles_an_event_delivered_before_a_stop_is_honored() {
 }
 
 #[test]
+fn claude_tail_reports_a_stop_short_of_the_awaited_reconciliations_as_unmet() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    fs::write(home.file(A), body(A, 0..2)).unwrap();
+    let (tailer, _events) = home.start(None);
+    tailer.wait_ready(WAIT).expect("ready");
+    let seen = tailer.status().reconciles;
+    // The stop wakes the waiter, but a count never reached is not met.
+    tailer.request_stop();
+    assert!(!tailer.wait_reconciled(seen + 100, WAIT));
+    // A count already reached stays met after the stop.
+    assert!(tailer.wait_reconciled(seen, WAIT));
+    tailer.stop();
+}
+
+#[test]
 fn claude_tail_follows_an_accepted_symlinked_home_for_the_fallback_watch() {
     // The home itself may be an alias (unlike a source root): with no root
     // yet, the fallback watch goes on the directory the alias names.

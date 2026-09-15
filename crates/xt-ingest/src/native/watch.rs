@@ -274,11 +274,21 @@ impl Tailer {
     }
 
     /// Wait until at least `count` reconciliations completed and the worker is
-    /// idle. Events the platform has not delivered yet are not waited for.
+    /// idle. Events the platform has not delivered yet are not waited for. A
+    /// worker that stopped wakes the waiter, but the wait is met only if the
+    /// count was reached: a stop short of it reads as unmet.
     pub fn wait_reconciled(&self, count: u64, timeout: Duration) -> bool {
-        self.shared.wait_until(timeout, |state| {
+        let woke = self.shared.wait_until(timeout, |state| {
             state.stopped || (state.reconciles >= count && state.idle)
-        })
+        });
+        woke && {
+            let state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.reconciles >= count && state.idle
+        }
     }
 
     /// Deliver a watcher error as the platform would, for tests of the
@@ -344,9 +354,11 @@ impl Drop for Tailer {
 /// later pass imported it, since the source may have been replaced in
 /// between and what the failure left unread is then gone (the counts still
 /// add up); a host the earlier pass could not scan at all (its reader or
-/// runtime failed, its pin mismatched, its root was unreadable) stays
-/// incomplete even if the later pass completed, since what the failed pass
-/// missed may be gone; and a host with a retained session that was not
+/// runtime failed, its pin mismatched, or it was incomplete with no session
+/// or diagnostic to say why) stays incomplete even if the later pass
+/// completed, since what the failed pass missed may be gone, while an
+/// incompleteness that sessions or diagnostics explain is decided by their
+/// retention or resolution; and a host with a retained session that was not
 /// imported, or a retained diagnostic, stays incomplete, as the earlier pass
 /// reported it, so the report never reads complete around a gap. The report
 /// then reads the same whether or not the
@@ -443,13 +455,16 @@ fn carry_counts(earlier: &HostReport, mut later: HostReport) -> HostReport {
             later.diagnostics.push(diagnostic.clone());
         }
     }
+    // A host-wide failure of the earlier pass: one its reader, runtime or pin
+    // reported, or an incomplete status without session or diagnostic
+    // evidence. Incompleteness that came from sessions or diagnostics is
+    // carried by those, retained or resolved above, not by the status.
     let failed_earlier = matches!(
         earlier.status,
-        HostStatus::Incomplete
-            | HostStatus::ReaderFailed
-            | HostStatus::MissingRuntime
-            | HostStatus::PinMismatch
-    );
+        HostStatus::ReaderFailed | HostStatus::MissingRuntime | HostStatus::PinMismatch
+    ) || (earlier.status == HostStatus::Incomplete
+        && earlier.sessions.is_empty()
+        && earlier.diagnostics.is_empty());
     if later.status == HostStatus::Complete
         && (failed_earlier || !all_imported(&later.sessions) || !later.diagnostics.is_empty())
     {
@@ -1248,7 +1263,100 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{ReaderDiagnostic, SessionResult};
     use super::*;
+
+    #[test]
+    fn a_resolved_diagnostic_completes_a_host_a_status_only_failure_does_not() {
+        let session = |path: &str, outcome: SessionOutcome| SessionResult {
+            native_session_id: Some("s".into()),
+            conversation_id: Some("s".into()),
+            source_surface: None,
+            path: Some(path.into()),
+            outcome,
+        };
+        let diagnostic = |path: &str| ReaderDiagnostic {
+            code: "discovery_incomplete".into(),
+            path: Some(path.into()),
+        };
+        let host = |status: HostStatus,
+                    detail: Option<&str>,
+                    diagnostics: Vec<ReaderDiagnostic>,
+                    sessions: Vec<SessionResult>| HostReport {
+            host: Host::Claude,
+            status,
+            detail: detail.map(str::to_owned),
+            diagnostics,
+            sessions,
+        };
+        let imported = || SessionOutcome::Imported {
+            records_new: 2,
+            records_enriched: 0,
+        };
+        // Incomplete only because of a diagnostic the later pass resolved by
+        // importing the session at that very path: complete.
+        let earlier = host(
+            HostStatus::Incomplete,
+            None,
+            vec![diagnostic("/h/p/s.jsonl")],
+            vec![],
+        );
+        let later = host(
+            HostStatus::Complete,
+            None,
+            vec![],
+            vec![session("/h/p/s.jsonl", imported())],
+        );
+        let merged = carry_counts(&earlier, later);
+        assert_eq!(merged.status, HostStatus::Complete, "{merged:?}");
+        assert!(merged.diagnostics.is_empty());
+        // Incomplete with nothing to say why (a host-wide failure): stays so,
+        // with the reason carried.
+        let earlier = host(
+            HostStatus::Incomplete,
+            Some("root unavailable"),
+            vec![],
+            vec![],
+        );
+        let later = host(
+            HostStatus::Complete,
+            None,
+            vec![],
+            vec![session("/h/p/s.jsonl", imported())],
+        );
+        let merged = carry_counts(&earlier, later);
+        assert_eq!(merged.status, HostStatus::Incomplete);
+        assert_eq!(
+            merged.detail.as_deref(),
+            Some("initial scan: root unavailable")
+        );
+        // A reader failure likewise.
+        let earlier = host(
+            HostStatus::ReaderFailed,
+            Some("producer died"),
+            vec![],
+            vec![],
+        );
+        let later = host(HostStatus::Complete, None, vec![], vec![]);
+        assert_eq!(carry_counts(&earlier, later).status, HostStatus::Incomplete);
+        // A diagnostic the later pass neither repeated nor resolved stays,
+        // and keeps the host incomplete.
+        let earlier = host(
+            HostStatus::Incomplete,
+            None,
+            vec![diagnostic("/h/q")],
+            vec![],
+        );
+        let later = host(
+            HostStatus::Complete,
+            None,
+            vec![],
+            vec![session("/h/q/t.jsonl", imported())],
+        );
+        let merged = carry_counts(&earlier, later);
+        assert_eq!(merged.status, HostStatus::Incomplete);
+        assert_eq!(merged.diagnostics, vec![diagnostic("/h/q")]);
+    }
 
     #[test]
     fn a_removal_at_or_above_a_watched_root_marks_its_watch_lost() {
