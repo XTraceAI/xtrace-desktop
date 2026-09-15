@@ -50,6 +50,17 @@ historical attachment bytes. Record the completed audit in the release or
 visibility-change checklist. Per-PR attestations can be reconsidered if outside
 contributors begin submitting work.
 
+### History items for the pre-publication review
+
+Items already in Git history that the comprehensive review must resolve (rewrite
+the history or accept them explicitly) before the repository becomes public. Each
+entry names what was committed, where, and how the current tree was corrected; it
+does not reproduce the disclosed value.
+
+| Item                                                                                                                                                                                                                                               | Where                                                                  | Current tree                                                                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A generated Python bytecode file, `scripts/conformance/__pycache__/test-reader-stream.cpython-314.pyc`, whose compiled source reference embeds the absolute path of the local working copy it was built in (a user directory name; no credential). | PR #55, commit `743b376`, on the `feat/native-incremental-scan` branch | Removed by the next commit on that branch; `__pycache__/` and `*.pyc` are ignored since. The historical blob remains reachable from that branch and from the merge. |
+
 Force-push timeline events bind both former and replacement head identities.
 The local checker and advisory workflow fetch retained source heads into owned
 temporary refs and scan their reachable history without checking out their code.

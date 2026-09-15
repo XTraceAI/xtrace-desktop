@@ -1,5 +1,7 @@
 /target/
 node_modules/
+__pycache__/
+*.pyc
 /apps/desktop/ui/dist/
 /apps/desktop/src-tauri/gen/
 /artifacts/private/
