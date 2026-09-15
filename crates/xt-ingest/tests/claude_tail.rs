@@ -1532,25 +1532,42 @@ fn claude_tail_registers_a_root_again_after_the_platform_reports_it_removed() {
 #[test]
 fn claude_tail_reconciles_an_event_counted_before_a_stop_but_queued_after_it() {
     // A watcher callback counts an event, is descheduled, and a stop request
-    // is queued before the event itself: the event was received before the
-    // stop and is still reconciled before the tailer stops.
+    // reaches the queue before the event itself, while the worker is about
+    // to drain (here: still in the initial scan's last probe): the event was
+    // received before the stop and is still reconciled before the tailer
+    // stops. A stop landing inside a drain ends the drain at once, which is
+    // where the counted event would otherwise be dropped.
     let temp = tempfile::TempDir::new().unwrap();
     let home = Home::new(temp.path());
     fs::write(home.file(A), body(A, 0..2)).unwrap();
-    let (tailer, events) = home.start(None);
-    tailer.wait_ready(WAIT).expect("ready");
-    let before = events.reconciled().len();
+    let (scanned_tx, scanned_rx) = std::sync::mpsc::channel::<()>();
+    let probe: xt_ingest::native::watch::Probe = Arc::new(move |point: ProbePoint<'_>| {
+        if matches!(point, ProbePoint::InitialScanDone) {
+            let _ = scanned_tx.send(());
+            std::thread::sleep(Duration::from_millis(80));
+        }
+    });
+    let (tailer, events) = home.start(Some(probe));
+    scanned_rx.recv_timeout(WAIT).expect("initial scan done");
     let queue = tailer.inject_removed_late(&home.root.join(".claude/projects"));
     let late = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(30));
         queue();
     });
+    // The stop is queued first, the counted event 30 ms later, both before
+    // the worker leaves the probe and drains.
     tailer.stop();
     late.join().unwrap();
     assert!(
-        events.reconciled().len() > before,
+        events.reconciled().iter().any(|event| matches!(
+            event,
+            TailEvent::Reconciled {
+                trigger: xt_ingest::native::watch::Trigger::Startup,
+                ..
+            }
+        )),
         "the event counted before the stop was reconciled: {:?}",
-        events.0.lock().unwrap().len()
+        events.0.lock().unwrap()
     );
 }
 
