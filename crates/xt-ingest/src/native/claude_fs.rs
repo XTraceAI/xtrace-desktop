@@ -13,6 +13,7 @@ use super::stream::{SessionHeader, expected_conversation_id};
 use super::{ScanMode, SessionOutcome, SessionResult, SessionWriter};
 use crate::canonical::{Parsed, ParsedRecord, SourceContext, parse_with_context};
 use crate::writer::MAX_BATCH_RECORDS;
+use sha2::Digest;
 use std::{
     fs,
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
@@ -401,6 +402,7 @@ pub fn import_file(
     let mut lines = resume.lines;
     let mut consumed: u64 = 0;
     let mut window = TailWindow::seeded(resume.tail);
+    let mut prefix = resume.prefix;
     let mut buffer = Vec::new();
     loop {
         buffer.clear();
@@ -460,6 +462,7 @@ pub fn import_file(
         // line the scan could not read.
         consumed += read as u64;
         window.push(&buffer);
+        prefix.update(&buffer);
         if batch.len() == MAX_BATCH_RECORDS {
             if !writer.labels_complete() {
                 writer.enrich(&header(file, &batch));
@@ -469,6 +472,7 @@ pub fn import_file(
                     &key,
                     &identity,
                     resume.start + consumed,
+                    &prefix,
                     &window,
                     lines,
                     observed_at,
@@ -488,7 +492,15 @@ pub fn import_file(
     }
     let position = resume.start + consumed;
     let progress = (dropped == 0 && writer.gapless()).then(|| {
-        checkpoint::file_checkpoint(&key, &identity, position, &window, lines, observed_at)
+        checkpoint::file_checkpoint(
+            &key,
+            &identity,
+            position,
+            &prefix,
+            &window,
+            lines,
+            observed_at,
+        )
     });
     // A file without a storable record (empty, or inert lines only) keeps its
     // discovered identity and nothing else: an empty batch commits no row,

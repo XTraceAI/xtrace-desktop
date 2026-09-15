@@ -140,7 +140,8 @@ impl Shared {
     }
 
     fn wait_until(&self, timeout: Duration, done: impl Fn(&State) -> bool) -> bool {
-        let deadline = Instant::now() + timeout;
+        // A timeout too large to represent as an instant waits without one.
+        let deadline = Instant::now().checked_add(timeout);
         let mut state = self
             .state
             .lock()
@@ -149,15 +150,22 @@ impl Shared {
             if done(&state) {
                 return true;
             }
-            let now = Instant::now();
-            if now >= deadline {
-                return false;
-            }
-            let (next, _) = self
-                .changed
-                .wait_timeout(state, deadline - now)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            state = next;
+            state = match deadline {
+                Some(deadline) => {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        return false;
+                    }
+                    self.changed
+                        .wait_timeout(state, deadline - now)
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .0
+                }
+                None => self
+                    .changed
+                    .wait(state)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            };
         }
     }
 }
@@ -352,7 +360,7 @@ impl Worker {
                 break;
             }
             let hosts = dirty.hosts.clone();
-            let reconciled = self.scan(&hosts, &mut |_| {});
+            let reconciled = self.reconcile(&hosts);
             for host in &reconciled.hosts {
                 match report
                     .hosts
@@ -408,7 +416,7 @@ impl Worker {
                 }
                 if !dirty.hosts.is_empty() {
                     let hosts = dirty.hosts.clone();
-                    let reconciled = self.scan(&hosts, &mut |_| {});
+                    let reconciled = self.reconcile(&hosts);
                     self.finished(
                         if dirty.rescan {
                             Trigger::Rescan
@@ -429,10 +437,16 @@ impl Worker {
     }
 
     fn finished(&mut self, trigger: Trigger, report: ImportReport) {
-        // A root that appeared since registration gets its own watch now.
-        self.ensure_watches();
         self.shared.update(|state| state.reconciles += 1);
         (self.sink)(TailEvent::Reconciled { trigger, report });
+    }
+
+    /// Reconcile the given hosts. A root that appeared since the last watch
+    /// pass is watched *before* it is enumerated, so a file created below it
+    /// after enumeration still produces an event.
+    fn reconcile(&mut self, hosts: &[Host]) -> ImportReport {
+        self.ensure_watches();
+        self.scan(hosts, &mut |_| {})
     }
 
     fn freshness(&self) -> Freshness {
@@ -490,6 +504,26 @@ impl Worker {
         let Some(watcher) = self.watcher.as_mut() else {
             return;
         };
+        // A watched root that vanished is forgotten, so the nearest existing
+        // ancestor takes over and the root is watched again once it returns
+        // (a platform whose watch dies with the directory would otherwise
+        // stay blind to it).
+        let vanished = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .watched
+            .iter()
+            .filter(|path| !path.is_dir())
+            .cloned()
+            .collect::<Vec<_>>();
+        for path in vanished {
+            let _ = watcher.unwatch(&path);
+            self.shared.update(|state| {
+                state.watched.remove(&path);
+            });
+        }
         for root in watch_roots(&self.config.home, &self.config.hosts) {
             let already = self
                 .shared
@@ -533,8 +567,7 @@ struct WatchRoot {
 /// itself is watched without recursion when a host root is absent, so the
 /// root's creation is noticed.
 fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
-    let mut roots: Vec<WatchRoot> = Vec::new();
-    let mut add = |candidates: &[PathBuf]| {
+    fn add(roots: &mut Vec<WatchRoot>, home: &Path, candidates: &[PathBuf]) {
         for candidate in candidates {
             if candidate.is_dir() {
                 if !roots.iter().any(|root| root.path == *candidate) {
@@ -552,22 +585,40 @@ fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
                 recursive: false,
             });
         }
-    };
+    }
+    let mut roots: Vec<WatchRoot> = Vec::new();
     for host in hosts {
         match host {
-            Host::Claude => add(&[home.join(".claude/projects"), home.join(".claude")]),
-            Host::Codex => add(&[home.join(".codex/sessions"), home.join(".codex")]),
+            Host::Claude => add(
+                &mut roots,
+                home,
+                &[home.join(".claude/projects"), home.join(".claude")],
+            ),
+            Host::Codex => add(
+                &mut roots,
+                home,
+                &[home.join(".codex/sessions"), home.join(".codex")],
+            ),
             Host::Cursor => {
+                // Two roots may exist independently; the parent is watched
+                // without recursion so the absent one is seen when it appears.
+                let parent = home.join(".cursor");
                 let chats = home.join(".cursor/chats");
                 let projects = home.join(".cursor/projects");
                 if chats.is_dir() || projects.is_dir() {
                     for root in [chats, projects] {
                         if root.is_dir() {
-                            add(&[root]);
+                            add(&mut roots, home, &[root]);
                         }
                     }
+                    if parent.is_dir() && !roots.iter().any(|root| root.path == parent) {
+                        roots.push(WatchRoot {
+                            path: parent,
+                            recursive: false,
+                        });
+                    }
                 } else {
-                    add(&[home.join(".cursor")]);
+                    add(&mut roots, home, &[parent]);
                 }
             }
             Host::Other => {}
@@ -697,10 +748,20 @@ mod tests {
                 (home.to_path_buf(), false)
             ]
         );
+        // One Cursor root present: it is watched recursively and the parent
+        // without recursion, so the sibling is seen when it appears.
         std::fs::create_dir_all(home.join(".cursor/projects")).unwrap();
         let roots = watch_roots(home, &[Host::Cursor]);
-        assert_eq!(roots.len(), 1);
-        assert_eq!(roots[0].path, home.join(".cursor/projects"));
-        assert!(roots[0].recursive);
+        let described = roots
+            .iter()
+            .map(|root| (root.path.clone(), root.recursive))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            described,
+            vec![
+                (home.join(".cursor/projects"), true),
+                (home.join(".cursor"), false)
+            ]
+        );
     }
 }

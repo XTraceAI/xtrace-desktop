@@ -5,13 +5,19 @@
 //! proven again:
 //!
 //! - A transcript file is identified by its device and inode, and the
-//!   checkpoint carries a digest of the bytes that end at its position. A scan
+//!   checkpoint carries two digests: one of every byte before its position and
+//!   one of the last 4 KiB before it, plus the inode's change time. A scan
 //!   resumes behind the position only if the same inode still holds at least
-//!   that many bytes and those trailing bytes digest to the same value. A
-//!   different inode is a replacement, a shorter file a truncation, a differing
-//!   digest an in-place rewrite: each starts a new generation and the file is
-//!   read from the beginning again. Rows never duplicate, because records
-//!   dedupe by UUID; the cost of a new generation is a re-read, never a gap.
+//!   that many bytes and the whole prefix digests to the recorded value. A
+//!   file whose length and change time both still match is proven unchanged
+//!   by the cheaper trailing digest alone (every write moves the change time,
+//!   which no ordinary tool sets back); a file whose change time moved is
+//!   proven by the whole prefix even when its length did not. A different
+//!   inode is a replacement, a shorter file a truncation, a differing digest an
+//!   in-place rewrite: each starts a new generation and the file is read from
+//!   the beginning again.
+//!   Rows never duplicate, because records dedupe by UUID; the cost of a new
+//!   generation is a re-read, never a gap.
 //! - A reader host (Codex, Cursor) is scanned through the pinned producer,
 //!   which can skip sessions it saw modified before an instant (`--since`).
 //!   The generation is the instant a scan that covered every session started;
@@ -43,12 +49,14 @@ pub const HOST_SCAN_MARGIN_MS: i64 = 2_000;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Generation {
-    /// One regular file: the inode it lived in, a digest of the last
-    /// `tail_len` bytes before the position, and the count of complete lines
-    /// consumed so far (for reporting only).
+    /// One regular file: the inode it lived in, a digest of every byte before
+    /// the position, a digest of the last `tail_len` bytes before it, and the
+    /// count of complete lines consumed so far (for reporting only).
     File {
         dev: u64,
         ino: u64,
+        ctime_ns: i64,
+        prefix_sha256: String,
         tail_len: u64,
         tail_sha256: String,
         lines: u64,
@@ -68,6 +76,9 @@ impl Generation {
 pub struct FileIdentity {
     pub dev: u64,
     pub ino: u64,
+    /// The inode's change time: moved by every write, truncation, rename,
+    /// link or permission change, and not settable by ordinary tools.
+    pub ctime_ns: i64,
     pub len: u64,
     /// False where the platform cannot name the inode; such a file is never
     /// resumed, only read whole.
@@ -82,6 +93,10 @@ impl FileIdentity {
             Self {
                 dev: metadata.dev(),
                 ino: metadata.ino(),
+                ctime_ns: metadata
+                    .ctime()
+                    .saturating_mul(1_000_000_000)
+                    .saturating_add(metadata.ctime_nsec()),
                 len: metadata.len(),
                 known: true,
             }
@@ -91,6 +106,7 @@ impl FileIdentity {
             Self {
                 dev: 0,
                 ino: 0,
+                ctime_ns: 0,
                 len: metadata.len(),
                 known: false,
             }
@@ -118,15 +134,19 @@ pub enum ResumeBasis {
     Unidentified,
 }
 
-/// Where a scan may start, with the verified bytes that seed its digest window
-/// and the line count they represent.
-#[derive(Debug)]
+/// Where a scan may start, with the verified trailing bytes that seed its
+/// digest window, the running digest of the verified prefix, and the line
+/// count they represent.
 pub struct Resume {
     pub start: u64,
     pub lines: u64,
     pub basis: ResumeBasis,
     pub tail: Vec<u8>,
+    pub prefix: Sha256,
 }
+
+/// Bytes hashed per read while proving a prefix.
+const PREFIX_CHUNK: usize = 64 * 1024;
 
 /// Decide the resume point for `source`, whose identity was just observed.
 /// Reads at most `TAIL_DIGEST_LEN` bytes; leaves the file position unspecified.
@@ -140,6 +160,7 @@ pub fn resume_point(
         lines: 0,
         basis,
         tail: Vec::new(),
+        prefix: Sha256::new(),
     };
     let Some(checkpoint) = checkpoint else {
         return Ok(fresh(ResumeBasis::Fresh));
@@ -147,6 +168,8 @@ pub fn resume_point(
     let Some(Generation::File {
         dev,
         ino,
+        ctime_ns,
+        prefix_sha256,
         tail_len,
         tail_sha256,
         lines,
@@ -165,10 +188,39 @@ pub fn resume_point(
     if identity.len < position || tail_len > position || tail_len > TAIL_DIGEST_LEN {
         return Ok(fresh(ResumeBasis::Truncated));
     }
-    source.seek(SeekFrom::Start(position - tail_len))?;
-    let mut tail = vec![0u8; usize::try_from(tail_len).unwrap_or(0)];
-    source.read_exact(&mut tail)?;
-    if hex_sha256(&tail) != tail_sha256 {
+    if identity.len == position && identity.ctime_ns == ctime_ns {
+        // Nothing was written to the inode since the checkpoint and nothing
+        // would be read: the trailing bytes alone decide, cheaply.
+        source.seek(SeekFrom::Start(position - tail_len))?;
+        let mut tail = vec![0u8; usize::try_from(tail_len).unwrap_or(0)];
+        source.read_exact(&mut tail)?;
+        if hex_sha256(&tail) != tail_sha256 {
+            return Ok(fresh(ResumeBasis::Rewritten));
+        }
+        return Ok(Resume {
+            start: position,
+            lines,
+            basis: ResumeBasis::Unchanged,
+            tail,
+            prefix: Sha256::new(),
+        });
+    }
+    // Bytes follow the position, or the inode was written to since the
+    // checkpoint: every byte before the position is proven before any of what
+    // follows is read, and the running digest continues over it.
+    source.seek(SeekFrom::Start(0))?;
+    let mut prefix = Sha256::new();
+    let mut window = TailWindow::default();
+    let mut remaining = position;
+    let mut chunk = vec![0u8; PREFIX_CHUNK];
+    while remaining > 0 {
+        let wanted = usize::try_from(remaining.min(PREFIX_CHUNK as u64)).unwrap_or(PREFIX_CHUNK);
+        source.read_exact(&mut chunk[..wanted])?;
+        prefix.update(&chunk[..wanted]);
+        window.push(&chunk[..wanted]);
+        remaining -= wanted as u64;
+    }
+    if hex_digest(prefix.clone()) != prefix_sha256 || window.len() != tail_len {
         return Ok(fresh(ResumeBasis::Rewritten));
     }
     Ok(Resume {
@@ -179,7 +231,8 @@ pub fn resume_point(
         } else {
             ResumeBasis::Appended
         },
-        tail,
+        tail: window.bytes,
+        prefix,
     })
 }
 
@@ -223,7 +276,11 @@ impl TailWindow {
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
+    hex_digest(Sha256::new_with_prefix(bytes))
+}
+
+fn hex_digest(hasher: Sha256) -> String {
+    let digest = hasher.finalize();
     let mut hex = String::with_capacity(64);
     for byte in digest {
         use std::fmt::Write;
@@ -237,11 +294,13 @@ pub fn file_key(path: &Path) -> String {
     format!("claude:{}", path.display())
 }
 
-/// A file checkpoint through `position`, in the generation of `identity`.
+/// A file checkpoint through `position`, in the generation of `identity`;
+/// `prefix` has digested every byte before `position`.
 pub fn file_checkpoint(
     key: &str,
     identity: &FileIdentity,
     position: u64,
+    prefix: &Sha256,
     window: &TailWindow,
     lines: u64,
     observed_at: i64,
@@ -249,6 +308,8 @@ pub fn file_checkpoint(
     let generation = Generation::File {
         dev: identity.dev,
         ino: identity.ino,
+        ctime_ns: identity.ctime_ns,
+        prefix_sha256: hex_digest(prefix.clone()),
         tail_len: window.len(),
         tail_sha256: window.digest(),
         lines,
@@ -312,6 +373,8 @@ mod tests {
         let file = Generation::File {
             dev: 1,
             ino: 2,
+            ctime_ns: 5,
+            prefix_sha256: "cd".into(),
             tail_len: 3,
             tail_sha256: "ab".into(),
             lines: 4,
@@ -328,7 +391,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn resume_proves_inode_length_and_trailing_bytes_before_skipping() {
+    fn resume_proves_inode_length_prefix_and_trailing_bytes_before_skipping() {
         let temp = tempfile::TempDir::new().unwrap();
         let path = temp.path().join("s.jsonl");
         fs::write(&path, b"first line\nsecond line\n").unwrap();
@@ -339,19 +402,23 @@ mod tests {
         // Checkpoint through the first line.
         let mut window = TailWindow::default();
         window.push(b"first line\n");
+        let prefix = Sha256::new_with_prefix(b"first line\n");
         let key = file_key(&path);
-        let checkpoint = file_checkpoint(&key, &id, 11, &window, 1, 7);
+        let checkpoint = file_checkpoint(&key, &id, 11, &prefix, &window, 1, 7);
         let resumed = resume_point(Some(&checkpoint), &mut source, &id).unwrap();
         assert_eq!(
             (resumed.start, resumed.lines, resumed.basis),
             (11, 1, ResumeBasis::Appended)
         );
         assert_eq!(resumed.tail, b"first line\n");
-        // Nothing after the position: unchanged.
+        assert_eq!(hex_digest(resumed.prefix), hex_sha256(b"first line\n"));
+        // Nothing after the position: unchanged, by the trailing bytes alone.
+        let whole_prefix = Sha256::new_with_prefix(b"first line\nsecond line\n");
         let whole = file_checkpoint(
             &key,
             &id,
             23,
+            &whole_prefix,
             &TailWindow::seeded(b"first line\nsecond line\n".to_vec()),
             2,
             7,
@@ -402,6 +469,80 @@ mod tests {
                 .basis,
             ResumeBasis::Rewritten
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_rewrite_before_the_trailing_window_is_caught_once_the_file_grows() {
+        // A prefix far longer than the trailing window, checkpointed whole.
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("s.jsonl");
+        let mut content = Vec::new();
+        for index in 0..8 {
+            content.extend_from_slice(format!("{index:0>2000}\n").as_bytes());
+        }
+        fs::write(&path, &content).unwrap();
+        let source = fs::File::open(&path).unwrap();
+        let id = identity(&source);
+        let window = TailWindow::seeded(content.clone());
+        let prefix = Sha256::new_with_prefix(&content);
+        let checkpoint = file_checkpoint(
+            &file_key(&path),
+            &id,
+            content.len() as u64,
+            &prefix,
+            &window,
+            8,
+            1,
+        );
+        // Change the first line only, keeping length and trailing bytes, and
+        // append: the prefix digest disagrees, so the file is read whole.
+        let mut edited = content.clone();
+        edited[0] = b'9';
+        edited.extend_from_slice(b"appended\n");
+        fs::write(&path, &edited).unwrap();
+        let mut source = fs::File::open(&path).unwrap();
+        let grown = identity(&source);
+        assert_eq!(grown.ino, id.ino);
+        assert_eq!(
+            resume_point(Some(&checkpoint), &mut source, &grown)
+                .unwrap()
+                .basis,
+            ResumeBasis::Rewritten
+        );
+        // The same bytes rewritten in place, length unchanged: the change time
+        // moved, so the whole prefix is proven again and the file reads as
+        // unchanged only because every byte still matches.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&path, &content).unwrap();
+        let mut source = fs::File::open(&path).unwrap();
+        let rewritten_same = identity(&source);
+        assert_ne!(rewritten_same.ctime_ns, id.ctime_ns);
+        let same = resume_point(Some(&checkpoint), &mut source, &rewritten_same).unwrap();
+        assert_eq!(same.basis, ResumeBasis::Unchanged);
+        // The first byte rewritten in place, length and trailing bytes kept:
+        // caught by the change time and the whole-prefix digest.
+        let mut edited_same = content.clone();
+        edited_same[0] = b'9';
+        fs::write(&path, &edited_same).unwrap();
+        let mut source = fs::File::open(&path).unwrap();
+        let edited = identity(&source);
+        assert_eq!(
+            resume_point(Some(&checkpoint), &mut source, &edited)
+                .unwrap()
+                .basis,
+            ResumeBasis::Rewritten
+        );
+        // An untouched prefix with the same append resumes behind it.
+        let mut appended = content.clone();
+        appended.extend_from_slice(b"appended\n");
+        fs::write(&path, &appended).unwrap();
+        let mut source = fs::File::open(&path).unwrap();
+        let grown = identity(&source);
+        let resumed = resume_point(Some(&checkpoint), &mut source, &grown).unwrap();
+        assert_eq!(resumed.basis, ResumeBasis::Appended);
+        assert_eq!(resumed.start, content.len() as u64);
+        assert_eq!(resumed.tail.len() as u64, TAIL_DIGEST_LEN);
     }
 
     #[test]

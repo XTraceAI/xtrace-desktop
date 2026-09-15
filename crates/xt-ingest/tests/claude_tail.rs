@@ -645,3 +645,102 @@ fn claude_tail_reports_a_watcher_failure_as_degraded_never_silent_ready() {
             .any(|event| matches!(event, TailEvent::Stopped))
     );
 }
+
+#[test]
+fn claude_tail_watches_a_root_that_appears_later_before_enumerating_it() {
+    // No Claude root at all when the tailer starts: only the home is watched.
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    fs::remove_dir_all(home.root.join(".claude")).unwrap();
+    let (tailer, _events) = home.start(None);
+    let ready = tailer.wait_ready(WAIT).expect("ready");
+    assert_eq!(ready.freshness, Freshness::Live);
+    assert_eq!(ready.report.hosts[0].status, HostStatus::MissingSource);
+    assert_eq!(
+        tailer.status().watched,
+        vec![home.root.to_string_lossy().into_owned()]
+    );
+    let seen = tailer.status().reconciles;
+    // The root appears with a first session: the home watch sees it, the new
+    // root is watched before it is enumerated, and the session is imported.
+    fs::create_dir_all(&home.project).unwrap();
+    fs::write(home.file(A), body(A, 0..2)).unwrap();
+    let seen = settle(&tailer, seen);
+    let store = home.store();
+    assert_eq!(records(&store, A), 2);
+    let watched = tailer.status().watched;
+    assert!(
+        watched.contains(
+            &home
+                .root
+                .join(".claude/projects")
+                .to_string_lossy()
+                .into_owned()
+        ),
+        "{watched:?}"
+    );
+    // A later file below the new root is seen through its own recursive watch.
+    fs::write(home.file(B), body(B, 0..3)).unwrap();
+    settle(&tailer, seen);
+    assert_eq!(records(&store, B), 3);
+    tailer.stop();
+}
+
+#[test]
+fn claude_tail_watches_the_cursor_parent_so_a_sibling_root_is_seen_when_it_appears() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path().join("home");
+    fs::create_dir_all(root.join(".cursor/projects")).unwrap();
+    let events = Events::default();
+    let sink = {
+        let events = events.clone();
+        Box::new(move |event: TailEvent| events.0.lock().unwrap().push(event))
+            as Box<dyn Fn(TailEvent) + Send>
+    };
+    let tailer = Tailer::start(
+        Store::open(temp.path().join("index.sqlite")).unwrap(),
+        WatchConfig {
+            home: root.clone(),
+            hosts: vec![Host::Cursor],
+            pin: repo().join(".plugin-pin"),
+            plugin_root: None,
+            python: None,
+            debounce: Duration::from_millis(100),
+            probe: None,
+        },
+        sink,
+    );
+    let ready = tailer.wait_ready(WAIT).expect("ready");
+    assert_eq!(ready.freshness, Freshness::Live, "{ready:?}");
+    let spelled = |path: &Path| path.to_string_lossy().into_owned();
+    assert_eq!(
+        tailer.status().watched,
+        vec![
+            spelled(&root.join(".cursor")),
+            spelled(&root.join(".cursor/projects"))
+        ]
+    );
+    let seen = tailer.status().reconciles;
+    // The sibling root appears: the parent watch reports it, the host is
+    // reconciled (the pinned producer is absent here, so explicitly not
+    // imported), and the new root gains its own recursive watch.
+    fs::create_dir_all(root.join(".cursor/chats/x")).unwrap();
+    fs::write(root.join(".cursor/chats/x/store.db"), b"not a store").unwrap();
+    settle(&tailer, seen);
+    let watched = tailer.status().watched;
+    assert!(
+        watched.contains(&spelled(&root.join(".cursor/chats"))),
+        "{watched:?}"
+    );
+    let last = events.reconciled();
+    let TailEvent::Reconciled { report, .. } = last.last().unwrap() else {
+        unreachable!()
+    };
+    assert_eq!(report.hosts[0].host, Host::Cursor);
+    assert_eq!(
+        report.hosts[0].status,
+        HostStatus::PinMismatch,
+        "{report:?}"
+    );
+    tailer.stop();
+}
