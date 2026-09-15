@@ -79,7 +79,8 @@ the existing writer.
   recorded value. A file whose length and change time both still match is proven
   unchanged by the trailing digest alone, since every write moves the change time and
   no ordinary tool sets it back; a file whose change time moved is proven by its whole
-  prefix even when its length did not. Another inode at the path is a replacement, a
+  prefix even when its length did not, and a file proven unchanged that way has its
+  checkpoint refreshed with the current identity so the next proof is the cheap one. Another inode at the path is a replacement, a
   shorter file a truncation, a differing digest an in-place rewrite: each starts a new
   generation and the file is read from the beginning again. Records dedupe by UUID, so
   a new generation costs a re-read, never a gap or a duplicate. History is kept when a

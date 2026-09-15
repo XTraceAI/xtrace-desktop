@@ -832,3 +832,53 @@ fn claude_tail_watches_a_root_replaced_at_the_same_path_again() {
     assert_eq!(records(&store, A), 2, "history is kept");
     tailer.stop();
 }
+
+#[test]
+fn claude_tail_refreshes_a_checkpoint_after_proving_an_unchanged_file_by_its_whole_prefix() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    fs::write(home.file(A), body(A, 0..3)).unwrap();
+    let path = home.file(A);
+    let mut store = home.store();
+    let request = ImportRequest {
+        home: &home.root,
+        hosts: &[Host::Claude],
+        pin: &repo().join(".plugin-pin"),
+        plugin_root: None,
+        python: None,
+        observed_at: 1,
+    };
+    assert!(scan_native(&mut store, &request, ScanMode::Resume).complete());
+    let ctime_of = |generation: &Generation| match generation {
+        Generation::File { ctime_ns, .. } => *ctime_ns,
+        Generation::HostScan { .. } => unreachable!(),
+    };
+    let recorded = ctime_of(&checkpoint(&store, &path).unwrap().0);
+    // An identical rewrite moves the change time without changing a byte.
+    std::thread::sleep(Duration::from_millis(20));
+    let bytes = fs::read(&path).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    let current =
+        xt_ingest::native::checkpoint::FileIdentity::of(&fs::metadata(&path).unwrap()).ctime_ns;
+    assert_ne!(current, recorded);
+    let report = scan_native(&mut store, &request, ScanMode::Resume);
+    assert!(report.complete(), "{report:?}");
+    assert_eq!(
+        report.hosts[0].sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 0,
+            records_enriched: 0
+        }
+    );
+    let (generation, position) = checkpoint(&store, &path).unwrap();
+    assert_eq!(
+        ctime_of(&generation),
+        current,
+        "the checkpoint now carries the current identity"
+    );
+    assert_eq!(position, file_len(&path));
+    assert_eq!(records(&store, A), 3);
+    // Proven cheaply from here on: the checkpoint stays as it is.
+    assert!(scan_native(&mut store, &request, ScanMode::Resume).complete());
+    assert_eq!(checkpoint(&store, &path).unwrap().0, generation);
+}

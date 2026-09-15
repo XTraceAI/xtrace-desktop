@@ -161,6 +161,11 @@ pub struct Resume {
     pub basis: ResumeBasis,
     pub tail: Vec<u8>,
     pub prefix: Sha256,
+    /// The file proved unchanged, but only by digesting its whole prefix
+    /// because its change time moved (an identical rewrite, a permission
+    /// change): the checkpoint should be refreshed with the current identity
+    /// so the next proof is the cheap one again.
+    pub refresh: bool,
 }
 
 /// Bytes hashed per read while proving a prefix.
@@ -179,6 +184,7 @@ pub fn resume_point(
         basis,
         tail: Vec::new(),
         prefix: Sha256::new(),
+        refresh: false,
     };
     let Some(checkpoint) = checkpoint else {
         return Ok(fresh(ResumeBasis::Fresh));
@@ -221,6 +227,7 @@ pub fn resume_point(
             basis: ResumeBasis::Unchanged,
             tail,
             prefix: Sha256::new(),
+            refresh: false,
         });
     }
     // Bytes follow the position, or the inode was written to since the
@@ -241,16 +248,18 @@ pub fn resume_point(
     if hex_digest(prefix.clone()) != prefix_sha256 || window.len() != tail_len {
         return Ok(fresh(ResumeBasis::Rewritten));
     }
+    let unchanged = identity.len == position;
     Ok(Resume {
         start: position,
         lines,
-        basis: if identity.len == position {
+        basis: if unchanged {
             ResumeBasis::Unchanged
         } else {
             ResumeBasis::Appended
         },
         tail: window.bytes,
         prefix,
+        refresh: unchanged,
     })
 }
 
@@ -702,6 +711,26 @@ mod tests {
         assert_ne!(rewritten_same.ctime_ns, id.ctime_ns);
         let same = resume_point(Some(&checkpoint), &mut source, &rewritten_same).unwrap();
         assert_eq!(same.basis, ResumeBasis::Unchanged);
+        assert!(
+            same.refresh,
+            "proven by the whole prefix: refresh the checkpoint"
+        );
+        let refreshed = file_checkpoint(
+            &file_key(&path),
+            &rewritten_same,
+            content.len() as u64,
+            &same.prefix,
+            &TailWindow::seeded(same.tail.clone()),
+            8,
+            2,
+        );
+        let mut source = fs::File::open(&path).unwrap();
+        let cheap = resume_point(Some(&refreshed), &mut source, &rewritten_same).unwrap();
+        assert_eq!(cheap.basis, ResumeBasis::Unchanged);
+        assert!(
+            !cheap.refresh,
+            "the refreshed checkpoint proves the file cheaply"
+        );
         // The first byte rewritten in place, length and trailing bytes kept:
         // caught by the change time and the whole-prefix digest.
         let mut edited_same = content.clone();

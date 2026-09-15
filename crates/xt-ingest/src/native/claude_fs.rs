@@ -357,6 +357,25 @@ pub fn import_file(
         }
     };
     if resume.basis == ResumeBasis::Unchanged {
+        // Proven unchanged by digesting the whole prefix (its change time had
+        // moved): the checkpoint takes the current identity, so the next
+        // proof is the cheap one again instead of another full digest.
+        if resume.refresh
+            && let Err(error) = store.record_native_checkpoint(&checkpoint::file_checkpoint(
+                &key,
+                &identity,
+                resume.start,
+                &resume.prefix,
+                &TailWindow::seeded(resume.tail.clone()),
+                resume.lines,
+                observed_at,
+            ))
+        {
+            return Ok(skipped(
+                file,
+                format!("checkpoint could not be refreshed: {error}"),
+            ));
+        }
         return Ok(SessionResult {
             native_session_id: Some(file.session_id.clone()),
             conversation_id: Some(file.session_id.clone()),
