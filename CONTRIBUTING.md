@@ -34,7 +34,7 @@ In the PR description, include:
   Identify any checks not run and why; do not count planned checks as passing.
 - For UI changes, screenshots in every currently supported theme and a native macOS interaction check.
   For window chrome, verify the traffic lights, dragging, and fullscreen transitions.
-  The scaffold currently supports dark appearance.
+  Verify both light and dark appearance.
 
 Use synthetic or redacted evidence. Do not commit personal transcripts, local
 databases, credentials, or private source paths.

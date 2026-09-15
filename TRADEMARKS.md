@@ -25,5 +25,5 @@ transparent PNG with SHA-256:
 ```
 
 The native app icons are generated from this mark as described in
-[DEVELOPING.md](DEVELOPING.md#brand-assets). The trademark terms above apply to
+[native development](docs/NATIVE-DEVELOPMENT.md#brand-assets). The trademark terms above apply to
 the source artwork and generated icons.

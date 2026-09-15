@@ -1,0 +1,23 @@
+name: Metric definition
+description: Clarify or propose a measurable metric.
+body:
+  - type: input
+    id: metric
+    attributes:
+      label: Metric name or existing public contract
+    validations:
+      required: true
+  - type: textarea
+    id: definition
+    attributes:
+      label: Definition and data sources
+      description: State units, time window, aggregation and treatment of missing measurements.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Synthetic example and expected result
+      description: Show inputs and expected arithmetic without private session data.
+    validations:
+      required: true
