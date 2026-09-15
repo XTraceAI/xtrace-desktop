@@ -128,7 +128,7 @@ const hostText = (host: NativeIndexStatus['hosts'][number]) => {
 /** The typed status the app publishes; every field is shown as reported, never invented. */
 function NativeIndexSummary({ status }: { status: NativeIndexStatus }) {
   return (
-    <dl className="xt-database-summary" data-testid="native-index">
+    <dl className="xt-native-index-summary" data-testid="native-index">
       <dt>State</dt>
       <dd>{phaseText(status)}</dd>
       <dt>Freshness</dt>

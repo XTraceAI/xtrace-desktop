@@ -53,6 +53,15 @@ test('navigates real shell routes with canonical F1 counts, shortcuts and both t
     String(fixture.db_counts.records),
     String(fixture.db_counts.usage),
   ]);
+  // The fixture export carries the disabled native index the app reports in fixture mode.
+  const index = fixture.native_index;
+  expect(index.phase.phase).toBe('disabled');
+  expect(await page.locator('.xt-native-index-summary dd').allTextContents()).toEqual([
+    `Disabled: ${index.phase.reason}`,
+    'Not watching yet',
+    `Unavailable: ${index.python.reason}`,
+    `Unavailable: ${index.readers.reason}`,
+  ]);
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled();
   await expect(page.locator('aside [aria-current="page"]')).toHaveCount(0);

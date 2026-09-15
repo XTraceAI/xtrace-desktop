@@ -44,17 +44,20 @@
   max-width: 640px;
   margin-top: 24px;
 }
-.xt-database-summary {
+.xt-database-summary,
+.xt-native-index-summary {
   display: grid;
   grid-template-columns: 110px minmax(0, 1fr);
   gap: 12px;
   margin: 0;
   font-size: 12px;
 }
-.xt-database-summary dt {
+.xt-database-summary dt,
+.xt-native-index-summary dt {
   color: var(--meta);
 }
-.xt-database-summary dd {
+.xt-database-summary dd,
+.xt-native-index-summary dd {
   margin: 0;
   color: var(--ink);
   overflow-wrap: anywhere;
