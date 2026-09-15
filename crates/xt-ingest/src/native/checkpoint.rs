@@ -20,9 +20,12 @@
 //!   generation is a re-read, never a gap.
 //! - A reader host (Codex, Cursor) is scanned through the pinned producer,
 //!   which can skip sessions it saw modified before an instant (`--since`).
-//!   The generation is the instant a scan that covered every session started;
-//!   a later scan asks for everything modified since then, less a margin for
-//!   coarse timestamps. A scan that left any gap does not advance the instant.
+//!   The generation is the instant a scan that covered every session started,
+//!   bound to the producer that ran it; a later scan by the same producer asks
+//!   for everything modified since then, less a margin for coarse timestamps,
+//!   while a different producer (a moved pin) starts with a full scan, since
+//!   it may discover sessions the old one did not. A scan that left any gap
+//!   does not advance the instant.
 //!
 //! The zero-position rows of `source_cursors` stay plain locators. Only a
 //! checkpoint authorizes skipping input, and it commits together with the rows
@@ -61,8 +64,13 @@ pub enum Generation {
         tail_sha256: String,
         lines: u64,
     },
-    /// One host scan through the pinned reader: the instant it started.
-    HostScan { started_at_ms: i64 },
+    /// One host scan through the pinned reader: the instant it started and
+    /// the producer (pinned commit and plugin version) that ran it.
+    HostScan {
+        started_at_ms: i64,
+        producer_commit: String,
+        producer_version: String,
+    },
 }
 
 impl Generation {
@@ -328,14 +336,24 @@ pub fn host_scan_key(host: Host, home: &Path) -> String {
     format!("scan:{}:{}", host.as_str(), home.display())
 }
 
-/// The instant the last gapless scan of `host` started, if any.
-pub fn host_scan_generation(store: &Store, host: Host, home: &Path) -> Option<i64> {
+/// The instant the last gapless scan of `host` by this very producer started,
+/// if any. A generation left by another producer proves nothing for this one.
+pub fn host_scan_generation(
+    store: &Store,
+    host: Host,
+    home: &Path,
+    producer_commit: &str,
+) -> Option<i64> {
     let checkpoint = store
         .native_checkpoint(SessionSource::ReadersCli, &host_scan_key(host, home))
         .ok()??;
     match Generation::parse(&checkpoint.generation)? {
-        Generation::HostScan { started_at_ms } => Some(started_at_ms),
-        Generation::File { .. } => None,
+        Generation::HostScan {
+            started_at_ms,
+            producer_commit: recorded,
+            ..
+        } if recorded == producer_commit => Some(started_at_ms),
+        _ => None,
     }
 }
 
@@ -348,12 +366,22 @@ pub fn host_scan_since(started_at_ms: i64) -> Option<String> {
     Some(instant.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
 }
 
-pub fn host_scan_checkpoint(host: Host, home: &Path, started_at_ms: i64) -> NativeCheckpoint {
+pub fn host_scan_checkpoint(
+    host: Host,
+    home: &Path,
+    started_at_ms: i64,
+    producer_commit: &str,
+    producer_version: &str,
+) -> NativeCheckpoint {
     NativeCheckpoint {
         source: SessionSource::ReadersCli,
         cursor_key: host_scan_key(host, home),
-        generation: serde_json::to_string(&Generation::HostScan { started_at_ms })
-            .expect("generation serializes"),
+        generation: serde_json::to_string(&Generation::HostScan {
+            started_at_ms,
+            producer_commit: producer_commit.to_owned(),
+            producer_version: producer_version.to_owned(),
+        })
+        .expect("generation serializes"),
         position: 0,
         updated_at: started_at_ms,
     }
@@ -382,8 +410,19 @@ mod tests {
         let json = serde_json::to_string(&file).unwrap();
         assert_eq!(Generation::parse(&json), Some(file));
         assert_eq!(
+            Generation::parse(
+                r#"{"kind":"host_scan","started_at_ms":5,"producer_commit":"c","producer_version":"0.55.0"}"#
+            ),
+            Some(Generation::HostScan {
+                started_at_ms: 5,
+                producer_commit: "c".into(),
+                producer_version: "0.55.0".into()
+            })
+        );
+        // An older shape without the producer is not a generation this build trusts.
+        assert_eq!(
             Generation::parse(r#"{"kind":"host_scan","started_at_ms":5}"#),
-            Some(Generation::HostScan { started_at_ms: 5 })
+            None
         );
         assert_eq!(Generation::parse(r#"{"kind":"future","x":1}"#), None);
         assert_eq!(Generation::parse("[]"), None);
@@ -462,7 +501,9 @@ mod tests {
         );
         // A generation this build does not understand proves nothing.
         let mut foreign = checkpoint.clone();
-        foreign.generation = r#"{"kind":"host_scan","started_at_ms":1}"#.into();
+        foreign.generation =
+            r#"{"kind":"host_scan","started_at_ms":1,"producer_commit":"c","producer_version":"v"}"#
+                .into();
         assert_eq!(
             resume_point(Some(&foreign), &mut source, &replaced)
                 .unwrap()
@@ -567,12 +608,33 @@ mod tests {
             host_scan_since(1_788_782_400_000).as_deref(),
             Some("2026-09-07T11:59:58.000Z")
         );
-        let checkpoint = host_scan_checkpoint(Host::Codex, Path::new("/home/x"), 5);
+        let checkpoint =
+            host_scan_checkpoint(Host::Codex, Path::new("/home/x"), 5, "abc", "0.55.0");
         assert_eq!(checkpoint.cursor_key, "scan:codex:/home/x");
         assert_eq!(checkpoint.source, SessionSource::ReadersCli);
         assert_eq!(
             Generation::parse(&checkpoint.generation),
-            Some(Generation::HostScan { started_at_ms: 5 })
+            Some(Generation::HostScan {
+                started_at_ms: 5,
+                producer_commit: "abc".into(),
+                producer_version: "0.55.0".into()
+            })
+        );
+        // The generation counts only for the producer that ran the scan.
+        let mut store = Store::open_in_memory().unwrap();
+        store.record_native_checkpoint(&checkpoint).unwrap();
+        assert_eq!(
+            host_scan_generation(&store, Host::Codex, Path::new("/home/x"), "abc"),
+            Some(5)
+        );
+        assert_eq!(
+            host_scan_generation(&store, Host::Codex, Path::new("/home/x"), "moved"),
+            None,
+            "a moved pin starts with a full scan"
+        );
+        assert_eq!(
+            host_scan_generation(&store, Host::Cursor, Path::new("/home/x"), "abc"),
+            None
         );
     }
 }

@@ -372,9 +372,8 @@ fn import_reader_host(
     // The generation of the last gapless scan lets the producer skip sessions
     // it saw modified before it; without one, every session is read again.
     let since = match mode {
-        ScanMode::Resume => {
-            host_scan_generation(store, host, request.home).and_then(host_scan_since)
-        }
+        ScanMode::Resume => host_scan_generation(store, host, request.home, &producer.commit)
+            .and_then(host_scan_since),
         ScanMode::Replay => None,
     };
     let (mut stdout, handle) =
@@ -413,6 +412,8 @@ fn import_reader_host(
             host,
             request.home,
             request.observed_at,
+            &producer.commit,
+            &producer.plugin_version,
         ))
     {
         report.status = HostStatus::Incomplete;

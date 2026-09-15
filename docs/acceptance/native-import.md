@@ -86,9 +86,11 @@ the existing writer.
   source shrinks. A partial trailing line is never consumed; the checkpoint stops before
   it and the completed line is read next time.
 - A reader host's generation is the instant of its last scan that covered every
-  session (`scan:<host>:<home>`). The next scan passes that instant, less a 2 s margin
-  for coarse clocks, as the pinned producer's `--since`, so it re-reads only sessions
-  the producer saw modified since then. A scan with any gap (skipped or partial
+  session (`scan:<host>:<home>`), bound to the pinned producer commit and version
+  that ran it. The next scan by the same producer passes that instant, less a 2 s
+  margin for coarse clocks, as the producer's `--since`, so it re-reads only sessions
+  the producer saw modified since then; a different producer (a moved pin) starts
+  with a full scan, since it may discover sessions the old one did not. A scan with any gap (skipped or partial
   session, diagnostic, producer failure) leaves the old generation in place, so the
   next scan repeats its whole range. Per-session reader locators stay at zero.
 - **Migration.** An index written by the initial importer holds zero-position
