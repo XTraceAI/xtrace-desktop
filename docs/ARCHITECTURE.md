@@ -19,10 +19,16 @@ is read directly, Codex and Cursor through the shared readers pinned by
 defines generation-aware resume checkpoints (proven before any input is skipped,
 committed only with the rows they cover) and `xt_ingest::native::watch` tails the
 native roots with `notify`, reconciling changes queued during the initial scan
-before it reports ready; app-wide orchestration of the tailer is separate work.
-The native app exposes `app_info` and `db_counts`, but does not start the capture
-server automatically. Production metric calculation, product data queries,
-host watchers/backfill and the remaining subsystem behavior are separate work.
+before it reports ready, and cancels a scan on shutdown (a reader still running
+is killed and reaped). The native app starts that tailer at launch over the
+user's home against its own database, running the Codex/Cursor readers from the
+bundled copy of the pinned sources (`vendor/agent-plugins`, verified by object
+identity without Git) with a discovered Python 3.10+ interpreter, and exposes the
+result as the typed `native_index_status` command and `native-index://status`
+event; see [native import](acceptance/native-import.md#app-integration). The app
+exposes `app_info` and `db_counts` as well, but does not start the capture server
+automatically. Production metric calculation, product data queries and the
+remaining subsystem behavior are separate work.
 
 The following table names each subsystem's responsibility. A reserved directory
 or compiling placeholder does not establish implemented behavior.

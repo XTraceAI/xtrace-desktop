@@ -32,6 +32,7 @@
     "active": true,
     "targets": ["app"],
     "icon": ["../ui/public/icons/icon.png", "../ui/public/icons/icon.icns"],
+    "resources": { "../../../vendor/agent-plugins": "agent-plugins" },
     "macOS": { "minimumSystemVersion": "14.0" }
   }
 }

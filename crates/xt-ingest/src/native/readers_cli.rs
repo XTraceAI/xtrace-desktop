@@ -1,14 +1,24 @@
-//! Running the pinned shared readers. The producer is exactly the checkout named
-//! by `.plugin-pin`: HEAD and every listed reader source object are verified
-//! before the script runs. The readers see a disposable-looking environment
+//! Running the pinned shared readers. The producer is exactly the sources
+//! named by `.plugin-pin`: either a developer checkout, whose HEAD and every
+//! listed reader source object are verified through Git, or the copy bundled
+//! with the app, whose files are verified by computing the same Git object
+//! identities without Git. The readers see a disposable-looking environment
 //! rooted at the requested home, no inherited interpreter overrides, and their
 //! stdout is the shared stream; their stderr carries static diagnostic codes.
+//! A running reader can be cancelled: its process is killed and reaped, and
+//! what it had streamed stays committed.
 
 use serde::{Deserialize, Serialize};
+use sha1::{Digest, Sha1};
 use std::{
     ffi::{OsStr, OsString},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Child, Command},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
 };
 use xt_store::Host;
 
@@ -27,8 +37,39 @@ pub struct PinnedProducer {
     pub commit: String,
     pub plugin_version: String,
     pub script: PathBuf,
-    // Keep the immutable-source export alive through reader execution.
-    _snapshot: std::sync::Arc<tempfile::TempDir>,
+    // Keep a checkout's immutable-source export alive through reader
+    // execution; a bundle runs in place.
+    _snapshot: Option<Arc<tempfile::TempDir>>,
+}
+
+/// Where the pinned producer's sources are.
+#[derive(Clone, Debug)]
+pub enum ProducerSource {
+    /// A developer checkout at the pinned commit, verified through Git; the
+    /// readers run from a temporary export of the committed objects.
+    Checkout {
+        pin: PathBuf,
+        plugin_root: Option<PathBuf>,
+    },
+    /// A copy of the pinned sources laid out as in the producer repository
+    /// (the app's bundled readers), verified by object identity without Git;
+    /// the readers run in place.
+    Bundle { pin: Pin, root: PathBuf },
+}
+
+impl ProducerSource {
+    /// Verify the sources against the pin and locate the reader script.
+    pub fn producer(&self) -> Result<PinnedProducer, ReaderError> {
+        match self {
+            Self::Checkout { pin, plugin_root } => {
+                let root = plugin_root.as_deref().ok_or_else(|| {
+                    ReaderError::PinMismatch("no pinned plugin root was supplied".into())
+                })?;
+                verify_pin(&read_pin(pin)?, root)
+            }
+            Self::Bundle { pin, root } => verify_bundle(pin, root),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -42,6 +83,9 @@ pub enum ReaderError {
     MissingRuntime(String),
     PinMismatch(String),
     Failed(String),
+    /// The caller cancelled the reader: it was not started, or it was killed
+    /// and reaped. What it had streamed before is not in doubt.
+    Cancelled,
 }
 
 impl std::fmt::Display for ReaderError {
@@ -50,6 +94,7 @@ impl std::fmt::Display for ReaderError {
             Self::MissingRuntime(reason) => write!(f, "python runtime unavailable: {reason}"),
             Self::PinMismatch(reason) => write!(f, "pinned producer unavailable: {reason}"),
             Self::Failed(reason) => write!(f, "reader failed: {reason}"),
+            Self::Cancelled => write!(f, "reader cancelled"),
         }
     }
 }
@@ -65,7 +110,12 @@ fn hex40(value: &str) -> bool {
 pub fn read_pin(path: &Path) -> Result<Pin, ReaderError> {
     let text = std::fs::read_to_string(path)
         .map_err(|_| ReaderError::PinMismatch(".plugin-pin is unreadable".into()))?;
-    let pin: Pin = serde_json::from_str(&text)
+    parse_pin(&text)
+}
+
+/// Parse the pin file's text (the app compiles the pin in).
+pub fn parse_pin(text: &str) -> Result<Pin, ReaderError> {
+    let pin: Pin = serde_json::from_str(text)
         .map_err(|_| ReaderError::PinMismatch(".plugin-pin is not the expected JSON".into()))?;
     if !hex40(&pin.commit)
         || pin.reader_sources.is_empty()
@@ -174,16 +224,216 @@ pub fn verify_pin(pin: &Pin, plugin_root: &Path) -> Result<PinnedProducer, Reade
         commit: pin.commit.clone(),
         plugin_version: pin.plugin_version.clone(),
         script,
-        _snapshot: std::sync::Arc::new(snapshot),
+        _snapshot: Some(Arc::new(snapshot)),
     })
 }
 
-/// Select the interpreter: an explicit executable, else `PYTHON`, else `python3`.
-/// It must be 3.10+ and must not strip assertions.
-pub fn resolve_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError> {
+/// Resolve the pinned reader script inside a bundled copy of the producer's
+/// sources at `root`, laid out as in the producer repository. Every reader
+/// source the pin lists must be present with exactly the pinned Git object
+/// identity, computed here the way Git computes it (a blob's bytes, a tree's
+/// sorted entries with their modes), so a bundle that was edited, that lost a
+/// module or gained one, that holds a bytecode cache, or that carries another
+/// producer's files is refused without Git being installed. The pin must list the scripts tree itself,
+/// since the readers import sibling modules from it.
+pub fn verify_bundle(pin: &Pin, root: &Path) -> Result<PinnedProducer, ReaderError> {
+    let scripts = format!("{}/scripts", pin.plugin_root);
+    if !pin.reader_sources.contains_key(&scripts) {
+        return Err(ReaderError::PinMismatch(
+            "the pin does not name the bundled scripts tree".into(),
+        ));
+    }
+    for (path, expected) in &pin.reader_sources {
+        let actual = git_object_id(&root.join(path)).map_err(|reason| {
+            ReaderError::PinMismatch(format!("bundled reader source {path}: {reason}"))
+        })?;
+        if &actual != expected {
+            return Err(ReaderError::PinMismatch(format!(
+                "bundled reader source differs: {path}"
+            )));
+        }
+    }
+    let script = root.join(&scripts).join("readers_cli.py");
+    if !script.is_file() {
+        return Err(ReaderError::PinMismatch("readers_cli.py is absent".into()));
+    }
+    Ok(PinnedProducer {
+        commit: pin.commit.clone(),
+        plugin_version: pin.plugin_version.clone(),
+        script,
+        _snapshot: None,
+    })
+}
+
+/// The Git object identity of a regular file (blob) or directory (tree) on
+/// disk, as `git hash-object` and `git write-tree` would compute it: the
+/// lowercase hex SHA-1 of the object header and its content. A directory's
+/// entries are sorted as Git sorts them (a subdirectory as if its name ended
+/// in `/`), and regular files carry mode 100644 or 100755 by their executable
+/// bit. A Python bytecode cache, a symlink or any other entry kind is refused.
+pub fn git_object_id(path: &Path) -> Result<String, String> {
+    fn hex(hash: &[u8]) -> String {
+        hash.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+    fn object(kind: &str, content: &[u8]) -> Vec<u8> {
+        let mut hasher = Sha1::new();
+        hasher.update(format!("{kind} {}\0", content.len()).as_bytes());
+        hasher.update(content);
+        hasher.finalize().to_vec()
+    }
+    fn raw(path: &Path) -> Result<Vec<u8>, String> {
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|error| format!("{} ({})", error.kind(), path.display()))?;
+        if metadata.is_file() {
+            let content = std::fs::read(path).map_err(|error| error.kind().to_string())?;
+            return Ok(object("blob", &content));
+        }
+        if !metadata.is_dir() {
+            return Err(format!(
+                "{} is neither a file nor a directory",
+                path.display()
+            ));
+        }
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(path).map_err(|error| error.kind().to_string())? {
+            let entry = entry.map_err(|error| error.kind().to_string())?;
+            let name = entry.file_name();
+            // Python loads a cache whose recorded source size and time match
+            // the module beside it, so bytecode the pin never covered could
+            // run from one; a bundle that holds a cache is refused outright.
+            if name == "__pycache__" {
+                return Err(format!(
+                    "{} holds a bytecode cache, which the pin never covers",
+                    entry.path().display()
+                ));
+            }
+            let kind = entry
+                .file_type()
+                .map_err(|error| error.kind().to_string())?;
+            let name = name
+                .to_str()
+                .ok_or_else(|| "entry name is not UTF-8".to_owned())?
+                .to_owned();
+            let (mode, sort_key) = if kind.is_dir() {
+                ("40000", format!("{name}/"))
+            } else if kind.is_file() {
+                (
+                    if executable(&entry.path()) {
+                        "100755"
+                    } else {
+                        "100644"
+                    },
+                    name.clone(),
+                )
+            } else {
+                return Err(format!(
+                    "{} is neither a file nor a directory",
+                    entry.path().display()
+                ));
+            };
+            entries.push((sort_key, mode, name, raw(&entry.path())?));
+        }
+        entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+        let mut content = Vec::new();
+        for (_, mode, name, id) in entries {
+            content.extend_from_slice(format!("{mode} {name}\0").as_bytes());
+            content.extend_from_slice(&id);
+        }
+        Ok(object("tree", &content))
+    }
+    raw(path).map(|id| hex(&id))
+}
+
+#[cfg(unix)]
+fn executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata()
+        .is_ok_and(|meta| meta.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn executable(_: &Path) -> bool {
+    false
+}
+
+/// Install directories a GUI process's `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`
+/// under launchd) does not reach, tried after `PATH` when no interpreter was
+/// named: Homebrew on Apple silicon and Intel, MacPorts, and the user's own
+/// `bin` (pipx, uv). Resolving the interactive login shell's environment is
+/// separate work; naming the interpreter (`XTRACE_PYTHON` in the app,
+/// `--python` or `PYTHON` for the CLI, which reads that variable itself)
+/// overrides the search. The library reads no environment variable for this:
+/// a `PYTHON` a desktop process happens to inherit is not a choice.
+#[cfg(target_os = "macos")]
+const KNOWN_PYTHON_DIRS: &[&str] = &[
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/opt/local/bin",
+    "~/.local/bin",
+];
+#[cfg(not(target_os = "macos"))]
+const KNOWN_PYTHON_DIRS: &[&str] = &["~/.local/bin"];
+
+/// How long an interpreter may take to answer the version probe. A runtime
+/// that cannot print its version within this is not one the readers can
+/// use; the probe is killed and the candidate reported.
+pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Select the interpreter: an explicit executable is probed as named;
+/// otherwise `python3` on `PATH`, then in each known install directory, the
+/// first that qualifies. Every reason a candidate did not qualify is reported
+/// when none did. Probes are bounded and, with a token, cancellable.
+pub fn discover_python(
+    explicit: Option<&OsStr>,
+    cancel: Option<&CancelToken>,
+) -> Result<OsString, ReaderError> {
+    if explicit.is_some() {
+        return resolve_python(explicit, cancel);
+    }
+    let mut reasons = Vec::new();
+    match resolve_python(None, cancel) {
+        Ok(python) => return Ok(python),
+        Err(ReaderError::Cancelled) => return Err(ReaderError::Cancelled),
+        Err(error) => reasons.push(format!("python3 on PATH: {error}")),
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    for directory in KNOWN_PYTHON_DIRS {
+        let directory = match (directory.strip_prefix("~/"), &home) {
+            (Some(rest), Some(home)) => home.join(rest),
+            (Some(_), None) => continue,
+            (None, _) => PathBuf::from(directory),
+        };
+        let candidate = directory.join("python3");
+        if !candidate.is_file() {
+            continue;
+        }
+        match resolve_python(Some(candidate.as_os_str()), cancel) {
+            Ok(python) => return Ok(python),
+            Err(ReaderError::Cancelled) => return Err(ReaderError::Cancelled),
+            Err(error) => reasons.push(format!("{}: {error}", candidate.display())),
+        }
+    }
+    Err(ReaderError::MissingRuntime(reasons.join("; ")))
+}
+
+/// Probe the named interpreter, or `python3` on `PATH`. It must be 3.10+ and
+/// must not strip assertions. The probe is killed after `PROBE_TIMEOUT`, and
+/// at once by a cancel of the token.
+pub fn resolve_python(
+    explicit: Option<&OsStr>,
+    cancel: Option<&CancelToken>,
+) -> Result<OsString, ReaderError> {
+    resolve_python_within(explicit, cancel, PROBE_TIMEOUT)
+}
+
+/// `resolve_python` with an explicit probe bound (tests shorten it).
+pub fn resolve_python_within(
+    explicit: Option<&OsStr>,
+    cancel: Option<&CancelToken>,
+    timeout: Duration,
+) -> Result<OsString, ReaderError> {
     let python = explicit
         .map(OsStr::to_os_string)
-        .or_else(|| std::env::var_os("PYTHON").filter(|value| !value.is_empty()))
         .unwrap_or_else(|| OsString::from("python3"));
     // The reader runs with the imported home as its working directory, so an
     // explicit relative path (as opposed to a bare command name found on PATH)
@@ -204,30 +454,206 @@ pub fn resolve_python(explicit: Option<&OsStr>) -> Result<OsString, ReaderError>
             .map_err(|_| ReaderError::MissingRuntime("current directory unavailable".into()))?,
         &std::env::var_os("PATH").unwrap_or_default(),
     )?;
-    let probe = Command::new(&python)
-        .env_remove("PYTHONOPTIMIZE")
-        .env_remove("PYTHONHOME")
-        .env_remove("PYTHONPATH")
-        .env_remove("PYTHONSTARTUP")
-        .args([
-            "-c",
-            "import sys; print(sys.version_info >= (3, 10) and sys.flags.optimize == 0)",
-        ])
-        .output()
-        .map_err(|_| ReaderError::MissingRuntime("python3 is not executable".into()))?;
-    if !probe.status.success() || String::from_utf8_lossy(&probe.stdout).trim() != "True" {
-        return Err(ReaderError::MissingRuntime(
-            "python3 must be 3.10 or newer with assertions enabled".into(),
-        ));
+    if cancel.is_some_and(CancelToken::is_cancelled) {
+        return Err(ReaderError::Cancelled);
+    }
+    let mut probe = spawn_grouped(
+        Command::new(&python)
+            .env_remove("PYTHONOPTIMIZE")
+            .env_remove("PYTHONHOME")
+            .env_remove("PYTHONPATH")
+            .env_remove("PYTHONSTARTUP")
+            .args([
+                "-c",
+                "import sys; print(sys.version_info >= (3, 10) and sys.flags.optimize == 0)",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null()),
+    )
+    .map_err(|_| {
+        ReaderError::MissingRuntime(format!(
+            "{} is not executable",
+            Path::new(&python).display()
+        ))
+    })?;
+    let mut stdout = probe
+        .stdout
+        .take()
+        .ok_or_else(|| ReaderError::MissingRuntime("probe output is unavailable".into()))?;
+    // The answer is one short line, read after exit: a probe that floods its
+    // output would fill the pipe and stall, which the deadline then ends.
+    let slot: ChildSlot = Arc::new(Mutex::new(Some(probe)));
+    if let Some(cancel) = cancel {
+        cancel.register(&slot);
+    }
+    let awaited = await_child(&slot, Some(Instant::now() + timeout));
+    if let Some(cancel) = cancel {
+        cancel.unregister(&slot);
+    }
+    let (status, timed_out) = awaited?;
+    if cancel.is_some_and(CancelToken::is_cancelled) && !status.success() {
+        return Err(ReaderError::Cancelled);
+    }
+    if timed_out {
+        return Err(ReaderError::MissingRuntime(format!(
+            "interpreter probe did not finish within {timeout:?}"
+        )));
+    }
+    let mut answer = String::new();
+    let _ = std::io::Read::read_to_string(&mut stdout, &mut answer);
+    if !status.success() || answer.trim() != "True" {
+        return Err(ReaderError::MissingRuntime(format!(
+            "{} must be Python 3.10 or newer with assertions enabled",
+            Path::new(&python).display()
+        )));
     }
     Ok(python)
+}
+
+/// Cancels reader execution from another thread: a reader (or interpreter
+/// probe) not yet started is refused, and every one running is killed (its
+/// process reaped by the thread awaiting it) so a producer that never
+/// returns cannot hold the caller. Cancellation is permanent for the token.
+#[derive(Clone, Default)]
+pub struct CancelToken(Arc<CancelState>);
+
+type ChildSlot = Arc<Mutex<Option<Child>>>;
+
+#[derive(Default)]
+struct CancelState {
+    cancelled: AtomicBool,
+    /// The children running now, shared with their handles so a cancel that
+    /// lands while they run kills exactly those processes; each is removed
+    /// by the thread that reaped it.
+    active: Mutex<Vec<ChildSlot>>,
+}
+
+impl CancelToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.cancelled.load(Ordering::SeqCst)
+    }
+
+    /// Refuse children from now on and kill those running. The flag and the
+    /// active list change under one lock, so a child registering
+    /// concurrently is killed as well.
+    pub fn cancel(&self) {
+        let active = self
+            .0
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.0.cancelled.store(true, Ordering::SeqCst);
+        for slot in active.iter() {
+            let mut child = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(child) = child.as_mut() {
+                // A process that already exited is left for its handle to reap.
+                terminate(child);
+            }
+        }
+    }
+
+    /// Register a spawned child, killing it at once if a cancel landed
+    /// between the caller's check and the spawn.
+    fn register(&self, slot: &ChildSlot) {
+        let mut active = self
+            .0
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        active.push(Arc::clone(slot));
+        if self.0.cancelled.load(Ordering::SeqCst)
+            && let Some(child) = slot
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_mut()
+        {
+            terminate(child);
+        }
+    }
+
+    fn unregister(&self, slot: &ChildSlot) {
+        self.0
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|known| !Arc::ptr_eq(known, slot));
+    }
+}
+
+/// Kill a child and, on Unix, every process in the group it leads: readers
+/// and probes are started as group leaders, so an interpreter launcher that
+/// spawned the real interpreter without replacing itself cannot leave it
+/// behind holding the stream (a descendant that left the group on its own is
+/// beyond this). A child already reaped is left alone: its group ID may be
+/// another's by now.
+fn terminate(child: &mut Child) {
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        return;
+    }
+    #[cfg(unix)]
+    if let Ok(pid) = i32::try_from(child.id()) {
+        // SAFETY: a plain signal to the unreaped child's own process group.
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+}
+
+/// Start `command` as the leader of its own process group on Unix, so a
+/// cancel or deadline can terminate everything it spawned.
+fn spawn_grouped(command: &mut Command) -> std::io::Result<Child> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    command.spawn()
+}
+
+/// Await a registered child: the slot is unlocked between polls, so a cancel
+/// can kill the process meanwhile, and a child still running at `deadline`
+/// is killed too. Returns the exit status and whether the deadline killed it.
+fn await_child(
+    slot: &ChildSlot,
+    deadline: Option<Instant>,
+) -> Result<(std::process::ExitStatus, bool), ReaderError> {
+    let mut timed_out = false;
+    loop {
+        let mut guard = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let child = guard
+            .as_mut()
+            .ok_or_else(|| ReaderError::Failed("child process was already reaped".into()))?;
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok((status, timed_out)),
+            Ok(None) => {
+                if !timed_out && deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                    timed_out = true;
+                    terminate(child);
+                }
+            }
+            Err(_) => {
+                return Err(ReaderError::Failed(
+                    "child process could not be awaited".into(),
+                ));
+            }
+        }
+        drop(guard);
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// A running pinned reader's exit half: the caller consumes the returned
 /// stdout line by line, then waits here; stderr (static diagnostics only) is
 /// drained concurrently.
 pub struct ReaderHandle {
-    child: std::process::Child,
+    child: ChildSlot,
+    cancel: Option<CancelToken>,
     stderr: std::thread::JoinHandle<Vec<u8>>,
 }
 
@@ -242,32 +668,38 @@ pub struct ReaderOutcome {
 /// Start the pinned reader for one host over `home`, reading every session it
 /// discovers. Only the shared stream on stdout and static diagnostic codes on
 /// stderr are consumed; a crash surfaces as a bounded failure text, never as
-/// imported data.
+/// imported data. A cancelled token refuses the start; a cancel while the
+/// reader runs kills it, which ends the stream, and `finish` reports it.
 pub fn spawn_reader(
     python: &OsStr,
     producer: &PinnedProducer,
     host: Host,
     home: &Path,
+    cancel: Option<&CancelToken>,
 ) -> Result<(std::io::BufReader<std::process::ChildStdout>, ReaderHandle), ReaderError> {
-    let mut child = Command::new(python)
-        .arg(&producer.script)
-        .args(["--host", host.as_str()])
-        .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("HOME", home)
-        .env("USERPROFILE", home)
-        .env("XDG_CONFIG_HOME", home.join(".config"))
-        .env("CODEX_HOME", home.join(".codex"))
-        .env("PYTHONNOUSERSITE", "1")
-        .env("PYTHONDONTWRITEBYTECODE", "1")
-        .env("PYTHONUTF8", "1")
-        .env("NO_PROXY", "*")
-        .current_dir(home)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|_| ReaderError::Failed("reader process could not start".into()))?;
+    if cancel.is_some_and(CancelToken::is_cancelled) {
+        return Err(ReaderError::Cancelled);
+    }
+    let mut child = spawn_grouped(
+        Command::new(python)
+            .arg(&producer.script)
+            .args(["--host", host.as_str()])
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", home)
+            .env("USERPROFILE", home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("CODEX_HOME", home.join(".codex"))
+            .env("PYTHONNOUSERSITE", "1")
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .env("PYTHONUTF8", "1")
+            .env("NO_PROXY", "*")
+            .current_dir(home)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped()),
+    )
+    .map_err(|_| ReaderError::Failed("reader process could not start".into()))?;
     let stdout = child
         .stdout
         .take()
@@ -281,10 +713,15 @@ pub fn spawn_reader(
         let _ = std::io::Read::read_to_end(&mut stderr, &mut bytes);
         bytes
     });
+    let child: ChildSlot = Arc::new(Mutex::new(Some(child)));
+    if let Some(cancel) = cancel {
+        cancel.register(&child);
+    }
     Ok((
         std::io::BufReader::new(stdout),
         ReaderHandle {
             child,
+            cancel: cancel.cloned(),
             stderr: drain,
         },
     ))
@@ -292,12 +729,19 @@ pub fn spawn_reader(
 
 impl ReaderHandle {
     /// Wait for the reader after its stdout has been consumed to its end and
-    /// classify its diagnostics and exit status.
-    pub fn finish(mut self) -> Result<ReaderOutcome, ReaderError> {
-        let status = self
-            .child
-            .wait()
-            .map_err(|_| ReaderError::Failed("reader process could not be awaited".into()))?;
+    /// classify its diagnostics and exit status. The process is always
+    /// reaped here, killed or not; a cancelled reader that did not exit
+    /// normally reports `Cancelled`, one that had exited normally before the
+    /// cancel landed reports its outcome, since its stream was complete.
+    pub fn finish(self) -> Result<ReaderOutcome, ReaderError> {
+        // The child stays registered, and the slot unlocked between polls,
+        // until it has exited: a reader that closed its stream but runs on
+        // can still be killed by a cancel while it is awaited here.
+        let (status, _) = await_child(&self.child, None)?;
+        if let Some(cancel) = &self.cancel {
+            cancel.unregister(&self.child);
+        }
+        let cancelled = self.cancel.as_ref().is_some_and(CancelToken::is_cancelled);
         let stderr = self.stderr.join().unwrap_or_default();
         let stderr = String::from_utf8_lossy(&stderr);
         let mut diagnostics = Vec::new();
@@ -326,6 +770,7 @@ impl ReaderHandle {
         let complete = match status.code() {
             Some(0) => true,
             Some(2) => false,
+            _ if cancelled => return Err(ReaderError::Cancelled),
             code => {
                 return Err(ReaderError::Failed(format!(
                     "reader exited with status {}: {}",

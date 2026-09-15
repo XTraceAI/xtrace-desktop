@@ -1,12 +1,15 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import exported from '../../fixtures/F1.json';
+import fixture from '../../fixtures/F1.json';
 import { App } from '../App';
 import { createDataSource } from '../data/createDataSource';
 import { FixtureDataSource } from '../data/FixtureDataSource';
 import type { DataSource } from '../data/DataSource';
 import { ThemeProvider } from '../theme/ThemeProvider';
+import type { FixtureExport } from '../data/generated/FixtureExport';
+// JSON imports widen literal unions; the export is the generated shape.
+const exported = fixture as FixtureExport;
 vi.mock('../data/createDataSource', () => ({ createDataSource: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => false }));
 afterEach(() => {
@@ -58,6 +61,7 @@ it('uses hash routes for native protocol navigation and reloads', async () => {
     kind: 'native',
     appInfo: async () => exported.app_info,
     dbCounts: async () => exported.db_counts,
+    nativeIndexStatus: async () => exported.native_index,
     subscribe: async () => () => {},
   };
   vi.mocked(createDataSource).mockResolvedValue(source);

@@ -9,7 +9,9 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use xt_ingest::native::{HostStatus, ImportReport, ImportRequest, SessionOutcome, import_native};
+use xt_ingest::native::{
+    HostStatus, ImportReport, ImportRequest, ProducerSource, SessionOutcome, import_native,
+};
 use xt_store::{Host, SessionSource, Store};
 
 const SID: &str = "00000000-0000-4000-8000-000000000001";
@@ -109,10 +111,13 @@ fn run(store: &mut Store, home: &Path) -> ImportReport {
         &ImportRequest {
             home,
             hosts: &[Host::Claude],
-            pin: &repo().join(".plugin-pin"),
-            plugin_root: None,
+            producer: &ProducerSource::Checkout {
+                pin: repo().join(".plugin-pin"),
+                plugin_root: None,
+            },
             python: None,
             observed_at: CLOCK.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            cancel: None,
         },
     )
 }

@@ -13,6 +13,9 @@ export class FixtureDataSource implements DataSource {
   async dbCounts() {
     return structuredClone(this.fixture.db_counts);
   }
+  async nativeIndexStatus() {
+    return structuredClone(this.fixture.native_index);
+  }
   async subscribe(event: DataEvent, listener: () => void) {
     const listeners = this.listeners.get(event) ?? new Set();
     listeners.add(listener);

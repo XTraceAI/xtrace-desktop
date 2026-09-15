@@ -138,7 +138,9 @@ fn conformance_native_reader_stream() {
 #[test]
 fn conformance_native_import() {
     use std::collections::BTreeMap;
-    use xt_ingest::native::{HostStatus, ImportRequest, SessionOutcome, import_native};
+    use xt_ingest::native::{
+        HostStatus, ImportRequest, ProducerSource, SessionOutcome, import_native,
+    };
     use xt_store::{Host, Store};
     let Some(plugin_root) = std::env::var_os("AGENT_PLUGINS_DIR") else {
         println!("SKIP conformance_native_import: set AGENT_PLUGINS_DIR to the pinned plugin root");
@@ -190,14 +192,17 @@ fn conformance_native_import() {
     )
     .unwrap();
     let mut store = Store::open(temp.join("index.sqlite")).unwrap();
-    let pin = root.join(".plugin-pin");
+    let producer = ProducerSource::Checkout {
+        pin: root.join(".plugin-pin"),
+        plugin_root: Some(PathBuf::from(&plugin_root)),
+    };
     let request_now = || ImportRequest {
         home: &home,
         hosts: &[Host::Codex, Host::Cursor],
-        pin: &pin,
-        plugin_root: Some(Path::new(&plugin_root)),
+        producer: &producer,
         python: Some(&python),
         observed_at: now_ms(),
+        cancel: None,
     };
     let report = import_native(&mut store, &request_now());
     println!("{}", serde_json::to_string(&report).unwrap());
@@ -408,5 +413,189 @@ fn conformance_native_import() {
         after, before,
         "native source bytes and file set are unchanged"
     );
+    let _ = fs::remove_dir_all(&temp);
+}
+
+/// The bundled reader sources the app ships are byte for byte the pinned
+/// commit's scripts tree, notices included, and read the F18 fixture home to
+/// the same index as the verified checkout, in place, with no checkout or Git.
+#[test]
+fn conformance_bundled_readers() {
+    use xt_ingest::native::{
+        HostStatus, ImportRequest, ProducerSource, import_native, readers_cli::read_pin,
+    };
+    use xt_store::{Host, Store};
+    let Some(plugin_root) = std::env::var_os("AGENT_PLUGINS_DIR") else {
+        println!(
+            "SKIP conformance_bundled_readers: set AGENT_PLUGINS_DIR to the pinned plugin root"
+        );
+        return;
+    };
+    let python = std::env::var_os("PYTHON").unwrap_or_else(|| "python3".into());
+    if Command::new(&python).arg("--version").output().is_err() {
+        println!("SKIP conformance_bundled_readers: Python 3 is unavailable");
+        return;
+    }
+    let root = repo_root();
+    let pin = read_pin(&root.join(".plugin-pin")).unwrap();
+    let bundle = root.join("vendor/agent-plugins");
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&plugin_root)
+            .args(args)
+            .output()
+            .expect("git runs in the pinned checkout");
+        assert!(output.status.success(), "git {args:?}");
+        output.stdout
+    };
+    // Every committed file below the scripts tree, and only those, with the
+    // committed bytes; the notices as committed too.
+    let scripts = format!("{}/scripts", pin.plugin_root);
+    // The checkout root may be the plugin root: paths are asked for from the
+    // tree's root, as the pin names them.
+    let listed = String::from_utf8(git(&[
+        "ls-tree",
+        "-r",
+        "--full-tree",
+        "--name-only",
+        &pin.commit,
+        &scripts,
+    ]))
+    .unwrap();
+    let mut committed = listed.lines().map(str::to_owned).collect::<Vec<_>>();
+    committed.sort();
+    fn vendored(dir: &Path, prefix: &str, out: &mut Vec<String>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == "__pycache__" {
+                continue;
+            }
+            let path = format!("{prefix}/{name}");
+            if entry.file_type().unwrap().is_dir() {
+                vendored(&entry.path(), &path, out);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+    let mut shipped = Vec::new();
+    vendored(&bundle.join(&scripts), &scripts, &mut shipped);
+    shipped.sort();
+    assert_eq!(
+        shipped, committed,
+        "the bundle holds exactly the committed scripts"
+    );
+    for path in committed
+        .iter()
+        .chain(["LICENSE".to_owned(), "NOTICE".to_owned()].iter())
+    {
+        assert_eq!(
+            fs::read(bundle.join(path)).unwrap(),
+            git(&["show", &format!("{}:{path}", pin.commit)]),
+            "{path} differs from the pinned commit"
+        );
+    }
+    println!(
+        "bundled readers verified against {} (memhub {}): {} files",
+        pin.commit,
+        pin.plugin_version,
+        committed.len()
+    );
+    // The same fixture home, read by the bundle and by the checkout, yields
+    // the same sessions and counts, and leaves the sources untouched.
+    let temp = std::env::temp_dir().join(format!("xtrace-bundle-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp);
+    let home = temp.join("home");
+    fs::create_dir_all(&home).unwrap();
+    let materialized = Command::new(&python)
+        .env_remove("PYTHONOPTIMIZE")
+        .arg(root.join("scripts/conformance/test-reader-stream.py"))
+        .args(["--plugin-root"])
+        .arg(&plugin_root)
+        .arg("--pin")
+        .arg(root.join(".plugin-pin"))
+        .arg("--fixtures")
+        .arg(root.join("fixtures"))
+        .arg("--materialize")
+        .arg(&home)
+        .args(["--only", "F18"])
+        .output()
+        .expect("materialize the fixture home");
+    assert!(
+        materialized.status.success(),
+        "{}",
+        String::from_utf8_lossy(&materialized.stderr)
+    );
+    let mut sources = std::collections::BTreeMap::new();
+    fn hashes(dir: &Path, out: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                hashes(&path, out);
+            } else {
+                out.insert(path.clone(), fs::read(&path).unwrap());
+            }
+        }
+    }
+    hashes(&home, &mut sources);
+    let run = |producer: ProducerSource, index: &str| {
+        let mut store = Store::open(temp.join(index)).unwrap();
+        let report = import_native(
+            &mut store,
+            &ImportRequest {
+                home: &home,
+                hosts: &[Host::Codex, Host::Cursor],
+                producer: &producer,
+                python: Some(&python),
+                observed_at: now_ms(),
+                cancel: None,
+            },
+        );
+        assert!(report.complete(), "{report:?}");
+        (report, store.counts().unwrap())
+    };
+    let (from_bundle, bundle_counts) = run(
+        ProducerSource::Bundle {
+            pin: pin.clone(),
+            root: bundle.clone(),
+        },
+        "bundle.sqlite",
+    );
+    let (from_checkout, checkout_counts) = run(
+        ProducerSource::Checkout {
+            pin: root.join(".plugin-pin"),
+            plugin_root: Some(PathBuf::from(&plugin_root)),
+        },
+        "checkout.sqlite",
+    );
+    for (bundled, checked) in from_bundle.hosts.iter().zip(&from_checkout.hosts) {
+        assert_eq!(bundled.status, HostStatus::Complete);
+        assert_eq!(bundled.host, checked.host);
+        assert_eq!(
+            bundled.sessions,
+            checked.sessions,
+            "{}",
+            bundled.host.as_str()
+        );
+        let detail = bundled.detail.as_deref().unwrap();
+        assert!(detail.contains(&pin.commit), "{detail}");
+    }
+    assert_eq!(bundle_counts.sessions, checkout_counts.sessions);
+    assert_eq!(bundle_counts.records, checkout_counts.records);
+    assert_eq!(bundle_counts.usage_rows, checkout_counts.usage_rows);
+    assert!(bundle_counts.sessions > 0);
+    let mut after = std::collections::BTreeMap::new();
+    hashes(&home, &mut after);
+    assert_eq!(sources, after, "the sources are unchanged");
+    // The bundle's readers ran from the bundle itself, not from an export.
+    let producer = ProducerSource::Bundle {
+        pin,
+        root: bundle.clone(),
+    }
+    .producer()
+    .unwrap();
+    assert!(producer.script.starts_with(&bundle));
     let _ = fs::remove_dir_all(&temp);
 }

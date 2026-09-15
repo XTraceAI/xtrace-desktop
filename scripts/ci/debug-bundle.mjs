@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,7 +7,10 @@ import { fileURLToPath } from 'node:url';
 export function smokeEnvironment(directory, inherited = process.env) {
   const env = { ...inherited, GITHUB_TOKEN: '', GH_TOKEN: '', XTRACE_TELEMETRY: '0' };
   delete env.XTRACE_FIXTURE;
+  delete env.XTRACE_PYTHON;
   env.XTRACE_DATA_DIR = join(directory, 'data');
+  // The smoke launch indexes an empty synthetic home, never the machine's own history.
+  env.XTRACE_NATIVE_HOME = join(directory, 'home');
   return env;
 }
 
@@ -33,9 +36,11 @@ async function main() {
       timeout: 120_000,
     });
     if (compile.error || compile.status !== 0) throw new Error();
+    const env = smokeEnvironment(temporary);
+    await mkdir(env.XTRACE_NATIVE_HOME);
     child = spawn(join(bundle, 'Contents/MacOS', executable), [], {
       stdio: 'ignore',
-      env: smokeEnvironment(temporary),
+      env,
     });
     await new Promise((resolve, reject) => {
       child.once('spawn', resolve);

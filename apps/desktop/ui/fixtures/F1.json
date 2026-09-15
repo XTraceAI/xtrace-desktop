@@ -11,5 +11,25 @@
     "sessions": 1,
     "records": 25,
     "usage": 15
+  },
+  "native_index": {
+    "phase": {
+      "phase": "disabled",
+      "reason": "fixture mode uses a disposable database"
+    },
+    "freshness": {
+      "freshness": "unknown"
+    },
+    "python": {
+      "state": "missing",
+      "reason": "not resolved: the index is disabled"
+    },
+    "readers": {
+      "state": "unavailable",
+      "reason": "not verified: the index is disabled"
+    },
+    "hosts": [],
+    "reconciles": 0,
+    "files_scanned": 0
   }
 }

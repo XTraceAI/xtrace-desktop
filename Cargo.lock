@@ -3263,6 +3263,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5102,6 +5113,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha1",
  "sha2",
  "tempfile",
  "xt-fixtures",
@@ -5167,6 +5179,7 @@ dependencies = [
 name = "xtrace-desktop"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "objc2-app-kit",
  "serde",
  "serde_json",
@@ -5177,6 +5190,7 @@ dependencies = [
  "thiserror 2.0.20",
  "ts-rs",
  "xt-fixtures",
+ "xt-ingest",
  "xt-store",
 ]
 
