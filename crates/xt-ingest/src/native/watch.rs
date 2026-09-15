@@ -282,6 +282,15 @@ impl Tailer {
             .send(Message::Fs(Err(notify::Error::generic(reason))));
     }
 
+    /// Deliver a synthetic removal event for `path`, as the platform would
+    /// report a watched root deleted (for tests).
+    pub fn inject_removed(&self, path: &Path) {
+        let event =
+            notify::Event::new(notify::EventKind::Remove(notify::event::RemoveKind::Folder))
+                .add_path(path.to_path_buf());
+        let _ = self.control.send(Message::Fs(Ok(event)));
+    }
+
     pub fn stop(mut self) {
         let _ = self.control.send(Message::Stop);
         if let Some(worker) = self.worker.take() {
@@ -389,6 +398,11 @@ struct Dirty {
     stop: bool,
     /// The watcher reported an error: some installed watch may be lost.
     watcher_failed: Option<String>,
+    /// Watched roots an event removed, renamed or recreated (or an ancestor
+    /// of one): a platform whose watch dies with the directory may have
+    /// dropped them, and a recreation may reuse the inode, so they are
+    /// re-registered whatever their identity says.
+    lost_watches: Vec<PathBuf>,
 }
 
 impl Dirty {
@@ -415,6 +429,8 @@ struct Worker {
     shared: Arc<Shared>,
     events: Sender<Message>,
     watcher: Option<RecommendedWatcher>,
+    /// Roots whose watch an event may have dropped, re-registered next.
+    lost: Vec<PathBuf>,
 }
 
 impl Worker {
@@ -439,7 +455,20 @@ impl Worker {
             shared,
             events,
             watcher: None,
+            lost: Vec::new(),
         }
+    }
+
+    /// The roots watched now, for classifying events against them.
+    fn watched_roots(&self) -> Vec<PathBuf> {
+        self.shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .watched
+            .keys()
+            .cloned()
+            .collect()
     }
 
     fn probe(&self, point: ProbePoint<'_>) {
@@ -470,10 +499,12 @@ impl Worker {
                 &mut dirty,
                 &self.config,
                 &self.homes,
+                &self.watched_roots(),
             );
             if let Some(reason) = dirty.watcher_failed.take() {
                 self.rebuild_watches(reason);
             }
+            self.lost.append(&mut dirty.lost_watches);
             // A root that appeared after the pass that decided the watches
             // was enumerated without a watch of its own, and its creation
             // was not necessarily reported: it is watched now and its host
@@ -522,8 +553,13 @@ impl Worker {
                     // that arrive within one quiet period, reach the index.
                     Message::Stop => dirty.stop = true,
                     Message::Fs(event) => {
-                        if let Some(error) = classify(event, &mut dirty, &self.config, &self.homes)
-                        {
+                        if let Some(error) = classify(
+                            event,
+                            &mut dirty,
+                            &self.config,
+                            &self.homes,
+                            &self.watched_roots(),
+                        ) {
                             dirty.watcher_failed = Some(error);
                         }
                     }
@@ -534,10 +570,12 @@ impl Worker {
                     &mut dirty,
                     &self.config,
                     &self.homes,
+                    &self.watched_roots(),
                 );
                 if let Some(reason) = dirty.watcher_failed.take() {
                     self.rebuild_watches(reason);
                 }
+                self.lost.append(&mut dirty.lost_watches);
                 if !dirty.hosts.is_empty() {
                     let hosts = dirty.hosts.clone();
                     let reconciled = self.reconcile(&hosts);
@@ -704,6 +742,15 @@ impl Worker {
             .map(|(path, _)| path.clone())
             .collect::<Vec<_>>();
         for path in stale {
+            let _ = watcher.unwatch(&path);
+            self.shared.update(|state| {
+                state.watched.remove(&path);
+            });
+        }
+        // A root an event removed, renamed or recreated is registered again
+        // whatever its identity says: a platform whose watch dies with the
+        // directory may have dropped it, and a recreation may reuse the inode.
+        for path in std::mem::take(&mut self.lost) {
             let _ = watcher.unwatch(&path);
             self.shared.update(|state| {
                 state.watched.remove(&path);
@@ -926,26 +973,45 @@ fn host_of(homes: &[PathBuf], path: &Path) -> Option<Host> {
     }
 }
 
-/// Note what an event touched. Kinds are not trusted: any path under a host
-/// root marks that host, and a rescan request or watcher error marks every
-/// host. Returns the watcher's error text, if it reported one.
+/// Note what an event touched. Kinds are not trusted for dirtying: any path
+/// under a host root marks that host, and a rescan request or watcher error
+/// marks every host. A removal, rename, folder creation or unclassified
+/// event at a watched root or above it also marks that root's watch lost.
+/// Returns the watcher's error text, if it reported one.
 fn classify(
     event: notify::Result<notify::Event>,
     dirty: &mut Dirty,
     config: &WatchConfig,
     homes: &[PathBuf],
+    watched: &[PathBuf],
 ) -> Option<String> {
+    use notify::EventKind;
     match event {
         Ok(event) => {
             if event.need_rescan() {
                 dirty.rescan = true;
                 dirty.mark_all(&config.hosts);
             }
+            let may_drop_watch = matches!(
+                event.kind,
+                EventKind::Remove(_)
+                    | EventKind::Modify(notify::event::ModifyKind::Name(_))
+                    | EventKind::Create(notify::event::CreateKind::Folder)
+                    | EventKind::Any
+                    | EventKind::Other
+            );
             for path in &event.paths {
                 if let Some(host) = host_of(homes, path)
                     && config.hosts.contains(&host)
                 {
                     dirty.mark(host);
+                }
+                if may_drop_watch {
+                    for root in watched {
+                        if root.starts_with(path) && !dirty.lost_watches.contains(root) {
+                            dirty.lost_watches.push(root.clone());
+                        }
+                    }
                 }
             }
             None
@@ -966,11 +1032,12 @@ fn drain(
     dirty: &mut Dirty,
     config: &WatchConfig,
     homes: &[PathBuf],
+    watched: &[PathBuf],
 ) {
     loop {
         match rx.recv_timeout(debounce) {
             Ok(Message::Fs(event)) => {
-                if let Some(error) = classify(event, dirty, config, homes) {
+                if let Some(error) = classify(event, dirty, config, homes, watched) {
                     dirty.watcher_failed = Some(error);
                 }
             }
@@ -996,6 +1063,53 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_removal_at_or_above_a_watched_root_marks_its_watch_lost() {
+        use notify::{Event, EventKind, event::*};
+        let home = PathBuf::from("/h");
+        let config = WatchConfig {
+            home: home.clone(),
+            hosts: vec![Host::Claude],
+            pin: PathBuf::from("/pin"),
+            plugin_root: None,
+            python: None,
+            debounce: Duration::from_millis(1),
+            probe: None,
+        };
+        let homes = vec![home.clone()];
+        let root = home.join(".claude/projects");
+        let watched = vec![root.clone()];
+        let classify_kind = |kind: EventKind, path: PathBuf| {
+            let mut dirty = Dirty::default();
+            let event = Event::new(kind).add_path(path);
+            classify(Ok(event), &mut dirty, &config, &homes, &watched);
+            dirty
+        };
+        // The root itself removed, renamed or recreated: its watch is lost.
+        for kind in [
+            EventKind::Remove(RemoveKind::Folder),
+            EventKind::Modify(ModifyKind::Name(RenameMode::From)),
+            EventKind::Create(CreateKind::Folder),
+            EventKind::Any,
+        ] {
+            let dirty = classify_kind(kind, root.clone());
+            assert_eq!(dirty.lost_watches, vec![root.clone()], "{kind:?}");
+            assert_eq!(dirty.hosts, vec![Host::Claude]);
+        }
+        // An ancestor removed takes the root with it.
+        let dirty = classify_kind(EventKind::Remove(RemoveKind::Folder), home.join(".claude"));
+        assert_eq!(dirty.lost_watches, vec![root.clone()]);
+        // A change below the root, or a data change of the root, drops nothing.
+        let dirty = classify_kind(EventKind::Remove(RemoveKind::File), root.join("p/a.jsonl"));
+        assert!(dirty.lost_watches.is_empty());
+        assert_eq!(dirty.hosts, vec![Host::Claude]);
+        let dirty = classify_kind(
+            EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+            root.clone(),
+        );
+        assert!(dirty.lost_watches.is_empty());
+    }
 
     #[test]
     fn paths_map_to_hosts_by_their_home_relative_root() {

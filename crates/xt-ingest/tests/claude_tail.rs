@@ -8,8 +8,9 @@
 //! seconds, truncation, replacement, restart and a failed transaction never
 //! omit or duplicate a record, an appended scan reports the surface the index
 //! holds and stops a record that disagrees with it, a root created after its
-//! watches were decided is watched and scanned again before ready, the Cursor
-//! hook's state pins are watched, sources are never modified, storage stays metadata-only, and zero-position locators from the
+//! watches were decided is watched and scanned again before ready, a root the
+//! platform reports removed is registered again, the Cursor hook's state pins
+//! are watched, sources are never modified, storage stays metadata-only, and zero-position locators from the
 //! initial importer migrate to checkpoints by one full replay.
 use rusqlite::Connection;
 use serde_json::json;
@@ -1312,6 +1313,40 @@ fn claude_tail_refreshes_a_checkpoint_after_proving_an_unchanged_file_by_its_who
     // Proven cheaply from here on: the checkpoint stays as it is.
     assert!(scan_native(&mut store, &request, ScanMode::Resume).complete());
     assert_eq!(checkpoint(&store, &path).unwrap().0, generation);
+}
+
+#[test]
+fn claude_tail_registers_a_root_again_after_the_platform_reports_it_removed() {
+    // A platform whose watch dies with the directory (inotify) may see the
+    // root recreated with its inode reused, so identity alone cannot tell;
+    // the removal event itself makes the root's watch lost and it is
+    // registered again, whatever its identity says.
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    fs::write(home.file(A), body(A, 0..2)).unwrap();
+    let (tailer, _events) = home.start(None);
+    tailer.wait_ready(WAIT).expect("ready");
+    let before = tailer.status();
+    let projects = home.root.join(".claude/projects");
+    tailer.inject_removed(&projects);
+    let seen = settle(&tailer, before.reconciles);
+    let after = tailer.status();
+    assert!(
+        after.watch_installs > before.watch_installs,
+        "the root was registered again: {after:?}"
+    );
+    assert!(
+        after
+            .watched
+            .contains(&projects.to_string_lossy().into_owned()),
+        "{after:?}"
+    );
+    assert_eq!(after.freshness, Freshness::Live);
+    // The re-registered watch reports later changes.
+    fs::write(home.file(B), body(B, 0..3)).unwrap();
+    settle(&tailer, seen);
+    assert_eq!(records(&home.store(), B), 3);
+    tailer.stop();
 }
 
 #[test]
