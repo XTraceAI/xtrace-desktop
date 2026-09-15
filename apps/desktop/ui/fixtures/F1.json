@@ -31,5 +31,20 @@
     "hosts": [],
     "reconciles": 0,
     "files_scanned": 0
+  },
+  "sessions": {
+    "rows": [
+      {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "host": "claude",
+        "repo": null,
+        "branch": null,
+        "model": "fixture-model-v1",
+        "first_ts": "2026-09-07T12:00:00Z",
+        "record_count": 25,
+        "has_conflict": false
+      }
+    ],
+    "next": null
   }
 }

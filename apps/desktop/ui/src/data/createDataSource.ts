@@ -14,6 +14,7 @@ export async function createDataSource(): Promise<DataSource> {
   };
   return {
     kind: 'preview',
+    sessionsList: unavailable,
     appInfo: unavailable,
     dbCounts: unavailable,
     nativeIndexStatus: unavailable,

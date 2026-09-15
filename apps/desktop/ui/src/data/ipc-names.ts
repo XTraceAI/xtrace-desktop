@@ -1,4 +1,5 @@
 export const commands = {
+  sessionsList: 'sessions_list',
   appInfo: 'app_info',
   dbCounts: 'db_counts',
   nativeIndexStatus: 'native_index_status',

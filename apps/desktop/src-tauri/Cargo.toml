@@ -18,6 +18,7 @@ fixtures = ["dep:xt-fixtures"]
 
 [dependencies]
 serde.workspace = true
+serde_json = "=1.0.151"
 ts-rs = "=12.0.1"
 xt-store = { path = "../../../crates/xt-store" }
 xt-ingest = { path = "../../../crates/xt-ingest" }
@@ -29,9 +30,6 @@ tauri-plugin-single-instance = "=2.4.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSView", "NSWindow"] }
-
-[dev-dependencies]
-serde_json = "=1.0.151"
 
 [target.'cfg(unix)'.dev-dependencies]
 libc = "=0.2.189"

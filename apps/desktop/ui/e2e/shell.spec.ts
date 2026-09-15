@@ -96,18 +96,10 @@ test('reloads every placeholder route and preserves canonical PR query context',
     await assertFits(page);
   }
   await page.goto('/sessions?pr=https%3A%2F%2Fgithub.com%2Fexample%2Fproject%2Fpull%2F1');
-  await expect(
-    page.getByText('Pull request filter: https://github.com/example/project/pull/1', {
-      exact: true,
-    }),
-  ).toBeVisible();
+  await expect(page.getByText(/Pull request filtering is not available yet/)).toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Sessions');
-  await expect(
-    page.getByText('Pull request filter: https://github.com/example/project/pull/1', {
-      exact: true,
-    }),
-  ).toBeVisible();
+  await expect(page.getByText(/Pull request filtering is not available yet/)).toBeVisible();
 });
 
 test('renders bundled fonts and remains navigable with external network denied', async ({

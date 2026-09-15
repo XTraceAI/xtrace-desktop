@@ -15,6 +15,7 @@ pub mod model;
 mod read;
 pub mod retention;
 mod server_settings;
+pub mod session_list;
 pub mod timestamp;
 mod write;
 

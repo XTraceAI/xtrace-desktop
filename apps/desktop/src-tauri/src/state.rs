@@ -242,6 +242,22 @@ impl AppState {
             .map_err(|_| StateError::CountRange)
     }
 
+    pub fn sessions_list(
+        &self,
+        search: &str,
+        host: Option<&str>,
+        after: Option<&str>,
+    ) -> Result<crate::dto::SessionPage, StateError> {
+        let guard = self.database.lock().map_err(|_| StateError::Poisoned)?;
+        crate::dto::session_page(
+            &guard.as_ref().ok_or(StateError::Closed)?.store,
+            search,
+            host,
+            after,
+        )
+        .map_err(Into::into)
+    }
+
     /// Tauri exits the process without dropping managed state. Close resources
     /// explicitly on its Exit event, serialized with any in-flight database read.
     pub fn shutdown(&self) {

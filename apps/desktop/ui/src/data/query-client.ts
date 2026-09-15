@@ -5,6 +5,7 @@ export function createQueryClient() {
   });
 }
 export const queryKeys = {
+  sessions: ['sessions', 'list'],
   appInfo: ['app', 'info'],
   dbCounts: ['database', 'counts'],
   nativeIndex: ['native', 'index'],

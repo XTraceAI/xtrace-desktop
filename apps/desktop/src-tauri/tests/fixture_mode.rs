@@ -98,6 +98,7 @@ fn fixture_mode_builds_isolated_database_and_generated_export_parity() {
         app_info,
         db_counts: first.db_counts().unwrap(),
         native_index: expected_native_index(),
+        sessions: first.sessions_list("", None, None).unwrap(),
     })
     .unwrap();
     let expected: serde_json::Value =

@@ -1,3 +1,4 @@
+import type { SessionPage } from './generated/SessionPage';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { DataSource } from './DataSource';
@@ -8,6 +9,9 @@ import { commands, type DataEvent } from './ipc-names';
 
 export class TauriDataSource implements DataSource {
   readonly kind = 'native';
+  sessionsList(search: string, host: string | null, after: string | null) {
+    return invoke<SessionPage>(commands.sessionsList, { search, host, after });
+  }
   appInfo() {
     return invoke<AppInfo>(commands.appInfo);
   }

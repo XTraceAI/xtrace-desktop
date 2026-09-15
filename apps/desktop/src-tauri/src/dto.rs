@@ -141,9 +141,11 @@ pub struct FixtureExport {
     pub app_info: AppInfo,
     pub db_counts: DbCounts,
     pub native_index: NativeIndexStatus,
+    pub sessions: SessionPage,
 }
 
 pub fn export_types(directory: impl AsRef<std::path::Path>) -> Result<(), ts_rs::ExportError> {
+    SessionPage::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
     FixtureExport::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))
 }
 
@@ -179,4 +181,66 @@ mod tests {
             }
         }
     }
+}
+
+/// Initial metadata browser. Product time/token metrics are separate projections.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+pub struct SessionRow {
+    pub id: String,
+    pub host: String,
+    pub repo: Option<String>,
+    pub branch: Option<String>,
+    pub model: Option<String>,
+    pub first_ts: Option<String>,
+    #[ts(type = "number")]
+    pub record_count: u64,
+    pub has_conflict: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+pub struct SessionPage {
+    pub rows: Vec<SessionRow>,
+    pub next: Option<String>,
+}
+
+pub fn session_page(
+    store: &xt_store::Store,
+    search: &str,
+    host: Option<&str>,
+    after: Option<&str>,
+) -> xt_store::Result<SessionPage> {
+    if after.is_some_and(|s| s.len() > 4096) {
+        return Err(xt_store::Error::InvalidInput("invalid session cursor"));
+    }
+    let cursor = after
+        .map(serde_json::from_str::<xt_store::session_list::SessionCursor>)
+        .transpose()
+        .map_err(|_| xt_store::Error::InvalidInput("invalid session cursor"))?;
+    let mut rows = store.sessions_page(search, host, cursor.as_ref())?;
+    let next = if rows.len() > 50 {
+        rows.truncate(50);
+        Some(serde_json::to_string(&rows.last().unwrap().cursor)?)
+    } else {
+        None
+    };
+    if rows.iter().any(|r| r.record_count >= 1u64 << 53) {
+        return Err(xt_store::Error::InvalidInput(
+            "record count exceeds JSON precision",
+        ));
+    }
+    Ok(SessionPage {
+        next,
+        rows: rows
+            .into_iter()
+            .map(|r| SessionRow {
+                id: r.id,
+                host: r.host,
+                repo: r.repo,
+                branch: r.branch,
+                model: r.model,
+                first_ts: r.first_ts,
+                record_count: r.record_count,
+                has_conflict: r.has_conflict,
+            })
+            .collect(),
+    })
 }
