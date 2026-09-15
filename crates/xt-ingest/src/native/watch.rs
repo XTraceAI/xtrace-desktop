@@ -143,8 +143,8 @@ struct State {
     freshness: Option<Freshness>,
     /// True only while every event delivered so far has been taken off the
     /// queue and reconciled: the delivery count below and this flag change
-    /// under the one lock, so a waiter never sees idle with a delivered
-    /// event unprocessed.
+    /// under the one lock (a delivery clears the flag as it is counted), so
+    /// a waiter never sees idle with a delivered event unprocessed.
     idle: bool,
     /// Filesystem events (and injected ones) handed to the worker's queue.
     delivered: u64,
@@ -288,6 +288,7 @@ impl Tailer {
         let control = self.control.clone();
         self.shared.update(|state| {
             state.delivered += 1;
+            state.idle = false;
             let _ = control.send(Message::Fs(Err(notify::Error::generic(reason))));
         });
     }
@@ -301,6 +302,7 @@ impl Tailer {
         let control = self.control.clone();
         self.shared.update(|state| {
             state.delivered += 1;
+            state.idle = false;
             let _ = control.send(Message::Fs(Ok(event)));
         });
     }
@@ -653,21 +655,39 @@ impl Worker {
                 stopped = true;
                 break;
             }
-            if dirty.hosts.is_empty() {
+            if !dirty.hosts.is_empty() {
+                continue;
+            }
+            // Ready is published only if nothing is queued at that moment,
+            // checked under the lock deliveries are counted under: an event
+            // delivered after the drain went quiet repeats the loop instead,
+            // so ready never claims an index a delivered change is missing.
+            let readiness = Readiness {
+                freshness: self.freshness(),
+                report: report.clone(),
+            };
+            let consumed = self.consumed;
+            let published = {
+                let mut state = self
+                    .shared
+                    .state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if state.delivered == consumed {
+                    state.ready = Some(readiness.clone());
+                    state.idle = true;
+                    self.shared.changed.notify_all();
+                    true
+                } else {
+                    false
+                }
+            };
+            if published {
+                (self.sink)(TailEvent::Ready(readiness));
                 break;
             }
         }
         if !stopped {
-            let readiness = Readiness {
-                freshness: self.freshness(),
-                report,
-            };
-            let consumed = self.consumed;
-            self.shared.update(|state| {
-                state.ready = Some(readiness.clone());
-                state.idle = state.delivered == consumed;
-            });
-            (self.sink)(TailEvent::Ready(readiness));
             // Live: each burst, after a quiet period, reconciles its hosts.
             let mut pending: Option<Message> = None;
             loop {
@@ -820,6 +840,7 @@ impl Worker {
             // than was delivered.
             shared.update(|state| {
                 state.delivered += 1;
+                state.idle = false;
                 let _ = events.send(Message::Fs(event));
             });
         });

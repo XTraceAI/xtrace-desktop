@@ -159,9 +159,11 @@ the existing writer.
   reason kept, and a host stays incomplete around any of these. After ready, the tailer is idle only once every
   change delivered to it, also one delivered while a reconciliation ran, has been
   taken off its queue and reconciled (the delivery count and the idle flag change
-  under one lock, and an event is counted and queued under that lock too), and a
-  stop request is honored only once every event delivered before it has been taken
-  off the queue and reconciled. A root that appears during a pass, after its
+  under one lock, and an event is counted, queued and clears idle under that lock
+  too), ready is published only if nothing is queued at that moment (checked under
+  the same lock; a later delivery repeats the startup pass instead), and a stop
+  request is honored only once every event delivered before it has been taken off
+  the queue and reconciled. A root that appears during a pass, after its
   watches were decided, is watched after the scan and its host scanned again, until
   a pass finds every root watched, so no change below a root falls between its
   enumeration and its watch. Event kinds are never trusted: any path under a host
