@@ -11,6 +11,16 @@ use std::{
 };
 use xt_ingest::canonical::{Parsed, SourceContext, parse_with_context};
 
+fn now_ms() -> i64 {
+    i64::try_from(
+        SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap()
+}
+
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -180,15 +190,21 @@ fn conformance_native_import() {
     )
     .unwrap();
     let mut store = Store::open(temp.join("index.sqlite")).unwrap();
-    let request = ImportRequest {
+    let pin = root.join(".plugin-pin");
+    let request_now = || ImportRequest {
         home: &home,
         hosts: &[Host::Codex, Host::Cursor],
-        pin: &root.join(".plugin-pin"),
+        pin: &pin,
         plugin_root: Some(Path::new(&plugin_root)),
         python: Some(&python),
-        observed_at: 1_788_782_400_000,
+        observed_at: now_ms(),
     };
-    let report = import_native(&mut store, &request);
+    // A session written within the last 2 s is never covered by a cutoff (a
+    // coarse clock could hide a rewrite), so runs that expect the cutoff wait
+    // for the source set to settle first.
+    let settle = || std::thread::sleep(std::time::Duration::from_millis(2_100));
+    settle();
+    let report = import_native(&mut store, &request_now());
     println!("{}", serde_json::to_string(&report).unwrap());
     assert!(report.complete(), "{report:?}");
     for host in &report.hosts {
@@ -231,7 +247,8 @@ fn conformance_native_import() {
             );
         }
     }
-    let again = import_native(&mut store, &request);
+    settle();
+    let again = import_native(&mut store, &request_now());
     assert!(again.complete());
     // The first scan covered every session, so the second asks the pinned
     // producer only for sessions modified since that scan started: it still
@@ -277,7 +294,7 @@ fn conformance_native_import() {
         .unwrap()
         .set_times(fs::FileTimes::new().set_modified(old_clock))
         .unwrap();
-    let with_restored = import_native(&mut store, &request);
+    let with_restored = import_native(&mut store, &request_now());
     let codex = with_restored
         .hosts
         .iter()
@@ -320,7 +337,7 @@ fn conformance_native_import() {
             .unwrap()
             .clone()
     };
-    let aged = codex_of(&import_native(&mut store, &request));
+    let aged = codex_of(&import_native(&mut store, &request_now()));
     assert_eq!(aged.status, HostStatus::Complete, "{aged:?}");
     assert!(
         aged.detail
@@ -329,7 +346,21 @@ fn conformance_native_import() {
         "a session with a clock the inventory does not know is read in a full scan: {aged:?}"
     );
     assert_eq!(aged.sessions.len(), 1, "{aged:?}");
-    let skipped = codex_of(&import_native(&mut store, &request));
+    // That scan started within 2 s of the change, so its generation cannot
+    // vouch for the session on a coarse clock: one more full scan, started
+    // after the change settled, records a generation that can.
+    settle();
+    let settling = codex_of(&import_native(&mut store, &request_now()));
+    assert_eq!(settling.status, HostStatus::Complete, "{settling:?}");
+    assert!(
+        settling
+            .detail
+            .as_deref()
+            .is_some_and(|detail| !detail.contains("sessions modified since")),
+        "an unsettled generation forces one more full scan: {settling:?}"
+    );
+    settle();
+    let skipped = codex_of(&import_native(&mut store, &request_now()));
     assert_eq!(skipped.status, HostStatus::Complete, "{skipped:?}");
     assert!(
         skipped
@@ -349,7 +380,7 @@ fn conformance_native_import() {
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(&original, &bytes).unwrap();
     age(&original);
-    let rewritten = codex_of(&import_native(&mut store, &request));
+    let rewritten = codex_of(&import_native(&mut store, &request_now()));
     assert_eq!(rewritten.status, HostStatus::Complete, "{rewritten:?}");
     assert!(
         rewritten
@@ -359,7 +390,16 @@ fn conformance_native_import() {
         "a clock-preserving rewrite forces a full scan: {rewritten:?}"
     );
     assert_eq!(rewritten.sessions.len(), 1, "{rewritten:?}");
-    let after_removal = import_native(&mut store, &request);
+    settle();
+    assert!(
+        codex_of(&import_native(&mut store, &request_now()))
+            .detail
+            .as_deref()
+            .is_some_and(|detail| !detail.contains("sessions modified since")),
+        "one more full scan records a settled generation"
+    );
+    settle();
+    let after_removal = import_native(&mut store, &request_now());
     let codex = after_removal
         .hosts
         .iter()
@@ -404,7 +444,7 @@ fn conformance_native_import() {
         &mut store,
         &ImportRequest {
             home: Path::new(&relative),
-            ..request
+            ..request_now()
         },
     );
     assert!(relative_run.complete(), "{relative_run:?}");

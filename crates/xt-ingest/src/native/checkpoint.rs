@@ -387,18 +387,25 @@ impl HostScan {
     /// Whether asking only for sessions modified since the cutoff can skip
     /// nothing unknown: every session of the current source set that the
     /// cutoff would skip must be in the recorded inventory with the same
-    /// clock and the same file identity. A restored or moved-in session with
-    /// an old clock is not; neither is one replaced or rewritten with its
-    /// clock preserved, nor one whose file cannot be identified.
+    /// clock and the same file identity, and its change time must have
+    /// settled at least `CTIME_SETTLE_MS` before the generation started, so a
+    /// coarse filesystem clock cannot hide a rewrite in the same tick. A
+    /// restored or moved-in session with an old clock is not covered; neither
+    /// is one replaced or rewritten with its clock preserved, one written too
+    /// close to the scan, nor one whose file cannot be identified.
     pub fn cutoff_covers(&self, current: &BTreeMap<String, Option<SourceStamp>>) -> bool {
         let cutoff = self.cutoff_secs();
         current
             .iter()
             .filter(|(_, stamp)| stamp.as_ref().is_none_or(|stamp| stamp.mtime < cutoff))
             .all(|(path, stamp)| {
-                stamp
-                    .as_ref()
-                    .is_some_and(|stamp| self.inventory.contains(&inventory_key(path, stamp)))
+                stamp.as_ref().is_some_and(|stamp| {
+                    self.inventory.contains(&inventory_key(path, stamp))
+                        && self
+                            .started_at_ms
+                            .saturating_sub(stamp.ctime_ns.saturating_div(1_000_000))
+                            >= CTIME_SETTLE_MS
+                })
             })
     }
 }
@@ -877,6 +884,24 @@ mod tests {
         // An older session the scan covered, unchanged: safe.
         current.insert("old".into(), Some(old.clone()));
         assert!(generation.cutoff_covers(&current));
+        // The same session whose change time had not settled before the
+        // generation started: a coarse clock could hide a rewrite, not covered.
+        let unsettled = SourceStamp {
+            ctime_ns: (generation.started_at_ms - CTIME_SETTLE_MS + 1) * 1_000_000,
+            ..old.clone()
+        };
+        let mut recent = HostScan {
+            started_at_ms: generation.started_at_ms,
+            inventory: [inventory_key("old", &unsettled)].into_iter().collect(),
+        };
+        current.insert("old".into(), Some(unsettled.clone()));
+        assert!(!recent.cutoff_covers(&current));
+        recent.started_at_ms += 1;
+        assert!(
+            recent.cutoff_covers(&current),
+            "settled by one more millisecond"
+        );
+        current.insert("old".into(), Some(old.clone()));
         // The same older session with another clock: not covered.
         current.insert(
             "old".into(),
