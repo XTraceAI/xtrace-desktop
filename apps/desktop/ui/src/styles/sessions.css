@@ -1,0 +1,70 @@
+.xt-sessions {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.xt-sessions-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.xt-sessions h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.xt-sessions p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--secondary);
+}
+.xt-sessions-filters {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.xt-sessions-filters select {
+  background: var(--surface);
+  color: var(--body);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.xt-session-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 3px;
+}
+.xt-session-name strong,
+.xt-session-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-session-name strong {
+  font-size: 12px;
+  color: var(--ink);
+  font-weight: 600;
+}
+.xt-session-name span {
+  font-size: 10px;
+  color: var(--meta);
+}
+.xt-sessions-notice a {
+  color: var(--accent-ink);
+}
+.xt-sessions-more {
+  display: flex;
+  justify-content: center;
+  padding-top: 12px;
+}
+
+.xt-shell-outlet:has(> .xt-sessions) {
+  padding: 0;
+}

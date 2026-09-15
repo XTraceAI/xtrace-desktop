@@ -126,6 +126,7 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                     listening: false,
                 },
                 db_counts: database.store().counts()?.try_into()?,
+                sessions: xtrace_desktop::dto::session_page(database.store(), "", None, None)?,
                 native_index: xtrace_desktop::dto::NativeIndexStatus {
                     phase: xtrace_desktop::dto::NativeIndexPhase::Disabled {
                         reason: "fixture mode uses a disposable database".into(),

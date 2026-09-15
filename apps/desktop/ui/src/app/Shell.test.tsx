@@ -54,9 +54,7 @@ it('routes sidebar navigation, crumbs, settings and fixture metadata from the ge
 
 it('preserves PR query context and resolves fires before dynamic rule details', async () => {
   const view = mount('/sessions?pr=https%3A%2F%2Fgithub.com%2Fexample%2Fproject%2Fpull%2F1');
-  expect(
-    screen.getByText('Pull request filter: https://github.com/example/project/pull/1'),
-  ).toBeTruthy();
+  expect(screen.getByText(/Pull request filtering is not available yet/)).toBeTruthy();
   view.unmount();
   const fires = mount('/rulebook/fires');
   expect(screen.getByRole('heading', { name: 'Rule fires' })).toBeTruthy();
@@ -76,6 +74,7 @@ it('shows native metadata failure safely, retries, and preserves native drag exc
       .mockRejectedValueOnce(new Error('backend-specific detail'))
       .mockResolvedValue(exported.app_info),
     dbCounts: async () => exported.db_counts,
+    sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: async () => exported.native_index,
     subscribe: async () => () => {},
   };

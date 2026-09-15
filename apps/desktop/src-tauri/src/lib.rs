@@ -22,6 +22,18 @@ fn db_counts(state: tauri::State<'_, state::AppState>) -> Result<dto::DbCounts, 
 }
 
 #[tauri::command]
+fn sessions_list(
+    state: tauri::State<'_, state::AppState>,
+    search: String,
+    host: Option<String>,
+    after: Option<String>,
+) -> Result<dto::SessionPage, String> {
+    state
+        .sessions_list(&search, host.as_deref(), after.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn native_index_status(
     index: tauri::State<'_, native_index::NativeIndex>,
 ) -> dto::NativeIndexStatus {
@@ -97,6 +109,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             db_counts,
+            sessions_list,
             native_index_status
         ])
         .build(tauri::generate_context!())

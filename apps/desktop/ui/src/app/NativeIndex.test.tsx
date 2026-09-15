@@ -73,6 +73,7 @@ it('shows the typed native index status as reported and refreshes it on its even
     kind: 'native',
     appInfo: async () => exported.app_info,
     dbCounts: async () => exported.db_counts,
+    sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: vi.fn(async () => status),
     subscribe: vi.fn(async (event, callback) => {
       if (event === events.nativeIndexStatus) listener = callback;
@@ -126,6 +127,7 @@ it('polls a transient status until it settles, so a ready event that precedes th
     kind: 'native',
     appInfo: async () => exported.app_info,
     dbCounts: vi.fn(async () => exported.db_counts),
+    sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: vi.fn(async () => status),
     // No event ever arrives: the listener registered after the only `ready`.
     subscribe: async () => () => {},
@@ -159,6 +161,7 @@ it('reconciles the data queries when the first status seen is already settled', 
     kind: 'native',
     appInfo: async () => exported.app_info,
     dbCounts: vi.fn(async () => exported.db_counts),
+    sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: vi.fn(async () => ready),
     subscribe: async () => () => {},
   };

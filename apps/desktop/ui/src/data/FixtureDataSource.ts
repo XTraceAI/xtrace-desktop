@@ -1,3 +1,4 @@
+import type { SessionPage } from './generated/SessionPage';
 import type { DataSource } from './DataSource';
 import type { FixtureExport } from './generated/FixtureExport';
 import type { DataEvent } from './ipc-names';
@@ -7,6 +8,21 @@ export class FixtureDataSource implements DataSource {
   readonly kind = 'fixture';
   private listeners = new Map<DataEvent, Set<() => void>>();
   constructor(private readonly fixture: FixtureExport) {}
+  async sessionsList(
+    search: string,
+    host: string | null,
+    _after: string | null,
+  ): Promise<SessionPage> {
+    if (_after) throw new Error('The fixture has one page.');
+    const rows = this.fixture.sessions.rows.filter(
+      (row) =>
+        (!host || row.host === host) &&
+        [row.id, row.repo, row.branch].some((value) =>
+          value?.toLowerCase().includes(search.toLowerCase()),
+        ),
+    );
+    return { rows: structuredClone(rows), next: null };
+  }
   async appInfo() {
     return structuredClone(this.fixture.app_info);
   }

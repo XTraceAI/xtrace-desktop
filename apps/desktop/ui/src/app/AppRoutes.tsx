@@ -1,3 +1,4 @@
+import { SessionsPage } from './SessionsPage';
 import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router';
 import { Shell } from './Shell';
@@ -27,7 +28,9 @@ export function AppRoutes() {
           <Route
             key={page.path}
             path={page.path}
-            element={<PlaceholderPage title={page.title} />}
+            element={
+              page.path === '/sessions' ? <SessionsPage /> : <PlaceholderPage title={page.title} />
+            }
           />
         ))}
         <Route path="*" element={<PlaceholderPage title="Page not found" />} />

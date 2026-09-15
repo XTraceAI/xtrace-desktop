@@ -61,6 +61,7 @@ it('uses hash routes for native protocol navigation and reloads', async () => {
     kind: 'native',
     appInfo: async () => exported.app_info,
     dbCounts: async () => exported.db_counts,
+    sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: async () => exported.native_index,
     subscribe: async () => () => {},
   };
@@ -79,9 +80,7 @@ it('uses hash routes for native protocol navigation and reloads', async () => {
     );
   });
   await screen.findByRole('heading', { name: 'Sessions' });
-  expect(
-    screen.getByText('Pull request filter: https://github.com/example/project/pull/1'),
-  ).toBeTruthy();
+  expect(screen.getByText(/Pull request filtering is not available yet/)).toBeTruthy();
   await act(async () => {
     fireEvent.keyDown(window, { key: ',', metaKey: true });
   });

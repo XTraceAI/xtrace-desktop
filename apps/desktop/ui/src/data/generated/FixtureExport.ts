@@ -2,5 +2,6 @@
 import type { AppInfo } from "./AppInfo";
 import type { DbCounts } from "./DbCounts";
 import type { NativeIndexStatus } from "./NativeIndexStatus";
+import type { SessionPage } from "./SessionPage";
 
-export type FixtureExport = { app_info: AppInfo, db_counts: DbCounts, native_index: NativeIndexStatus, };
+export type FixtureExport = { app_info: AppInfo, db_counts: DbCounts, native_index: NativeIndexStatus, sessions: SessionPage, };

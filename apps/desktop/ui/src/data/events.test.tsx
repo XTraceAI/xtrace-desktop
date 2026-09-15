@@ -121,6 +121,7 @@ it('balances delayed async subscriptions under StrictMode and cancels pending in
     kind: 'fixture',
     appInfo: async () => exported.app_info,
     dbCounts: async () => exported.db_counts,
+    sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: async () => exported.native_index,
     subscribe: vi.fn((_event, listener) => {
       const done = deferred<() => void>();
