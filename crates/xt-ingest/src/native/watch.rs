@@ -49,6 +49,9 @@ pub type Probe = Arc<dyn Fn(ProbePoint<'_>) + Send + Sync>;
 pub enum ProbePoint<'a> {
     /// The watcher is registered (or has failed); the initial scan starts next.
     WatcherRegistered,
+    /// A watch pass listed the roots to watch; the missing watches are
+    /// installed next.
+    WatchesDecided,
     /// One Claude file of the initial scan is done.
     FileScanned(&'a Path),
     /// The initial scan is done; queued changes are reconciled next.
@@ -432,20 +435,18 @@ impl Worker {
             if let Some(reason) = dirty.watcher_failed.take() {
                 self.rebuild_watches(reason);
             }
+            // A root that appeared after the pass that decided the watches
+            // was enumerated without a watch of its own, and its creation
+            // was not necessarily reported: it is watched now and its host
+            // reconciled again before ready.
+            for host in self.ensure_watches() {
+                dirty.mark(host);
+            }
             // Changes received before a stop request are still reconciled.
             if !dirty.hosts.is_empty() {
                 let hosts = dirty.hosts.clone();
                 let reconciled = self.reconcile(&hosts);
-                for host in &reconciled.hosts {
-                    match report
-                        .hosts
-                        .iter_mut()
-                        .find(|known| known.host == host.host)
-                    {
-                        Some(known) => *known = carry_counts(known, host.clone()),
-                        None => report.hosts.push(host.clone()),
-                    }
-                }
+                absorb(&mut report, &reconciled);
                 self.finished(
                     if dirty.rescan {
                         Trigger::Rescan
@@ -536,11 +537,22 @@ impl Worker {
 
     /// Reconcile the given hosts. A root that appeared since the last watch
     /// pass is watched *before* it is enumerated, so a file created below it
-    /// after enumeration still produces an event.
+    /// after enumeration still produces an event. A root that appeared during
+    /// the pass, after its watches were decided, is watched afterwards and
+    /// its host scanned again, until a pass finds every root watched: no
+    /// change below a root falls between its enumeration and its watch.
     fn reconcile(&mut self, hosts: &[Host]) -> ImportReport {
         self.probe(ProbePoint::Reconciling(hosts));
         self.ensure_watches();
-        self.scan(hosts, &mut |_| {})
+        let mut report = self.scan(hosts, &mut |_| {});
+        loop {
+            let late = self.ensure_watches();
+            if late.is_empty() {
+                return report;
+            }
+            let again = self.scan(&late, &mut |_| {});
+            absorb(&mut report, &again);
+        }
     }
 
     fn freshness(&self) -> Freshness {
@@ -622,9 +634,18 @@ impl Worker {
         });
     }
 
-    fn ensure_watches(&mut self) {
+    /// Install the watches still missing; returns the hosts whose own root
+    /// gained a watch in this pass, which must be scanned again if a scan ran
+    /// since the roots were listed.
+    fn ensure_watches(&mut self) -> Vec<Host> {
+        let mut late = Vec::new();
+        if self.watcher.is_none() {
+            return late;
+        }
+        let roots = watch_roots(&self.config.home, &self.config.hosts);
+        self.probe(ProbePoint::WatchesDecided);
         let Some(watcher) = self.watcher.as_mut() else {
-            return;
+            return late;
         };
         let mut failed = false;
         // A watched root that vanished, or that is no longer the directory
@@ -649,7 +670,7 @@ impl Worker {
                 state.watched.remove(&path);
             });
         }
-        for root in watch_roots(&self.config.home, &self.config.hosts) {
+        for root in roots {
             let already = self
                 .shared
                 .state
@@ -681,10 +702,17 @@ impl Worker {
                 RecursiveMode::NonRecursive
             };
             match watcher.watch(&root.path, mode) {
-                Ok(()) => self.shared.update(|state| {
-                    state.watched.insert(root.path.clone(), identity);
-                    state.watch_installs += 1;
-                }),
+                Ok(()) => {
+                    self.shared.update(|state| {
+                        state.watched.insert(root.path.clone(), identity);
+                        state.watch_installs += 1;
+                    });
+                    if let Some(host) = root.host
+                        && !late.contains(&host)
+                    {
+                        late.push(host);
+                    }
+                }
                 Err(error) => {
                     let reason = format!("{} could not be watched: {error}", root.path.display());
                     failed = true;
@@ -703,12 +731,31 @@ impl Worker {
             self.shared
                 .update(|state| state.freshness = Some(Freshness::Live));
         }
+        late
+    }
+}
+
+/// Fold a later pass into `report`: each host it reconciled stands in for the
+/// earlier report of that host, with the earlier counts carried.
+fn absorb(report: &mut ImportReport, later: &ImportReport) {
+    for host in &later.hosts {
+        match report
+            .hosts
+            .iter_mut()
+            .find(|known| known.host == host.host)
+        {
+            Some(known) => *known = carry_counts(known, host.clone()),
+            None => report.hosts.push(host.clone()),
+        }
     }
 }
 
 struct WatchRoot {
     path: PathBuf,
     recursive: bool,
+    /// The host whose own root this is; none for a fallback watch on an
+    /// ancestor, which only reports roots appearing below it.
+    host: Option<Host>,
 }
 
 /// The device and inode of a directory, without following an alias; `None`
@@ -734,13 +781,14 @@ fn directory_identity(path: &Path) -> Option<(u64, u64)> {
 /// itself is watched without recursion when a host root is absent, so the
 /// root's creation is noticed.
 fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
-    fn add(roots: &mut Vec<WatchRoot>, home: &Path, candidates: &[PathBuf]) {
+    fn add(roots: &mut Vec<WatchRoot>, home: &Path, host: Host, candidates: &[PathBuf]) {
         for candidate in candidates {
             if candidate.is_dir() {
                 if !roots.iter().any(|root| root.path == *candidate) {
                     roots.push(WatchRoot {
                         path: candidate.clone(),
                         recursive: true,
+                        host: Some(host),
                     });
                 }
                 return;
@@ -750,6 +798,7 @@ fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
             roots.push(WatchRoot {
                 path: home.to_path_buf(),
                 recursive: false,
+                host: None,
             });
         }
     }
@@ -759,11 +808,13 @@ fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
             Host::Claude => add(
                 &mut roots,
                 home,
+                *host,
                 &[home.join(".claude/projects"), home.join(".claude")],
             ),
             Host::Codex => add(
                 &mut roots,
                 home,
+                *host,
                 &[home.join(".codex/sessions"), home.join(".codex")],
             ),
             Host::Cursor => {
@@ -775,17 +826,18 @@ fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
                 if chats.is_dir() || projects.is_dir() {
                     for root in [chats, projects] {
                         if root.is_dir() {
-                            add(&mut roots, home, &[root]);
+                            add(&mut roots, home, *host, &[root]);
                         }
                     }
                     if parent.is_dir() && !roots.iter().any(|root| root.path == parent) {
                         roots.push(WatchRoot {
                             path: parent,
                             recursive: false,
+                            host: None,
                         });
                     }
                 } else {
-                    add(&mut roots, home, &[parent]);
+                    add(&mut roots, home, *host, &[parent]);
                 }
             }
             Host::Other => {}

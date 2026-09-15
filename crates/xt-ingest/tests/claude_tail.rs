@@ -4,8 +4,9 @@
 //! partial lines, new files and coalesced directory events converge within
 //! seconds, truncation, replacement, restart and a failed transaction never
 //! omit or duplicate a record, an appended scan reports the surface the index
-//! holds and stops a record that disagrees with it, sources are never
-//! modified, storage stays metadata-only, and zero-position locators from the
+//! holds and stops a record that disagrees with it, a root created after its
+//! watches were decided is watched and scanned again before ready, sources
+//! are never modified, storage stays metadata-only, and zero-position locators from the
 //! initial importer migrate to checkpoints by one full replay.
 use rusqlite::Connection;
 use serde_json::json;
@@ -810,6 +811,53 @@ fn claude_tail_watches_a_root_that_appears_later_before_enumerating_it() {
     fs::write(home.file(B), body(B, 0..3)).unwrap();
     settle(&tailer, seen);
     assert_eq!(records(&store, B), 3);
+    tailer.stop();
+}
+
+#[test]
+fn claude_tail_watches_a_root_created_after_its_watches_were_decided_before_ready() {
+    // No Claude root when the tailer starts. The root appears after the pass
+    // that decided to watch only the home and before that watch exists, so
+    // its creation is never reported; the initial scan enumerates it all the
+    // same. It must be watched, and scanned again, before ready.
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    fs::remove_dir_all(home.root.join(".claude")).unwrap();
+    let created = Arc::new(AtomicBool::new(false));
+    let probe: xt_ingest::native::watch::Probe = {
+        let created = Arc::clone(&created);
+        let project = home.project.clone();
+        let file = home.file(A);
+        Arc::new(move |point: ProbePoint<'_>| {
+            if matches!(point, ProbePoint::WatchesDecided) && !created.swap(true, Ordering::SeqCst)
+            {
+                fs::create_dir_all(&project).unwrap();
+                fs::write(&file, body(A, 0..2)).unwrap();
+            }
+        })
+    };
+    let (tailer, _events) = home.start(Some(probe));
+    let ready = tailer.wait_ready(WAIT).expect("ready");
+    assert_eq!(ready.freshness, Freshness::Live, "{ready:?}");
+    assert!(created.load(Ordering::SeqCst));
+    let store = home.store();
+    assert_eq!(records(&store, A), 2, "{ready:?}");
+    let watched = tailer.status().watched;
+    assert!(
+        watched.contains(
+            &home
+                .root
+                .join(".claude/projects")
+                .to_string_lossy()
+                .into_owned()
+        ),
+        "the root is watched before ready: {watched:?}"
+    );
+    // A change below the root is seen through its own recursive watch.
+    let seen = tailer.status().reconciles;
+    home.append(A, &line(2, A));
+    settle(&tailer, seen);
+    assert_eq!(records(&store, A), 3);
     tailer.stop();
 }
 
