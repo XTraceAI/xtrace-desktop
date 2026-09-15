@@ -122,7 +122,8 @@ pub struct TailStatus {
     pub ready: bool,
     /// No event is being processed and none was pending when the worker last looked.
     pub idle: bool,
-    /// Reconciliations completed so far, the startup pass included.
+    /// Reconciliations completed so far: the initial scan, the startup
+    /// passes and every later one.
     pub reconciles: u64,
     pub watched: Vec<String>,
     /// Watches installed so far; a replaced root counts again.
@@ -488,6 +489,9 @@ impl Worker {
             }
         });
         self.probe(ProbePoint::InitialScanDone);
+        // The initial scan is the first reconciliation: a caller waiting for
+        // one after ready must not wait for an unrelated change.
+        self.shared.update(|state| state.reconciles += 1);
         // Whatever changed while scanning is reconciled before ready, until
         // the queue is quiet; a change during that reconciliation queues again.
         let mut stopped = false;

@@ -662,6 +662,9 @@ fn claude_tail_restart_resumes_from_checkpoints_without_rereading_or_duplicating
     fs::write(home.file(B), body(B, 0..2)).unwrap();
     let (tailer, _events) = home.start(None);
     tailer.wait_ready(WAIT).expect("ready");
+    // The initial scan counts as the first reconciliation.
+    assert!(tailer.status().reconciles >= 1, "{:?}", tailer.status());
+    assert!(tailer.wait_reconciled(1, Duration::from_millis(50)));
     tailer.stop();
     // Offline changes: one file grows, one is untouched, one is new.
     home.append(A, &line(3, A));
