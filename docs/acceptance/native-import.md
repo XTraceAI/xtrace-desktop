@@ -127,7 +127,9 @@ the existing writer.
   root that appeared is watched before the reconciliation that first enumerates it.
   The Cursor hook's state pin directory (`.config/memhub-plugin/cursorflush`), whose
   pins fold into a session's clock and stamp and change on their own, is watched like
-  a root, through its nearest existing ancestor until it appears. A
+  a root, through its nearest existing ancestor until it appears; like the host
+  history directories, that area (`.config/memhub-plugin`) is refused as the index
+  destination, so the index's own writes never read as source changes. A
   watched root that vanished, or that was deleted and recreated at the same path
   (its directory identity changed), is forgotten and watched again, so a watch tied
   to the old directory never leaves the replacement unwatched. A watcher error drops

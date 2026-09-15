@@ -390,7 +390,10 @@ fn validate_index_destination(
         Ok(())
     }
     let mut destinations = Vec::new();
-    let roots = [".claude", ".codex", ".cursor"].map(|name| resolved(&home.join(name)));
+    // The host history directories, and the hook state area the Cursor watch
+    // covers: an index there would feed its own writes back as changes.
+    let roots = [".claude", ".codex", ".cursor", ".config/memhub-plugin"]
+        .map(|name| resolved(&home.join(name)));
     for suffix in ["", "-wal", "-shm", "-journal"] {
         let mut name = db.as_os_str().to_os_string();
         name.push(suffix);
@@ -418,6 +421,7 @@ fn validate_index_destination(
         ".codex/sessions",
         ".cursor/chats",
         ".cursor/projects",
+        ".config/memhub-plugin/cursorflush",
     ] {
         reject_reverse_aliases(&home.join(source), &destinations)?;
     }

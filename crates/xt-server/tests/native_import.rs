@@ -144,12 +144,18 @@ fn database_and_sidecar_aliases_cannot_modify_native_history() {
     fs::hard_link(&source, &hard).unwrap();
     let sidecar_db = temp.path().join("sidecar.sqlite");
     symlink(&source, temp.path().join("sidecar.sqlite-wal")).unwrap();
+    // The hook state area the Cursor watch covers is no place for the index
+    // either: its own writes would read as changes.
+    let pins = home.join(".config/memhub-plugin/cursorflush");
+    fs::create_dir_all(&pins).unwrap();
     for db in [
         &source,
         &link,
         &hard,
         &sidecar_db,
         &sources.join("new.sqlite"),
+        &pins.join("index.sqlite"),
+        &home.join(".config/memhub-plugin/index.sqlite"),
     ] {
         let output = core()
             .args(["import-native", "--db"])
@@ -164,6 +170,8 @@ fn database_and_sidecar_aliases_cannot_modify_native_history() {
     assert!(!sidecar_db.exists());
     assert!(!sources.join("new.sqlite").exists());
     assert_eq!(fs::read_dir(&sources).unwrap().count(), 1);
+    assert_eq!(fs::read_dir(&pins).unwrap().count(), 0);
+    assert!(!home.join(".config/memhub-plugin/index.sqlite").exists());
 }
 
 #[cfg(unix)]
