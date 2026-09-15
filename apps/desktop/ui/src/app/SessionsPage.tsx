@@ -98,10 +98,23 @@ export function SessionsPage() {
     enabled: source.kind !== 'preview' && !params.has('pr'),
   });
   const rows = query.data?.pages.flatMap((page) => page.rows) ?? [];
-  const incomplete = index.data?.hosts.some((h) => !['complete', 'pending'].includes(h.state));
+  const incomplete = index.data?.hosts.some((h) => h.state !== 'complete');
+  const scanning =
+    index.data?.phase.phase === 'scanning' || index.data?.hosts.some((h) => h.state === 'pending');
+  const degraded = index.data?.freshness.freshness === 'degraded';
   const indexUnavailable =
     source.kind === 'native' &&
     (index.isError || ['disabled', 'stopped'].includes(index.data?.phase.phase ?? ''));
+
+  const coverageNotice = indexUnavailable
+    ? 'Indexing is unavailable; showing previously indexed history.'
+    : scanning
+      ? 'History is still being indexed; this list may be incomplete.'
+      : degraded
+        ? 'Live indexing is interrupted; this list may be out of date.'
+        : incomplete
+          ? 'Some history could not be fully indexed.'
+          : null;
 
   return (
     <section className="xt-sessions">
@@ -130,12 +143,9 @@ export function SessionsPage() {
           </select>
         </div>
       </div>
-      {(incomplete || indexUnavailable) && (
+      {coverageNotice && (
         <p className="xt-sessions-notice" role="status">
-          {indexUnavailable
-            ? 'Indexing is unavailable; showing previously indexed history.'
-            : 'Some history could not be fully indexed.'}{' '}
-          <Link to="/settings">View indexing status</Link>
+          {coverageNotice} <Link to="/settings">View indexing status</Link>
         </p>
       )}
       {params.has('pr') ? (

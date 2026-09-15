@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { DataSource } from '../data/DataSource';
 import { DataProvider } from '../data/DataProvider';
 import { FixtureDataSource } from '../data/FixtureDataSource';
+import type { NativeIndexStatus } from '../data/generated/NativeIndexStatus';
 import type { FixtureExport } from '../data/generated/FixtureExport';
 import fixture from '../../fixtures/F1.json';
 import { events } from '../data/ipc-names';
@@ -115,3 +116,57 @@ it('keeps indexed rows visible with a warning when native indexing is disabled',
     '/settings',
   );
 });
+
+it.each(['initial scan', 'pending host', 'degraded watcher'] as const)(
+  'warns during %s and clears after a healthy status event',
+  async (scenario) => {
+    const source = new FixtureDataSource(fixture as FixtureExport);
+    const complete: NativeIndexStatus = {
+      ...(fixture as FixtureExport).native_index,
+      phase: { phase: 'ready' },
+      freshness: { freshness: 'live' },
+      hosts: [
+        {
+          host: 'claude',
+          state: 'complete',
+          detail: null,
+          sessions_imported: 1,
+          sessions_partial: 0,
+          sessions_skipped: 0,
+          records_new: 25,
+          records_enriched: 0,
+          diagnostics: 0,
+        },
+      ],
+    };
+    let status = structuredClone(complete);
+    if (scenario === 'initial scan') {
+      status.phase = { phase: 'scanning' };
+      status.hosts = [];
+    } else if (scenario === 'pending host') {
+      status.hosts[0].state = 'pending';
+    } else {
+      status.freshness = { freshness: 'degraded', reason: 'watcher stopped' };
+    }
+    vi.spyOn(source, 'nativeIndexStatus').mockImplementation(async () => status);
+    render(
+      <MemoryRouter>
+        <DataProvider source={source}>
+          <SessionsPage />
+        </DataProvider>
+      </MemoryRouter>,
+    );
+    const warning =
+      scenario === 'degraded watcher'
+        ? /Live indexing is interrupted/
+        : /History is still being indexed/;
+    await screen.findByText(warning);
+    expect(await screen.findByText('Session 00000000')).toBeTruthy();
+    status = complete;
+    act(() => source.emit(events.nativeIndexStatus));
+    await waitFor(() =>
+      expect(screen.queryByRole('link', { name: 'View indexing status' })).toBeNull(),
+    );
+    expect(screen.getByText('Session 00000000')).toBeTruthy();
+  },
+);
