@@ -199,11 +199,6 @@ fn conformance_native_import() {
         python: Some(&python),
         observed_at: now_ms(),
     };
-    // A session written within the last 2 s is never covered by a cutoff (a
-    // coarse clock could hide a rewrite), so runs that expect the cutoff wait
-    // for the source set to settle first.
-    let settle = || std::thread::sleep(std::time::Duration::from_millis(2_100));
-    settle();
     let report = import_native(&mut store, &request_now());
     println!("{}", serde_json::to_string(&report).unwrap());
     assert!(report.complete(), "{report:?}");
@@ -247,24 +242,40 @@ fn conformance_native_import() {
             );
         }
     }
-    settle();
+    // Every scan reads every session again through the pinned producer, with
+    // no cutoff: a repeated scan reports complete coverage and adds nothing,
+    // since records dedupe by UUID.
+    let host_of = |report: &xt_ingest::native::ImportReport, host: Host| {
+        report
+            .hosts
+            .iter()
+            .find(|candidate| candidate.host == host)
+            .unwrap()
+            .clone()
+    };
+    let nothing_new = |host: &xt_ingest::native::HostReport| {
+        host.status == HostStatus::Complete
+            && host.sessions.iter().all(|session| {
+                session.outcome
+                    == SessionOutcome::Imported {
+                        records_new: 0,
+                        records_enriched: 0,
+                    }
+            })
+    };
     let again = import_native(&mut store, &request_now());
-    assert!(again.complete());
-    // The first scan covered every session, so the second asks the pinned
-    // producer only for sessions modified since that scan started: it still
-    // reports complete coverage and adds nothing.
-    for host in &again.hosts {
+    assert!(again.complete(), "{again:?}");
+    for (host, first) in again.hosts.iter().zip(&report.hosts) {
+        assert!(nothing_new(host), "{host:?}");
+        assert_eq!(host.sessions.len(), first.sessions.len());
+        let detail = host.detail.as_deref().unwrap();
         assert!(
-            host.detail
-                .as_deref()
-                .is_some_and(|detail| detail.contains("sessions modified since")),
-            "{host:?}"
+            detail.contains("pinned producer") && !detail.contains("since"),
+            "{detail}"
         );
     }
-    // A Codex session restored into the tree with an old clock, older than
-    // the cutoff: the cutoff would skip it, so the inventory check forces a
-    // full scan and the session is read. Once it is gone again, the cutoff is
-    // safe once more.
+    // A Codex session restored into the tree with an old clock is read like
+    // any other: the whole host is read on every scan.
     let rollout = home.join(".codex/sessions/2026/09/07");
     let original = fs::read_dir(&rollout)
         .unwrap()
@@ -288,204 +299,71 @@ fn conformance_native_import() {
     .unwrap();
     let old_clock =
         std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
-    fs::File::options()
-        .write(true)
-        .open(&restored)
-        .unwrap()
-        .set_times(fs::FileTimes::new().set_modified(old_clock))
-        .unwrap();
-    let with_restored = import_native(&mut store, &request_now());
-    let codex = with_restored
-        .hosts
-        .iter()
-        .find(|host| host.host == Host::Codex)
-        .unwrap();
-    assert!(
-        codex
-            .detail
-            .as_deref()
-            .is_some_and(|detail| !detail.contains("sessions modified since")),
-        "a session older than the cutoff that the scan never covered forces a full scan: {codex:?}"
-    );
-    assert!(
-        codex.sessions.iter().any(|session| {
-            session.native_session_id.as_deref() == Some("00000000-0000-4000-8000-000000000191")
-                && !matches!(session.outcome, SessionOutcome::Skipped { .. })
-        }),
-        "the restored session is read: {codex:?}"
-    );
-    fs::remove_file(&restored).unwrap();
-    // The original given an old clock, older than the cutoff: its stamp is
-    // new to the inventory, so one more full scan reads it; after that the
-    // cutoff covers it and the producer skips it.
-    let aged_clock =
-        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_100);
-    let age = |path: &Path| {
+    let set_clock = |path: &Path, clock: std::time::SystemTime| {
         fs::File::options()
             .write(true)
             .open(path)
             .unwrap()
-            .set_times(fs::FileTimes::new().set_modified(aged_clock))
+            .set_times(fs::FileTimes::new().set_modified(clock))
             .unwrap();
     };
-    age(&original);
-    let codex_of = |report: &xt_ingest::native::ImportReport| {
-        report
-            .hosts
-            .iter()
-            .find(|host| host.host == Host::Codex)
-            .unwrap()
-            .clone()
-    };
-    let aged = codex_of(&import_native(&mut store, &request_now()));
-    assert_eq!(aged.status, HostStatus::Complete, "{aged:?}");
-    assert!(
-        aged.detail
-            .as_deref()
-            .is_some_and(|detail| !detail.contains("sessions modified since")),
-        "a session with a clock the inventory does not know is read in a full scan: {aged:?}"
-    );
-    assert_eq!(aged.sessions.len(), 1, "{aged:?}");
-    // That scan started within 2 s of the change, so its generation cannot
-    // vouch for the session on a coarse clock: one more full scan, started
-    // after the change settled, records a generation that can.
-    settle();
-    let settling = codex_of(&import_native(&mut store, &request_now()));
-    assert_eq!(settling.status, HostStatus::Complete, "{settling:?}");
-    assert!(
-        settling
-            .detail
-            .as_deref()
-            .is_some_and(|detail| !detail.contains("sessions modified since")),
-        "an unsettled generation forces one more full scan: {settling:?}"
-    );
-    settle();
-    let skipped = codex_of(&import_native(&mut store, &request_now()));
-    assert_eq!(skipped.status, HostStatus::Complete, "{skipped:?}");
-    assert!(
-        skipped
-            .detail
-            .as_deref()
-            .is_some_and(|detail| detail.contains("sessions modified since")),
-        "{skipped:?}"
-    );
-    assert!(
-        skipped.sessions.is_empty(),
-        "the covered old session is skipped behind the cutoff: {skipped:?}"
-    );
-    // Rewritten in place with the same bytes and the old clock put back (a
-    // synchronization tool's replacement): the change time moved, so the
-    // cutoff cannot cover it and a full scan reads it again.
-    let bytes = fs::read(&original).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    fs::write(&original, &bytes).unwrap();
-    age(&original);
-    let rewritten = codex_of(&import_native(&mut store, &request_now()));
-    assert_eq!(rewritten.status, HostStatus::Complete, "{rewritten:?}");
-    assert!(
-        rewritten
-            .detail
-            .as_deref()
-            .is_some_and(|detail| !detail.contains("sessions modified since")),
-        "a clock-preserving rewrite forces a full scan: {rewritten:?}"
-    );
-    assert_eq!(rewritten.sessions.len(), 1, "{rewritten:?}");
-    settle();
-    assert!(
-        codex_of(&import_native(&mut store, &request_now()))
-            .detail
-            .as_deref()
-            .is_some_and(|detail| !detail.contains("sessions modified since")),
-        "one more full scan records a settled generation"
-    );
-    settle();
-    let after_removal = import_native(&mut store, &request_now());
-    let codex = after_removal
-        .hosts
-        .iter()
-        .find(|host| host.host == Host::Codex)
-        .unwrap();
+    set_clock(&restored, old_clock);
+    let codex = host_of(&import_native(&mut store, &request_now()), Host::Codex);
     assert_eq!(codex.status, HostStatus::Complete, "{codex:?}");
+    assert_eq!(codex.sessions.len(), 2, "{codex:?}");
+    let restored_session = codex
+        .sessions
+        .iter()
+        .find(|session| {
+            session.native_session_id.as_deref() == Some("00000000-0000-4000-8000-000000000191")
+        })
+        .unwrap();
     assert!(
-        codex
-            .detail
-            .as_deref()
-            .is_some_and(|detail| detail.contains("sessions modified since")),
-        "every older session is covered again: {codex:?}"
+        matches!(restored_session.outcome, SessionOutcome::Imported { records_new, .. } if records_new > 0),
+        "the restored session is read and indexed: {codex:?}"
     );
-    assert!(
-        again
-            .hosts
-            .iter()
-            .flat_map(|h| &h.sessions)
-            .all(|s| matches!(
-                s.outcome,
-                SessionOutcome::Imported {
-                    records_new: 0,
-                    records_enriched: 0,
-                    ..
-                }
-            ))
-    );
-    // A store-backed Cursor session's `meta.json` rewritten in place with the
-    // same bytes and its clock put back: the store itself is untouched and the
-    // producer's clock for the session unchanged, but the sidecar's change
-    // time moved, so the cutoff cannot cover the session and a full scan
-    // reads it again; once settled, the cutoff covers it once more.
-    let meta =
-        home.join(".cursor/chats/19ee0000fixture0/00000000-0000-4000-8000-000000000183/meta.json");
+    fs::remove_file(&restored).unwrap();
+    // The original given an old clock, then rewritten in place with the same
+    // bytes and that clock put back (a synchronization tool's replacement):
+    // read again each time, nothing new either time.
+    set_clock(&original, old_clock);
+    let aged = host_of(&import_native(&mut store, &request_now()), Host::Codex);
+    assert!(nothing_new(&aged), "{aged:?}");
+    assert_eq!(aged.sessions.len(), 1, "{aged:?}");
+    let bytes = fs::read(&original).unwrap();
+    fs::write(&original, &bytes).unwrap();
+    set_clock(&original, old_clock);
+    let rewritten = host_of(&import_native(&mut store, &request_now()), Host::Codex);
+    assert!(nothing_new(&rewritten), "{rewritten:?}");
+    assert_eq!(rewritten.sessions.len(), 1, "{rewritten:?}");
+    // A store-backed Cursor session's `meta.json` rewritten in place with its
+    // clock put back, and a hook state pin appearing beside the session: each
+    // is read through the same whole scan, nothing new.
+    let chat = home.join(".cursor/chats/19ee0000fixture0/00000000-0000-4000-8000-000000000183");
+    let meta = chat.join("meta.json");
     let meta_bytes = fs::read(&meta).unwrap();
     let meta_clock = fs::metadata(&meta).unwrap().modified().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(&meta, &meta_bytes).unwrap();
-    fs::File::options()
-        .write(true)
-        .open(&meta)
-        .unwrap()
-        .set_times(fs::FileTimes::new().set_modified(meta_clock))
-        .unwrap();
-    let cursor_of = |report: &xt_ingest::native::ImportReport| {
-        report
-            .hosts
-            .iter()
-            .find(|host| host.host == Host::Cursor)
-            .unwrap()
-            .clone()
-    };
-    let sidecar = cursor_of(&import_native(&mut store, &request_now()));
-    assert_eq!(sidecar.status, HostStatus::Complete, "{sidecar:?}");
-    assert!(
-        sidecar
-            .detail
-            .as_deref()
-            .is_some_and(|detail| !detail.contains("sessions modified since")),
-        "a clock-preserving sidecar rewrite forces a full scan: {sidecar:?}"
-    );
+    set_clock(&meta, meta_clock);
+    let sidecar = host_of(&import_native(&mut store, &request_now()), Host::Cursor);
+    assert!(nothing_new(&sidecar), "{sidecar:?}");
     assert!(
         sidecar.sessions.iter().any(|session| {
             session.native_session_id.as_deref() == Some("00000000-0000-4000-8000-000000000183")
-                && !matches!(session.outcome, SessionOutcome::Skipped { .. })
         }),
-        "the session behind the rewritten sidecar is read: {sidecar:?}"
+        "{sidecar:?}"
     );
-    settle();
-    assert!(
-        cursor_of(&import_native(&mut store, &request_now()))
-            .detail
-            .as_deref()
-            .is_some_and(|detail| !detail.contains("sessions modified since")),
-        "one more full scan records a settled generation"
-    );
-    settle();
-    let covered = cursor_of(&import_native(&mut store, &request_now()));
-    assert_eq!(covered.status, HostStatus::Complete, "{covered:?}");
-    assert!(
-        covered
-            .detail
-            .as_deref()
-            .is_some_and(|detail| detail.contains("sessions modified since")),
-        "the rewritten sidecar is covered again: {covered:?}"
-    );
+    let pins = home.join(".config/memhub-plugin/cursorflush");
+    fs::create_dir_all(&pins).unwrap();
+    fs::write(
+        pins.join("00000000-0000-4000-8000-000000000183.json"),
+        b"{}",
+    )
+    .unwrap();
+    let pinned = host_of(&import_native(&mut store, &request_now()), Host::Cursor);
+    assert!(nothing_new(&pinned), "{pinned:?}");
+    assert_eq!(pinned.sessions.len(), sidecar.sessions.len());
+    fs::remove_dir_all(home.join(".config")).unwrap();
     // A relative spelling of the same home reaches the readers anchored: they
     // change into the home and receive it as HOME, so a relative value would
     // resolve beneath itself and report a complete, empty import.

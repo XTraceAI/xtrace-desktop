@@ -18,14 +18,8 @@ pub mod stream;
 pub mod watch;
 
 use crate::writer::{MAX_BATCH_RECORDS, WriteBatch, write_batch};
-use checkpoint::{
-    covered_after_scan, host_scan_checkpoint, host_scan_generation, host_scan_since, stamp,
-    stamp_all,
-};
-use readers_cli::ReaderOptions;
 use readers_cli::{ReaderDiagnostic, ReaderError};
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::{
     ffi::OsStr,
     path::{Component, Path, PathBuf},
@@ -36,13 +30,15 @@ use xt_store::{
     ingest::DiscoveredSession,
 };
 
-/// Whether proven checkpoints may shorten a scan.
+/// Whether proven checkpoints may shorten a scan of Claude transcripts. Reader
+/// hosts (Codex, Cursor) are read whole through the pinned producer in both
+/// modes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScanMode {
     /// Resume behind checkpoints whose generation is proven again; read
-    /// everything else. Unchanged sources cost a stat and a short read.
+    /// everything else. Unchanged transcripts cost a stat and a short read.
     Resume,
-    /// Read every source from its start; checkpoints are still recorded.
+    /// Read every transcript from its start; checkpoints are still recorded.
     Replay,
 }
 
@@ -196,7 +192,7 @@ pub fn scan_native_observed(
         .iter()
         .map(|host| match host {
             Host::Claude => import_claude(store, request, mode, observer),
-            Host::Codex | Host::Cursor => import_reader_host(store, request, *host, mode),
+            Host::Codex | Host::Cursor => import_reader_host(store, request, *host),
             Host::Other => HostReport::unavailable(
                 Host::Other,
                 HostStatus::MissingSource,
@@ -334,12 +330,10 @@ fn reader_sources_present(home: &Path, host: Host) -> std::io::Result<bool> {
     }
 }
 
-fn import_reader_host(
-    store: &mut Store,
-    request: &ImportRequest<'_>,
-    host: Host,
-    mode: ScanMode,
-) -> HostReport {
+/// Read one reader host whole through the pinned producer. Every scan reads
+/// every session; records dedupe by UUID, so a repeated scan adds nothing and
+/// a session restored, replaced or rewritten in any way is simply read again.
+fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host) -> HostReport {
     match reader_sources_present(request.home, host) {
         Ok(true) => {}
         Ok(false) => {
@@ -374,55 +368,17 @@ fn import_reader_host(
             return HostReport::unavailable(host, HostStatus::PinMismatch, error.to_string());
         }
     };
-    // The generation of the last gapless scan lets the producer skip sessions
-    // it saw modified before it; without one, every session is read again.
-    // A cutoff may skip only sessions the last gapless scan by this producer
-    // already covered, unchanged: the current source set is inventoried first
-    // (headers only), and an older session it does not know, an inventory
-    // that cannot be taken, or another producer all mean a full scan.
-    let generation = match mode {
-        ScanMode::Resume => host_scan_generation(store, host, request.home, &producer.commit),
-        ScanMode::Replay => None,
-    };
-    // The source set is inventoried and every session stamped with its file's
-    // identity before the producer reads anything: the cutoff may skip only
-    // sessions the last gapless scan covered, unchanged in every respect, and
-    // only sessions whose identity is the same after this scan as before it
-    // can be recorded as covered by it.
-    let before = readers_cli::inventory(&python, &producer, host, request.home)
-        .ok()
-        .map(|inventory| stamp_all(request.home, host, &inventory));
-    let since = match (&generation, &before) {
-        (Some(generation), Some(before)) if generation.cutoff_covers(before) => {
-            host_scan_since(generation.started_at_ms)
-        }
-        _ => None,
-    };
-    let (mut stdout, handle) = match readers_cli::spawn_reader(
-        &python,
-        &producer,
-        host,
-        request.home,
-        ReaderOptions {
-            since: since.as_deref(),
-            metadata_only: false,
-        },
-    ) {
-        Ok(spawned) => spawned,
-        Err(error) => {
-            return HostReport::unavailable(host, HostStatus::ReaderFailed, error.to_string());
-        }
-    };
-    let detail = match &since {
-        Some(since) => format!(
-            "pinned producer {} (memhub {}); sessions modified since {since}",
-            producer.commit, producer.plugin_version
-        ),
-        None => format!(
-            "pinned producer {} (memhub {})",
-            producer.commit, producer.plugin_version
-        ),
-    };
+    let (mut stdout, handle) =
+        match readers_cli::spawn_reader(&python, &producer, host, request.home) {
+            Ok(spawned) => spawned,
+            Err(error) => {
+                return HostReport::unavailable(host, HostStatus::ReaderFailed, error.to_string());
+            }
+        };
+    let detail = format!(
+        "pinned producer {} (memhub {})",
+        producer.commit, producer.plugin_version
+    );
     let lines = std::iter::from_fn(|| {
         let mut line = String::new();
         match std::io::BufRead::read_line(&mut stdout, &mut line) {
@@ -431,46 +387,9 @@ fn import_reader_host(
             Err(error) => Some(Err(error)),
         }
     });
-    let mut report =
-        import_reader_lines(store, host, detail, lines, request.observed_at, move || {
-            handle.finish()
-        });
-    // Only a scan that covered every session becomes the next generation; a
-    // scan with any gap leaves the old one, so the next scan repeats its
-    // range. It vouches for every inventoried session whose file is still
-    // the one stamped before the producer ran; a session replaced meanwhile,
-    // one that appeared meanwhile, or one that cannot be identified is left
-    // out and read again next time. Without a pre-scan inventory nothing can
-    // be vouched for, so no generation is recorded.
-    let after = before.as_ref().map(|before| {
-        before
-            .iter()
-            .map(|(path, pre)| {
-                let post = pre
-                    .as_ref()
-                    .and_then(|pre| stamp(request.home, host, path, pre.mtime));
-                (path.clone(), post)
-            })
-            .collect::<BTreeMap<_, _>>()
-    });
-    if report.status == HostStatus::Complete
-        && let (Some(before), Some(after)) = (&before, &after)
-        && let Err(error) = store.record_native_checkpoint(&host_scan_checkpoint(
-            host,
-            request.home,
-            request.observed_at,
-            &producer.commit,
-            &producer.plugin_version,
-            &covered_after_scan(before, after),
-        ))
-    {
-        report.status = HostStatus::Incomplete;
-        report.detail = Some(format!(
-            "{}; scan generation could not be recorded: {error}",
-            report.detail.as_deref().unwrap_or_default()
-        ));
-    }
-    report
+    import_reader_lines(store, host, detail, lines, request.observed_at, move || {
+        handle.finish()
+    })
 }
 
 /// Import one host's stream as it arrives. Records are written in bounded

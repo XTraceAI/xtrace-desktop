@@ -787,9 +787,9 @@ fn claude_tail_converges_after_truncation_and_replacement_without_duplicates() {
     );
     let (replaced_generation, replaced_position) = checkpoint(&store, &path).unwrap();
     assert_eq!(replaced_position, file_len(&path));
-    let inode = |generation: &Generation| match generation {
-        Generation::File { ino, .. } => *ino,
-        Generation::HostScan { .. } => unreachable!(),
+    let inode = |generation: &Generation| {
+        let Generation::File { ino, .. } = generation;
+        *ino
     };
     assert_ne!(
         inode(&replaced_generation),
@@ -1472,9 +1472,9 @@ fn claude_tail_refreshes_a_checkpoint_after_proving_an_unchanged_file_by_its_who
         observed_at: 1,
     };
     assert!(scan_native(&mut store, &request, ScanMode::Resume).complete());
-    let ctime_of = |generation: &Generation| match generation {
-        Generation::File { ctime_ns, .. } => *ctime_ns,
-        Generation::HostScan { .. } => unreachable!(),
+    let ctime_of = |generation: &Generation| {
+        let Generation::File { ctime_ns, .. } = generation;
+        *ctime_ns
     };
     let recorded = ctime_of(&checkpoint(&store, &path).unwrap().0);
     // An identical rewrite moves the change time without changing a byte.

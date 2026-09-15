@@ -7,8 +7,8 @@
 //! quiet period, reconciles the hosts it touched through the same importer
 //! the scan used: Claude files are enumerated and proven against their
 //! checkpoints (an unchanged file costs a stat and a short read), reader hosts
-//! are rescanned through the pinned producer for sessions modified since their
-//! last gapless scan. Event kinds are never trusted: a directory-level or
+//! are read whole again through the pinned producer, whose output dedupes
+//! into the index. Event kinds are never trusted: a directory-level or
 //! coalesced event marks its host dirty, and the reconciliation decides what
 //! actually changed. A watcher that cannot be registered leaves the tailer
 //! degraded and says so; it never reports ready as if it were live.
@@ -1161,7 +1161,7 @@ fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
                     add(&mut roots, &fallback, *host, &[parent]);
                 }
                 // The hook's state pins fold into a Cursor session's clock and
-                // stamp, and change on their own: their directory is watched
+                // usage, and change on their own: their directory is watched
                 // like a root, or its nearest existing ancestor (without
                 // recursion) until it appears.
                 let pins = home.join(".config/memhub-plugin/cursorflush");

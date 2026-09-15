@@ -239,36 +239,19 @@ pub struct ReaderOutcome {
     pub complete: bool,
 }
 
-/// Start the pinned reader for one host over `home`. Only the shared stream on
-/// stdout and static diagnostic codes on stderr are consumed; a crash surfaces
-/// as a bounded failure text, never as imported data.
-/// What one producer run is asked for.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ReaderOptions<'a> {
-    /// The producer skips sessions it saw modified before this instant.
-    pub since: Option<&'a str>,
-    /// Headers only: the source set, without reading any records.
-    pub metadata_only: bool,
-}
-
+/// Start the pinned reader for one host over `home`, reading every session it
+/// discovers. Only the shared stream on stdout and static diagnostic codes on
+/// stderr are consumed; a crash surfaces as a bounded failure text, never as
+/// imported data.
 pub fn spawn_reader(
     python: &OsStr,
     producer: &PinnedProducer,
     host: Host,
     home: &Path,
-    options: ReaderOptions<'_>,
 ) -> Result<(std::io::BufReader<std::process::ChildStdout>, ReaderHandle), ReaderError> {
-    let mut command = Command::new(python);
-    command
+    let mut child = Command::new(python)
         .arg(&producer.script)
-        .args(["--host", host.as_str()]);
-    if let Some(since) = options.since {
-        command.args(["--since", since]);
-    }
-    if options.metadata_only {
-        command.arg("--metadata-only");
-    }
-    let mut child = command
+        .args(["--host", host.as_str()])
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("HOME", home)
@@ -305,62 +288,6 @@ pub fn spawn_reader(
             stderr: drain,
         },
     ))
-}
-
-/// The current source set of one host, as the producer discovers it: each
-/// session's path with its update clock, from a headers-only run. Anything
-/// but a complete, diagnostic-free, header-only stream is an error, so a
-/// caller that cannot inventory the host must read it whole.
-pub fn inventory(
-    python: &OsStr,
-    producer: &PinnedProducer,
-    host: Host,
-    home: &Path,
-) -> Result<std::collections::BTreeMap<String, f64>, ReaderError> {
-    let (mut stdout, handle) = spawn_reader(
-        python,
-        producer,
-        host,
-        home,
-        ReaderOptions {
-            since: None,
-            metadata_only: true,
-        },
-    )?;
-    let mut events = super::stream::StreamEvents::new(host, xt_store::SessionSource::ReadersCli);
-    let mut sessions = std::collections::BTreeMap::new();
-    let mut failure: Option<&'static str> = None;
-    let mut line = String::new();
-    loop {
-        line.clear();
-        match std::io::BufRead::read_line(&mut stdout, &mut line) {
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(_) => {
-                failure = Some("inventory stream could not be read");
-                break;
-            }
-        }
-        if failure.is_some() {
-            continue; // drain, so the producer can exit
-        }
-        match events.push(line.trim_end_matches(['\n', '\r'])) {
-            Ok(Some(super::stream::StreamEvent::Session(header))) => {
-                sessions.insert(header.path, header.mtime);
-            }
-            Ok(None) | Ok(Some(super::stream::StreamEvent::Dropped)) => {}
-            Ok(Some(_)) => failure = Some("inventory stream was not header-only"),
-            Err(_) => failure = Some("inventory stream is malformed"),
-        }
-    }
-    let outcome = handle.finish()?;
-    match failure {
-        Some(failure) => Err(ReaderError::Failed(failure.into())),
-        None if !outcome.complete || !outcome.diagnostics.is_empty() => Err(ReaderError::Failed(
-            "inventory did not cover every session".into(),
-        )),
-        None => Ok(sessions),
-    }
 }
 
 impl ReaderHandle {
