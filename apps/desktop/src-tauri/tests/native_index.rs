@@ -126,19 +126,20 @@ fn indexes_a_synthetic_home_publishes_typed_status_and_reconciles_appends() {
     assert_eq!(claude.state, NativeHostState::Complete, "{ready:?}");
     assert_eq!((claude.sessions_imported, claude.records_new), (1, 2));
     for name in ["codex", "cursor"] {
+        // No Codex/Cursor history under this home: the source is what is
+        // missing, whatever interpreter the machine has (sources are checked
+        // before the runtime).
         let reader = host(&ready, name);
-        // No Codex/Cursor history under this home; with an interpreter the
-        // readers say so, without one the missing runtime is what is reported.
-        match &ready.python {
-            PythonRuntime::Available { .. } => {
-                assert_eq!(reader.state, NativeHostState::MissingSource, "{reader:?}")
-            }
-            PythonRuntime::Missing { .. } => {
-                assert_eq!(reader.state, NativeHostState::MissingRuntime, "{reader:?}")
-            }
-            PythonRuntime::Resolving => unreachable!("waited for discovery"),
-        }
+        assert_eq!(reader.state, NativeHostState::MissingSource, "{reader:?}");
     }
+    assert!(
+        matches!(
+            ready.python,
+            PythonRuntime::Available { .. } | PythonRuntime::Missing { .. }
+        ),
+        "{:?}",
+        ready.python
+    );
     let store = Store::open(&db).unwrap();
     assert_eq!(store.counts().unwrap().records, 2);
     // An append is reconciled live, through the checkpoint: one new record.
