@@ -414,12 +414,29 @@ fn carry_counts(earlier: &HostReport, mut later: HostReport) -> HostReport {
         if let (Some((new, enriched)), SessionOutcome::Skipped { reason }) =
             (counted, &session.outcome)
         {
-            let reason = reason.clone();
+            // An earlier partial outcome keeps what it could not index too.
+            let (records_dropped, mut rejections) = earlier
+                .sessions
+                .iter()
+                .find(|known| {
+                    known.native_session_id == session.native_session_id
+                        && known.path == session.path
+                })
+                .and_then(|known| match &known.outcome {
+                    SessionOutcome::Partial {
+                        records_dropped,
+                        rejections,
+                        ..
+                    } => Some((*records_dropped, rejections.clone())),
+                    _ => None,
+                })
+                .unwrap_or((0, Vec::new()));
+            rejections.push(format!("startup pass skipped: {reason}"));
             session.outcome = SessionOutcome::Partial {
                 records_new: new,
                 records_enriched: enriched,
-                records_dropped: 0,
-                rejections: vec![format!("startup pass skipped: {reason}")],
+                records_dropped,
+                rejections,
             };
         }
         let failed_earlier = earlier.sessions.iter().find(|known| {
@@ -1387,6 +1404,46 @@ mod tests {
                 records_enriched: 0,
                 records_dropped: 0,
                 rejections: vec![
+                    "startup pass skipped: file could not be read: PermissionDenied".into()
+                ],
+            }
+        );
+        // An earlier partial session skipped by the later pass keeps what it
+        // could not index, the later failure added.
+        let earlier = host(
+            HostStatus::Incomplete,
+            None,
+            vec![],
+            vec![session(
+                "/h/p/s.jsonl",
+                SessionOutcome::Partial {
+                    records_new: 2,
+                    records_enriched: 0,
+                    records_dropped: 1,
+                    rejections: vec!["missing_uuid".into()],
+                },
+            )],
+        );
+        let later = host(
+            HostStatus::Incomplete,
+            None,
+            vec![],
+            vec![session(
+                "/h/p/s.jsonl",
+                SessionOutcome::Skipped {
+                    reason: "file could not be read: PermissionDenied".into(),
+                },
+            )],
+        );
+        let merged = carry_counts(&earlier, later);
+        assert_eq!(
+            merged.sessions[0].outcome,
+            SessionOutcome::Partial {
+                records_new: 2,
+                records_enriched: 0,
+                records_dropped: 1,
+                rejections: vec![
+                    "missing_uuid".into(),
                     "startup pass skipped: file could not be read: PermissionDenied".into()
                 ],
             }

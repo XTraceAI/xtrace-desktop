@@ -317,20 +317,27 @@ fn watch_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static 
         },
         sink,
     );
+    // Readiness counts only if no stop was queued first: a bound reached
+    // while the startup was still running, even within the same wait step,
+    // means the run did not become ready within its bound.
     let ready = loop {
-        if let Some(ready) = tailer.wait_ready(Duration::from_millis(200)) {
-            break Some(ready);
-        }
-        if tailer.status().stopped {
+        let ready = tailer.wait_ready(Duration::from_millis(200));
+        let stop_requested = match stop_rx.try_recv() {
+            Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => true,
+            Err(std::sync::mpsc::TryRecvError::Empty) => false,
+        };
+        if stop_requested || tailer.status().stopped {
             break None;
         }
-        match stop_rx.try_recv() {
-            Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break None,
-            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        if ready.is_some() {
+            break ready;
         }
     };
     if ready.is_none() {
         tailer.stop();
+        if output_failed.load(Ordering::SeqCst) {
+            return Err("Could not write the event stream");
+        }
         return Err("Native watcher stopped before it was ready");
     }
     if options.duration != Some(None) {

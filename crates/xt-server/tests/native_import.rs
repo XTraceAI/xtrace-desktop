@@ -459,3 +459,31 @@ fn watch_native_stops_cleanly_on_ctrl_c_with_a_single_runtime_worker() {
     assert_eq!(last["event"], "stopped");
     assert_eq!(last["freshness"], "live");
 }
+
+#[test]
+fn watch_native_reports_a_bound_reached_during_startup_as_not_ready() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (home, _transcript, db) = synthetic_home(temp.path());
+    // A bound of zero seconds is reached before the initial scan can finish:
+    // whatever the scan emits, the run did not become ready within its bound.
+    let output = core()
+        .args(["watch-native", "--db"])
+        .arg(&db)
+        .arg("--home")
+        .arg(&home)
+        .args(["--host", "claude", "--for", "0"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("before it was ready"), "{stderr}");
+    // The scan itself completed and its rows stay indexed.
+    assert_eq!(
+        xt_store::Store::open(&db)
+            .unwrap()
+            .records(WATCH_SESSION)
+            .unwrap()
+            .len(),
+        2
+    );
+}
