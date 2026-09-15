@@ -199,29 +199,29 @@ The [fixture acceptance contract](acceptance/fixtures.md) lists setup, actions
 and expected outcomes for the loader, database owner, exports and reference
 assertions. Follow [CI.md](CI.md) for combined-source validation.
 
-| ID  | Current status                | Planned input responsibility                                    |
-| --- | ----------------------------- | --------------------------------------------------------------- |
-| F1  | Populated, reference asserted | Baseline human/assistant turns, response usage, activity, model |
-| F2  | Skeleton                      | Overlapping activity and concurrency                            |
-| F3  | Skeleton                      | Event window boundaries                                         |
-| F4  | Skeleton                      | Exact pull-request links and merged-PR statistics               |
-| F5  | Skeleton                      | Codex cumulative usage reader                                   |
-| F6  | Skeleton                      | Cursor IDE hook usage attachment                                |
-| F7  | Skeleton                      | Cursor Agent CLI unmeasured usage                               |
-| F8  | Skeleton                      | Human-message exclusions                                        |
-| F9  | Skeleton                      | Batched timestamp latency                                       |
-| F10 | Skeleton                      | Aborted turn without counters                                   |
-| F11 | Skeleton                      | Weekly model comparisons                                        |
-| F12 | Skeleton                      | Inferred branch links                                           |
-| F13 | Skeleton                      | Directive coverage                                              |
-| F14 | Skeleton                      | Rule-fire deduplication                                         |
-| F15 | Skeleton                      | Enforcement downgrade                                           |
-| F16 | Skeleton                      | Named filesystem/environment probe snapshots                    |
-| F17 | Skeleton                      | Claude response revisions, copies and missing IDs               |
-| F18 | Skeleton, native inputs       | Source replay, enrichment, retention and purge variants         |
-| F19 | Skeleton                      | Overlapping pull-request attribution                            |
-| F20 | Skeleton, native inputs       | Surface identity and capture coverage                           |
-| F21 | Skeleton                      | Initial scan/tail handoff race                                  |
+| ID  | Current status                | Planned input responsibility                                                               |
+| --- | ----------------------------- | ------------------------------------------------------------------------------------------ |
+| F1  | Populated, reference asserted | Baseline human/assistant turns, response usage, activity, model                            |
+| F2  | Skeleton                      | Overlapping activity and concurrency                                                       |
+| F3  | Skeleton                      | Event window boundaries                                                                    |
+| F4  | Skeleton                      | Exact pull-request links and merged-PR statistics                                          |
+| F5  | Skeleton                      | Codex cumulative usage reader                                                              |
+| F6  | Skeleton                      | Cursor IDE hook usage attachment                                                           |
+| F7  | Skeleton                      | Cursor Agent CLI unmeasured usage                                                          |
+| F8  | Skeleton                      | Human-message exclusions                                                                   |
+| F9  | Skeleton                      | Batched timestamp latency                                                                  |
+| F10 | Skeleton                      | Aborted turn without counters                                                              |
+| F11 | Skeleton                      | Weekly model comparisons                                                                   |
+| F12 | Skeleton                      | Inferred branch links                                                                      |
+| F13 | Skeleton                      | Directive coverage                                                                         |
+| F14 | Skeleton                      | Rule-fire deduplication                                                                    |
+| F15 | Skeleton                      | Enforcement downgrade                                                                      |
+| F16 | Skeleton                      | Named filesystem/environment probe snapshots                                               |
+| F17 | Skeleton                      | Claude response revisions, copies and missing IDs                                          |
+| F18 | Skeleton, native inputs       | Source replay, enrichment, retention and purge variants                                    |
+| F19 | Skeleton                      | Overlapping pull-request attribution                                                       |
+| F20 | Skeleton, native inputs       | Surface identity and capture coverage                                                      |
+| F21 | Skeleton                      | Initial scan/tail handoff race (exercised with synthetic homes in the `claude_tail` suite) |
 
 Purge variants must eventually cover previously stored transcript/tool/fire/judge
 content, confirmed removal, unchanged metadata/counts and source files, and a

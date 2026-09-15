@@ -239,9 +239,10 @@ pub struct ReaderOutcome {
     pub complete: bool,
 }
 
-/// Start the pinned reader for one host over `home`. Only the shared stream on
-/// stdout and static diagnostic codes on stderr are consumed; a crash surfaces
-/// as a bounded failure text, never as imported data.
+/// Start the pinned reader for one host over `home`, reading every session it
+/// discovers. Only the shared stream on stdout and static diagnostic codes on
+/// stderr are consumed; a crash surfaces as a bounded failure text, never as
+/// imported data.
 pub fn spawn_reader(
     python: &OsStr,
     producer: &PinnedProducer,

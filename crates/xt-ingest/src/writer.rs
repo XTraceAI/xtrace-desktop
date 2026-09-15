@@ -35,6 +35,8 @@ pub struct WriteBatch<'a> {
     pub cursor: Option<&'a SourceCursor>,
     /// A discovered identity that fills only if this batch commits.
     pub discovery: Option<&'a xt_store::ingest::DiscoveredSession>,
+    /// Resume progress that commits only with this batch's rows.
+    pub checkpoint: Option<&'a xt_store::batch::NativeCheckpoint>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -181,6 +183,7 @@ pub fn write_batch(store: &mut Store, request: &WriteBatch<'_>) -> Result<BatchO
     batch.evidence_policy = EvidencePolicy::AcceptedOnly;
     batch.cursor = request.cursor;
     batch.discovery = request.discovery;
+    batch.checkpoint = request.checkpoint;
     let saved = store.apply_ingest_batch(&batch)?;
     // No code above this point constructs an acknowledgement or emitted event.
     let mut accepted = BTreeMap::<&str, (bool, bool)>::new();

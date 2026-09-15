@@ -1467,6 +1467,7 @@ fn claude_fs_unusable_dropped_surfaces_prevent_cross_batch_label_persistence() {
 #[test]
 fn claude_fs_rejects_source_replacement_between_enumeration_and_open() {
     use std::os::unix::fs::symlink;
+    use xt_ingest::native::ScanMode;
     use xt_ingest::native::claude_fs::{enumerate, import_file};
     for alias in [true, false] {
         let temp = tempfile::TempDir::new().unwrap();
@@ -1488,7 +1489,7 @@ fn claude_fs_rejects_source_replacement_between_enumeration_and_open() {
             fs::write(&source, &bytes).unwrap();
         }
         let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
-        assert!(import_file(&mut store, &files[0], 1).is_err());
+        assert!(import_file(&mut store, &files[0], 1, ScanMode::Resume).is_err());
         assert_eq!(store.counts().unwrap().records, 0);
         assert_eq!(fs::read_to_string(&external).unwrap(), bytes);
     }

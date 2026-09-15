@@ -1,7 +1,9 @@
 # Dependency license obligations
 
 The dependency policy accepts Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause,
-ISC, OFL-1.1, Unicode-DFS-2016, Unicode-3.0, Zlib and MPL-2.0. This covers
+ISC, OFL-1.1, Unicode-DFS-2016, Unicode-3.0, Zlib, MPL-2.0 and CC0-1.0 (a
+public-domain dedication with a permissive fallback license; added for the
+`notify` filesystem watcher, whose own dependencies are MIT/ISC/Apache-2.0). This covers
 the current locked graph; unknown licenses, unsupported exceptions and
 expressions requiring a prohibited license still fail. An allowed alternative
 in an OR expression is sufficient; every obligation in an AND expression must

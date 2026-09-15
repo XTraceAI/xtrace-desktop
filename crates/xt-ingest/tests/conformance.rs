@@ -11,6 +11,16 @@ use std::{
 };
 use xt_ingest::canonical::{Parsed, SourceContext, parse_with_context};
 
+fn now_ms() -> i64 {
+    i64::try_from(
+        SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap()
+}
+
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -180,15 +190,16 @@ fn conformance_native_import() {
     )
     .unwrap();
     let mut store = Store::open(temp.join("index.sqlite")).unwrap();
-    let request = ImportRequest {
+    let pin = root.join(".plugin-pin");
+    let request_now = || ImportRequest {
         home: &home,
         hosts: &[Host::Codex, Host::Cursor],
-        pin: &root.join(".plugin-pin"),
+        pin: &pin,
         plugin_root: Some(Path::new(&plugin_root)),
         python: Some(&python),
-        observed_at: 1_788_782_400_000,
+        observed_at: now_ms(),
     };
-    let report = import_native(&mut store, &request);
+    let report = import_native(&mut store, &request_now());
     println!("{}", serde_json::to_string(&report).unwrap());
     assert!(report.complete(), "{report:?}");
     for host in &report.hosts {
@@ -231,22 +242,128 @@ fn conformance_native_import() {
             );
         }
     }
-    let again = import_native(&mut store, &request);
-    assert!(again.complete());
-    assert!(
-        again
+    // Every scan reads every session again through the pinned producer, with
+    // no cutoff: a repeated scan reports complete coverage and adds nothing,
+    // since records dedupe by UUID.
+    let host_of = |report: &xt_ingest::native::ImportReport, host: Host| {
+        report
             .hosts
             .iter()
-            .flat_map(|h| &h.sessions)
-            .all(|s| matches!(
-                s.outcome,
-                SessionOutcome::Imported {
-                    records_new: 0,
-                    records_enriched: 0,
-                    ..
-                }
-            ))
+            .find(|candidate| candidate.host == host)
+            .unwrap()
+            .clone()
+    };
+    let nothing_new = |host: &xt_ingest::native::HostReport| {
+        host.status == HostStatus::Complete
+            && host.sessions.iter().all(|session| {
+                session.outcome
+                    == SessionOutcome::Imported {
+                        records_new: 0,
+                        records_enriched: 0,
+                    }
+            })
+    };
+    let again = import_native(&mut store, &request_now());
+    assert!(again.complete(), "{again:?}");
+    for (host, first) in again.hosts.iter().zip(&report.hosts) {
+        assert!(nothing_new(host), "{host:?}");
+        assert_eq!(host.sessions.len(), first.sessions.len());
+        let detail = host.detail.as_deref().unwrap();
+        assert!(
+            detail.contains("pinned producer") && !detail.contains("since"),
+            "{detail}"
+        );
+    }
+    // A Codex session restored into the tree with an old clock is read like
+    // any other: the whole host is read on every scan.
+    let rollout = home.join(".codex/sessions/2026/09/07");
+    let original = fs::read_dir(&rollout)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
+        .unwrap();
+    let restored = rollout.join(
+        original
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .replace("000000000181", "000000000191"),
     );
+    fs::write(
+        &restored,
+        fs::read_to_string(&original)
+            .unwrap()
+            .replace("000000000181", "000000000191"),
+    )
+    .unwrap();
+    let old_clock =
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+    let set_clock = |path: &Path, clock: std::time::SystemTime| {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(clock))
+            .unwrap();
+    };
+    set_clock(&restored, old_clock);
+    let codex = host_of(&import_native(&mut store, &request_now()), Host::Codex);
+    assert_eq!(codex.status, HostStatus::Complete, "{codex:?}");
+    assert_eq!(codex.sessions.len(), 2, "{codex:?}");
+    let restored_session = codex
+        .sessions
+        .iter()
+        .find(|session| {
+            session.native_session_id.as_deref() == Some("00000000-0000-4000-8000-000000000191")
+        })
+        .unwrap();
+    assert!(
+        matches!(restored_session.outcome, SessionOutcome::Imported { records_new, .. } if records_new > 0),
+        "the restored session is read and indexed: {codex:?}"
+    );
+    fs::remove_file(&restored).unwrap();
+    // The original given an old clock, then rewritten in place with the same
+    // bytes and that clock put back (a synchronization tool's replacement):
+    // read again each time, nothing new either time.
+    set_clock(&original, old_clock);
+    let aged = host_of(&import_native(&mut store, &request_now()), Host::Codex);
+    assert!(nothing_new(&aged), "{aged:?}");
+    assert_eq!(aged.sessions.len(), 1, "{aged:?}");
+    let bytes = fs::read(&original).unwrap();
+    fs::write(&original, &bytes).unwrap();
+    set_clock(&original, old_clock);
+    let rewritten = host_of(&import_native(&mut store, &request_now()), Host::Codex);
+    assert!(nothing_new(&rewritten), "{rewritten:?}");
+    assert_eq!(rewritten.sessions.len(), 1, "{rewritten:?}");
+    // A store-backed Cursor session's `meta.json` rewritten in place with its
+    // clock put back, and a hook state pin appearing beside the session: each
+    // is read through the same whole scan, nothing new.
+    let chat = home.join(".cursor/chats/19ee0000fixture0/00000000-0000-4000-8000-000000000183");
+    let meta = chat.join("meta.json");
+    let meta_bytes = fs::read(&meta).unwrap();
+    let meta_clock = fs::metadata(&meta).unwrap().modified().unwrap();
+    fs::write(&meta, &meta_bytes).unwrap();
+    set_clock(&meta, meta_clock);
+    let sidecar = host_of(&import_native(&mut store, &request_now()), Host::Cursor);
+    assert!(nothing_new(&sidecar), "{sidecar:?}");
+    assert!(
+        sidecar.sessions.iter().any(|session| {
+            session.native_session_id.as_deref() == Some("00000000-0000-4000-8000-000000000183")
+        }),
+        "{sidecar:?}"
+    );
+    let pins = home.join(".config/memhub-plugin/cursorflush");
+    fs::create_dir_all(&pins).unwrap();
+    fs::write(
+        pins.join("00000000-0000-4000-8000-000000000183.json"),
+        b"{}",
+    )
+    .unwrap();
+    let pinned = host_of(&import_native(&mut store, &request_now()), Host::Cursor);
+    assert!(nothing_new(&pinned), "{pinned:?}");
+    assert_eq!(pinned.sessions.len(), sidecar.sessions.len());
+    fs::remove_dir_all(home.join(".config")).unwrap();
     // A relative spelling of the same home reaches the readers anchored: they
     // change into the home and receive it as HOME, so a relative value would
     // resolve beneath itself and report a complete, empty import.
@@ -264,7 +381,7 @@ fn conformance_native_import() {
         &mut store,
         &ImportRequest {
             home: Path::new(&relative),
-            ..request
+            ..request_now()
         },
     );
     assert!(relative_run.complete(), "{relative_run:?}");

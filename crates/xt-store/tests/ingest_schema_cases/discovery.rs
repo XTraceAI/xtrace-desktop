@@ -191,6 +191,7 @@ fn supplemental_schema_constraints_and_record_counts_survive_replay() {
         "hosts",
         "settings",
         "source_cursors",
+        "native_checkpoints",
         "pull_requests",
         "pr_links",
     ] {

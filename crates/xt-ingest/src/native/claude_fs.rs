@@ -7,14 +7,16 @@
 //! batch at a time, so a large transcript is never held in memory as a whole.
 //! Files are only ever read.
 
+use super::checkpoint::{self, FileIdentity, ResumeBasis, TailWindow};
 use super::readers_cli::ReaderDiagnostic;
 use super::stream::{SessionHeader, expected_conversation_id};
-use super::{SessionResult, SessionWriter};
+use super::{ScanMode, SessionOutcome, SessionResult, SessionWriter};
 use crate::canonical::{Parsed, ParsedRecord, SourceContext, parse_with_context};
 use crate::writer::MAX_BATCH_RECORDS;
+use sha2::Digest;
 use std::{
     fs,
-    io::{BufRead, BufReader, Read, Seek},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
@@ -198,6 +200,15 @@ fn context(session: &str) -> SourceContext {
     }
 }
 
+/// The surface the index holds for a session, persisted with its rows.
+fn stored_surface(store: &Store, session: &str) -> Option<String> {
+    store
+        .session(session)
+        .ok()
+        .flatten()
+        .and_then(|stored| stored.meta.surface)
+}
+
 /// A record-derived label; a blank value is no label. The writer rejects a
 /// record whose identity label is blank, so it must never reach the
 /// discovered identity first, where a fill-once value would outlive the skip.
@@ -227,15 +238,18 @@ fn header(file: &ClaudeFile, first: &[ParsedRecord]) -> SessionHeader {
 
 /// The surface the whole file agrees on, settled before any row is written:
 /// the first non-blank surface a record names, which every later record must
-/// repeat. One streaming pass, nothing retained; a line the parser rejects
-/// ends the pass early, and the import pass reports it precisely.
+/// repeat. `settled` is the surface the bytes before the snapshot already
+/// named, when the snapshot holds only the bytes behind a checkpoint. One
+/// streaming pass, nothing retained; a line the parser rejects ends the pass
+/// early, and the import pass reports it precisely.
 fn file_surface(
     snapshot: &mut fs::File,
     context: &SourceContext,
+    settled: Option<String>,
 ) -> std::io::Result<Result<Option<String>, (usize, &'static str)>> {
     snapshot.rewind()?;
     let mut reader = BufReader::new(snapshot);
-    let mut surface: Option<String> = None;
+    let mut surface = settled;
     let mut line_number = 0usize;
     let mut buffer = Vec::new();
     loop {
@@ -297,24 +311,96 @@ fn file_surface(
 }
 
 /// Import one file as a stream of complete lines. The file name identifies
-/// the session, so its discovered identity is registered before any line is
-/// parsed. The surface is settled over the whole file before any row is
-/// written, so a label committed with the first batch is never contradicted
-/// by a later record; each batch then fills in whichever of the surface, cwd
-/// and branch is still unknown, and those labels persist only with a
-/// committed batch. Batches commit as they fill, and a zero-position source
-/// locator is recorded after the last one, only for
-/// a file with no rejected or dropped record. A trailing partial line is left
-/// unconsumed. A malformed or non-UTF-8 line stops the file with the
-/// committed count named and without advancing the cursor; the parent
-/// session's earlier batches stay.
+/// the session, so its discovered identity is registered before anything is
+/// written. In `Resume` mode the file's checkpoint is proven first (same
+/// inode, position still held, trailing bytes unchanged): a proven file is
+/// read only behind its position, and an unchanged one touches the index not
+/// at all; a replaced, truncated or rewritten file is read whole again. The
+/// surface is settled over the bytes to be read before any row is written;
+/// each batch fills in whichever labels are still unknown, and those labels
+/// persist only with a committed batch. Batches commit as they fill, each
+/// carrying the checkpoint through its last complete line, which the store
+/// records only if every record of the batch is stored; a scan that dropped
+/// or rejected any record advances no checkpoint, and a zero-position source
+/// locator is recorded after the last batch only for a file with no rejected
+/// or dropped record. A trailing partial line is left unconsumed. A malformed
+/// or non-UTF-8 line stops the file with the committed count named; the
+/// checkpoints of earlier batches stay.
 pub fn import_file(
     store: &mut Store,
     file: &ClaudeFile,
     observed_at: i64,
+    mode: ScanMode,
 ) -> std::io::Result<SessionResult> {
-    // The identity is registered before the open, so a transcript that
-    // vanished or became unreadable since enumeration is still a known session.
+    let key = checkpoint::file_key(&file.path);
+    let context = context(&file.session_id);
+    let known = match mode {
+        ScanMode::Resume => match store.native_checkpoint(SessionSource::Transcript, &key) {
+            Ok(known) => known,
+            Err(error) => {
+                return Ok(skipped(
+                    file,
+                    format!("checkpoint could not be read: {error}"),
+                ));
+            }
+        },
+        ScanMode::Replay => None,
+    };
+    let opened = open_source(&file.path, &file.metadata).and_then(|(mut source, identity)| {
+        let resume = checkpoint::resume_point(known.as_ref(), &mut source, &identity)?;
+        Ok((source, identity, resume))
+    });
+    let (mut source, identity, resume) = match opened {
+        Ok(opened) => opened,
+        Err(error) => {
+            // The file name still identifies the session: a transcript that
+            // vanished or became unreadable since enumeration is a known session
+            // whose read failure the caller diagnoses.
+            if let Err(skipped) = SessionWriter::begin(
+                store,
+                Host::Claude,
+                SessionSource::Transcript,
+                &header(file, &[]),
+                observed_at,
+            ) {
+                return Ok(*skipped);
+            }
+            return Err(error);
+        }
+    };
+    if resume.basis == ResumeBasis::Unchanged {
+        // Proven unchanged by digesting the whole prefix (its change time had
+        // moved): the checkpoint takes the current identity, so the next
+        // proof is the cheap one again instead of another full digest.
+        if resume.refresh
+            && let Err(error) = store.record_native_checkpoint(&checkpoint::file_checkpoint(
+                &key,
+                &identity,
+                resume.start,
+                &resume.prefix,
+                &TailWindow::seeded(resume.tail.clone()),
+                resume.lines,
+                observed_at,
+            ))
+        {
+            return Ok(skipped(
+                file,
+                format!("checkpoint could not be refreshed: {error}"),
+            ));
+        }
+        // The report names the surface the index already holds for the
+        // session, so an unchanged file reads the same as when it was imported.
+        return Ok(SessionResult {
+            native_session_id: Some(file.session_id.clone()),
+            conversation_id: Some(file.session_id.clone()),
+            source_surface: stored_surface(store, &file.session_id),
+            path: Some(file.path.to_string_lossy().into_owned()),
+            outcome: SessionOutcome::Imported {
+                records_new: 0,
+                records_enriched: 0,
+            },
+        });
+    }
     let mut writer = match SessionWriter::begin(
         store,
         Host::Claude,
@@ -325,26 +411,41 @@ pub fn import_file(
         Ok(started) => started,
         Err(skipped) => return Ok(*skipped),
     };
-    let context = context(&file.session_id);
-    let stop = |writer: &SessionWriter, line: usize, reason: &str| {
+    // For a session the index knows, the surface is settled already: the
+    // index holds the one its records named, persisted with its rows. The
+    // report names it from the start, whether the file is read behind its
+    // checkpoint or whole again (replaced, truncated, rewritten, replayed),
+    // and every record read must repeat it, as it would have to in the first
+    // read of a file.
+    let settled = stored_surface(store, &file.session_id);
+    if let Some(surface) = &settled {
+        writer.resume_surface(surface.clone());
+    }
+    let stop = |writer: &SessionWriter, line: u64, reason: &str| {
         writer.abandon(format!(
             "{reason} (stream line {line}); {} earlier batches stay committed",
             writer.batches
         ))
     };
-    // The whole file must agree on its surface before the first batch can
-    // commit that label to the canonical row and the fill-once discovered
+    // Only the bytes behind the resume point are read, into one bounded
+    // anonymous snapshot shared by validation and import.
+    source.seek(SeekFrom::Start(resume.start))?;
+    let mut snapshot = copy_snapshot(source, identity.len - resume.start)?;
+    // The bytes to be read must agree on their surface before the first batch
+    // can commit that label to the canonical row and the fill-once discovered
     // identity; the check stays per line below in case the file grows.
-    let mut snapshot = snapshot_source(&file.path, &file.metadata)?;
-    let mut surface = match file_surface(&mut snapshot, &context)? {
+    let mut surface = match file_surface(&mut snapshot, &context, settled)? {
         Ok(surface) => surface,
-        Err((line, reason)) => return Ok(stop(&writer, line, reason)),
+        Err((line, reason)) => return Ok(stop(&writer, resume.lines + line as u64, reason)),
     };
     snapshot.rewind()?;
     let mut reader = BufReader::new(snapshot);
     let mut batch: Vec<ParsedRecord> = Vec::new();
     let mut dropped = 0;
-    let mut line_number = 0usize;
+    let mut lines = resume.lines;
+    let mut consumed: u64 = 0;
+    let mut window = TailWindow::seeded(resume.tail);
+    let mut prefix = resume.prefix;
     let mut buffer = Vec::new();
     loop {
         buffer.clear();
@@ -352,60 +453,77 @@ pub fn import_file(
         if read == 0 || !buffer.ends_with(b"\n") {
             break; // end of file, or a partial trailing line that is not consumed
         }
-        line_number += 1;
+        lines += 1;
         let Ok(text) = std::str::from_utf8(&buffer) else {
-            return Ok(stop(&writer, line_number, "transcript is not UTF-8"));
+            return Ok(stop(&writer, lines, "transcript is not UTF-8"));
         };
-        if text.trim().is_empty() {
-            continue;
-        }
-        match parse_with_context(text, &context) {
-            Ok(Parsed::Record(record)) => {
-                // The file name is this session's identity; a record that
-                // names another session stops the file before its metadata
-                // could enrich the registered identity.
-                if record
-                    .native
-                    .session_id
-                    .as_deref()
-                    .is_some_and(|id| id != file.session_id)
-                {
+        if !text.trim().is_empty() {
+            match parse_with_context(text, &context) {
+                Ok(Parsed::Record(record)) => {
+                    // The file name is this session's identity; a record that
+                    // names another session stops the file before its metadata
+                    // could enrich the registered identity.
+                    if record
+                        .native
+                        .session_id
+                        .as_deref()
+                        .is_some_and(|id| id != file.session_id)
+                    {
+                        return Ok(stop(
+                            &writer,
+                            lines,
+                            "record identity disagrees with the file name",
+                        ));
+                    }
+                    if let Some(named) = label(record.canonical.source_surface.as_ref()) {
+                        match &surface {
+                            Some(known) if *known != named => {
+                                return Ok(stop(
+                                    &writer,
+                                    lines,
+                                    "record surface disagrees with the file's surface",
+                                ));
+                            }
+                            Some(_) => {}
+                            None => surface = Some(named),
+                        }
+                    }
+                    batch.push(*record);
+                }
+                Ok(Parsed::Dropped(_)) => dropped += 1,
+                Ok(Parsed::Inert | Parsed::StructuralEvent(_) | Parsed::PrLink(_)) => {}
+                Err(_) => {
                     return Ok(stop(
                         &writer,
-                        line_number,
-                        "record identity disagrees with the file name",
+                        lines,
+                        "canonical record does not match the shared stream contract",
                     ));
                 }
-                if let Some(named) = label(record.canonical.source_surface.as_ref()) {
-                    match &surface {
-                        Some(known) if *known != named => {
-                            return Ok(stop(
-                                &writer,
-                                line_number,
-                                "record surface disagrees with the file's surface",
-                            ));
-                        }
-                        Some(_) => {}
-                        None => surface = Some(named),
-                    }
-                }
-                batch.push(*record);
-            }
-            Ok(Parsed::Dropped(_)) => dropped += 1,
-            Ok(Parsed::Inert | Parsed::StructuralEvent(_) | Parsed::PrLink(_)) => {}
-            Err(_) => {
-                return Ok(stop(
-                    &writer,
-                    line_number,
-                    "canonical record does not match the shared stream contract",
-                ));
             }
         }
+        // The line is consumed only once it parsed: progress never covers a
+        // line the scan could not read.
+        consumed += read as u64;
+        window.push(&buffer);
+        prefix.update(&buffer);
         if batch.len() == MAX_BATCH_RECORDS {
             if !writer.labels_complete() {
                 writer.enrich(&header(file, &batch));
             }
-            if let Err(skipped) = writer.write(store, &batch, observed_at) {
+            let progress = (dropped == 0 && writer.gapless()).then(|| {
+                checkpoint::file_checkpoint(
+                    &key,
+                    &identity,
+                    resume.start + consumed,
+                    &prefix,
+                    &window,
+                    lines,
+                    observed_at,
+                )
+            });
+            if let Err(skipped) =
+                writer.write_with_checkpoint(store, &batch, observed_at, progress.as_ref())
+            {
                 return Ok(*skipped);
             }
             batch.clear();
@@ -415,19 +533,70 @@ pub fn import_file(
     if !writer.labels_complete() {
         writer.enrich(&header(file, &batch));
     }
+    let position = resume.start + consumed;
+    let progress = (dropped == 0 && writer.gapless()).then(|| {
+        checkpoint::file_checkpoint(
+            &key,
+            &identity,
+            position,
+            &prefix,
+            &window,
+            lines,
+            observed_at,
+        )
+    });
     // A file without a storable record (empty, or inert lines only) keeps its
     // discovered identity and nothing else: an empty batch commits no row,
     // and no cursor is recorded without a committed batch.
-    if let Err(skipped) = writer.write(store, &batch, observed_at) {
+    let carried = !batch.is_empty();
+    if let Err(skipped) =
+        writer.write_with_checkpoint(store, &batch, observed_at, progress.as_ref())
+    {
         return Ok(*skipped);
     }
+    let gapless = dropped == 0 && writer.gapless();
     let cursor = SourceCursor {
         source: SessionSource::Transcript,
-        cursor_key: format!("claude:{}", file.path.display()),
+        cursor_key: key.clone(),
         position: 0,
         updated_at: observed_at,
     };
-    Ok(writer.complete(store, Some(&cursor)))
+    let result = writer.complete(store, Some(&cursor));
+    if !gapless || !matches!(result.outcome, SessionOutcome::Imported { .. }) {
+        return Ok(result);
+    }
+    // Progress no batch carried is recorded on its own, after the rows: the
+    // last complete lines were inert, or the scan consumed nothing under a
+    // new generation, whose stale checkpoint is then forgotten.
+    let recorded = if position == 0 {
+        store.clear_native_checkpoint(SessionSource::Transcript, &key)
+    } else if carried {
+        Ok(())
+    } else {
+        match &progress {
+            Some(progress) => store.record_native_checkpoint(progress),
+            None => Ok(()),
+        }
+    };
+    Ok(match recorded {
+        Ok(()) => result,
+        Err(error) => SessionResult {
+            outcome: SessionOutcome::Skipped {
+                reason: format!("checkpoint could not be recorded after the rows: {error}"),
+            },
+            ..result
+        },
+    })
+}
+
+fn skipped(file: &ClaudeFile, reason: String) -> SessionResult {
+    SessionResult {
+        native_session_id: Some(file.session_id.clone()),
+        conversation_id: Some(file.session_id.clone()),
+        source_surface: None,
+        path: Some(file.path.to_string_lossy().into_owned()),
+        outcome: SessionOutcome::Skipped { reason },
+    }
 }
 
 fn entry_name<'a>(path: &'a Path, diagnostics: &mut Vec<ReaderDiagnostic>) -> Option<&'a str> {
@@ -461,7 +630,16 @@ mod name_tests {
 
 /// One anonymous temporary file shared by validation and import. Later source
 /// appends are outside this scan; no named transcript copy remains on disk.
+#[cfg(test)]
 fn snapshot_source(path: &Path, expected: &fs::Metadata) -> std::io::Result<fs::File> {
+    let (source, identity) = open_source(path, expected)?;
+    copy_snapshot(source, identity.len)
+}
+
+/// Open the enumerated transcript without following aliases and confirm it is
+/// still the file that was enumerated; its identity fixes the length this scan
+/// may read, so later appends stay outside it.
+fn open_source(path: &Path, expected: &fs::Metadata) -> std::io::Result<(fs::File, FileIdentity)> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -481,8 +659,8 @@ fn snapshot_source(path: &Path, expected: &fs::Metadata) -> std::io::Result<fs::
             return Err(std::io::Error::other("source changed since discovery"));
         }
     }
-    let length = source.metadata()?.len();
-    copy_snapshot(source, length)
+    let identity = FileIdentity::of(&source.metadata()?);
+    Ok((source, identity))
 }
 
 fn copy_snapshot(source: impl Read, length: u64) -> std::io::Result<fs::File> {
@@ -521,7 +699,7 @@ mod snapshot_tests {
         fs::write(&source, original).unwrap();
         let mut snapshot = snapshot_source(&source, &fs::metadata(&source).unwrap()).unwrap();
         assert_eq!(
-            file_surface(&mut snapshot, &context("session"))
+            file_surface(&mut snapshot, &context("session"), None)
                 .unwrap()
                 .unwrap()
                 .as_deref(),
@@ -539,7 +717,7 @@ mod snapshot_tests {
         assert_eq!(imported_bytes, original);
         let mut next = snapshot_source(&source, &fs::metadata(&source).unwrap()).unwrap();
         assert!(
-            file_surface(&mut next, &context("session"))
+            file_surface(&mut next, &context("session"), None)
                 .unwrap()
                 .is_err()
         );

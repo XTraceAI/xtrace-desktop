@@ -153,6 +153,7 @@ fn every_late_failure_including_commit_rolls_back_before_retry() {
         "record_sources",
         "capture_record_coverage",
         "source_cursors",
+        "native_checkpoints",
         "commit",
     ] {
         let mut db = TempDb::empty().unwrap();
@@ -190,7 +191,15 @@ fn every_late_failure_including_commit_rolls_back_before_retry() {
         }];
         let (receipt, coverage) = receipt_case("target", "new");
         let next_cursor = cursor(SessionSource::Fixture, "tail", 20);
+        let checkpoint = xt_store::batch::NativeCheckpoint {
+            source: SessionSource::Transcript,
+            cursor_key: "claude:/synthetic/transcript.jsonl".into(),
+            generation: r#"{"kind":"synthetic"}"#.into(),
+            position: 20,
+            updated_at: 100,
+        };
         let mut batch = IngestBatch::new(&metadata, &records, true);
+        batch.checkpoint = Some(&checkpoint);
         batch.session_sources = &sources;
         batch.record_sources = &record_sources;
         batch.receipt = Some(SubmittedReceipt {
