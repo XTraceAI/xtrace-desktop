@@ -152,8 +152,9 @@ the existing writer.
   by what was imported below it),
   a session the initial scan could not import fully keeps that failure even if a
   later pass imported it (the source may have been replaced in between, and what the
-  failure left unread is then gone; the counts still add up), and a host stays
-  incomplete around any of these. After ready, the tailer is idle only once every
+  failure left unread is then gone; the counts still add up), a host the initial
+  scan could not scan at all stays incomplete even if a later pass completed, its
+  reason kept, and a host stays incomplete around any of these. After ready, the tailer is idle only once every
   change delivered to it, also one delivered while a reconciliation ran, has been
   taken off its queue and reconciled (the delivery count and the idle flag change
   under one lock). A root that appears during a pass, after its

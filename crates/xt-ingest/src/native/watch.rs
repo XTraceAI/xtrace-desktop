@@ -330,7 +330,10 @@ impl Drop for Tailer {
 /// the earlier pass could not import fully keeps that failure even if the
 /// later pass imported it, since the source may have been replaced in
 /// between and what the failure left unread is then gone (the counts still
-/// add up); and a host with a retained session that was not
+/// add up); a host the earlier pass could not scan at all (its reader or
+/// runtime failed, its pin mismatched, its root was unreadable) stays
+/// incomplete even if the later pass completed, since what the failed pass
+/// missed may be gone; and a host with a retained session that was not
 /// imported, or a retained diagnostic, stays incomplete, as the earlier pass
 /// reported it, so the report never reads complete around a gap. The report
 /// then reads the same whether or not the
@@ -427,10 +430,23 @@ fn carry_counts(earlier: &HostReport, mut later: HostReport) -> HostReport {
             later.diagnostics.push(diagnostic.clone());
         }
     }
+    let failed_earlier = matches!(
+        earlier.status,
+        HostStatus::Incomplete
+            | HostStatus::ReaderFailed
+            | HostStatus::MissingRuntime
+            | HostStatus::PinMismatch
+    );
     if later.status == HostStatus::Complete
-        && (!all_imported(&later.sessions) || !later.diagnostics.is_empty())
+        && (failed_earlier || !all_imported(&later.sessions) || !later.diagnostics.is_empty())
     {
         later.status = HostStatus::Incomplete;
+        if failed_earlier && later.detail.is_none() {
+            later.detail = earlier
+                .detail
+                .as_ref()
+                .map(|detail| format!("initial scan: {detail}"));
+        }
     }
     later
 }

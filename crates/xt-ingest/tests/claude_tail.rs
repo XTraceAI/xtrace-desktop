@@ -3,7 +3,8 @@
 //! reach the index before ready with no later event (a session the initial
 //! scan indexed and a later pass no longer saw stays in the readiness
 //! report, as does a diagnostic it raised, and each keeps the report
-//! incomplete; a failure the replacement of its source cannot clear stands),
+//! incomplete; a failure the replacement of its source cannot clear stands, as
+//! does a host-level failure of the initial scan),
 //! live appends (the worker is idle only once every delivered change is
 //! reconciled), completed
 //! partial lines, new files and coalesced directory events converge within
@@ -603,6 +604,59 @@ fn claude_tail_is_idle_only_once_a_change_delivered_during_a_reconciliation_is_i
     let store = home.store();
     assert_eq!(records(&store, A), 3);
     assert_eq!(records(&store, B), 3);
+    tailer.stop();
+}
+
+#[test]
+fn claude_tail_ready_keeps_a_host_level_failure_a_later_pass_cannot_clear() {
+    // The projects root is a file when the tailer starts: the initial scan
+    // cannot read the host at all (no session, no diagnostic, a status).
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    fs::remove_dir_all(&home.project).unwrap();
+    let projects = home.root.join(".claude/projects");
+    fs::remove_dir_all(&projects).unwrap();
+    fs::write(&projects, b"not a directory").unwrap();
+    // Once the initial scan is done the root becomes a real directory with a
+    // transcript, before the startup reconciliation that its change queues.
+    let probe: xt_ingest::native::watch::Probe = {
+        let projects = projects.clone();
+        let project = home.project.clone();
+        let file = home.file(A);
+        Arc::new(move |point: ProbePoint<'_>| {
+            if matches!(point, ProbePoint::InitialScanDone) {
+                fs::remove_file(&projects).unwrap();
+                fs::create_dir_all(&project).unwrap();
+                fs::write(&file, body(A, 0..2)).unwrap();
+            }
+        })
+    };
+    let (tailer, events) = home.start(Some(probe));
+    let ready = tailer.wait_ready(WAIT).expect("ready");
+    assert_eq!(ready.freshness, Freshness::Live, "{ready:?}");
+    assert!(
+        events.reconciled().iter().any(|event| matches!(
+            event,
+            TailEvent::Reconciled {
+                trigger: xt_ingest::native::watch::Trigger::Startup,
+                ..
+            }
+        )),
+        "the new root was reconciled before ready: {ready:?}"
+    );
+    assert_eq!(records(&home.store(), A), 2, "the transcript is indexed");
+    // The host the initial scan could not read stays incomplete in the
+    // readiness report, its reason kept, although the later pass completed.
+    let claude = &ready.report.hosts[0];
+    assert_eq!(claude.status, HostStatus::Incomplete, "{ready:?}");
+    assert!(!ready.report.complete());
+    assert!(
+        claude
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("not a directory")),
+        "{ready:?}"
+    );
     tailer.stop();
 }
 
