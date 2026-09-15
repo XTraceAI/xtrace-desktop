@@ -90,11 +90,20 @@ pub enum Trigger {
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum TailEvent {
     Ready(Readiness),
+    /// Carries the freshness as of this reconciliation: a root that could not
+    /// be watched when it appeared degrades it after readiness.
     Reconciled {
         trigger: Trigger,
+        #[serde(flatten)]
+        freshness: Freshness,
         report: ImportReport,
     },
-    Stopped,
+    /// The final freshness, so a consumer that decides on it need not have
+    /// tracked every reconciliation.
+    Stopped {
+        #[serde(flatten)]
+        freshness: Freshness,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -440,12 +449,18 @@ impl Worker {
             state.stopped = true;
             state.idle = true;
         });
-        (self.sink)(TailEvent::Stopped);
+        (self.sink)(TailEvent::Stopped {
+            freshness: self.freshness(),
+        });
     }
 
     fn finished(&mut self, trigger: Trigger, report: ImportReport) {
         self.shared.update(|state| state.reconciles += 1);
-        (self.sink)(TailEvent::Reconciled { trigger, report });
+        (self.sink)(TailEvent::Reconciled {
+            trigger,
+            freshness: self.freshness(),
+            report,
+        });
     }
 
     /// Reconcile the given hosts. A root that appeared since the last watch

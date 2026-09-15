@@ -121,7 +121,9 @@ the existing writer.
   input is read.
 - `xtrace-core watch-native --db PATH --home DIR [--once | --for SECONDS]` runs the
   tailer headlessly and prints one JSON line per event (`ready`, `reconciled`,
-  `stopped`); it exits 0 only when live and every scan was complete. App-wide
+  `stopped`), each carrying the freshness as of that moment; it exits 0 only when
+  the final freshness is live and every scan was complete, so a root that could not
+  be watched after readiness still fails the run. App-wide
   orchestration (start order, UI events, scheduling) belongs to ING-13.
 - Scope kept out: scheduling frameworks, plugin delivery, cloud synchronization,
   full-content storage, automatic historical-identity repair and UI. The importer's

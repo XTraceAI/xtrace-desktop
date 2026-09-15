@@ -256,10 +256,11 @@ fn claude_tail_watches_before_scanning_and_reconciles_changes_made_during_the_sc
             event,
             TailEvent::Reconciled {
                 trigger: xt_ingest::native::watch::Trigger::Startup,
+                freshness: Freshness::Live,
                 ..
             }
         )),
-        "the startup queue was reconciled: {:?}",
+        "the startup queue was reconciled while live: {:?}",
         events.reconciled().len()
     );
     assert!(ready.report.complete(), "{ready:?}");
@@ -637,12 +638,13 @@ fn claude_tail_reports_a_watcher_failure_as_degraded_never_silent_ready() {
     assert!(status.last_error.is_some());
     tailer.stop();
     assert!(
-        events
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|event| matches!(event, TailEvent::Stopped))
+        events.0.lock().unwrap().iter().any(|event| matches!(
+            event,
+            TailEvent::Stopped {
+                freshness: Freshness::Degraded { .. }
+            }
+        )),
+        "the final event carries the degraded freshness"
     );
 }
 
@@ -793,6 +795,8 @@ fn claude_tail_reconciles_changes_received_before_a_stop_request() {
     );
     assert!(matches!(
         events.0.lock().unwrap().last(),
-        Some(TailEvent::Stopped)
+        Some(TailEvent::Stopped {
+            freshness: Freshness::Live
+        })
     ));
 }

@@ -222,8 +222,8 @@ fn import_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static
 /// before the initial scan, changes queued meanwhile are reconciled before
 /// `ready`, then each burst of changes is reconciled live. Prints one JSON
 /// line per event. `--once` exits after `ready`; `--for` exits after the given
-/// seconds; otherwise it runs until interrupted. Exits 0 when live and every
-/// scan was complete, 2 otherwise.
+/// seconds; otherwise it runs until interrupted. Exits 0 when the final
+/// freshness is live and every scan was complete, 2 otherwise.
 fn watch_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static str> {
     use std::sync::{
         Arc, Mutex,
@@ -244,6 +244,8 @@ fn watch_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static 
             Arc::clone(&output),
         );
         Box::new(move |event: TailEvent| {
+            // Freshness is taken from every event, so a root that could not
+            // be watched after readiness still fails the run.
             match &event {
                 TailEvent::Ready(readiness) => {
                     live.store(readiness.freshness == Freshness::Live, Ordering::SeqCst);
@@ -251,12 +253,17 @@ fn watch_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static 
                         complete.store(false, Ordering::SeqCst);
                     }
                 }
-                TailEvent::Reconciled { report, .. } => {
+                TailEvent::Reconciled {
+                    freshness, report, ..
+                } => {
+                    live.store(*freshness == Freshness::Live, Ordering::SeqCst);
                     if !report.complete() {
                         complete.store(false, Ordering::SeqCst);
                     }
                 }
-                TailEvent::Stopped => {}
+                TailEvent::Stopped { freshness } => {
+                    live.store(*freshness == Freshness::Live, Ordering::SeqCst);
+                }
             }
             if let Ok(text) = serde_json::to_string(&event)
                 && let Ok(mut out) = output.lock()

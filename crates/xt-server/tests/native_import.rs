@@ -245,6 +245,7 @@ fn watch_native_once_reports_ready_and_resumes_on_the_next_run() {
         2
     );
     assert_eq!(lines.last().unwrap()["event"], "stopped");
+    assert_eq!(lines.last().unwrap()["freshness"], "live");
     // Appended offline; the next run reads only the new record.
     fs::OpenOptions::new()
         .append(true)
