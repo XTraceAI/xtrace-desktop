@@ -35,7 +35,7 @@ const ready: NativeIndexStatus = {
       sessions_partial: 0,
       sessions_skipped: 0,
       records_new: 6,
-      records_enriched: 0,
+      records_enriched: 1,
       diagnostics: 0,
     },
     {
@@ -86,11 +86,13 @@ it('shows the typed native index status as reported and refreshes it on its even
   expect(within(card).getByText('/opt/homebrew/bin/python3')).toBeTruthy();
   expect(within(card).getByText('Bundled memhub 0.55.0 at d7c94227cc9b')).toBeTruthy();
   expect(
-    within(card).getByText('complete · 2 imported, 0 partial, 0 skipped, 6 new records'),
+    within(card).getByText(
+      'complete · 2 imported, 0 partial, 0 skipped, 6 new records, 1 enriched',
+    ),
   ).toBeTruthy();
   expect(
     within(card).getByText(
-      'missing_runtime · 0 imported, 0 partial, 0 skipped, 0 new records · python runtime unavailable: python3 on PATH: python3 must be 3.10 or newer',
+      'missing_runtime · 0 imported, 0 partial, 0 skipped, 0 new records, 0 enriched · python runtime unavailable: python3 on PATH: python3 must be 3.10 or newer',
     ),
   ).toBeTruthy();
   // The next status arrives through the event: the query is invalidated and refetched.

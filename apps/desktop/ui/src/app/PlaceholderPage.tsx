@@ -123,7 +123,7 @@ const freshnessText = (status: NativeIndexStatus) => {
 const hostText = (host: NativeIndexStatus['hosts'][number]) => {
   const parts = [
     host.state,
-    `${host.sessions_imported} imported, ${host.sessions_partial} partial, ${host.sessions_skipped} skipped, ${host.records_new} new records`,
+    `${host.sessions_imported} imported, ${host.sessions_partial} partial, ${host.sessions_skipped} skipped, ${host.records_new} new records, ${host.records_enriched} enriched`,
   ];
   if (host.diagnostics > 0)
     parts.push(`${host.diagnostics} ${host.diagnostics === 1 ? 'diagnostic' : 'diagnostics'}`);
