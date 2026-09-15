@@ -34,6 +34,10 @@ pub struct IngestBatch<'a> {
     /// A discovered identity that fills under this batch's transaction, so a
     /// rejected batch leaves no label behind.
     pub discovery: Option<&'a crate::ingest::DiscoveredSession>,
+    /// Resume progress that commits with this batch's rows and never without
+    /// them: the position through the input these rows came from, bound to
+    /// the source generation it was read under.
+    pub checkpoint: Option<&'a NativeCheckpoint>,
 }
 
 impl<'a> IngestBatch<'a> {
@@ -55,6 +59,7 @@ impl<'a> IngestBatch<'a> {
             evidence_policy: EvidencePolicy::RequireAll,
             cursor: None,
             discovery: None,
+            checkpoint: None,
         }
     }
 }
@@ -84,6 +89,20 @@ pub enum EvidencePolicy {
 /// Incremental positions are monotonically nondecreasing within a source/key.
 /// Initial native imports retain locators at position zero; generation-aware
 /// incremental positions belong to the eventual incremental consumer.
+/// A native resume checkpoint: how far a source was consumed, bound to the
+/// generation of the source it was read from. `generation` is a JSON object
+/// the importer defines (a file identity and prefix digest, or a scan
+/// instant); the store keeps it opaque. Unlike a plugin cursor, a checkpoint
+/// may move backwards: a replaced or truncated source starts a new generation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeCheckpoint {
+    pub source: SessionSource,
+    pub cursor_key: String,
+    pub generation: String,
+    pub position: i64,
+    pub updated_at: i64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceCursor {
     pub source: SessionSource,
@@ -329,6 +348,16 @@ impl Store {
         if let Some(cursor) = batch.cursor {
             advance_cursor(&transaction, cursor)?;
         }
+        // Progress advances only past input every record of which was stored;
+        // a batch with a rejected or dropped record keeps the earlier checkpoint.
+        if let Some(checkpoint) = batch.checkpoint
+            && outcome
+                .records
+                .iter()
+                .all(|row| row.disposition.is_accepted())
+        {
+            upsert_native_checkpoint(&transaction, checkpoint)?;
+        }
         transaction.commit()?;
         Ok(outcome)
     }
@@ -368,6 +397,73 @@ impl Store {
         )?;
         Ok(())
     }
+}
+
+impl Store {
+    /// The checkpoint recorded for a native source, if any.
+    pub fn native_checkpoint(
+        &self,
+        source: SessionSource,
+        key: &str,
+    ) -> Result<Option<NativeCheckpoint>> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT source,cursor_key,generation,position,updated_at FROM native_checkpoints
+                 WHERE source=?1 AND cursor_key=?2",
+                params![source, key],
+                |row| {
+                    Ok(NativeCheckpoint {
+                        source: row.get(0)?,
+                        cursor_key: row.get(1)?,
+                        generation: row.get(2)?,
+                        position: row.get(3)?,
+                        updated_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// Record a checkpoint on its own, after the rows it covers have committed
+    /// (a scan that consumed input without producing a new row, say).
+    pub fn record_native_checkpoint(&mut self, checkpoint: &NativeCheckpoint) -> Result<()> {
+        upsert_native_checkpoint(&self.connection, checkpoint)
+    }
+
+    /// Forget a checkpoint, so the next scan reads the source from the start.
+    pub fn clear_native_checkpoint(&mut self, source: SessionSource, key: &str) -> Result<()> {
+        self.connection.execute(
+            "DELETE FROM native_checkpoints WHERE source=?1 AND cursor_key=?2",
+            params![source, key],
+        )?;
+        Ok(())
+    }
+}
+
+fn upsert_native_checkpoint(connection: &Connection, checkpoint: &NativeCheckpoint) -> Result<()> {
+    if !matches!(
+        checkpoint.source,
+        SessionSource::Transcript | SessionSource::ReadersCli
+    ) {
+        return Err(Error::InvalidInput(
+            "native checkpoint requires a native source",
+        ));
+    }
+    connection.execute(
+        "INSERT INTO native_checkpoints(source,cursor_key,generation,position,updated_at)
+         VALUES (?1,?2,?3,?4,?5)
+         ON CONFLICT(source,cursor_key) DO UPDATE SET generation=excluded.generation,
+             position=excluded.position, updated_at=excluded.updated_at",
+        params![
+            checkpoint.source,
+            checkpoint.cursor_key,
+            checkpoint.generation,
+            checkpoint.position,
+            checkpoint.updated_at
+        ],
+    )?;
+    Ok(())
 }
 
 fn advance_cursor(connection: &Connection, cursor: &SourceCursor) -> Result<()> {

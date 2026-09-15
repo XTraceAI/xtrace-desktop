@@ -1,7 +1,7 @@
 //! The headless `import-native` command: a JSON report on stdout, exit 0 only
 //! when every requested host imported completely, 2 for an explicit gap.
 use serde_json::Value;
-use std::{fs, process::Command};
+use std::{fs, io::Write, process::Command};
 
 fn core() -> Command {
     Command::new(env!("CARGO_BIN_EXE_xtrace-core"))
@@ -193,5 +193,102 @@ fn native_reverse_symlinks_cannot_expose_the_index_as_source_history() {
         assert_eq!(output.status.code(), Some(1));
         assert_eq!(fs::read(&db).unwrap(), original);
         assert_eq!(fs::read_dir(&data).unwrap().count(), 1);
+    }
+}
+
+/// `watch-native --once`: the watcher registers, the initial scan runs, queued
+/// changes are reconciled, one `ready` line is printed, and the process exits
+/// by freshness and completeness. A second run resumes behind checkpoints.
+#[test]
+fn watch_native_once_reports_ready_and_resumes_on_the_next_run() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/-Users-synthetic");
+    fs::create_dir_all(&project).unwrap();
+    let session = "00000000-0000-4000-8000-00000000c1b0";
+    let record = |index: u32| {
+        format!(
+            "{{\"uuid\":\"44444444-4444-4444-8444-{index:012}\",\"type\":\"user\",\"sessionId\":\"{session}\",\"entrypoint\":\"cli\",\"timestamp\":\"2026-09-07T12:00:0{index}Z\",\"message\":{{\"role\":\"user\",\"content\":\"turn {index}\"}}}}\n"
+        )
+    };
+    fs::write(
+        project.join(format!("{session}.jsonl")),
+        record(1) + &record(2),
+    )
+    .unwrap();
+    let db = temp.path().join("index.sqlite");
+    let run = || {
+        core()
+            .args(["watch-native", "--db"])
+            .arg(&db)
+            .arg("--home")
+            .arg(&home)
+            .args(["--host", "claude", "--once"])
+            .output()
+            .unwrap()
+    };
+    let output = run();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let lines: Vec<Value> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(lines[0]["event"], "ready");
+    assert_eq!(lines[0]["freshness"], "live");
+    assert_eq!(lines[0]["report"]["hosts"][0]["status"], "complete");
+    assert_eq!(
+        lines[0]["report"]["hosts"][0]["sessions"][0]["records_new"],
+        2
+    );
+    assert_eq!(lines.last().unwrap()["event"], "stopped");
+    // Appended offline; the next run reads only the new record.
+    fs::OpenOptions::new()
+        .append(true)
+        .open(project.join(format!("{session}.jsonl")))
+        .unwrap()
+        .write_all(record(3).as_bytes())
+        .unwrap();
+    let output = run();
+    assert!(output.status.success());
+    let ready: Value = serde_json::from_str(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ready["report"]["hosts"][0]["sessions"][0]["records_new"], 1);
+    // `--replay` on the one-shot import rereads everything and adds nothing.
+    let output = core()
+        .args(["import-native", "--db"])
+        .arg(&db)
+        .arg("--home")
+        .arg(&home)
+        .args(["--host", "claude", "--replay"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["hosts"][0]["sessions"][0]["records_new"], 0);
+    // Usage errors stay explicit.
+    for args in [
+        vec![
+            "watch-native",
+            "--db",
+            "x",
+            "--home",
+            ".",
+            "--once",
+            "--once",
+        ],
+        vec!["watch-native", "--db", "x", "--home", ".", "--for", "soon"],
+        vec!["import-native", "--db", "x", "--home", ".", "--once"],
+    ] {
+        let output = core().args(&args).output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
     }
 }

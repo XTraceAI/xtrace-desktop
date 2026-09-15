@@ -15,8 +15,11 @@ with full-content archival available only through a saved opt-in.
 `xt-ingest::native` performs the initial import of native history: Claude JSONL
 is read directly, Codex and Cursor through the shared readers pinned by
 `.plugin-pin`, all as one header-plus-records stream into the same writer; see
-[native import](acceptance/native-import.md). Incremental scanning and watching
-are separate work.
+[native import](acceptance/native-import.md). `xt_ingest::native::checkpoint`
+defines generation-aware resume checkpoints (proven before any input is skipped,
+committed only with the rows they cover) and `xt_ingest::native::watch` tails the
+native roots with `notify`, reconciling changes queued during the initial scan
+before it reports ready; app-wide orchestration of the tailer is separate work.
 The native app exposes `app_info` and `db_counts`, but does not start the capture
 server automatically. Production metric calculation, product data queries,
 host watchers/backfill and the remaining subsystem behavior are separate work.

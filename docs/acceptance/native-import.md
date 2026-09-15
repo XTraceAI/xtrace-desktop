@@ -34,10 +34,15 @@ the existing writer.
   Reader headers initially register only identity; labels persist with a successful
   batch or successful completion of a header-only session.
 - Successful imports retain private source locators in the existing `source_cursors`
-  table with **position zero**, meaning full replay. The timestamp is only a last-seen
-  observation. There is no scan-order arbitration, byte-offset resume or mtime resume.
-  Empty scans update an existing locator but create no new one. Failed/partial scans
-  do not replace a locator. Reimports preserve indexed history when sources shrink.
+  table with **position zero**. The timestamp is only a last-seen observation; a
+  locator never authorizes skipping input. Empty scans update an existing locator
+  but create no new one. Failed/partial scans do not replace a locator. Reimports
+  preserve indexed history when sources shrink.
+- Resume is authorized only by a **checkpoint** in `native_checkpoints`, which binds a
+  position to the source generation it was read under (see below). A checkpoint
+  commits inside the transaction of the batch whose rows it covers, and only when
+  every record of that batch was stored; a batch with a rejected or UUID-less
+  record keeps the earlier checkpoint, so progress never passes unimported input.
 
 ## Source safety and scope
 
@@ -64,20 +69,63 @@ the existing writer.
   concurrently replacing ancestor directories. Directory-handle-relative traversal
   is not implemented. Source file bytes are never intentionally modified by import.
 
-File watching, generation-aware resume, scan scheduling, reader bundling and UI are
-subsequent work. An incremental consumer must validate source generation before
-skipping input; neither the current locator nor its timestamp establishes it.
+## Incremental scanning and watching
+
+- **Source generation contract.** A Claude transcript's generation is its device and
+  inode plus a SHA-256 digest of the last 4 KiB of bytes ending at the checkpoint
+  position (and the count of complete lines consumed, for reporting). A scan resumes
+  behind the position only when the same inode still holds at least that many bytes
+  and those trailing bytes digest to the recorded value. Another inode at the path is
+  a replacement, a shorter file a truncation, a differing digest an in-place rewrite:
+  each starts a new generation and the file is read from the beginning again. Records
+  dedupe by UUID, so a new generation costs a re-read, never a gap or a duplicate.
+  History is kept when a source shrinks. A partial trailing line is never consumed;
+  the checkpoint stops before it and the completed line is read next time.
+- A reader host's generation is the instant of its last scan that covered every
+  session (`scan:<host>:<home>`). The next scan passes that instant, less a 2 s margin
+  for coarse clocks, as the pinned producer's `--since`, so it re-reads only sessions
+  the producer saw modified since then. A scan with any gap (skipped or partial
+  session, diagnostic, producer failure) leaves the old generation in place, so the
+  next scan repeats its whole range. Per-session reader locators stay at zero.
+- **Migration.** An index written by the initial importer holds zero-position
+  locators and no checkpoints. The first resuming scan reads every source whole
+  (the locator proves nothing), adds no rows, and records checkpoints; the next scan
+  then proves them. `xtrace-core import-native --replay` rereads everything
+  regardless and still records checkpoints.
+- **Watching.** `xt_ingest::native::watch::Tailer` registers a recursive `notify`
+  watcher (FSEvents on macOS, inotify on Linux) on each existing host root before the
+  initial scan; an absent root is covered by a non-recursive watch on the home so its
+  creation is seen and it is watched once it exists. Changes queued during the scan
+  are coalesced (250 ms quiet period) and reconciled before `ready`, repeatedly until
+  the queue is quiet, so an append or new file written during the scan with no later
+  event is indexed before ready. Event kinds are never trusted: any path under a host
+  root, a directory-level or coalesced event, a rescan request or a watcher error
+  marks the host dirty, and reconciliation re-enumerates it; an unchanged Claude file
+  costs a stat and a 4 KiB read and touches the index not at all. Reader hosts
+  reconcile through the incremental producer scan. A watcher that cannot be created
+  or a root that cannot be watched leaves freshness `degraded` with the reason; the
+  tailer still scans and reports ready, never silently as live. Restarting resumes
+  from checkpoints: only appended input is read.
+- `xtrace-core watch-native --db PATH --home DIR [--once | --for SECONDS]` runs the
+  tailer headlessly and prints one JSON line per event (`ready`, `reconciled`,
+  `stopped`); it exits 0 only when live and every scan was complete. App-wide
+  orchestration (start order, UI events, scheduling) belongs to ING-13.
+- Scope kept out: scheduling frameworks, plugin delivery, cloud synchronization,
+  full-content storage, automatic historical-identity repair and UI. The importer's
+  per-file safety checks remain as documented above; the tailer adds no traversal
+  boundary against a hostile local process.
 
 ## Verification
 
-| Area                         | Required checks and expected result                                                                                                                                                                                                                      |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude filesystem            | Main/subagent mapping; ignored entries; partial lines; metadata-only default; repeated import without duplicates; unchanged originals; missing/permission/alias/name errors; cross-batch label consistency; corrected invalid files import successfully. |
-| Stream and lifecycle         | Native identity/usage fixtures; malformed headers/records; no cross-session attribution; bounded batches; draining after stream failure; incomplete producer exit; partial rejection reports; exact-batch boundaries.                                    |
-| Native locators              | Position remains zero for repeated, older and tied observations; old development offsets reset safely; empty undiscovered sessions create no locator; historical records survive shorter/empty replacements.                                             |
-| Storage ownership            | Mismatched host/native/conversation/surface/start facts reject before writes; existing batch atomicity and retention checks remain in force.                                                                                                             |
-| Source and executable safety | Database/source aliases reject before mutation; opened-file replacement and short-copy rejection; fixed snapshot under append; ignored Python modules excluded; stable interpreter selection.                                                            |
-| Pinned conformance           | All four inventoried tests execute, including the real pinned reader-to-index import, deduplication and unchanged-source evidence.                                                                                                                       |
+| Area                         | Required checks and expected result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude filesystem            | Main/subagent mapping; ignored entries; partial lines; metadata-only default; repeated import without duplicates; unchanged originals; missing/permission/alias/name errors; cross-batch label consistency; corrected invalid files import successfully.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Stream and lifecycle         | Native identity/usage fixtures; malformed headers/records; no cross-session attribution; bounded batches; draining after stream failure; incomplete producer exit; partial rejection reports; exact-batch boundaries.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Checkpoints and tailing      | `claude_tail` suite: changes during the initial scan with no later event are indexed before ready; appends, completed partial lines, duplicate events, new files and whole new directories converge within seconds; truncation, replacement and in-place rewrite start new generations without duplicates; restart reads only appended input; a failed record transaction keeps the checkpoint behind the failed batch and the retry converges; originals unchanged; metadata-only rows; zero-position locators migrate by one full replay; a watcher failure reports degraded. Store: `native_checkpoints` suite and the atomicity failure list. CLI: `watch_native_once_reports_ready_and_resumes_on_the_next_run`. Pinned conformance: the second import runs with `--since` and stays complete. |
+| Native locators              | Position remains zero for repeated, older and tied observations; old development offsets reset safely; empty undiscovered sessions create no locator; historical records survive shorter/empty replacements.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Storage ownership            | Mismatched host/native/conversation/surface/start facts reject before writes; existing batch atomicity and retention checks remain in force.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Source and executable safety | Database/source aliases reject before mutation; opened-file replacement and short-copy rejection; fixed snapshot under append; ignored Python modules excluded; stable interpreter selection.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Pinned conformance           | All four inventoried tests execute, including the real pinned reader-to-index import, deduplication and unchanged-source evidence.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ```sh
 cargo test -p xt-ingest --test claude_fs --test native --locked

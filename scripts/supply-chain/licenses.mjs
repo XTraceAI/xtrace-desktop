@@ -12,6 +12,7 @@ const allowed = new Set([
   'MPL-2.0',
   'Zlib',
   'Unicode-3.0',
+  'CC0-1.0',
 ]);
 
 export function acceptedLicense(expression) {

@@ -15,7 +15,7 @@ fn fixture_mode_data_dir_override_wins_and_live_store_persists() {
     )
     .unwrap();
     assert_eq!(state.app_info().data_dir, path.to_str().unwrap());
-    assert_eq!(state.app_info().schema_version, 2);
+    assert_eq!(state.app_info().schema_version, 3);
     assert_eq!(state.app_info().fixture, None);
     assert!(!state.app_info().listening);
     assert_eq!(

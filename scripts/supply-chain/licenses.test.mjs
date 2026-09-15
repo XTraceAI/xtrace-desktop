@@ -8,6 +8,7 @@ test('SPDX policy evaluates alternatives, obligations and exceptions structurall
     'MPL-2.0',
     'Zlib',
     'Unicode-3.0',
+    'CC0-1.0',
     '(MPL-2.0 AND MIT)',
     '(MIT OR Apache-2.0)',
     '(MIT AND BSD-3-Clause)',

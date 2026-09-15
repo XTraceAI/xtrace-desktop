@@ -56,6 +56,7 @@ fn request<'a>(
         receipt,
         cursor: None,
         discovery: None,
+        checkpoint: None,
     }
 }
 

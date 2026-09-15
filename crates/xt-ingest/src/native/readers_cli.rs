@@ -247,10 +247,17 @@ pub fn spawn_reader(
     producer: &PinnedProducer,
     host: Host,
     home: &Path,
+    since: Option<&str>,
 ) -> Result<(std::io::BufReader<std::process::ChildStdout>, ReaderHandle), ReaderError> {
-    let mut child = Command::new(python)
+    let mut command = Command::new(python);
+    command
         .arg(&producer.script)
-        .args(["--host", host.as_str()])
+        .args(["--host", host.as_str()]);
+    if let Some(since) = since {
+        // The producer skips sessions it saw modified before this instant.
+        command.args(["--since", since]);
+    }
+    let mut child = command
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("HOME", home)

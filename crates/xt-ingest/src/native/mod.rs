@@ -11,11 +11,14 @@
 //! malformed output are reported explicitly per host and per session, while
 //! every readable session still imports.
 
+pub mod checkpoint;
 pub mod claude_fs;
 pub mod readers_cli;
 pub mod stream;
+pub mod watch;
 
 use crate::writer::{MAX_BATCH_RECORDS, WriteBatch, write_batch};
+use checkpoint::{host_scan_checkpoint, host_scan_generation, host_scan_since};
 use readers_cli::{ReaderDiagnostic, ReaderError};
 use serde::Serialize;
 use std::{
@@ -24,9 +27,19 @@ use std::{
 };
 use xt_store::{
     Host, SessionSource, Store,
-    batch::{RecordDisposition, SourceCursor},
+    batch::{NativeCheckpoint, RecordDisposition, SourceCursor},
     ingest::DiscoveredSession,
 };
+
+/// Whether proven checkpoints may shorten a scan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScanMode {
+    /// Resume behind checkpoints whose generation is proven again; read
+    /// everything else. Unchanged sources cost a stat and a short read.
+    Resume,
+    /// Read every source from its start; checkpoints are still recorded.
+    Replay,
+}
 
 pub struct ImportRequest<'a> {
     /// The home directory whose `.claude`, `.codex` and `.cursor` trees are
@@ -132,9 +145,26 @@ impl ImportReport {
     }
 }
 
-/// Import every requested host. Failures are reported, never raised: one host's
-/// missing runtime does not stop another host's import.
+/// Import every requested host, resuming behind proven checkpoints. Failures
+/// are reported, never raised: one host's missing runtime does not stop
+/// another host's import.
 pub fn import_native(store: &mut Store, request: &ImportRequest<'_>) -> ImportReport {
+    scan_native(store, request, ScanMode::Resume)
+}
+
+/// Import every requested host in the given mode.
+pub fn scan_native(store: &mut Store, request: &ImportRequest<'_>, mode: ScanMode) -> ImportReport {
+    scan_native_observed(store, request, mode, &mut |_| {})
+}
+
+/// `scan_native` with an observer called after each Claude file is done, so a
+/// caller can act between files (the watcher's startup race is tested this way).
+pub fn scan_native_observed(
+    store: &mut Store,
+    request: &ImportRequest<'_>,
+    mode: ScanMode,
+    observer: &mut dyn FnMut(&Path),
+) -> ImportReport {
     let home = match anchor(request.home) {
         Ok(home) => home,
         Err(error) => {
@@ -160,8 +190,8 @@ pub fn import_native(store: &mut Store, request: &ImportRequest<'_>) -> ImportRe
         .hosts
         .iter()
         .map(|host| match host {
-            Host::Claude => import_claude(store, request),
-            Host::Codex | Host::Cursor => import_reader_host(store, request, *host),
+            Host::Claude => import_claude(store, request, mode, observer),
+            Host::Codex | Host::Cursor => import_reader_host(store, request, *host, mode),
             Host::Other => HostReport::unavailable(
                 Host::Other,
                 HostStatus::MissingSource,
@@ -187,7 +217,12 @@ fn anchor(home: &Path) -> std::io::Result<PathBuf> {
     Ok(anchored)
 }
 
-fn import_claude(store: &mut Store, request: &ImportRequest<'_>) -> HostReport {
+fn import_claude(
+    store: &mut Store,
+    request: &ImportRequest<'_>,
+    mode: ScanMode,
+    observer: &mut dyn FnMut(&Path),
+) -> HostReport {
     let projects = request.home.join(".claude").join("projects");
     for root in [request.home.join(".claude"), projects.clone()] {
         match std::fs::symlink_metadata(&root) {
@@ -239,7 +274,7 @@ fn import_claude(store: &mut Store, request: &ImportRequest<'_>) -> HostReport {
     };
     let mut sessions = Vec::new();
     for file in files {
-        match claude_fs::import_file(store, &file, request.observed_at) {
+        match claude_fs::import_file(store, &file, request.observed_at, mode) {
             Ok(result) => sessions.push(result),
             Err(error) => {
                 diagnostics.push(ReaderDiagnostic {
@@ -257,6 +292,7 @@ fn import_claude(store: &mut Store, request: &ImportRequest<'_>) -> HostReport {
                 });
             }
         }
+        observer(&file.path);
     }
     let status = if diagnostics.is_empty() && all_imported(&sessions) {
         HostStatus::Complete
@@ -293,7 +329,12 @@ fn reader_sources_present(home: &Path, host: Host) -> std::io::Result<bool> {
     }
 }
 
-fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host) -> HostReport {
+fn import_reader_host(
+    store: &mut Store,
+    request: &ImportRequest<'_>,
+    host: Host,
+    mode: ScanMode,
+) -> HostReport {
     match reader_sources_present(request.home, host) {
         Ok(true) => {}
         Ok(false) => {
@@ -328,17 +369,31 @@ fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host
             return HostReport::unavailable(host, HostStatus::PinMismatch, error.to_string());
         }
     };
+    // The generation of the last gapless scan lets the producer skip sessions
+    // it saw modified before it; without one, every session is read again.
+    let since = match mode {
+        ScanMode::Resume => {
+            host_scan_generation(store, host, request.home).and_then(host_scan_since)
+        }
+        ScanMode::Replay => None,
+    };
     let (mut stdout, handle) =
-        match readers_cli::spawn_reader(&python, &producer, host, request.home) {
+        match readers_cli::spawn_reader(&python, &producer, host, request.home, since.as_deref()) {
             Ok(spawned) => spawned,
             Err(error) => {
                 return HostReport::unavailable(host, HostStatus::ReaderFailed, error.to_string());
             }
         };
-    let detail = format!(
-        "pinned producer {} (memhub {})",
-        producer.commit, producer.plugin_version
-    );
+    let detail = match &since {
+        Some(since) => format!(
+            "pinned producer {} (memhub {}); sessions modified since {since}",
+            producer.commit, producer.plugin_version
+        ),
+        None => format!(
+            "pinned producer {} (memhub {})",
+            producer.commit, producer.plugin_version
+        ),
+    };
     let lines = std::iter::from_fn(|| {
         let mut line = String::new();
         match std::io::BufRead::read_line(&mut stdout, &mut line) {
@@ -347,9 +402,26 @@ fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host
             Err(error) => Some(Err(error)),
         }
     });
-    import_reader_lines(store, host, detail, lines, request.observed_at, move || {
-        handle.finish()
-    })
+    let mut report =
+        import_reader_lines(store, host, detail, lines, request.observed_at, move || {
+            handle.finish()
+        });
+    // Only a scan that covered every session becomes the next generation; a
+    // scan with any gap leaves the old one, so the next scan repeats its range.
+    if report.status == HostStatus::Complete
+        && let Err(error) = store.record_native_checkpoint(&host_scan_checkpoint(
+            host,
+            request.home,
+            request.observed_at,
+        ))
+    {
+        report.status = HostStatus::Incomplete;
+        report.detail = Some(format!(
+            "{}; scan generation could not be recorded: {error}",
+            report.detail.as_deref().unwrap_or_default()
+        ));
+    }
+    report
 }
 
 /// Import one host's stream as it arrives. Records are written in bounded
@@ -669,6 +741,11 @@ impl SessionWriter {
         self.context.source_surface.is_some() && self.cwd.is_some() && self.git_branch.is_some()
     }
 
+    /// Whether every record so far was stored; only then may progress advance.
+    pub fn gapless(&self) -> bool {
+        self.rejected.is_empty()
+    }
+
     /// Records the parser could not identify; they count against coverage.
     pub fn note_dropped(&mut self, count: usize) {
         self.rejected
@@ -683,6 +760,18 @@ impl SessionWriter {
         store: &mut Store,
         records: &[crate::canonical::ParsedRecord],
         observed_at: i64,
+    ) -> Result<(), Box<SessionResult>> {
+        self.write_with_checkpoint(store, records, observed_at, None)
+    }
+
+    /// `write`, with resume progress that commits only if this batch commits
+    /// and every record of it is stored.
+    pub fn write_with_checkpoint(
+        &mut self,
+        store: &mut Store,
+        records: &[crate::canonical::ParsedRecord],
+        observed_at: i64,
+        checkpoint: Option<&NativeCheckpoint>,
     ) -> Result<(), Box<SessionResult>> {
         if records.is_empty() {
             return Ok(());
@@ -702,6 +791,7 @@ impl SessionWriter {
             receipt: None,
             cursor: None,
             discovery: Some(&discovery),
+            checkpoint,
         };
         match write_batch(store, &batch) {
             Ok(saved) => {

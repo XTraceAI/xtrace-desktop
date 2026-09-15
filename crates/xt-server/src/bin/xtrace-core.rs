@@ -12,13 +12,14 @@ async fn main() {
         std::process::exit(1);
     }
 }
-const USAGE: &str = "Usage: xtrace-core serve --db PATH [--port PORT] [--bind 127.0.0.1|::1]\n       xtrace-core import-native --db PATH --home DIR [--host claude|codex|cursor]... [--pin FILE] [--plugin-root DIR] [--python EXE]";
+const USAGE: &str = "Usage: xtrace-core serve --db PATH [--port PORT] [--bind 127.0.0.1|::1]\n       xtrace-core import-native --db PATH --home DIR [--host claude|codex|cursor]... [--pin FILE] [--plugin-root DIR] [--python EXE] [--replay]\n       xtrace-core watch-native --db PATH --home DIR [--host claude|codex|cursor]... [--pin FILE] [--plugin-root DIR] [--python EXE] [--once | --for SECONDS]";
 
 async fn run() -> Result<(), &'static str> {
     let mut args = std::env::args_os().skip(1);
     match args.next().as_deref().and_then(std::ffi::OsStr::to_str) {
         Some("serve") => {}
         Some("import-native") => return import_native(args),
+        Some("watch-native") => return watch_native(args),
         _ => return Err(USAGE),
     }
     let (mut db, mut port, mut ip) = (None, None, None);
@@ -80,15 +81,39 @@ async fn run() -> Result<(), &'static str> {
     .map_err(|_| "Loopback server failed")
 }
 
-/// One-shot import of native session history through the pinned shared readers.
-/// Prints a JSON report; exits 0 when every requested host imported completely,
-/// 2 when a host or session was unavailable, unreadable or incomplete.
-fn import_native(mut args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static str> {
-    use xt_ingest::native::{ImportRequest, import_native};
+struct NativeOptions {
+    db: PathBuf,
+    home: PathBuf,
+    hosts: Vec<xt_store::Host>,
+    pin: PathBuf,
+    plugin_root: Option<PathBuf>,
+    python: Option<std::ffi::OsString>,
+    replay: bool,
+    /// `watch-native`: exit once ready (`--once`) or after this many seconds (`--for`).
+    duration: Option<Option<u64>>,
+}
+
+fn parse_native_options(
+    mut args: std::iter::Skip<std::env::ArgsOs>,
+    watch: bool,
+) -> Result<NativeOptions, &'static str> {
     use xt_store::Host;
     let (mut db, mut home, mut pin, mut plugin_root, mut python) = (None, None, None, None, None);
     let mut hosts = Vec::new();
+    let mut replay = false;
+    let mut duration: Option<Option<u64>> = None;
     while let Some(flag) = args.next() {
+        match flag.to_str() {
+            Some("--replay") if !watch && !replay => {
+                replay = true;
+                continue;
+            }
+            Some("--once") if watch && duration.is_none() => {
+                duration = Some(None);
+                continue;
+            }
+            _ => {}
+        }
         let value = args.next().ok_or("An import option is missing its value")?;
         match flag.to_str() {
             Some("--db") if db.is_none() => db = Some(PathBuf::from(value)),
@@ -98,6 +123,14 @@ fn import_native(mut args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'st
                 plugin_root = Some(PathBuf::from(value))
             }
             Some("--python") if python.is_none() => python = Some(value),
+            Some("--for") if watch && duration.is_none() => {
+                duration = Some(Some(
+                    value
+                        .to_str()
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .ok_or("--for requires a whole number of seconds")?,
+                ))
+            }
             Some("--host") => {
                 let host = match value.to_str() {
                     Some("claude") => Host::Claude,
@@ -125,24 +158,52 @@ fn import_native(mut args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'st
     let plugin_root =
         plugin_root.or_else(|| std::env::var_os("AGENT_PLUGINS_DIR").map(PathBuf::from));
     let pin = pin.unwrap_or_else(|| PathBuf::from(".plugin-pin"));
-    let observed_at = i64::try_from(
+    Ok(NativeOptions {
+        db,
+        home,
+        hosts,
+        pin,
+        plugin_root,
+        python,
+        replay,
+        duration,
+    })
+}
+
+fn clock_ms() -> Result<i64, &'static str> {
+    i64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| "Import clock is unavailable")?
             .as_millis(),
     )
-    .map_err(|_| "Import clock is unavailable")?;
-    validate_index_destination(&db, &home)?;
-    let mut store = Store::open(&db).map_err(|_| "Could not open the index database")?;
-    let report = import_native(
+    .map_err(|_| "Import clock is unavailable")
+}
+
+/// One-shot import of native session history through the pinned shared readers,
+/// resuming behind proven checkpoints unless `--replay` is given. Prints a JSON
+/// report; exits 0 when every requested host imported completely, 2 when a host
+/// or session was unavailable, unreadable or incomplete.
+fn import_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static str> {
+    use xt_ingest::native::{ImportRequest, ScanMode, scan_native};
+    let options = parse_native_options(args, false)?;
+    let observed_at = clock_ms()?;
+    validate_index_destination(&options.db, &options.home)?;
+    let mut store = Store::open(&options.db).map_err(|_| "Could not open the index database")?;
+    let report = scan_native(
         &mut store,
         &ImportRequest {
-            home: &home,
-            hosts: &hosts,
-            pin: &pin,
-            plugin_root: plugin_root.as_deref(),
-            python: python.as_deref(),
+            home: &options.home,
+            hosts: &options.hosts,
+            pin: &options.pin,
+            plugin_root: options.plugin_root.as_deref(),
+            python: options.python.as_deref(),
             observed_at,
+        },
+        if options.replay {
+            ScanMode::Replay
+        } else {
+            ScanMode::Resume
         },
     );
     let text =
@@ -155,6 +216,95 @@ fn import_native(mut args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'st
         std::process::exit(2);
     }
     Ok(())
+}
+
+/// Watch native history and keep the index current: the watcher registers
+/// before the initial scan, changes queued meanwhile are reconciled before
+/// `ready`, then each burst of changes is reconciled live. Prints one JSON
+/// line per event. `--once` exits after `ready`; `--for` exits after the given
+/// seconds; otherwise it runs until interrupted. Exits 0 when live and every
+/// scan was complete, 2 otherwise.
+fn watch_native(args: std::iter::Skip<std::env::ArgsOs>) -> Result<(), &'static str> {
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::time::Duration;
+    use xt_ingest::native::watch::{Freshness, TailEvent, Tailer, WatchConfig};
+    let options = parse_native_options(args, true)?;
+    validate_index_destination(&options.db, &options.home)?;
+    let store = Store::open(&options.db).map_err(|_| "Could not open the index database")?;
+    let complete = Arc::new(AtomicBool::new(true));
+    let live = Arc::new(AtomicBool::new(false));
+    let output = Arc::new(Mutex::new(io::stdout()));
+    let sink = {
+        let (complete, live, output) = (
+            Arc::clone(&complete),
+            Arc::clone(&live),
+            Arc::clone(&output),
+        );
+        Box::new(move |event: TailEvent| {
+            match &event {
+                TailEvent::Ready(readiness) => {
+                    live.store(readiness.freshness == Freshness::Live, Ordering::SeqCst);
+                    if !readiness.report.complete() {
+                        complete.store(false, Ordering::SeqCst);
+                    }
+                }
+                TailEvent::Reconciled { report, .. } => {
+                    if !report.complete() {
+                        complete.store(false, Ordering::SeqCst);
+                    }
+                }
+                TailEvent::Stopped => {}
+            }
+            if let Ok(text) = serde_json::to_string(&event)
+                && let Ok(mut out) = output.lock()
+            {
+                let _ = writeln!(out, "{text}");
+                let _ = out.flush();
+            }
+        }) as Box<dyn Fn(TailEvent) + Send>
+    };
+    let tailer = Tailer::start(
+        store,
+        WatchConfig {
+            home: options.home.clone(),
+            hosts: options.hosts.clone(),
+            pin: options.pin.clone(),
+            plugin_root: options.plugin_root.clone(),
+            python: options.python.clone(),
+            debounce: Duration::from_millis(250),
+            probe: None,
+        },
+        sink,
+    );
+    let ready = tailer.wait_ready(Duration::from_secs(u64::MAX / 4));
+    if ready.is_none() {
+        return Err("Native watcher stopped before it was ready");
+    }
+    match options.duration {
+        Some(None) => {}
+        Some(Some(seconds)) => std::thread::sleep(Duration::from_secs(seconds)),
+        None => {
+            let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+            ctrlc_wait(stop_tx);
+            let _ = stop_rx.recv();
+        }
+    }
+    tailer.stop();
+    if !(live.load(Ordering::SeqCst) && complete.load(Ordering::SeqCst)) {
+        std::process::exit(2);
+    }
+    Ok(())
+}
+
+/// Resolve the sender when Ctrl-C arrives (or the runtime cannot listen).
+fn ctrlc_wait(stop: std::sync::mpsc::Sender<()>) {
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        let _ = stop.send(());
+    });
 }
 
 /// Validate before SQLite can create tables or sidecars. Existing hardlinks are

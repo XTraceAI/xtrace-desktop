@@ -104,6 +104,7 @@ pub(crate) fn apply(store: &mut Store, args: ImportArgs) -> Result<ImportOutcome
         receipt: None,
         cursor: None,
         discovery: None,
+        checkpoint: None,
     };
     let session = resolve_session(&batch).map_err(|_| "Import session identities disagree")?;
     if !label(&session.session_id)

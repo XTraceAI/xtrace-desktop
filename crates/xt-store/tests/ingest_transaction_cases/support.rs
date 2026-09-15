@@ -63,6 +63,7 @@ pub const TABLES: &[&str] = &[
     "capture_receipts",
     "capture_record_coverage",
     "source_cursors",
+    "native_checkpoints",
 ];
 pub fn snapshot(connection: &Connection) -> Vec<Vec<Vec<SqlValue>>> {
     TABLES

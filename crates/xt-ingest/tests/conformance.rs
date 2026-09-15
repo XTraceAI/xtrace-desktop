@@ -233,6 +233,17 @@ fn conformance_native_import() {
     }
     let again = import_native(&mut store, &request);
     assert!(again.complete());
+    // The first scan covered every session, so the second asks the pinned
+    // producer only for sessions modified since that scan started: it still
+    // reports complete coverage and adds nothing.
+    for host in &again.hosts {
+        assert!(
+            host.detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("sessions modified since")),
+            "{host:?}"
+        );
+    }
     assert!(
         again
             .hosts
