@@ -125,7 +125,7 @@ it('polls a transient status until it settles, so a ready event that precedes th
   const source: DataSource = {
     kind: 'native',
     appInfo: async () => exported.app_info,
-    dbCounts: async () => exported.db_counts,
+    dbCounts: vi.fn(async () => exported.db_counts),
     nativeIndexStatus: vi.fn(async () => status),
     // No event ever arrives: the listener registered after the only `ready`.
     subscribe: async () => () => {},
@@ -135,11 +135,14 @@ it('polls a transient status until it settles, so a ready event that precedes th
     await vi.advanceTimersByTimeAsync(50);
   });
   expect(screen.getByText('Scanning (2 Claude transcripts read)')).toBeTruthy();
+  const countsBeforeSettling = vi.mocked(source.dbCounts).mock.calls.length;
   status = ready;
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1100);
   });
   expect(screen.getByText('Ready (3 reconciliations)')).toBeTruthy();
+  // Settling also refetches the database counts the lost event would have.
+  expect(vi.mocked(source.dbCounts).mock.calls.length).toBeGreaterThan(countsBeforeSettling);
   const settled = vi.mocked(source.nativeIndexStatus).mock.calls.length;
   await act(async () => {
     await vi.advanceTimersByTimeAsync(3000);
