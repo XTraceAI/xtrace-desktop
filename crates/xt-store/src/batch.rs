@@ -12,6 +12,13 @@ use crate::{
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::BTreeSet;
 
+/// Native file continuation state; never parsed from a record payload.
+#[derive(Clone, Debug)]
+pub struct NativeOrderSource {
+    pub key: String,
+    pub reset: bool,
+}
+
 /// One canonical session and its submitted facts. Empty record batches may
 /// update metadata/cursors, but cannot manufacture receipt coverage.
 /// UUID-level evidence requires every occurrence of that UUID to be accepted;
@@ -23,6 +30,8 @@ pub struct IngestBatch<'a> {
     /// Native Claude file membership may reference an identical work record.
     /// Never available to plugin receipts or generic transcript imports.
     pub native_history: bool,
+    /// File order is supplied only by the discovered native Claude adapter.
+    pub native_order: Option<&'a NativeOrderSource>,
     /// A pinned Codex reader may classify inherited context and replace legacy
     /// UI counters when a native response ledger first identifies the request.
     pub native_codex: bool,
@@ -60,6 +69,7 @@ impl<'a> IngestBatch<'a> {
             records,
             keep_content,
             native_history: false,
+            native_order: None,
             native_codex: false,
             confirmed_iteration_usage: &[],
             namespace: None,
@@ -190,6 +200,17 @@ impl Store {
                 "native copies require discovered Claude history",
             ));
         }
+        if batch.native_order.is_some_and(|order| {
+            !batch.native_history
+                || order.key.trim().is_empty()
+                || batch
+                    .checkpoint
+                    .is_some_and(|checkpoint| checkpoint.cursor_key != order.key)
+        }) {
+            return Err(Error::InvalidInput(
+                "native response order requires its discovered Claude file",
+            ));
+        }
         if batch.native_codex
             && (batch.session.host != crate::Host::Codex
                 || batch.session.source != SessionSource::ReadersCli
@@ -298,6 +319,29 @@ impl Store {
             .filter_map(|record| record.uuid.as_deref())
             .filter(|uuid| !rejected.contains(uuid))
             .collect::<BTreeSet<_>>();
+        if let Some(order) = batch.native_order {
+            let owners =
+                crate::native_order::observe(&transaction, order, batch.records, &accepted)?;
+            outcome.session_changed |= !owners.is_empty();
+            for owner in owners {
+                if owner != batch.session.session_id
+                    && !outcome
+                        .affected_owners
+                        .iter()
+                        .any(|s| s.session_id == owner)
+                {
+                    let surface = transaction.query_row(
+                        "SELECT surface FROM sessions WHERE session_id=?1",
+                        [&owner],
+                        |row| row.get(0),
+                    )?;
+                    outcome.affected_owners.push(AffectedSession {
+                        session_id: owner,
+                        surface,
+                    });
+                }
+            }
+        }
         // A stored UUID outside this submission (or rejected by the merger) must
         // not acquire this batch's source/receipt evidence just because it exists.
         // Any rejected occurrence makes UUID-level evidence ambiguous, even if

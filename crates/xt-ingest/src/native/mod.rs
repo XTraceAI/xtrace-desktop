@@ -753,6 +753,7 @@ where
 /// or dropped record. It never supplies an incremental resume position. Titles are never
 /// persisted: they derive from prompts.
 pub struct SessionWriter {
+    native_order: Option<xt_store::batch::NativeOrderSource>,
     host: Host,
     native_session_id: String,
     context: crate::canonical::SourceContext,
@@ -777,6 +778,7 @@ impl SessionWriter {
         observed_at: i64,
     ) -> Result<Self, Box<SessionResult>> {
         let writer = Self {
+            native_order: None,
             host,
             native_session_id: header.native_session_id.clone(),
             context: header.context(host, source),
@@ -917,9 +919,13 @@ impl SessionWriter {
             cursor: None,
             discovery: Some(&discovery),
             checkpoint,
+            native_order: self.native_order.as_ref(),
         };
         match write_batch(store, &batch) {
             Ok(saved) => {
+                if let Some(order) = self.native_order.as_mut() {
+                    order.reset = false;
+                }
                 self.new += saved.records_new;
                 self.enriched += saved.records_enriched;
                 // A rejection is a record this import could not store; it must
