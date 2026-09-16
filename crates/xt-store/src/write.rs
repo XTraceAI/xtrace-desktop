@@ -227,6 +227,10 @@ pub(crate) fn upsert_records(
                 **stored = corrected;
                 changed_records.entry(uuid.to_owned()).or_insert(false);
                 codex_repaired = true;
+            } else if !retained_matches && stored.api_message_id.is_none() {
+                // An unverified identity must not establish a ledger and block
+                // a later complete replay from correcting the legacy counters.
+                incoming.api_message_id = None;
             }
         }
         let native_owner = if native_history && let Some(stored) = existing.as_ref() {

@@ -1292,6 +1292,19 @@ fn native_codex_repairs_compare_retained_content_before_privacy_stripping() {
             if variant == "text" || variant == "tool" {
                 assert!(after.has_conflict);
             }
+            if variant != "same" && !metadata {
+                assert!(after.api_message_id.is_none());
+                let mut complete = rows[0].clone();
+                complete.canonical.message.content = original[0].canonical.message.content.clone();
+                let complete_rows = [complete];
+                let mut retry = request(&context, &complete_rows, None);
+                retry.discovery = Some(&discovery);
+                write_batch(db.store_mut(), &retry).unwrap();
+                let corrected = db.store().records("codex-native").unwrap().remove(0);
+                assert_eq!(corrected.api_message_id.as_deref(), Some("native-response"));
+                assert_eq!(corrected.usage.unwrap().input_tokens, Some(100));
+                assert_eq!(corrected.content_json, before.content_json);
+            }
         }
     }
 }
