@@ -2009,3 +2009,48 @@ fn copied_parent_links_enrich_unknowns_without_erasing_known_values() {
     );
     assert_eq!(store.counts().unwrap().records, 1);
 }
+
+#[test]
+fn copied_content_can_fill_a_missing_retained_value_without_accepting_disagreement() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/synthetic");
+    fs::create_dir_all(&project).unwrap();
+    let mut row = json!({"type":"user","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"user","content":[{"type":"text","text":"alpha"}]}});
+    fs::write(
+        project.join(format!("{SID}.jsonl")),
+        native_line(row.clone(), SID) + "\n",
+    )
+    .unwrap();
+    let database = temp.path().join("index.sqlite");
+    let mut store = Store::open(&database).unwrap();
+    assert!(run(&mut store, &home).complete());
+    let sql = rusqlite::Connection::open(&database).unwrap();
+    let content = || {
+        sql.query_row("SELECT content_json FROM records", [], |r| {
+            r.get::<_, Option<String>>(0)
+        })
+        .unwrap()
+    };
+    assert_eq!(content(), None);
+    store
+        .set_retention_mode(xt_store::retention::RetentionMode::FullContent)
+        .unwrap();
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    let path = project.join(format!("{fork_id}.jsonl"));
+    fs::write(&path, native_line(row.clone(), fork_id) + "\n").unwrap();
+    assert!(run(&mut store, &home).complete());
+    let retained = content().unwrap();
+    assert!(retained.contains("alpha"));
+    assert_eq!(store.counts().unwrap().records, 1);
+    row["message"].as_object_mut().unwrap().remove("content");
+    fs::write(&path, native_line(row.clone(), fork_id) + "\n").unwrap();
+    assert!(run(&mut store, &home).complete());
+    assert_eq!(content().as_deref(), Some(retained.as_str()));
+    // Same length keeps measurement projections compatible; content itself
+    // must reject this known-to-known difference.
+    row["message"]["content"] = json!([{"type":"text","text":"omega"}]);
+    fs::write(path, native_line(row, fork_id) + "\n").unwrap();
+    assert!(!run(&mut store, &home).complete());
+    assert_eq!(content().as_deref(), Some(retained.as_str()));
+}

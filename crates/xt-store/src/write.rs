@@ -208,7 +208,11 @@ pub(crate) fn upsert_records(
                 && crate::measurement::Projection::from_stored(&corrected)?
                     .conflicting_fields(&crate::measurement::Projection::from_stored(&comparable)?)
                     == 0
-                && (!keep_content || stored.content_json == incoming.content_json)
+                && stored
+                    .content_json
+                    .as_ref()
+                    .zip(incoming.content_json.as_ref())
+                    .is_none_or(|(old, new)| old == new)
             {
                 save_record(connection, &corrected)?;
                 **stored = corrected;
@@ -253,7 +257,11 @@ pub(crate) fn upsert_records(
                 && crate::measurement::Projection::from_stored(stored)?
                     .conflicting_fields(&crate::measurement::Projection::from_stored(&comparable)?)
                     == 0
-                && (!keep_content || stored.content_json == incoming.content_json)
+                && stored
+                    .content_json
+                    .as_ref()
+                    .zip(incoming.content_json.as_ref())
+                    .is_none_or(|(old, new)| old == new)
             {
                 let added = connection.execute(
                     "INSERT INTO native_record_copies(session_id,record_uuid,parent_uuid) VALUES(?1,?2,?3)
