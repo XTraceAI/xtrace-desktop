@@ -120,7 +120,8 @@ fn large_replay_prefetches_only_requested_records_in_bounded_queries() {
         // once (one explicit full-content policy row); advancing the cursor adds no SELECT.
         assert_eq!(ROWS_READ.get(), 30_002 + usize::from(composed));
         let queries = SELECTS.get();
-        let maximum = 63 + usize::from(composed);
+        // Shared-context detection adds one constant, empty-result lookup.
+        let maximum = 64 + usize::from(composed);
         assert!(
             (1..=maximum).contains(&queries),
             "10k replay must need at most {maximum} SELECTs, observed {queries}"

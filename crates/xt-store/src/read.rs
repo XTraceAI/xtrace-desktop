@@ -112,11 +112,12 @@ pub(crate) fn timestamp_range(
     let timestamps = ordered_timestamps(
         connection,
         session_id,
-        "SELECT uuid, ts FROM records WHERE session_id=?1 AND (
-            ts_ms BETWEEN (SELECT min(ts_ms) FROM records WHERE session_id=?1)
-                AND (SELECT min(ts_ms)+999 FROM records WHERE session_id=?1)
-            OR ts_ms BETWEEN (SELECT max(ts_ms)-999 FROM records WHERE session_id=?1)
-                AND (SELECT max(ts_ms) FROM records WHERE session_id=?1))",
+        "WITH visible AS (
+            SELECT r.uuid,r.ts,r.ts_ms FROM session_work_records m
+                JOIN records r ON r.uuid=m.record_uuid WHERE m.session_id=?1
+        ) SELECT uuid, ts FROM visible WHERE (
+            ts_ms BETWEEN (SELECT min(ts_ms) FROM visible) AND (SELECT min(ts_ms)+999 FROM visible)
+            OR ts_ms BETWEEN (SELECT max(ts_ms)-999 FROM visible) AND (SELECT max(ts_ms) FROM visible))",
     )?;
     Ok((
         timestamps.first().and_then(|(_, ts)| ts.clone()),

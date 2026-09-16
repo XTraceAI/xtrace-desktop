@@ -21,6 +21,9 @@ pub struct SourceContext {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeMetadata {
+    /// Set only by the native adapter after validating explicit iteration usage.
+    #[serde(skip)]
+    pub iteration_usage_confirmed: bool,
     /// Native `sessionId`, independent of the canonical header conversation ID.
     pub session_id: Option<String>,
     pub agent_id: Option<String>,
@@ -134,6 +137,7 @@ pub fn parse_with_context(line: &str, context: &SourceContext) -> Result<Parsed,
     }
     validate_time(context.started_at.as_deref())?;
     let native = NativeMetadata {
+        iteration_usage_confirmed: false,
         session_id: optional_string(object, "sessionId")?,
         agent_id: optional_string(object, "agentId")?,
         parent_uuid: optional_string(object, "parentUuid")?,
