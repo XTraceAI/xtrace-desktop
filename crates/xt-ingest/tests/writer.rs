@@ -1044,7 +1044,14 @@ fn native_codex_context_and_first_ledger_correct_cached_metadata_atomically() {
             .unwrap()
     };
     for native in [false, true] {
-        for mode in ["valid", "malformed", "conflicting", "aliases"] {
+        for mode in [
+            "valid",
+            "malformed",
+            "conflicting",
+            "aliases",
+            "sparse",
+            "partial",
+        ] {
             let invalid = mode == "malformed";
             let mut db = TempDb::empty().unwrap();
             let mut context = context(SessionSource::ReadersCli);
@@ -1061,7 +1068,16 @@ fn native_codex_context_and_first_ledger_correct_cached_metadata_atomically() {
             };
             let mut prefix = rich("inherited");
             prefix.canonical.timestamp = Some("2026-09-06T00:00:00Z".into());
-            let work = rich("work");
+            let mut work = rich("work");
+            work.canonical
+                .message
+                .usage
+                .as_mut()
+                .unwrap()
+                .cache_creation = Some(xt_store::model::CacheCreation {
+                ephemeral_5m_input_tokens: Some(0),
+                ephemeral_1h_input_tokens: Some(0),
+            });
             let initial = [prefix.clone(), work.clone()];
             write_batch(db.store_mut(), &request(&context, &initial, None)).unwrap();
             prefix.canonical.is_meta = true;
@@ -1085,6 +1101,20 @@ fn native_codex_context_and_first_ledger_correct_cached_metadata_atomically() {
             }
             if mode == "aliases" {
                 corrected.canonical.message.id = Some("different-response".into());
+            }
+            if matches!(mode, "sparse" | "partial") {
+                corrected.canonical.message.model = None;
+                let usage = corrected.canonical.message.usage.as_mut().unwrap();
+                usage.service_tier = None;
+                if mode == "sparse" {
+                    usage.cache_creation = None;
+                } else {
+                    usage
+                        .cache_creation
+                        .as_mut()
+                        .unwrap()
+                        .ephemeral_1h_input_tokens = None;
+                }
             }
             let incoming = [prefix, corrected];
             let mut batch = request(&context, &incoming, None);
@@ -1119,6 +1149,22 @@ fn native_codex_context_and_first_ledger_correct_cached_metadata_atomically() {
             }
 
             let saved = get_record(db.store(), "work");
+            if matches!(mode, "sparse" | "partial") {
+                assert_eq!(saved.model.as_deref(), Some("synthetic-model"));
+                assert_eq!(
+                    saved.usage.as_ref().unwrap().service_tier.as_deref(),
+                    Some("standard")
+                );
+                assert_eq!(
+                    saved.usage.as_ref().unwrap().cache_creation,
+                    work.canonical
+                        .message
+                        .usage
+                        .as_ref()
+                        .unwrap()
+                        .cache_creation
+                );
+            }
             assert_eq!(
                 saved.usage.unwrap().input_tokens,
                 Some(if native { 100 } else { 10 })
@@ -1134,7 +1180,14 @@ fn native_codex_context_and_first_ledger_correct_cached_metadata_atomically() {
                 );
                 let page = db.store().sessions_page("", None, None).unwrap();
                 assert_eq!(page[0].record_count, 1);
-                assert_eq!(page[0].model.as_deref(), Some("actual-model"));
+                assert_eq!(
+                    page[0].model.as_deref(),
+                    Some(if matches!(mode, "sparse" | "partial") {
+                        "synthetic-model"
+                    } else {
+                        "actual-model"
+                    })
+                );
                 assert_eq!(page[0].first_ts, work.canonical.timestamp);
                 assert_eq!(
                     write_batch(db.store_mut(), &batch)

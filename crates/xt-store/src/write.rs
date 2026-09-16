@@ -207,8 +207,14 @@ pub(crate) fn upsert_records(
                 })
             {
                 corrected.api_message_id = incoming.api_message_id.clone();
-                corrected.usage = incoming.usage.clone();
-                corrected.model = incoming.model.clone();
+                let mut usage = incoming.usage.clone().unwrap();
+                if let Some(previous) = &stored.usage {
+                    // The first ledger replaces supplied counters, but omissions
+                    // are unknown facts, not instructions to erase old details.
+                    merge_usage(&mut Change::default(), &mut usage, previous);
+                }
+                corrected.usage = Some(usage);
+                corrected.model = incoming.model.clone().or_else(|| stored.model.clone());
             }
             if corrected != **stored
                 && !incoming.has_conflict
