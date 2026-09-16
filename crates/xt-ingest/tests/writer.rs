@@ -1032,3 +1032,132 @@ fn writer_event_surface_comes_from_the_committed_session() {
     assert_eq!(stored.meta.surface.as_deref(), Some("cli"));
     assert_eq!(output.events[0].surface, stored.meta.surface);
 }
+
+#[test]
+fn native_codex_context_and_first_ledger_correct_cached_metadata_atomically() {
+    let get_record = |store: &Store, id: &str| {
+        store
+            .records("codex-native")
+            .unwrap()
+            .into_iter()
+            .find(|r| r.uuid == id)
+            .unwrap()
+    };
+    for native in [false, true] {
+        for mode in ["valid", "malformed", "conflicting"] {
+            let invalid = mode == "malformed";
+            let mut db = TempDb::empty().unwrap();
+            let mut context = context(SessionSource::ReadersCli);
+            context.source_platform = Some("codex".into());
+            context.conversation_id = Some("codex-native".into());
+            let discovery = xt_store::ingest::DiscoveredSession {
+                host: xt_store::Host::Codex,
+                native_session_id: "native".into(),
+                conversation_id: context.conversation_id.clone(),
+                surface: Some("cli".into()),
+                started_at_ms: None,
+                last_observed_at: 100,
+                discovery_complete: true,
+            };
+            let mut prefix = rich("inherited");
+            prefix.canonical.timestamp = Some("2026-09-06T00:00:00Z".into());
+            let work = rich("work");
+            let initial = [prefix.clone(), work.clone()];
+            write_batch(db.store_mut(), &request(&context, &initial, None)).unwrap();
+            prefix.canonical.is_meta = true;
+            prefix.canonical.message.usage = None;
+            let mut corrected = work.clone();
+            corrected.canonical.api_message_id = Some("native-response".into());
+            corrected.canonical.message.model = Some("actual-model".into());
+            corrected
+                .canonical
+                .message
+                .usage
+                .as_mut()
+                .unwrap()
+                .input_tokens = Some(if invalid { -1 } else { 100 });
+            if mode == "conflicting" {
+                prefix.canonical.message.content = Some(vec![
+                    json!({"type":"text","text":"Different inherited content"}),
+                ]);
+                corrected.canonical.message.content =
+                    Some(vec![json!({"type":"text","text":"Different work content"})]);
+            }
+            let incoming = [prefix, corrected];
+            let mut batch = request(&context, &incoming, None);
+            batch.discovery = native.then_some(&discovery);
+            let outcome = write_batch(db.store_mut(), &batch);
+            if invalid {
+                assert!(outcome.is_err());
+                assert!(!get_record(db.store(), "inherited").is_meta);
+                assert_eq!(
+                    get_record(db.store(), "work").usage.unwrap().input_tokens,
+                    Some(10)
+                );
+                continue;
+            }
+            let outcome = outcome.unwrap();
+            if mode == "conflicting" {
+                assert!(!get_record(db.store(), "inherited").is_meta);
+                assert_eq!(
+                    get_record(db.store(), "work").usage.unwrap().input_tokens,
+                    Some(10)
+                );
+                assert!(get_record(db.store(), "work").has_conflict);
+                continue;
+            }
+
+            let saved = get_record(db.store(), "work");
+            assert_eq!(
+                saved.usage.unwrap().input_tokens,
+                Some(if native { 100 } else { 10 })
+            );
+            assert_eq!(get_record(db.store(), "inherited").is_meta, native);
+            if native {
+                assert_eq!(outcome.records_enriched, 2);
+                assert!(
+                    outcome
+                        .events
+                        .iter()
+                        .all(|e| e.invalidate_measurements && e.invalidate_cost)
+                );
+                let page = db.store().sessions_page("", None, None).unwrap();
+                assert_eq!(page[0].record_count, 1);
+                assert_eq!(page[0].model.as_deref(), Some("actual-model"));
+                assert_eq!(page[0].first_ts, work.canonical.timestamp);
+                assert_eq!(
+                    write_batch(db.store_mut(), &batch)
+                        .unwrap()
+                        .records_enriched,
+                    0
+                );
+                assert_eq!(db.store().counts().unwrap().records, 2);
+                assert!(
+                    db.store()
+                        .records("codex-native")
+                        .unwrap()
+                        .iter()
+                        .all(|r| r.content_json.is_none())
+                );
+                // An established ledger is immutable; a conflicting retry cannot
+                // use the first-ledger repair path again.
+                let mut contradictory = incoming[1].clone();
+                contradictory
+                    .canonical
+                    .message
+                    .usage
+                    .as_mut()
+                    .unwrap()
+                    .input_tokens = Some(200);
+                let rows = [contradictory];
+                let mut retry = request(&context, &rows, None);
+                retry.discovery = Some(&discovery);
+                write_batch(db.store_mut(), &retry).unwrap();
+                assert_eq!(
+                    get_record(db.store(), "work").usage.unwrap().input_tokens,
+                    Some(100)
+                );
+            }
+        }
+    }
+}

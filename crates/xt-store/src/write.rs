@@ -63,7 +63,7 @@ impl Store {
             records,
             keep_content,
             &[],
-            false,
+            None,
             &[],
         )?;
         transaction.commit()?;
@@ -114,9 +114,10 @@ pub(crate) fn upsert_records(
     records: &[CanonicalRecord],
     keep_content: bool,
     identities: &[crate::model::RecordIdentity],
-    native_history: bool,
+    native_host: Option<Host>,
     confirmed_iteration_usage: &[bool],
 ) -> Result<IngestBatchOutcome> {
+    let native_history = native_host == Some(Host::Claude);
     let mut session = read::session(connection, session_id)?.ok_or(Error::InvalidInput(
         "session must be created before writing records",
     ))?;
@@ -166,6 +167,49 @@ pub(crate) fn upsert_records(
         validate_session(&metadata)?;
         // Ownership/type conflicts do not exempt nonblank input from validation.
         let mut existing = existing_records.get_mut(uuid);
+        let mut codex_repaired = false;
+        if native_host == Some(Host::Codex)
+            && session.meta.host == Host::Codex
+            && session.meta.source == crate::SessionSource::ReadersCli
+            && let Some(stored) = existing.as_mut()
+            && stored.session_id == session_id
+        {
+            let mut corrected = (**stored).clone();
+            if incoming.is_meta {
+                corrected.is_meta = true;
+            } else if stored.api_message_id.is_none()
+                && incoming.api_message_id.is_some()
+                && incoming.usage.as_ref().is_some_and(|u| {
+                    [
+                        u.input_tokens,
+                        u.output_tokens,
+                        u.cache_read_input_tokens,
+                        u.cache_creation_input_tokens,
+                    ]
+                    .iter()
+                    .all(Option::is_some)
+                })
+            {
+                corrected.api_message_id = incoming.api_message_id.clone();
+                corrected.usage = incoming.usage.clone();
+                corrected.model = incoming.model.clone();
+            }
+            if corrected != **stored
+                && crate::measurement::Projection::from_stored(&corrected)?
+                    .conflicting_fields(&crate::measurement::Projection::from_stored(&incoming)?)
+                    == 0
+                && stored
+                    .content_json
+                    .as_ref()
+                    .zip(incoming.content_json.as_ref())
+                    .is_none_or(|(old, new)| old == new)
+            {
+                save_record(connection, &corrected)?;
+                **stored = corrected;
+                changed_records.entry(uuid.to_owned()).or_insert(false);
+                codex_repaired = true;
+            }
+        }
         let native_owner = if native_history && let Some(stored) = existing.as_ref() {
             if !native_owners.contains_key(&stored.session_id) {
                 let eligible = connection.query_row(
@@ -382,7 +426,7 @@ pub(crate) fn upsert_records(
                         .or_insert(before.ts != stored.ts);
                     save_record(connection, stored)?;
                 }
-                let disposition = if enriched || repaired_usage {
+                let disposition = if enriched || repaired_usage || codex_repaired {
                     stats.enriched += 1;
                     RecordDisposition::Enriched
                 } else {
@@ -818,7 +862,7 @@ fn save_record(connection: &Connection, record: &StoredRecord) -> Result<()> {
              role,model,is_tool_result_carrier,text_len,tool_use_count,content_json,has_conflict,parent_uuid,agent_id,subtype,first_seen_at,is_human,is_command,is_interrupted,is_system_reminder)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24)
          ON CONFLICT(uuid) DO UPDATE SET ts=excluded.ts,ts_ms=excluded.ts_ms,api_message_id=excluded.api_message_id,
-             request_id=excluded.request_id,role=excluded.role,model=excluded.model,
+             request_id=excluded.request_id,role=excluded.role,model=excluded.model,is_meta=excluded.is_meta,
              is_tool_result_carrier=excluded.is_tool_result_carrier,text_len=excluded.text_len,
              tool_use_count=excluded.tool_use_count,content_json=excluded.content_json,has_conflict=excluded.has_conflict,
              parent_uuid=excluded.parent_uuid,agent_id=excluded.agent_id,subtype=excluded.subtype,first_seen_at=excluded.first_seen_at,

@@ -114,7 +114,7 @@ pub(crate) fn timestamp_range(
         session_id,
         "WITH visible AS (
             SELECT r.uuid,r.ts,r.ts_ms FROM session_work_records m
-                JOIN records r ON r.uuid=m.record_uuid WHERE m.session_id=?1
+                JOIN records r ON r.uuid=m.record_uuid WHERE m.session_id=?1 AND r.is_meta=0
         ) SELECT uuid, ts FROM visible WHERE (
             ts_ms BETWEEN (SELECT min(ts_ms) FROM visible) AND (SELECT min(ts_ms)+999 FROM visible)
             OR ts_ms BETWEEN (SELECT max(ts_ms)-999 FROM visible) AND (SELECT max(ts_ms) FROM visible))",

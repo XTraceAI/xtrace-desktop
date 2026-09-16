@@ -180,6 +180,9 @@ pub fn write_batch(store: &mut Store, request: &WriteBatch<'_>) -> Result<BatchO
     batch.native_history = source == SessionSource::Transcript
         && session.host == Host::Claude
         && request.discovery.is_some();
+    batch.native_codex = source == SessionSource::ReadersCli
+        && session.host == Host::Codex
+        && request.discovery.is_some();
     if batch.native_history {
         batch.confirmed_iteration_usage = &confirmed_iteration_usage;
     }
