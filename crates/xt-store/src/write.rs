@@ -5,7 +5,7 @@ use crate::{
     model::CacheCreation,
     read, timestamp,
 };
-use rusqlite::{Connection, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::Value;
 
 #[derive(Default)]
@@ -130,7 +130,7 @@ pub(crate) fn upsert_records(
     let mut stats = WriteStats::default();
     let mut outcomes = Vec::with_capacity(records.len());
     let mut affected_owners = std::collections::BTreeMap::new();
-    let mut changed_timestamps = std::collections::BTreeSet::new();
+    let mut changed_records = std::collections::BTreeMap::<String, bool>::new();
     for (input_index, input) in records.iter().enumerate() {
         let Some(uuid) = input.uuid.as_deref().filter(|id| !id.trim().is_empty()) else {
             stats.dropped_no_uuid += 1;
@@ -200,7 +200,9 @@ pub(crate) fn upsert_records(
             usage.cache_creation_input_tokens = new_usage.cache_creation_input_tokens;
             let mut comparable = incoming.clone();
             comparable.session_id = stored.session_id.clone();
-            comparable.identity.parent_uuid = stored.identity.parent_uuid.clone();
+            if stored.session_id != session_id {
+                comparable.identity.parent_uuid = stored.identity.parent_uuid.clone();
+            }
             let owner =
                 read::session(connection, &stored.session_id)?.ok_or(Error::IncompatibleSchema)?;
             if owner.meta.host == Host::Claude
@@ -217,6 +219,7 @@ pub(crate) fn upsert_records(
                 save_record(connection, &corrected)?;
                 **stored = corrected;
                 repaired_usage = true;
+                changed_records.entry(uuid.to_owned()).or_insert(false);
                 if stored.session_id != session_id {
                     affected_owners.insert(
                         stored.session_id.clone(),
@@ -272,6 +275,10 @@ pub(crate) fn upsert_records(
                 let before = (**stored).clone();
                 let measurement_enriched = merge_record(stored, &comparable);
                 if before != **stored {
+                    changed_records
+                        .entry(uuid.to_owned())
+                        .and_modify(|time| *time |= before.ts != stored.ts)
+                        .or_insert(before.ts != stored.ts);
                     save_record(connection, stored)?;
                     affected_owners.insert(
                         stored.session_id.clone(),
@@ -280,9 +287,6 @@ pub(crate) fn upsert_records(
                             surface: owner.meta.surface,
                         },
                     );
-                }
-                if before.ts != stored.ts {
-                    changed_timestamps.insert(uuid.to_owned());
                 }
                 let metadata_changed = merge_session(&mut session, &metadata, false);
                 if added || metadata_changed || measurement_enriched || repaired_usage {
@@ -352,10 +356,11 @@ pub(crate) fn upsert_records(
                 let before = stored.clone();
                 let enriched = merge_record(stored, &incoming) || session_enriched;
                 if before != *stored {
+                    changed_records
+                        .entry(uuid.to_owned())
+                        .and_modify(|time| *time |= before.ts != stored.ts)
+                        .or_insert(before.ts != stored.ts);
                     save_record(connection, stored)?;
-                }
-                if before.ts != stored.ts {
-                    changed_timestamps.insert(uuid.to_owned());
                 }
                 let disposition = if enriched || repaired_usage {
                     stats.enriched += 1;
@@ -383,26 +388,57 @@ pub(crate) fn upsert_records(
         "UPDATE sessions SET record_count=record_count+?1 WHERE session_id=?2",
         params![stats.inserted as i64, session_id],
     )?;
-    let mut timestamp_dependents = std::collections::BTreeSet::new();
-    for uuid in changed_timestamps {
-        let mut query = connection
-            .prepare("SELECT session_id FROM session_work_records WHERE record_uuid=?1")?;
-        for id in query.query_map([uuid], |row| row.get::<_, String>(0))? {
-            timestamp_dependents.insert(id?);
+    let mut dependents = std::collections::BTreeMap::<String, bool>::new();
+    if !changed_records.is_empty()
+        && connection
+            .query_row("SELECT 1 FROM native_record_copies LIMIT 1", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .optional()?
+            .is_some()
+    {
+        let changes = changed_records.into_iter().collect::<Vec<_>>();
+        // Two values per record plus the current session remain below SQLite's
+        // historical 999-parameter limit; one result per dependent per chunk.
+        for group in changes.chunks(400) {
+            let slots = std::iter::repeat_n("(?,?)", group.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut values = Vec::<rusqlite::types::Value>::new();
+            for (uuid, timestamp_changed) in group {
+                values.push(uuid.clone().into());
+                values.push(i64::from(*timestamp_changed).into());
+            }
+            values.push(session_id.to_owned().into());
+            let mut query = connection.prepare(&format!(
+                "WITH changed(uuid,ts) AS (VALUES {slots})
+                 SELECT m.session_id,max(c.ts) FROM session_work_records m
+                 JOIN changed c ON c.uuid=m.record_uuid WHERE m.session_id<>?
+                 GROUP BY m.session_id"
+            ))?;
+            for row in query.query_map(rusqlite::params_from_iter(values), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+            })? {
+                let (id, timestamp_changed) = row?;
+                dependents
+                    .entry(id)
+                    .and_modify(|time| *time |= timestamp_changed)
+                    .or_insert(timestamp_changed);
+            }
         }
     }
-    for dependent in timestamp_dependents {
-        if dependent == session_id {
-            continue;
+    for (dependent, timestamp_changed) in dependents {
+        let mut affected =
+            read::session(connection, &dependent)?.ok_or(Error::IncompatibleSchema)?;
+        if dependent != session_id && timestamp_changed {
+            (affected.first_ts, affected.last_ts) = read::timestamp_range(connection, &dependent)?;
+            save_session(connection, &affected)?;
         }
-        let mut copied = read::session(connection, &dependent)?.ok_or(Error::IncompatibleSchema)?;
-        (copied.first_ts, copied.last_ts) = read::timestamp_range(connection, &dependent)?;
-        save_session(connection, &copied)?;
         affected_owners.insert(
             dependent.clone(),
             crate::batch::AffectedSession {
                 session_id: dependent,
-                surface: copied.meta.surface,
+                surface: affected.meta.surface,
             },
         );
     }
