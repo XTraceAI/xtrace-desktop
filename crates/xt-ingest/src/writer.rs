@@ -170,8 +170,19 @@ pub fn write_batch(store: &mut Store, request: &WriteBatch<'_>) -> Result<BatchO
         first_seen_at: request.observed_at,
         last_seen_at: request.observed_at,
     }];
+    let confirmed_iteration_usage = request
+        .records
+        .iter()
+        .map(|r| r.native.iteration_usage_confirmed)
+        .collect::<Vec<_>>();
     let mut batch = IngestBatch::new(&session, &records, request.keep_content);
     batch.identities = &identities;
+    batch.native_history = source == SessionSource::Transcript
+        && session.host == Host::Claude
+        && request.discovery.is_some();
+    if batch.native_history {
+        batch.confirmed_iteration_usage = &confirmed_iteration_usage;
+    }
     batch.namespace = request.namespace;
     batch.session_sources = &session_sources;
     batch.record_sources = &record_sources;

@@ -5,7 +5,7 @@ use crate::{
     model::CacheCreation,
     read, timestamp,
 };
-use rusqlite::{Connection, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::Value;
 
 #[derive(Default)]
@@ -57,7 +57,15 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let keep_content = crate::retention::allows_content(&transaction, keep_content)?;
-        let result = upsert_records(&transaction, session_id, records, keep_content, &[])?;
+        let result = upsert_records(
+            &transaction,
+            session_id,
+            records,
+            keep_content,
+            &[],
+            false,
+            &[],
+        )?;
         transaction.commit()?;
         Ok(result.stats)
     }
@@ -106,6 +114,8 @@ pub(crate) fn upsert_records(
     records: &[CanonicalRecord],
     keep_content: bool,
     identities: &[crate::model::RecordIdentity],
+    native_history: bool,
+    confirmed_iteration_usage: &[bool],
 ) -> Result<IngestBatchOutcome> {
     let mut session = read::session(connection, session_id)?.ok_or(Error::InvalidInput(
         "session must be created before writing records",
@@ -120,6 +130,8 @@ pub(crate) fn upsert_records(
     let mut stats = WriteStats::default();
     let mut outcomes = Vec::with_capacity(records.len());
     let mut affected_owners = std::collections::BTreeMap::new();
+    let mut native_owners = std::collections::BTreeMap::<String, bool>::new();
+    let mut changed_records = std::collections::BTreeMap::<String, bool>::new();
     for (input_index, input) in records.iter().enumerate() {
         let Some(uuid) = input.uuid.as_deref().filter(|id| !id.trim().is_empty()) else {
             stats.dropped_no_uuid += 1;
@@ -154,6 +166,87 @@ pub(crate) fn upsert_records(
         validate_session(&metadata)?;
         // Ownership/type conflicts do not exempt nonblank input from validation.
         let mut existing = existing_records.get_mut(uuid);
+        let native_owner = if native_history && let Some(stored) = existing.as_ref() {
+            if !native_owners.contains_key(&stored.session_id) {
+                let eligible = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sessions s JOIN discovered_sessions d
+                     ON d.conversation_id=s.session_id AND d.native_session_id=s.native_session_id
+                     WHERE s.session_id=?1 AND s.host='claude' AND s.source='transcript' AND d.host='claude')",
+                    [&stored.session_id], |row| row.get::<_, bool>(0),
+                )?;
+                native_owners.insert(stored.session_id.clone(), eligible);
+            }
+            native_owners[&stored.session_id]
+        } else {
+            false
+        };
+        let copy_context_matches: bool = if native_history
+            && existing
+                .as_ref()
+                .is_some_and(|r| r.session_id != session_id)
+        {
+            connection.query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM native_record_copies WHERE session_id=?1 AND record_uuid=?2 AND parent_uuid IS NOT NULL AND ?3 IS NOT NULL AND parent_uuid<>?3)",
+                params![session_id, uuid, incoming.identity.parent_uuid], |row| row.get(0),
+            )?
+        } else {
+            true
+        };
+        let mut repaired_usage = false;
+        if native_history
+            && native_owner
+            && copy_context_matches
+            && confirmed_iteration_usage.get(input_index) == Some(&true)
+            && let Some(stored) = existing.as_mut()
+            && let (Some(old_usage), Some(new_usage)) = (&stored.usage, &incoming.usage)
+            && [
+                old_usage.input_tokens,
+                old_usage.output_tokens,
+                old_usage.cache_read_input_tokens,
+                old_usage.cache_creation_input_tokens,
+            ]
+            .iter()
+            .all(|v| *v == Some(0))
+        {
+            let mut corrected = (**stored).clone();
+            let usage = corrected.usage.as_mut().unwrap();
+            usage.input_tokens = new_usage.input_tokens;
+            usage.output_tokens = new_usage.output_tokens;
+            usage.cache_read_input_tokens = new_usage.cache_read_input_tokens;
+            usage.cache_creation_input_tokens = new_usage.cache_creation_input_tokens;
+            let mut comparable = incoming.clone();
+            comparable.session_id = stored.session_id.clone();
+            if stored.session_id != session_id {
+                comparable.identity.parent_uuid = stored.identity.parent_uuid.clone();
+            }
+            let owner =
+                read::session(connection, &stored.session_id)?.ok_or(Error::IncompatibleSchema)?;
+            if owner.meta.host == Host::Claude
+                && corrected != **stored
+                && crate::measurement::Projection::from_stored(&corrected)?
+                    .conflicting_fields(&crate::measurement::Projection::from_stored(&comparable)?)
+                    == 0
+                && stored
+                    .content_json
+                    .as_ref()
+                    .zip(incoming.content_json.as_ref())
+                    .is_none_or(|(old, new)| old == new)
+            {
+                save_record(connection, &corrected)?;
+                **stored = corrected;
+                repaired_usage = true;
+                changed_records.entry(uuid.to_owned()).or_insert(false);
+                if stored.session_id != session_id {
+                    affected_owners.insert(
+                        stored.session_id.clone(),
+                        crate::batch::AffectedSession {
+                            session_id: stored.session_id.clone(),
+                            surface: owner.meta.surface,
+                        },
+                    );
+                }
+            }
+        }
         let conflict_fields = existing
             .as_ref()
             .map(|saved| {
@@ -167,9 +260,81 @@ pub(crate) fn upsert_records(
             })
             .transpose()?
             .unwrap_or(0);
+        if native_history
+            && native_owner
+            && let Some(stored) = existing.as_mut()
+            && stored.session_id != session_id
+        {
+            // Compare immutable work facts independently of which file was
+            // discovered first. Enrichment keeps its original storage partition.
+            let mut comparable = incoming.clone();
+            comparable.session_id = stored.session_id.clone();
+            comparable.identity.parent_uuid = stored.identity.parent_uuid.clone();
+            let owner =
+                read::session(connection, &stored.session_id)?.ok_or(Error::IncompatibleSchema)?;
+            if copy_context_matches
+                && owner.meta.host == Host::Claude
+                && crate::measurement::Projection::from_stored(stored)?
+                    .conflicting_fields(&crate::measurement::Projection::from_stored(&comparable)?)
+                    == 0
+                && stored
+                    .content_json
+                    .as_ref()
+                    .zip(incoming.content_json.as_ref())
+                    .is_none_or(|(old, new)| old == new)
+            {
+                let added = connection.execute(
+                    "INSERT INTO native_record_copies(session_id,record_uuid,parent_uuid) VALUES(?1,?2,?3)
+                    ON CONFLICT(session_id,record_uuid) DO UPDATE SET parent_uuid=excluded.parent_uuid
+                    WHERE native_record_copies.parent_uuid IS NULL AND excluded.parent_uuid IS NOT NULL",
+                    params![session_id, uuid, incoming.identity.parent_uuid],
+                )? > 0;
+                let before = (**stored).clone();
+                let measurement_enriched = merge_record(stored, &comparable);
+                if before != **stored {
+                    changed_records
+                        .entry(uuid.to_owned())
+                        .and_modify(|time| *time |= before.ts != stored.ts)
+                        .or_insert(before.ts != stored.ts);
+                    save_record(connection, stored)?;
+                    affected_owners.insert(
+                        stored.session_id.clone(),
+                        crate::batch::AffectedSession {
+                            session_id: stored.session_id.clone(),
+                            surface: owner.meta.surface,
+                        },
+                    );
+                }
+                let metadata_changed = merge_session(&mut session, &metadata, false);
+                if added || metadata_changed || measurement_enriched || repaired_usage {
+                    stats.enriched += 1;
+                } else {
+                    stats.ignored += 1;
+                }
+                outcomes.push(RecordOutcome {
+                    input_index,
+                    uuid: Some(uuid.to_owned()),
+                    disposition: if added
+                        || metadata_changed
+                        || measurement_enriched
+                        || repaired_usage
+                    {
+                        RecordDisposition::Enriched
+                    } else {
+                        RecordDisposition::Duplicate
+                    },
+                    conflict_fields: 0,
+                    stored_has_conflict: Some(stored.has_conflict),
+                });
+                continue;
+            }
+        }
         if let Some(stored) = existing.as_mut()
             && (stored.session_id != session_id || stored.record_type != incoming.record_type)
         {
+            if !stored.has_conflict {
+                changed_records.entry(uuid.to_owned()).or_insert(false);
+            }
             stored.has_conflict = true;
             if stored.session_id != session_id && !affected_owners.contains_key(&stored.session_id)
             {
@@ -211,9 +376,13 @@ pub(crate) fn upsert_records(
                 let before = stored.clone();
                 let enriched = merge_record(stored, &incoming) || session_enriched;
                 if before != *stored {
+                    changed_records
+                        .entry(uuid.to_owned())
+                        .and_modify(|time| *time |= before.ts != stored.ts)
+                        .or_insert(before.ts != stored.ts);
                     save_record(connection, stored)?;
                 }
-                let disposition = if enriched {
+                let disposition = if enriched || repaired_usage {
                     stats.enriched += 1;
                     RecordDisposition::Enriched
                 } else {
@@ -239,6 +408,60 @@ pub(crate) fn upsert_records(
         "UPDATE sessions SET record_count=record_count+?1 WHERE session_id=?2",
         params![stats.inserted as i64, session_id],
     )?;
+    let mut dependents = std::collections::BTreeMap::<String, bool>::new();
+    if !changed_records.is_empty()
+        && connection
+            .query_row("SELECT 1 FROM native_record_copies LIMIT 1", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .optional()?
+            .is_some()
+    {
+        let changes = changed_records.into_iter().collect::<Vec<_>>();
+        // Two values per record plus the current session remain below SQLite's
+        // historical 999-parameter limit; one result per dependent per chunk.
+        for group in changes.chunks(400) {
+            let slots = std::iter::repeat_n("(?,?)", group.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut values = Vec::<rusqlite::types::Value>::new();
+            for (uuid, timestamp_changed) in group {
+                values.push(uuid.clone().into());
+                values.push(i64::from(*timestamp_changed).into());
+            }
+            values.push(session_id.to_owned().into());
+            let mut query = connection.prepare(&format!(
+                "WITH changed(uuid,ts) AS (VALUES {slots})
+                 SELECT m.session_id,max(c.ts) FROM session_work_records m
+                 JOIN changed c ON c.uuid=m.record_uuid WHERE m.session_id<>?
+                 GROUP BY m.session_id"
+            ))?;
+            for row in query.query_map(rusqlite::params_from_iter(values), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+            })? {
+                let (id, timestamp_changed) = row?;
+                dependents
+                    .entry(id)
+                    .and_modify(|time| *time |= timestamp_changed)
+                    .or_insert(timestamp_changed);
+            }
+        }
+    }
+    for (dependent, timestamp_changed) in dependents {
+        let mut affected =
+            read::session(connection, &dependent)?.ok_or(Error::IncompatibleSchema)?;
+        if dependent != session_id && timestamp_changed {
+            (affected.first_ts, affected.last_ts) = read::timestamp_range(connection, &dependent)?;
+            save_session(connection, &affected)?;
+        }
+        affected_owners.insert(
+            dependent.clone(),
+            crate::batch::AffectedSession {
+                session_id: dependent,
+                surface: affected.meta.surface,
+            },
+        );
+    }
     Ok(IngestBatchOutcome {
         session_surface: session.meta.surface.clone(),
         affected_owners: affected_owners.into_values().collect(),

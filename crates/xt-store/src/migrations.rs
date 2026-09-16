@@ -9,6 +9,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/0001_canonical.sql")),
     (2, include_str!("../migrations/0002_ingest.sql")),
     (3, include_str!("../migrations/0003_native_checkpoints.sql")),
+    (
+        4,
+        include_str!("../migrations/0004_native_record_copies.sql"),
+    ),
 ];
 
 impl Store {

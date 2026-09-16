@@ -287,14 +287,17 @@ fn claude_fs_reports_absent_roots_and_identity_disagreements_explicitly() {
     assert!(!report.complete());
 
     let project = fake_home(&home);
-    // A file whose records belong to another session cannot be imported under its name.
+    // Copied history is valid, but contradictory explicit identity labels are not.
     let other = "00000000-0000-4000-8000-000000000002";
     fs::write(
         project.join(format!("{other}.jsonl")),
         fixture_records()
             .into_iter()
             .take(3)
-            .map(|r| native_line(r, SID) + "\n")
+            .map(|mut r| {
+                r["native_session_id"] = json!(other);
+                native_line(r, SID) + "\n"
+            })
             .collect::<String>(),
     )
     .unwrap();
@@ -1497,5 +1500,754 @@ fn claude_fs_rejects_source_replacement_between_enumeration_and_open() {
         assert!(import_file(&mut store, &files[0], 1, ScanMode::Resume).is_err());
         assert_eq!(store.counts().unwrap().records, 0);
         assert_eq!(fs::read_to_string(&external).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn inherited_work_has_one_record_and_each_session_context_in_either_scan_order() {
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    for rewritten in [false, true] {
+        for fork_first in [false, true] {
+            let temp = tempfile::TempDir::new().unwrap();
+            let home = temp.path().join("home");
+            let project = home.join(".claude/projects/synthetic");
+            fs::create_dir_all(&project).unwrap();
+            let original = project.join(format!("{SID}.jsonl"));
+            let fork = project.join(format!("{fork_id}.jsonl"));
+            let records = fixture_records();
+            fs::write(
+                &original,
+                records[..2]
+                    .iter()
+                    .map(|r| native_line(r.clone(), SID) + "\n")
+                    .collect::<String>(),
+            )
+            .unwrap();
+            let mut lines = records[..2]
+                .iter()
+                .map(|r| native_line(r.clone(), if rewritten { fork_id } else { SID }) + "\n")
+                .collect::<String>();
+            lines.push_str(&(native_line(records[2].clone(), fork_id) + "\n"));
+            fs::write(&fork, lines).unwrap();
+            for (path, newer) in [(&original, !fork_first), (&fork, fork_first)] {
+                fs::File::open(path)
+                    .unwrap()
+                    .set_times(fs::FileTimes::new().set_modified(
+                        std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(if newer { 200 } else { 100 }),
+                    ))
+                    .unwrap();
+            }
+            let before = hashes(&home);
+            let database = temp.path().join("index.sqlite");
+            let mut store = Store::open(&database).unwrap();
+            let report = run(&mut store, &home);
+            assert!(report.complete(), "{report:?}");
+            let sql = rusqlite::Connection::open(&database).unwrap();
+            let scalar = |query| sql.query_row(query, [], |r| r.get::<_, i64>(0)).unwrap();
+            assert_eq!(scalar("SELECT count(*) FROM records"), 3);
+            assert_eq!(scalar("SELECT count(*) FROM session_work_records"), 5);
+            assert_eq!(
+                scalar("SELECT count(DISTINCT record_uuid) FROM session_work_records"),
+                3
+            );
+            assert_eq!(
+                scalar(
+                    "SELECT count(*) FROM records WHERE content_json IS NOT NULL OR has_conflict=1"
+                ),
+                0
+            );
+            let pages = store.sessions_page("", None, None).unwrap();
+            assert_eq!(pages.iter().find(|r| r.id == SID).unwrap().record_count, 2);
+            assert_eq!(
+                pages.iter().find(|r| r.id == fork_id).unwrap().record_count,
+                3
+            );
+            assert!(pages.iter().all(|r| r.first_ts.is_some()));
+            assert!(run(&mut store, &home).complete());
+            assert_eq!(scalar("SELECT count(*) FROM records"), 3);
+            assert_eq!(scalar("SELECT count(*) FROM session_work_records"), 5);
+            assert_eq!(before, hashes(&home));
+        }
+    }
+}
+
+#[test]
+fn native_copy_conflicts_stay_rejected_and_failed_copy_writes_roll_back() {
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    for fail_transaction in [false, true] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/synthetic");
+        fs::create_dir_all(&project).unwrap();
+        let records = fixture_records();
+        fs::write(
+            project.join(format!("{SID}.jsonl")),
+            native_line(records[0].clone(), SID) + "\n",
+        )
+        .unwrap();
+        let database = temp.path().join("index.sqlite");
+        let mut store = Store::open(&database).unwrap();
+        assert!(run(&mut store, &home).complete());
+        let sql = rusqlite::Connection::open(&database).unwrap();
+        let mut copied = records[0].clone();
+        if fail_transaction {
+            sql.execute_batch("CREATE TRIGGER reject_copy BEFORE INSERT ON native_record_copies BEGIN SELECT RAISE(ABORT,'synthetic failure'); END;").unwrap();
+        } else {
+            copied["timestamp"] = json!("2026-09-08T00:00:00Z");
+        }
+        // A fresh record before the copy must also roll back on database failure.
+        fs::write(
+            project.join(format!("{fork_id}.jsonl")),
+            native_line(records[1].clone(), fork_id) + "\n" + &native_line(copied, fork_id) + "\n",
+        )
+        .unwrap();
+        let report = run(&mut store, &home);
+        assert!(!report.complete());
+        assert_eq!(
+            sql.query_row("SELECT count(*) FROM native_record_copies", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        if fail_transaction {
+            assert_eq!(store.counts().unwrap().records, 1);
+            assert!(store.session(fork_id).unwrap().is_none());
+        } else {
+            assert_eq!(store.counts().unwrap().records, 2);
+            assert_eq!(
+                sql.query_row(
+                    "SELECT count(*) FROM records WHERE has_conflict=1",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+                1
+            );
+        }
+    }
+}
+
+#[test]
+fn fork_parent_links_and_zeroed_aggregates_preserve_one_measured_inference() {
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    for fork_first in [false, true] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/synthetic");
+        fs::create_dir_all(&project).unwrap();
+        let usage = json!({"input_tokens":11,"output_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3});
+        let original = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","parentUuid":"original-parent","timestamp":"2026-01-01T00:00:00Z","message":{"id":"synthetic-api-id","role":"assistant","model":"fixture-model","content":[{"type":"text","text":"one measured inference"}],"usage":usage}});
+        let mut copied = original.clone();
+        copied["parentUuid"] = json!("fork-parent");
+        copied["message"]["usage"] = json!({"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"iterations":[{"type":"message","model":"fixture-model","input_tokens":11,"output_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3}]});
+        for (id, record, newer) in [(SID, original, !fork_first), (fork_id, copied, fork_first)] {
+            let path = project.join(format!("{id}.jsonl"));
+            fs::write(&path, native_line(record, id) + "\n").unwrap();
+            fs::File::open(path)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(
+                    std::time::SystemTime::UNIX_EPOCH
+                        + std::time::Duration::from_secs(if newer { 200 } else { 100 }),
+                ))
+                .unwrap();
+        }
+        let database = temp.path().join("index.sqlite");
+        let mut store = Store::open(&database).unwrap();
+        let report = run(&mut store, &home);
+        assert!(report.complete(), "{report:?}");
+        let sql = rusqlite::Connection::open(&database).unwrap();
+        assert_eq!(sql.query_row("SELECT sum(input_tokens+output_tokens+cache_read_tokens+cache_creation_tokens) FROM usage", [], |r| r.get::<_, i64>(0)).unwrap(),26);
+        assert_eq!(store.counts().unwrap().records, 1);
+        for (id, parent) in [(SID, "original-parent"), (fork_id, "fork-parent")] {
+            assert_eq!(
+                sql.query_row(
+                    "SELECT parent_uuid FROM session_work_records WHERE session_id=?1",
+                    [id],
+                    |r| r.get::<_, String>(0)
+                )
+                .unwrap(),
+                parent
+            );
+        }
+        assert!(run(&mut store, &home).complete());
+        assert_eq!(store.counts().unwrap().records, 1);
+        assert_eq!(
+            sql.query_row(
+                "SELECT count(*) FROM records WHERE has_conflict=1 OR content_json IS NOT NULL",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+    }
+}
+
+#[test]
+fn malformed_native_iteration_counters_do_not_become_measured_zeroes() {
+    for invalid in [json!(-1), json!("11"), json!(null)] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/synthetic");
+        fs::create_dir_all(&project).unwrap();
+        let record = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"iterations":[{"type":"message","input_tokens":invalid,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}]}}});
+        fs::write(
+            project.join(format!("{SID}.jsonl")),
+            native_line(record, SID) + "\n",
+        )
+        .unwrap();
+        let mut store = Store::open_in_memory().unwrap();
+        assert!(!run(&mut store, &home).complete());
+        assert_eq!(store.counts().unwrap().records, 0);
+    }
+}
+
+#[test]
+fn native_membership_normalization_does_not_erase_blank_identity_aliases() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/synthetic");
+    fs::create_dir_all(&project).unwrap();
+    let mut record = fixture_records()[0].clone();
+    record["native_session_id"] = json!(" ");
+    record.as_object_mut().unwrap().remove("sessionId");
+    fs::write(
+        project.join(format!("{SID}.jsonl")),
+        record.to_string() + "\n",
+    )
+    .unwrap();
+    let mut store = Store::open_in_memory().unwrap();
+    assert!(!run(&mut store, &home).complete());
+    assert_eq!(store.counts().unwrap().records, 0);
+}
+
+#[test]
+fn v3_upgrade_replays_unchanged_forks_and_repairs_only_confirmed_zeroed_usage() {
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    for original_first in [None, Some(false), Some(true)] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/synthetic");
+        fs::create_dir_all(&project).unwrap();
+        let mut record = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","timestamp":"2026-01-01T00:00:00Z","message":{"id":"synthetic-api-id","role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"iterations":[{"type":"message","input_tokens":11,"output_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3}]}}});
+        let fork = project.join(format!("{fork_id}.jsonl"));
+        fs::write(&fork, native_line(record.clone(), fork_id) + "\n").unwrap();
+        fs::File::open(&fork)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(200),
+            ))
+            .unwrap();
+        let database = temp.path().join("index.sqlite");
+        let mut store = Store::open(&database).unwrap();
+        assert!(run(&mut store, &home).complete());
+        drop(store);
+        // Exact legacy state: the source/checkpoint are unchanged, but v3
+        // stored the zero aggregate and did not understand iteration evidence.
+        let sql = rusqlite::Connection::open(&database).unwrap();
+        assert!(
+            sql.query_row("SELECT count(*) FROM native_checkpoints", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap()
+                > 0
+        );
+        sql.execute_batch("UPDATE usage SET input_tokens=0,output_tokens=0,cache_read_tokens=0,cache_creation_tokens=0; UPDATE records SET has_conflict=1; DROP VIEW session_work_records; DROP TABLE native_record_copies; DELETE FROM schema_version WHERE version=4;").unwrap();
+        if let Some(first) = original_first {
+            record["message"]["usage"]["input_tokens"] = json!(11);
+            record["message"]["usage"]["output_tokens"] = json!(7);
+            record["message"]["usage"]["cache_read_input_tokens"] = json!(5);
+            record["message"]["usage"]["cache_creation_input_tokens"] = json!(3);
+            let original = project.join(format!("{SID}.jsonl"));
+            fs::write(&original, native_line(record, SID) + "\n").unwrap();
+            fs::File::open(original)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(
+                    std::time::SystemTime::UNIX_EPOCH
+                        + std::time::Duration::from_secs(if first { 300 } else { 100 }),
+                ))
+                .unwrap();
+        }
+        let before = hashes(&home);
+        let mut store = Store::open(&database).unwrap();
+        assert_eq!(
+            sql.query_row("SELECT count(*) FROM native_checkpoints", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        let report = run(&mut store, &home);
+        assert!(report.complete(), "{report:?}");
+        assert_eq!(store.counts().unwrap().records, 1);
+        assert_eq!(sql.query_row("SELECT sum(input_tokens+output_tokens+cache_read_tokens+cache_creation_tokens) FROM usage",[],|r|r.get::<_,i64>(0)).unwrap(),26);
+        assert_eq!(
+            sql.query_row(
+                "SELECT count(*) FROM records WHERE has_conflict=1",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1,
+            "unrelated historical flags are retained"
+        );
+        assert_eq!(
+            sql.query_row("SELECT count(*) FROM session_work_records", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            if original_first.is_some() { 2 } else { 1 }
+        );
+        assert_eq!(before, hashes(&home));
+    }
+}
+
+#[test]
+fn owner_timestamp_enrichment_refreshes_an_unchanged_copied_session() {
+    for enrich_copy in [false, true] {
+        let fork_id = "00000000-0000-4000-8000-000000000002";
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/synthetic");
+        fs::create_dir_all(&project).unwrap();
+        let mut record = fixture_records()[0].clone();
+        record.as_object_mut().unwrap().remove("timestamp");
+        for (id, age) in [(SID, 200), (fork_id, 100)] {
+            let file = project.join(format!("{id}.jsonl"));
+            fs::write(&file, native_line(record.clone(), id) + "\n").unwrap();
+            fs::File::open(file)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(
+                    std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(age),
+                ))
+                .unwrap();
+        }
+        let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+        assert!(run(&mut store, &home).complete());
+        assert_eq!(store.session(fork_id).unwrap().unwrap().first_ts, None);
+        record["timestamp"] = json!("2026-01-01T00:00:00Z");
+        let changed_id = if enrich_copy { fork_id } else { SID };
+        fs::write(
+            project.join(format!("{changed_id}.jsonl")),
+            native_line(record, changed_id) + "\n",
+        )
+        .unwrap();
+        assert!(run(&mut store, &home).complete());
+        let fork = store.session(fork_id).unwrap().unwrap();
+        assert_eq!(fork.first_ts.as_deref(), Some("2026-01-01T00:00:00Z"));
+        // A later full replay of the sparse copy must not turn the enriched
+        // timestamp into a new ownership conflict.
+        rusqlite::Connection::open(temp.path().join("index.sqlite"))
+            .unwrap()
+            .execute(
+                "DELETE FROM native_checkpoints WHERE source='transcript'",
+                [],
+            )
+            .unwrap();
+        assert!(run(&mut store, &home).complete());
+        assert_eq!(fork.last_ts, fork.first_ts);
+        assert_eq!(store.session(SID).unwrap().unwrap().first_ts, fork.first_ts);
+        assert_eq!(
+            store
+                .sessions_page("", None, None)
+                .unwrap()
+                .iter()
+                .find(|r| r.id == fork_id)
+                .unwrap()
+                .first_ts,
+            fork.first_ts
+        );
+    }
+}
+
+#[test]
+fn native_zero_usage_without_iteration_evidence_is_not_replaced() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/synthetic");
+    fs::create_dir_all(&project).unwrap();
+    let mut row = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}});
+    fs::write(
+        project.join(format!("{SID}.jsonl")),
+        native_line(row.clone(), SID) + "\n",
+    )
+    .unwrap();
+    let database = temp.path().join("index.sqlite");
+    let mut store = Store::open(&database).unwrap();
+    assert!(run(&mut store, &home).complete());
+    row["message"]["usage"]["input_tokens"] = json!(11);
+    row["iteration_usage_confirmed"] = json!(true);
+    row["native"] = json!({"iteration_usage_confirmed":true});
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    fs::write(
+        project.join(format!("{fork_id}.jsonl")),
+        native_line(row, fork_id) + "\n",
+    )
+    .unwrap();
+    assert!(!run(&mut store, &home).complete());
+    let sql = rusqlite::Connection::open(database).unwrap();
+    assert_eq!(
+        sql.query_row("SELECT input_tokens FROM usage", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sql.query_row("SELECT count(*) FROM native_record_copies", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn a_rejected_copy_context_cannot_repair_the_shared_work_as_a_side_effect() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/synthetic");
+    fs::create_dir_all(&project).unwrap();
+    let mut row = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}});
+    row["parentUuid"] = json!("known-parent");
+    fs::write(
+        project.join(format!("{SID}.jsonl")),
+        native_line(row.clone(), SID) + "\n",
+    )
+    .unwrap();
+    let database = temp.path().join("index.sqlite");
+    let mut store = Store::open(&database).unwrap();
+    assert!(run(&mut store, &home).complete());
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    let path = project.join(format!("{fork_id}.jsonl"));
+    fs::write(&path, native_line(row.clone(), fork_id) + "\n").unwrap();
+    assert!(run(&mut store, &home).complete());
+    row["parentUuid"] = json!("different-parent");
+    row["message"]["usage"]["input_tokens"] = json!(11);
+    row["message"]["usage"]["iterations"] = json!([{"type":"message","input_tokens":11,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}]);
+    fs::write(path, native_line(row, fork_id) + "\n").unwrap();
+    assert!(!run(&mut store, &home).complete());
+    let sql = rusqlite::Connection::open(database).unwrap();
+    assert_eq!(
+        sql.query_row("SELECT input_tokens FROM usage", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sql.query_row("SELECT parent_uuid FROM native_record_copies", [], |r| {
+            r.get::<_, Option<String>>(0)
+        })
+        .unwrap(),
+        Some("known-parent".to_owned())
+    );
+}
+
+#[test]
+fn unused_incomplete_iteration_metadata_does_not_block_ordinary_usage_or_later_records() {
+    for iteration in [
+        json!({"type":"message","input_tokens":11,"output_tokens":7}),
+        json!({"type":"message","input_tokens":"bad","output_tokens":7}),
+        json!({"type":"message","model":5,"input_tokens":11,"output_tokens":7}),
+    ] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/synthetic");
+        fs::create_dir_all(&project).unwrap();
+        let record = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"assistant","content":[],"usage":{"input_tokens":11,"output_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"iterations":[iteration]}}});
+        let later = json!({"type":"user","uuid":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","message":{"role":"user","content":[{"type":"text","text":"following work"}]}});
+        fs::write(
+            project.join(format!("{SID}.jsonl")),
+            native_line(record, SID) + "\n" + &native_line(later, SID) + "\n",
+        )
+        .unwrap();
+        let database = temp.path().join("index.sqlite");
+        let mut store = Store::open(&database).unwrap();
+        assert!(run(&mut store, &home).complete());
+        assert_eq!(store.counts().unwrap().records, 2);
+        let sql = rusqlite::Connection::open(database).unwrap();
+        assert_eq!(sql.query_row("SELECT sum(input_tokens+output_tokens+cache_read_tokens+cache_creation_tokens) FROM usage",[],|r|r.get::<_,i64>(0)).unwrap(),26);
+    }
+}
+
+#[test]
+fn copied_parent_links_enrich_unknowns_without_erasing_known_values() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/synthetic");
+    fs::create_dir_all(&project).unwrap();
+    let mut row = fixture_records()[0].clone();
+    row.as_object_mut().unwrap().remove("parentUuid");
+    fs::write(
+        project.join(format!("{SID}.jsonl")),
+        native_line(row.clone(), SID) + "\n",
+    )
+    .unwrap();
+    let database = temp.path().join("index.sqlite");
+    let mut store = Store::open(&database).unwrap();
+    assert!(run(&mut store, &home).complete());
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    let path = project.join(format!("{fork_id}.jsonl"));
+    fs::write(&path, native_line(row.clone(), fork_id) + "\n").unwrap();
+    assert!(run(&mut store, &home).complete());
+    row["parentUuid"] = json!("observed-parent");
+    fs::write(&path, native_line(row.clone(), fork_id) + "\n").unwrap();
+    assert!(run(&mut store, &home).complete());
+    row.as_object_mut().unwrap().remove("parentUuid");
+    fs::write(&path, native_line(row, fork_id) + "\n").unwrap();
+    assert!(run(&mut store, &home).complete());
+    let sql = rusqlite::Connection::open(database).unwrap();
+    assert_eq!(
+        sql.query_row("SELECT parent_uuid FROM native_record_copies", [], |r| {
+            r.get::<_, String>(0)
+        })
+        .unwrap(),
+        "observed-parent"
+    );
+    assert_eq!(
+        sql.query_row(
+            "SELECT count(*) FROM records WHERE has_conflict=1",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(store.counts().unwrap().records, 1);
+}
+
+#[test]
+fn copied_content_can_fill_a_missing_retained_value_without_accepting_disagreement() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/synthetic");
+    fs::create_dir_all(&project).unwrap();
+    let mut row = json!({"type":"user","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"user","content":[{"type":"text","text":"alpha"}]}});
+    fs::write(
+        project.join(format!("{SID}.jsonl")),
+        native_line(row.clone(), SID) + "\n",
+    )
+    .unwrap();
+    let database = temp.path().join("index.sqlite");
+    let mut store = Store::open(&database).unwrap();
+    assert!(run(&mut store, &home).complete());
+    let sql = rusqlite::Connection::open(&database).unwrap();
+    let content = || {
+        sql.query_row("SELECT content_json FROM records", [], |r| {
+            r.get::<_, Option<String>>(0)
+        })
+        .unwrap()
+    };
+    assert_eq!(content(), None);
+    store
+        .set_retention_mode(xt_store::retention::RetentionMode::FullContent)
+        .unwrap();
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    let path = project.join(format!("{fork_id}.jsonl"));
+    fs::write(&path, native_line(row.clone(), fork_id) + "\n").unwrap();
+    assert!(run(&mut store, &home).complete());
+    let retained = content().unwrap();
+    assert!(retained.contains("alpha"));
+    assert_eq!(store.counts().unwrap().records, 1);
+    row["message"].as_object_mut().unwrap().remove("content");
+    fs::write(&path, native_line(row.clone(), fork_id) + "\n").unwrap();
+    assert!(run(&mut store, &home).complete());
+    assert_eq!(content().as_deref(), Some(retained.as_str()));
+    // Same length keeps measurement projections compatible; content itself
+    // must reject this known-to-known difference.
+    row["message"]["content"] = json!([{"type":"text","text":"omega"}]);
+    fs::write(path, native_line(row, fork_id) + "\n").unwrap();
+    assert!(!run(&mut store, &home).complete());
+    assert_eq!(content().as_deref(), Some(retained.as_str()));
+}
+
+#[test]
+fn all_shared_contexts_receive_measurement_and_cost_invalidations() {
+    use xt_ingest::canonical::{Parsed, SourceContext, parse_with_context};
+    use xt_ingest::writer::{WriteBatch, write_batch};
+    let second = "00000000-0000-4000-8000-000000000002";
+    let third = "00000000-0000-4000-8000-000000000003";
+    for target in [SID, second] {
+        for mode in ["model", "repair", "conflicting-model", "conflicting-type"] {
+            let repair = mode == "repair";
+            let temp = tempfile::TempDir::new().unwrap();
+            let home = temp.path().join("home");
+            let project = home.join(".claude/projects/synthetic");
+            fs::create_dir_all(&project).unwrap();
+            let mut row = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"assistant","content":[]}});
+            if repair {
+                row["message"]["usage"] = json!({"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0});
+            }
+            if mode.starts_with("conflicting-") {
+                row["message"]["model"] = json!("original-model");
+            }
+            fs::write(
+                project.join(format!("{SID}.jsonl")),
+                native_line(row.clone(), SID) + "\n",
+            )
+            .unwrap();
+            let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+            assert!(run(&mut store, &home).complete());
+            for id in [second, third] {
+                fs::write(
+                    project.join(format!("{id}.jsonl")),
+                    native_line(row.clone(), id) + "\n",
+                )
+                .unwrap();
+            }
+            assert!(run(&mut store, &home).complete());
+            if repair {
+                row["message"]["usage"]["input_tokens"] = json!(5);
+            } else if mode == "conflicting-type" {
+                row["type"] = json!("user");
+                row["message"]["role"] = json!("user");
+            } else {
+                row["message"]["model"] = json!("enriched-model");
+            }
+            let context = SourceContext {
+                conversation_id: Some(target.into()),
+                native_session_id: Some(target.into()),
+                source: Some(SessionSource::Transcript),
+                ..Default::default()
+            };
+            let Parsed::Record(mut parsed) =
+                parse_with_context(&native_line(row, target), &context).unwrap()
+            else {
+                panic!()
+            };
+            // The native adapter's validated proof is internal, not a JSON field.
+            parsed.native.iteration_usage_confirmed = repair;
+            let records = [*parsed];
+            let discovery = store
+                .discovered_sessions(Host::Claude)
+                .unwrap()
+                .into_iter()
+                .find(|d| d.native_session_id == target)
+                .unwrap();
+            let outcome = write_batch(
+                &mut store,
+                &WriteBatch {
+                    context: &context,
+                    declared_host: Some(Host::Claude),
+                    records: &records,
+                    title: None,
+                    cwd: None,
+                    git_branch: None,
+                    namespace: None,
+                    keep_content: true,
+                    observed_at: 1_800_000_000_000,
+                    receipt: None,
+                    cursor: None,
+                    discovery: Some(&discovery),
+                    checkpoint: None,
+                },
+            )
+            .unwrap();
+            let ids = outcome
+                .events
+                .iter()
+                .map(|e| e.conversation_id.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            assert_eq!(ids, std::collections::BTreeSet::from([SID, second, third]));
+            if !mode.starts_with("conflicting-") {
+                assert_eq!(outcome.events.len(), 3);
+            } else {
+                let sql = rusqlite::Connection::open(temp.path().join("index.sqlite")).unwrap();
+                assert!(
+                    sql.query_row("SELECT has_conflict FROM records", [], |r| r
+                        .get::<_, bool>(0))
+                        .unwrap()
+                );
+                assert_eq!(
+                    sql.query_row("SELECT count(*) FROM session_work_records", [], |r| r
+                        .get::<_, i64>(0))
+                        .unwrap(),
+                    3
+                );
+            }
+            assert!(
+                outcome
+                    .events
+                    .iter()
+                    .all(|e| e.invalidate_measurements && e.invalidate_cost)
+            );
+        }
+    }
+}
+
+#[test]
+fn same_session_parent_conflicts_cannot_supply_usage_repair_evidence() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/synthetic");
+    fs::create_dir_all(&project).unwrap();
+    let mut row = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","parentUuid":"known-parent","message":{"role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}});
+    let path = project.join(format!("{SID}.jsonl"));
+    fs::write(&path, native_line(row.clone(), SID) + "\n").unwrap();
+    let database = temp.path().join("index.sqlite");
+    let mut store = Store::open(&database).unwrap();
+    assert!(run(&mut store, &home).complete());
+    row["parentUuid"] = json!("different-parent");
+    row["message"]["usage"]["input_tokens"] = json!(11);
+    row["message"]["usage"]["iterations"] = json!([{"type":"message","input_tokens":11,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}]);
+    fs::write(path, native_line(row, SID) + "\n").unwrap();
+    run(&mut store, &home);
+    let sql = rusqlite::Connection::open(database).unwrap();
+    assert_eq!(
+        sql.query_row("SELECT input_tokens FROM usage", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sql.query_row("SELECT parent_uuid FROM records", [], |r| r
+            .get::<_, String>(0))
+            .unwrap(),
+        "known-parent"
+    );
+}
+
+#[test]
+fn native_copies_do_not_enrich_records_owned_by_other_import_kinds() {
+    let fork = "00000000-0000-4000-8000-000000000002";
+    for source in ["plugin", "fixture", "transcript"] {
+        for repair in [false, true] {
+            let temp = tempfile::TempDir::new().unwrap();
+            let home = temp.path().join("home");
+            let project = home.join(".claude/projects/synthetic");
+            fs::create_dir_all(&project).unwrap();
+            let mut row = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}});
+            let original = project.join(format!("{SID}.jsonl"));
+            fs::write(&original, native_line(row.clone(), SID) + "\n").unwrap();
+            let database = temp.path().join("index.sqlite");
+            let mut store = Store::open(&database).unwrap();
+            assert!(run(&mut store, &home).complete());
+            let sql = rusqlite::Connection::open(&database).unwrap();
+            sql.execute("UPDATE sessions SET source=?1", [source])
+                .unwrap();
+            if source == "transcript" {
+                // A generic transcript lacks native discovery evidence.
+                sql.execute("DELETE FROM discovered_sessions", []).unwrap();
+            }
+            fs::remove_file(original).unwrap();
+            if repair {
+                row["message"]["usage"]["input_tokens"] = json!(7);
+                row["message"]["usage"]["iterations"] = json!([{"type":"message","input_tokens":7,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}]);
+            }
+            fs::write(
+                project.join(format!("{fork}.jsonl")),
+                native_line(row, fork) + "\n",
+            )
+            .unwrap();
+            assert!(
+                !run(&mut store, &home).complete(),
+                "{source} repair={repair}"
+            );
+            assert_eq!(
+                sql.query_row("SELECT count(*) FROM native_record_copies", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                sql.query_row("SELECT input_tokens FROM usage", [], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(store.counts().unwrap().records, 1);
+        }
     }
 }
