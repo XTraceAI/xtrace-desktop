@@ -315,6 +315,9 @@ pub(crate) fn upsert_records(
         if let Some(stored) = existing.as_mut()
             && (stored.session_id != session_id || stored.record_type != incoming.record_type)
         {
+            if !stored.has_conflict {
+                changed_records.entry(uuid.to_owned()).or_insert(false);
+            }
             stored.has_conflict = true;
             if stored.session_id != session_id && !affected_owners.contains_key(&stored.session_id)
             {

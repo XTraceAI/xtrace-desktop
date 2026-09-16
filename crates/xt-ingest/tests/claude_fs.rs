@@ -2062,7 +2062,8 @@ fn all_shared_contexts_receive_measurement_and_cost_invalidations() {
     let second = "00000000-0000-4000-8000-000000000002";
     let third = "00000000-0000-4000-8000-000000000003";
     for target in [SID, second] {
-        for repair in [false, true] {
+        for mode in ["model", "repair", "conflicting-model", "conflicting-type"] {
+            let repair = mode == "repair";
             let temp = tempfile::TempDir::new().unwrap();
             let home = temp.path().join("home");
             let project = home.join(".claude/projects/synthetic");
@@ -2070,6 +2071,9 @@ fn all_shared_contexts_receive_measurement_and_cost_invalidations() {
             let mut row = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"assistant","content":[]}});
             if repair {
                 row["message"]["usage"] = json!({"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0});
+            }
+            if mode.starts_with("conflicting-") {
+                row["message"]["model"] = json!("original-model");
             }
             fs::write(
                 project.join(format!("{SID}.jsonl")),
@@ -2088,6 +2092,9 @@ fn all_shared_contexts_receive_measurement_and_cost_invalidations() {
             assert!(run(&mut store, &home).complete());
             if repair {
                 row["message"]["usage"]["input_tokens"] = json!(5);
+            } else if mode == "conflicting-type" {
+                row["type"] = json!("user");
+                row["message"]["role"] = json!("user");
             } else {
                 row["message"]["model"] = json!("enriched-model");
             }
@@ -2136,7 +2143,22 @@ fn all_shared_contexts_receive_measurement_and_cost_invalidations() {
                 .map(|e| e.conversation_id.as_str())
                 .collect::<std::collections::BTreeSet<_>>();
             assert_eq!(ids, std::collections::BTreeSet::from([SID, second, third]));
-            assert_eq!(outcome.events.len(), 3);
+            if !mode.starts_with("conflicting-") {
+                assert_eq!(outcome.events.len(), 3);
+            } else {
+                let sql = rusqlite::Connection::open(temp.path().join("index.sqlite")).unwrap();
+                assert!(
+                    sql.query_row("SELECT has_conflict FROM records", [], |r| r
+                        .get::<_, bool>(0))
+                        .unwrap()
+                );
+                assert_eq!(
+                    sql.query_row("SELECT count(*) FROM session_work_records", [], |r| r
+                        .get::<_, i64>(0))
+                        .unwrap(),
+                    3
+                );
+            }
             assert!(
                 outcome
                     .events
