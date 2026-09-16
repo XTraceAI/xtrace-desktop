@@ -13,3 +13,6 @@ CREATE VIEW session_work_records AS
     SELECT session_id,uuid AS record_uuid,parent_uuid FROM records
     UNION ALL
     SELECT session_id,record_uuid,parent_uuid FROM native_record_copies;
+
+-- The native interpretation changed: prove unchanged Claude files again once.
+DELETE FROM native_checkpoints WHERE source='transcript';

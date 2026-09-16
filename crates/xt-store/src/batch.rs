@@ -23,6 +23,8 @@ pub struct IngestBatch<'a> {
     /// Native Claude file membership may reference an identical work record.
     /// Never available to plugin receipts or generic transcript imports.
     pub native_history: bool,
+    /// Per-input native adapter proof; never accepted without native_history.
+    pub confirmed_iteration_usage: &'a [bool],
     pub namespace: Option<&'a str>,
     /// Empty means unknown; otherwise exactly one native identity per input.
     pub identities: &'a [crate::model::RecordIdentity],
@@ -55,6 +57,7 @@ impl<'a> IngestBatch<'a> {
             records,
             keep_content,
             native_history: false,
+            confirmed_iteration_usage: &[],
             namespace: None,
             identities: &[],
             session_sources: &[],
@@ -183,6 +186,14 @@ impl Store {
                 "native copies require discovered Claude history",
             ));
         }
+        if !batch.confirmed_iteration_usage.is_empty()
+            && (!batch.native_history
+                || batch.confirmed_iteration_usage.len() != batch.records.len())
+        {
+            return Err(Error::InvalidInput(
+                "iteration proofs require aligned native inputs",
+            ));
+        }
         if !batch.identities.is_empty() && batch.identities.len() != batch.records.len() {
             return Err(Error::InvalidInput(
                 "native identities must align with batch inputs",
@@ -251,6 +262,7 @@ impl Store {
             keep_content,
             batch.identities,
             batch.native_history,
+            batch.confirmed_iteration_usage,
         )?;
         outcome.session_changed |= session_changed;
         let rejected = outcome

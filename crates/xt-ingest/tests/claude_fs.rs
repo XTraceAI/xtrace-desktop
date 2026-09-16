@@ -1721,3 +1721,217 @@ fn native_membership_normalization_does_not_erase_blank_identity_aliases() {
     assert!(!run(&mut store, &home).complete());
     assert_eq!(store.counts().unwrap().records, 0);
 }
+
+#[test]
+fn v3_upgrade_replays_unchanged_forks_and_repairs_only_confirmed_zeroed_usage() {
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    for original_first in [None, Some(false), Some(true)] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/synthetic");
+        fs::create_dir_all(&project).unwrap();
+        let mut record = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","timestamp":"2026-01-01T00:00:00Z","message":{"id":"synthetic-api-id","role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"iterations":[{"type":"message","input_tokens":11,"output_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3}]}}});
+        let fork = project.join(format!("{fork_id}.jsonl"));
+        fs::write(&fork, native_line(record.clone(), fork_id) + "\n").unwrap();
+        fs::File::open(&fork)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(200),
+            ))
+            .unwrap();
+        let database = temp.path().join("index.sqlite");
+        let mut store = Store::open(&database).unwrap();
+        assert!(run(&mut store, &home).complete());
+        drop(store);
+        // Exact legacy state: the source/checkpoint are unchanged, but v3
+        // stored the zero aggregate and did not understand iteration evidence.
+        let sql = rusqlite::Connection::open(&database).unwrap();
+        assert!(
+            sql.query_row("SELECT count(*) FROM native_checkpoints", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap()
+                > 0
+        );
+        sql.execute_batch("UPDATE usage SET input_tokens=0,output_tokens=0,cache_read_tokens=0,cache_creation_tokens=0; UPDATE records SET has_conflict=1; DROP VIEW session_work_records; DROP TABLE native_record_copies; DELETE FROM schema_version WHERE version=4;").unwrap();
+        if let Some(first) = original_first {
+            record["message"]["usage"]["input_tokens"] = json!(11);
+            record["message"]["usage"]["output_tokens"] = json!(7);
+            record["message"]["usage"]["cache_read_input_tokens"] = json!(5);
+            record["message"]["usage"]["cache_creation_input_tokens"] = json!(3);
+            let original = project.join(format!("{SID}.jsonl"));
+            fs::write(&original, native_line(record, SID) + "\n").unwrap();
+            fs::File::open(original)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(
+                    std::time::SystemTime::UNIX_EPOCH
+                        + std::time::Duration::from_secs(if first { 300 } else { 100 }),
+                ))
+                .unwrap();
+        }
+        let before = hashes(&home);
+        let mut store = Store::open(&database).unwrap();
+        assert_eq!(
+            sql.query_row("SELECT count(*) FROM native_checkpoints", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        let report = run(&mut store, &home);
+        assert!(report.complete(), "{report:?}");
+        assert_eq!(store.counts().unwrap().records, 1);
+        assert_eq!(sql.query_row("SELECT sum(input_tokens+output_tokens+cache_read_tokens+cache_creation_tokens) FROM usage",[],|r|r.get::<_,i64>(0)).unwrap(),26);
+        assert_eq!(
+            sql.query_row(
+                "SELECT count(*) FROM records WHERE has_conflict=1",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1,
+            "unrelated historical flags are retained"
+        );
+        assert_eq!(
+            sql.query_row("SELECT count(*) FROM session_work_records", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            if original_first.is_some() { 2 } else { 1 }
+        );
+        assert_eq!(before, hashes(&home));
+    }
+}
+
+#[test]
+fn owner_timestamp_enrichment_refreshes_an_unchanged_copied_session() {
+    for enrich_copy in [false, true] {
+        let fork_id = "00000000-0000-4000-8000-000000000002";
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/synthetic");
+        fs::create_dir_all(&project).unwrap();
+        let mut record = fixture_records()[0].clone();
+        record.as_object_mut().unwrap().remove("timestamp");
+        for (id, age) in [(SID, 200), (fork_id, 100)] {
+            let file = project.join(format!("{id}.jsonl"));
+            fs::write(&file, native_line(record.clone(), id) + "\n").unwrap();
+            fs::File::open(file)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(
+                    std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(age),
+                ))
+                .unwrap();
+        }
+        let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+        assert!(run(&mut store, &home).complete());
+        assert_eq!(store.session(fork_id).unwrap().unwrap().first_ts, None);
+        record["timestamp"] = json!("2026-01-01T00:00:00Z");
+        let changed_id = if enrich_copy { fork_id } else { SID };
+        fs::write(
+            project.join(format!("{changed_id}.jsonl")),
+            native_line(record, changed_id) + "\n",
+        )
+        .unwrap();
+        assert!(run(&mut store, &home).complete());
+        let fork = store.session(fork_id).unwrap().unwrap();
+        assert_eq!(fork.first_ts.as_deref(), Some("2026-01-01T00:00:00Z"));
+        // A later full replay of the sparse copy must not turn the enriched
+        // timestamp into a new ownership conflict.
+        rusqlite::Connection::open(temp.path().join("index.sqlite"))
+            .unwrap()
+            .execute(
+                "DELETE FROM native_checkpoints WHERE source='transcript'",
+                [],
+            )
+            .unwrap();
+        assert!(run(&mut store, &home).complete());
+        assert_eq!(fork.last_ts, fork.first_ts);
+        assert_eq!(store.session(SID).unwrap().unwrap().first_ts, fork.first_ts);
+        assert_eq!(
+            store
+                .sessions_page("", None, None)
+                .unwrap()
+                .iter()
+                .find(|r| r.id == fork_id)
+                .unwrap()
+                .first_ts,
+            fork.first_ts
+        );
+    }
+}
+
+#[test]
+fn native_zero_usage_without_iteration_evidence_is_not_replaced() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/synthetic");
+    fs::create_dir_all(&project).unwrap();
+    let mut row = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}});
+    fs::write(
+        project.join(format!("{SID}.jsonl")),
+        native_line(row.clone(), SID) + "\n",
+    )
+    .unwrap();
+    let database = temp.path().join("index.sqlite");
+    let mut store = Store::open(&database).unwrap();
+    assert!(run(&mut store, &home).complete());
+    row["message"]["usage"]["input_tokens"] = json!(11);
+    row["iteration_usage_confirmed"] = json!(true);
+    row["native"] = json!({"iteration_usage_confirmed":true});
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    fs::write(
+        project.join(format!("{fork_id}.jsonl")),
+        native_line(row, fork_id) + "\n",
+    )
+    .unwrap();
+    assert!(!run(&mut store, &home).complete());
+    let sql = rusqlite::Connection::open(database).unwrap();
+    assert_eq!(
+        sql.query_row("SELECT input_tokens FROM usage", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sql.query_row("SELECT count(*) FROM native_record_copies", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn a_rejected_copy_context_cannot_repair_the_shared_work_as_a_side_effect() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/synthetic");
+    fs::create_dir_all(&project).unwrap();
+    let mut row = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}});
+    fs::write(
+        project.join(format!("{SID}.jsonl")),
+        native_line(row.clone(), SID) + "\n",
+    )
+    .unwrap();
+    let database = temp.path().join("index.sqlite");
+    let mut store = Store::open(&database).unwrap();
+    assert!(run(&mut store, &home).complete());
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    let path = project.join(format!("{fork_id}.jsonl"));
+    fs::write(&path, native_line(row.clone(), fork_id) + "\n").unwrap();
+    assert!(run(&mut store, &home).complete());
+    row["parentUuid"] = json!("different-parent");
+    row["message"]["usage"]["input_tokens"] = json!(11);
+    row["message"]["usage"]["iterations"] = json!([{"type":"message","input_tokens":11,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}]);
+    fs::write(path, native_line(row, fork_id) + "\n").unwrap();
+    assert!(!run(&mut store, &home).complete());
+    let sql = rusqlite::Connection::open(database).unwrap();
+    assert_eq!(
+        sql.query_row("SELECT input_tokens FROM usage", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sql.query_row("SELECT parent_uuid FROM native_record_copies", [], |r| {
+            r.get::<_, Option<String>>(0)
+        })
+        .unwrap(),
+        None
+    );
+}

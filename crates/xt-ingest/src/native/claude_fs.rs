@@ -220,20 +220,12 @@ fn label(value: Option<&String>) -> Option<String> {
 // single-message iteration. Recover only that explicit same-model measurement;
 // this is not a zero-is-unknown merge rule or a multi-model cost calculation.
 fn restore_iteration_usage(record: &mut ParsedRecord, text: &str) -> Result<(), &'static str> {
+    if record.canonical.record_type != xt_store::model::RecordType::Assistant {
+        return Ok(());
+    }
     let Some(usage) = record.canonical.message.usage.as_mut() else {
         return Ok(());
     };
-    if [
-        usage.input_tokens,
-        usage.output_tokens,
-        usage.cache_read_input_tokens,
-        usage.cache_creation_input_tokens,
-    ]
-    .iter()
-    .any(|v| *v != Some(0))
-    {
-        return Ok(());
-    }
     let raw: serde_json::Value = serde_json::from_str(text).map_err(|_| "invalid usage record")?;
     let Some(iterations) = raw
         .pointer("/message/usage/iterations")
@@ -266,10 +258,25 @@ fn restore_iteration_usage(record: &mut ParsedRecord, text: &str) -> Result<(), 
     {
         return Err("incomplete native usage iteration");
     }
-    usage.input_tokens = parsed.input_tokens;
-    usage.output_tokens = parsed.output_tokens;
-    usage.cache_read_input_tokens = parsed.cache_read_input_tokens;
-    usage.cache_creation_input_tokens = parsed.cache_creation_input_tokens;
+    let aggregates = [
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.cache_read_input_tokens,
+        usage.cache_creation_input_tokens,
+    ];
+    let confirmed = [
+        parsed.input_tokens,
+        parsed.output_tokens,
+        parsed.cache_read_input_tokens,
+        parsed.cache_creation_input_tokens,
+    ];
+    if aggregates.iter().all(|v| *v == Some(0)) || aggregates == confirmed {
+        usage.input_tokens = parsed.input_tokens;
+        usage.output_tokens = parsed.output_tokens;
+        usage.cache_read_input_tokens = parsed.cache_read_input_tokens;
+        usage.cache_creation_input_tokens = parsed.cache_creation_input_tokens;
+        record.native.iteration_usage_confirmed = true;
+    }
     Ok(())
 }
 
