@@ -1161,3 +1161,73 @@ fn native_codex_context_and_first_ledger_correct_cached_metadata_atomically() {
         }
     }
 }
+
+#[test]
+fn native_codex_repairs_compare_retained_content_before_privacy_stripping() {
+    for variant in ["same", "text", "tool", "absent"] {
+        for metadata in [false, true] {
+            let mut db = TempDb::empty().unwrap();
+            db.store_mut()
+                .set_retention_mode(xt_store::retention::RetentionMode::FullContent)
+                .unwrap();
+            let mut context = context(SessionSource::ReadersCli);
+            context.source_platform = Some("codex".into());
+            context.conversation_id = Some("codex-native".into());
+            let original = [rich("retained")];
+            let mut first = request(&context, &original, None);
+            first.keep_content = true;
+            write_batch(db.store_mut(), &first).unwrap();
+            let before = db.store().records("codex-native").unwrap().remove(0);
+            db.store_mut()
+                .set_retention_mode(xt_store::retention::RetentionMode::MetadataOnly)
+                .unwrap();
+            let discovery = xt_store::ingest::DiscoveredSession {
+                host: xt_store::Host::Codex,
+                native_session_id: "native".into(),
+                conversation_id: context.conversation_id.clone(),
+                surface: Some("cli".into()),
+                started_at_ms: None,
+                last_observed_at: 100,
+                discovery_complete: true,
+            };
+            let mut row = original[0].clone();
+            if metadata {
+                row.canonical.is_meta = true;
+            } else {
+                row.canonical.api_message_id = Some("native-response".into());
+                row.canonical.message.usage.as_mut().unwrap().input_tokens = Some(100);
+            }
+            match variant {
+                "text" => {
+                    row.canonical.message.content.as_mut().unwrap()[0]["text"] =
+                        json!("Other text xxx")
+                }
+                "tool" => {
+                    row.canonical.message.content.as_mut().unwrap()[1]["input"] =
+                        json!({"changed":"value"})
+                }
+                "absent" => row.canonical.message.content = None,
+                _ => {}
+            }
+            let rows = [row];
+            let mut replay = request(&context, &rows, None);
+            replay.discovery = Some(&discovery);
+            write_batch(db.store_mut(), &replay).unwrap();
+            let after = db.store().records("codex-native").unwrap().remove(0);
+            assert_eq!(after.content_json, before.content_json);
+            assert_eq!(after.tool_uses, before.tool_uses);
+            assert_eq!(after.is_meta, metadata && variant == "same");
+            assert_eq!(
+                after.usage.unwrap().input_tokens,
+                Some(if !metadata && variant == "same" {
+                    100
+                } else {
+                    10
+                })
+            );
+            if variant == "text" || variant == "tool" {
+                assert!(after.has_conflict);
+            }
+        }
+    }
+}

@@ -174,6 +174,21 @@ pub(crate) fn upsert_records(
             && let Some(stored) = existing.as_mut()
             && stored.session_id == session_id
         {
+            let retained_matches = stored.content_json.as_ref().is_none_or(|old| {
+                input
+                    .message
+                    .content
+                    .as_ref()
+                    .is_some_and(|new| old.as_array() == Some(new))
+            });
+            if stored
+                .content_json
+                .as_ref()
+                .zip(input.message.content.as_ref())
+                .is_some_and(|(old, new)| old.as_array() != Some(new))
+            {
+                incoming.has_conflict = true;
+            }
             let mut corrected = (**stored).clone();
             if incoming.is_meta {
                 corrected.is_meta = true;
@@ -198,11 +213,7 @@ pub(crate) fn upsert_records(
                 && crate::measurement::Projection::from_stored(&corrected)?
                     .conflicting_fields(&crate::measurement::Projection::from_stored(&incoming)?)
                     == 0
-                && stored
-                    .content_json
-                    .as_ref()
-                    .zip(incoming.content_json.as_ref())
-                    .is_none_or(|(old, new)| old == new)
+                && retained_matches
             {
                 save_record(connection, &corrected)?;
                 **stored = corrected;
