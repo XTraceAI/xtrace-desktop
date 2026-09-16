@@ -227,3 +227,12 @@ Purge variants must eventually cover previously stored transcript/tool/fire/judg
 content, confirmed removal, unchanged metadata/counts and source files, and a
 metadata-only retry that cannot refill removed content. F18's skeleton does not
 claim those storage/ingestion/rulebook operations are implemented.
+
+## Token aggregation snapshots
+
+F5, F6, F17 and F18 expose a named `tokens` snapshot for the implemented response
+aggregation tests. These use the shared manifest loader and canonical writer.
+Their broader product fixtures remain skeletons; token-only evidence does not
+claim reader normalization, retention/purge or complete capture coverage.
+See [token aggregation acceptance](acceptance/token-aggregation.md) for arithmetic,
+selected UUIDs and replay expectations. F1's populated token golden is tested too.

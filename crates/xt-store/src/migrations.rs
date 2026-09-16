@@ -63,6 +63,14 @@ impl Store {
         let views = [
             ("v_records", include_str!("../views/records.sql")),
             (
+                "v_usage_records",
+                include_str!("../views/usage_records.sql"),
+            ),
+            (
+                "v_response_usage",
+                include_str!("../views/response_usage.sql"),
+            ),
+            (
                 "v_session_events",
                 include_str!("../views/session_events.sql"),
             ),
@@ -80,7 +88,7 @@ impl Store {
         }
         if changed {
             transaction.execute_batch(
-                "DROP VIEW IF EXISTS v_session_events; DROP VIEW IF EXISTS v_records;",
+                "DROP VIEW IF EXISTS v_response_usage; DROP VIEW IF EXISTS v_usage_records; DROP VIEW IF EXISTS v_session_events; DROP VIEW IF EXISTS v_records;",
             )?;
             for (_, sql) in views {
                 transaction.execute_batch(sql)?;

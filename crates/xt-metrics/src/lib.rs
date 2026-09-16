@@ -1,5 +1,9 @@
 //! Read-only metrics over canonical work records and explicit event windows.
+mod tokens;
 mod window;
+pub use tokens::{
+    DayTokens, HostTokens, ModelTokens, SurfaceTokens, TokenCounters, TokenReport, TokenSummary,
+};
 pub use window::{DayBucket, Window};
 
 use rusqlite::{Connection, OpenFlags};
@@ -9,6 +13,8 @@ use std::{path::Path, time::Duration};
 pub enum Error {
     #[error("Invalid metric window")]
     InvalidWindow,
+    #[error("Token counter overflow")]
+    CounterOverflow,
     #[error(transparent)]
     Time(#[from] jiff::Error),
     #[error(transparent)]

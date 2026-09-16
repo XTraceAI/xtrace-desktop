@@ -8,6 +8,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+serde.workspace = true
 jiff = "=0.2.35"
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
 thiserror = "=2.0.20"
