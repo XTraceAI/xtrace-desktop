@@ -1935,3 +1935,30 @@ fn a_rejected_copy_context_cannot_repair_the_shared_work_as_a_side_effect() {
         None
     );
 }
+
+#[test]
+fn unused_incomplete_iteration_metadata_does_not_block_ordinary_usage_or_later_records() {
+    for iteration in [
+        json!({"type":"message","input_tokens":11,"output_tokens":7}),
+        json!({"type":"message","input_tokens":"bad","output_tokens":7}),
+        json!({"type":"message","model":5,"input_tokens":11,"output_tokens":7}),
+    ] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/synthetic");
+        fs::create_dir_all(&project).unwrap();
+        let record = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"assistant","content":[],"usage":{"input_tokens":11,"output_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"iterations":[iteration]}}});
+        let later = json!({"type":"user","uuid":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","message":{"role":"user","content":[{"type":"text","text":"following work"}]}});
+        fs::write(
+            project.join(format!("{SID}.jsonl")),
+            native_line(record, SID) + "\n" + &native_line(later, SID) + "\n",
+        )
+        .unwrap();
+        let database = temp.path().join("index.sqlite");
+        let mut store = Store::open(&database).unwrap();
+        assert!(run(&mut store, &home).complete());
+        assert_eq!(store.counts().unwrap().records, 2);
+        let sql = rusqlite::Connection::open(database).unwrap();
+        assert_eq!(sql.query_row("SELECT sum(input_tokens+output_tokens+cache_read_tokens+cache_creation_tokens) FROM usage",[],|r|r.get::<_,i64>(0)).unwrap(),26);
+    }
+}
