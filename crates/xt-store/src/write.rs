@@ -171,7 +171,7 @@ pub(crate) fn upsert_records(
                 .is_some_and(|r| r.session_id != session_id)
         {
             connection.query_row(
-                "SELECT NOT EXISTS(SELECT 1 FROM native_record_copies WHERE session_id=?1 AND record_uuid=?2 AND parent_uuid IS NOT ?3)",
+                "SELECT NOT EXISTS(SELECT 1 FROM native_record_copies WHERE session_id=?1 AND record_uuid=?2 AND parent_uuid IS NOT NULL AND ?3 IS NOT NULL AND parent_uuid<>?3)",
                 params![session_id, uuid, incoming.identity.parent_uuid], |row| row.get(0),
             )?
         } else {
@@ -256,7 +256,9 @@ pub(crate) fn upsert_records(
                 && (!keep_content || stored.content_json == incoming.content_json)
             {
                 let added = connection.execute(
-                    "INSERT OR IGNORE INTO native_record_copies(session_id,record_uuid,parent_uuid) VALUES(?1,?2,?3)",
+                    "INSERT INTO native_record_copies(session_id,record_uuid,parent_uuid) VALUES(?1,?2,?3)
+                    ON CONFLICT(session_id,record_uuid) DO UPDATE SET parent_uuid=excluded.parent_uuid
+                    WHERE native_record_copies.parent_uuid IS NULL AND excluded.parent_uuid IS NOT NULL",
                     params![session_id, uuid, incoming.identity.parent_uuid],
                 )? > 0;
                 let before = (**stored).clone();

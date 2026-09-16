@@ -1904,6 +1904,7 @@ fn a_rejected_copy_context_cannot_repair_the_shared_work_as_a_side_effect() {
     let project = home.join(".claude/projects/synthetic");
     fs::create_dir_all(&project).unwrap();
     let mut row = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}});
+    row["parentUuid"] = json!("known-parent");
     fs::write(
         project.join(format!("{SID}.jsonl")),
         native_line(row.clone(), SID) + "\n",
@@ -1932,7 +1933,7 @@ fn a_rejected_copy_context_cannot_repair_the_shared_work_as_a_side_effect() {
             r.get::<_, Option<String>>(0)
         })
         .unwrap(),
-        None
+        Some("known-parent".to_owned())
     );
 }
 
@@ -1961,4 +1962,50 @@ fn unused_incomplete_iteration_metadata_does_not_block_ordinary_usage_or_later_r
         let sql = rusqlite::Connection::open(database).unwrap();
         assert_eq!(sql.query_row("SELECT sum(input_tokens+output_tokens+cache_read_tokens+cache_creation_tokens) FROM usage",[],|r|r.get::<_,i64>(0)).unwrap(),26);
     }
+}
+
+#[test]
+fn copied_parent_links_enrich_unknowns_without_erasing_known_values() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/synthetic");
+    fs::create_dir_all(&project).unwrap();
+    let mut row = fixture_records()[0].clone();
+    row.as_object_mut().unwrap().remove("parentUuid");
+    fs::write(
+        project.join(format!("{SID}.jsonl")),
+        native_line(row.clone(), SID) + "\n",
+    )
+    .unwrap();
+    let database = temp.path().join("index.sqlite");
+    let mut store = Store::open(&database).unwrap();
+    assert!(run(&mut store, &home).complete());
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    let path = project.join(format!("{fork_id}.jsonl"));
+    fs::write(&path, native_line(row.clone(), fork_id) + "\n").unwrap();
+    assert!(run(&mut store, &home).complete());
+    row["parentUuid"] = json!("observed-parent");
+    fs::write(&path, native_line(row.clone(), fork_id) + "\n").unwrap();
+    assert!(run(&mut store, &home).complete());
+    row.as_object_mut().unwrap().remove("parentUuid");
+    fs::write(&path, native_line(row, fork_id) + "\n").unwrap();
+    assert!(run(&mut store, &home).complete());
+    let sql = rusqlite::Connection::open(database).unwrap();
+    assert_eq!(
+        sql.query_row("SELECT parent_uuid FROM native_record_copies", [], |r| {
+            r.get::<_, String>(0)
+        })
+        .unwrap(),
+        "observed-parent"
+    );
+    assert_eq!(
+        sql.query_row(
+            "SELECT count(*) FROM records WHERE has_conflict=1",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(store.counts().unwrap().records, 1);
 }
