@@ -360,3 +360,53 @@ fn tokens_local_day_buckets_use_the_same_selected_responses() {
     assert_eq!(report.by_day.last().unwrap().end_ms, window().end_ms());
     breakdowns_match(&report);
 }
+
+#[test]
+fn tokens_open_rejects_missing_or_incomplete_response_projection() {
+    let db = TempDb::empty().unwrap();
+    let c = Connection::open(db.path()).unwrap();
+    c.execute_batch("DROP VIEW v_response_usage;").unwrap();
+    assert!(MetricsDb::open(db.path()).is_err());
+    c.execute_batch("CREATE VIEW v_response_usage AS SELECT session_id,host,model,surface,ts_ms,input_tokens,output_tokens,cache_read_tokens FROM v_usage_records;").unwrap();
+    assert!(MetricsDb::open(db.path()).is_err());
+    let _writer = xt_store::Store::open(db.path()).unwrap();
+    assert!(MetricsDb::open(db.path()).is_ok());
+}
+#[test]
+fn tokens_all_rust_whitespace_ids_fall_back_without_collapsing_observations() {
+    let (mut db, s, row) = one(
+        json!({"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}),
+    );
+    let mut inputs = Vec::new();
+    for ch in (0..=0x10ffff)
+        .filter_map(char::from_u32)
+        .filter(|c| c.is_whitespace())
+    {
+        for blank_api in [false, true] {
+            for repeat in 0..2 {
+                let mut r = row.clone();
+                r.uuid = Some(format!("space-{}-{blank_api}-{repeat}", u32::from(ch)));
+                r.api_message_id = Some(if blank_api {
+                    ch.to_string()
+                } else {
+                    "response".into()
+                });
+                r.request_id = Some(if blank_api {
+                    "request".into()
+                } else {
+                    ch.to_string()
+                });
+                inputs.push(r);
+            }
+        }
+    }
+    db.store_mut()
+        .upsert_records(&s.session_id, &inputs, false)
+        .unwrap();
+    let report = query(&db);
+    assert_eq!(report.total.selected_responses, inputs.len() as u64 + 1);
+    assert_eq!(
+        report.total.counters.total_tokens,
+        Some((inputs.len() as u64 + 1) * 2)
+    );
+}

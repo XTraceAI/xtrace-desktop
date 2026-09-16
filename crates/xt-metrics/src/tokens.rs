@@ -3,6 +3,9 @@ use jiff::tz::TimeZone;
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+pub(crate) const QUERY: &str = "SELECT session_id,host,model,surface,ts_ms,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens
+             FROM v_response_usage WHERE ts_ms>=?1 AND ts_ms<?2";
+
 /// None is unknown, not zero. Components are independently measurable.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct TokenCounters {
@@ -115,9 +118,7 @@ impl MetricsDb {
         let mut hosts = BTreeMap::<String, Totals>::new();
         let mut models = BTreeMap::<Option<String>, Totals>::new();
         let mut surfaces = BTreeMap::<(String, Option<String>), Totals>::new();
-        let mut statement=self.connection.prepare(
-            "SELECT session_id,host,model,surface,ts_ms,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens
-             FROM v_response_usage WHERE ts_ms>=?1 AND ts_ms<?2")?;
+        let mut statement = self.connection.prepare(QUERY)?;
         let mut rows = statement.query([window.start_ms(), window.end_ms()])?;
         while let Some(row) = rows.next()? {
             let session: String = row.get(0)?;

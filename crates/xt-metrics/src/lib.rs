@@ -37,6 +37,7 @@ impl MetricsDb {
         connection.pragma_update(None, "query_only", true)?;
         // Fail at open if the writer has not installed the current projection.
         connection.prepare("SELECT uuid,session_id,ts_ms FROM v_session_events LIMIT 0")?;
+        connection.prepare(&format!("{} LIMIT 0", tokens::QUERY))?;
         Ok(Self { connection })
     }
 
