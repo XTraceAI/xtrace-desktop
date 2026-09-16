@@ -1,12 +1,12 @@
 {
   "repository": "https://github.com/XTraceAI/agent-plugins.git",
-  "commit": "fc79ec2c40fa1b8d5d3e78d02ebafa5abd0735a5",
+  "commit": "2538729a39c4903672c83e3f9f2a655ec6ac9a87",
   "plugin_root": "plugins/memhub",
-  "plugin_version": "0.58.2",
+  "plugin_version": "0.58.3",
   "reader_sources": {
-    "plugins/memhub/scripts": "c0b975ae41bb94c10266ebb9604d51d46966983b",
+    "plugins/memhub/scripts": "bf7b0da8496cd8d84a7b88ce643bcaeeb93ebc62",
     "plugins/memhub/scripts/cursor_flush.py": "15082185b075a82ca5593058d5317acbbcd026fe",
-    "plugins/memhub/scripts/readers": "a51c4ba7197624c0ff4cf2a0bf0feb4755c1af6d",
+    "plugins/memhub/scripts/readers": "bd1b5533f6dafe5b2b0aaabf9050ea4124d6f3e7",
     "plugins/memhub/scripts/readers_cli.py": "98ea6d3acb40b352fde9a2e7e880f35ef3c4a3be"
   }
 }

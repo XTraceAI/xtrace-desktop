@@ -23,6 +23,9 @@ pub struct IngestBatch<'a> {
     /// Native Claude file membership may reference an identical work record.
     /// Never available to plugin receipts or generic transcript imports.
     pub native_history: bool,
+    /// A pinned Codex reader may classify inherited context and replace legacy
+    /// UI counters when a native response ledger first identifies the request.
+    pub native_codex: bool,
     /// Per-input native adapter proof; never accepted without native_history.
     pub confirmed_iteration_usage: &'a [bool],
     pub namespace: Option<&'a str>,
@@ -57,6 +60,7 @@ impl<'a> IngestBatch<'a> {
             records,
             keep_content,
             native_history: false,
+            native_codex: false,
             confirmed_iteration_usage: &[],
             namespace: None,
             identities: &[],
@@ -186,6 +190,16 @@ impl Store {
                 "native copies require discovered Claude history",
             ));
         }
+        if batch.native_codex
+            && (batch.session.host != crate::Host::Codex
+                || batch.session.source != SessionSource::ReadersCli
+                || batch.discovery.is_none()
+                || batch.receipt.is_some())
+        {
+            return Err(Error::InvalidInput(
+                "native Codex evidence requires discovered reader history",
+            ));
+        }
         if !batch.confirmed_iteration_usage.is_empty()
             && (!batch.native_history
                 || batch.confirmed_iteration_usage.len() != batch.records.len())
@@ -261,7 +275,13 @@ impl Store {
             batch.records,
             keep_content,
             batch.identities,
-            batch.native_history,
+            if batch.native_history {
+                Some(crate::Host::Claude)
+            } else if batch.native_codex {
+                Some(crate::Host::Codex)
+            } else {
+                None
+            },
             batch.confirmed_iteration_usage,
         )?;
         outcome.session_changed |= session_changed;
