@@ -58,7 +58,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: XTraceAI/agent-plugins
-          ref: 770b9e79f98e3e2ef6795dc9aee32fa6ad6509d7 # must equal .plugin-pin commit
+          ref: fc79ec2c40fa1b8d5d3e78d02ebafa5abd0735a5 # must equal .plugin-pin commit
           path: artifacts/private/plugin-conformance
           persist-credentials: false
       - name: Validate the native release candidate
