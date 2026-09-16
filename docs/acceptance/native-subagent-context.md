@@ -13,7 +13,10 @@ plugin receipts retain the ordinary conflict rules.
 
 Corrections and their invalidation events share the existing transaction. An
 invalid later record rolls back earlier corrections. Raw rows remain stored;
-Sessions counts, model labels and time ranges exclude metadata. No source file,
+Sessions counts, model labels and time ranges exclude metadata. Listing ranges
+are derived in one read snapshot even for untouched older sessions, without
+rewriting their cached timestamps; only the bounded page needs precise first-time
+selection. No source file,
 transcript-retention policy or database schema is changed.
 
 Validation covers inherited-context classification, first-ledger correction,

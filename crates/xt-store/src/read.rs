@@ -111,7 +111,7 @@ pub(crate) fn timestamp_range(
     // following UTC second, so the coarse projection cannot discard an endpoint.
     let timestamps = ordered_timestamps(
         connection,
-        session_id,
+        [session_id],
         "WITH visible AS (
             SELECT r.uuid,r.ts,r.ts_ms FROM session_work_records m
                 JOIN records r ON r.uuid=m.record_uuid WHERE m.session_id=?1 AND r.is_meta=0
@@ -125,14 +125,30 @@ pub(crate) fn timestamp_range(
     ))
 }
 
-fn ordered_timestamps(
+pub(crate) fn first_work_timestamp(
     connection: &Connection,
     session_id: &str,
+    first_ms: Option<i64>,
+) -> Result<Option<String>> {
+    let Some(first_ms) = first_ms else {
+        return Ok(None);
+    };
+    let rows = ordered_timestamps(connection,
+        rusqlite::params![session_id, first_ms, first_ms.saturating_add(999)],
+        "SELECT uuid,ts FROM records WHERE session_id=?1 AND is_meta=0 AND ts_ms BETWEEN ?2 AND ?3
+         UNION ALL SELECT r.uuid,r.ts FROM native_record_copies m JOIN records r ON r.uuid=m.record_uuid
+         WHERE m.session_id=?1 AND r.is_meta=0 AND r.ts_ms BETWEEN ?2 AND ?3")?;
+    Ok(rows.first().and_then(|(_, ts)| ts.clone()))
+}
+
+fn ordered_timestamps(
+    connection: &Connection,
+    parameters: impl rusqlite::Params,
     query: &str,
 ) -> Result<Vec<(String, Option<String>)>> {
     let rows = connection
         .prepare(query)?
-        .query_map([session_id], |row| {
+        .query_map(parameters, |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
