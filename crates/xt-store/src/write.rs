@@ -167,6 +167,15 @@ pub(crate) fn upsert_records(
         validate_session(&metadata)?;
         // Ownership/type conflicts do not exempt nonblank input from validation.
         let mut existing = existing_records.get_mut(uuid);
+        if native_host.is_some()
+            && existing
+                .as_ref()
+                .and_then(|stored| stored.content_json.as_ref())
+                .zip(input.message.content.as_ref())
+                .is_some_and(|(old, new)| old.as_array() != Some(new))
+        {
+            incoming.has_conflict = true;
+        }
         let mut codex_repaired = false;
         if native_host == Some(Host::Codex)
             && session.meta.host == Host::Codex
@@ -181,14 +190,6 @@ pub(crate) fn upsert_records(
                     .as_ref()
                     .is_some_and(|new| old.as_array() == Some(new))
             });
-            if stored
-                .content_json
-                .as_ref()
-                .zip(input.message.content.as_ref())
-                .is_some_and(|(old, new)| old.as_array() != Some(new))
-            {
-                incoming.has_conflict = true;
-            }
             let mut corrected = (**stored).clone();
             if incoming.is_meta {
                 corrected.is_meta = true;
@@ -210,6 +211,7 @@ pub(crate) fn upsert_records(
                 corrected.model = incoming.model.clone();
             }
             if corrected != **stored
+                && !incoming.has_conflict
                 && crate::measurement::Projection::from_stored(&corrected)?
                     .conflicting_fields(&crate::measurement::Projection::from_stored(&incoming)?)
                     == 0
@@ -249,6 +251,7 @@ pub(crate) fn upsert_records(
         };
         let mut repaired_usage = false;
         if native_history
+            && !incoming.has_conflict
             && native_owner
             && copy_context_matches
             && confirmed_iteration_usage.get(input_index) == Some(&true)
@@ -316,6 +319,7 @@ pub(crate) fn upsert_records(
             .transpose()?
             .unwrap_or(0);
         if native_history
+            && !incoming.has_conflict
             && native_owner
             && let Some(stored) = existing.as_mut()
             && stored.session_id != session_id

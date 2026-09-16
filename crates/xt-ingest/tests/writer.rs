@@ -1044,7 +1044,7 @@ fn native_codex_context_and_first_ledger_correct_cached_metadata_atomically() {
             .unwrap()
     };
     for native in [false, true] {
-        for mode in ["valid", "malformed", "conflicting"] {
+        for mode in ["valid", "malformed", "conflicting", "aliases"] {
             let invalid = mode == "malformed";
             let mut db = TempDb::empty().unwrap();
             let mut context = context(SessionSource::ReadersCli);
@@ -1083,6 +1083,9 @@ fn native_codex_context_and_first_ledger_correct_cached_metadata_atomically() {
                 corrected.canonical.message.content =
                     Some(vec![json!({"type":"text","text":"Different work content"})]);
             }
+            if mode == "aliases" {
+                corrected.canonical.message.id = Some("different-response".into());
+            }
             let incoming = [prefix, corrected];
             let mut batch = request(&context, &incoming, None);
             batch.discovery = native.then_some(&discovery);
@@ -1097,6 +1100,14 @@ fn native_codex_context_and_first_ledger_correct_cached_metadata_atomically() {
                 continue;
             }
             let outcome = outcome.unwrap();
+            if mode == "aliases" {
+                assert_eq!(
+                    get_record(db.store(), "work").usage.unwrap().input_tokens,
+                    Some(10)
+                );
+                assert!(get_record(db.store(), "work").has_conflict);
+                continue;
+            }
             if mode == "conflicting" {
                 assert!(!get_record(db.store(), "inherited").is_meta);
                 assert_eq!(

@@ -2053,6 +2053,12 @@ fn copied_content_can_fill_a_missing_retained_value_without_accepting_disagreeme
     fs::write(path, native_line(row, fork_id) + "\n").unwrap();
     assert!(!run(&mut store, &home).complete());
     assert_eq!(content().as_deref(), Some(retained.as_str()));
+    // Changing future retention must not hide a known content disagreement.
+    store
+        .set_retention_mode(xt_store::retention::RetentionMode::MetadataOnly)
+        .unwrap();
+    assert!(!run(&mut store, &home).complete());
+    assert_eq!(content().as_deref(), Some(retained.as_str()));
 }
 
 #[test]
