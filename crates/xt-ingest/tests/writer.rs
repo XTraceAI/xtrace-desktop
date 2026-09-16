@@ -1228,7 +1228,16 @@ fn native_codex_context_and_first_ledger_correct_cached_metadata_atomically() {
 
 #[test]
 fn native_codex_repairs_compare_retained_content_before_privacy_stripping() {
-    for variant in ["same", "text", "tool", "absent"] {
+    for variant in [
+        "same",
+        "text",
+        "tool",
+        "absent",
+        "timestamp",
+        "role",
+        "partial_usage",
+        "alias",
+    ] {
         for metadata in [false, true] {
             let mut db = TempDb::empty().unwrap();
             db.store_mut()
@@ -1271,6 +1280,14 @@ fn native_codex_repairs_compare_retained_content_before_privacy_stripping() {
                         json!({"changed":"value"})
                 }
                 "absent" => row.canonical.message.content = None,
+                "timestamp" => row.canonical.timestamp = Some("2026-09-08T01:00:00Z".into()),
+                "role" => row.canonical.message.role = Some("user".into()),
+                "partial_usage" if !metadata => {
+                    row.canonical.message.usage.as_mut().unwrap().output_tokens = None
+                }
+                "alias" if !metadata => {
+                    row.canonical.message.id = Some("contradictory-response".into())
+                }
                 _ => {}
             }
             let rows = [row];
@@ -1280,7 +1297,10 @@ fn native_codex_repairs_compare_retained_content_before_privacy_stripping() {
             let after = db.store().records("codex-native").unwrap().remove(0);
             assert_eq!(after.content_json, before.content_json);
             assert_eq!(after.tool_uses, before.tool_uses);
-            assert_eq!(after.is_meta, metadata && variant == "same");
+            assert_eq!(
+                after.is_meta,
+                metadata && matches!(variant, "same" | "partial_usage" | "alias")
+            );
             assert_eq!(
                 after.usage.unwrap().input_tokens,
                 Some(if !metadata && variant == "same" {
@@ -1294,8 +1314,15 @@ fn native_codex_repairs_compare_retained_content_before_privacy_stripping() {
             }
             if variant != "same" && !metadata {
                 assert!(after.api_message_id.is_none());
-                let mut complete = rows[0].clone();
-                complete.canonical.message.content = original[0].canonical.message.content.clone();
+                let mut complete = original[0].clone();
+                complete.canonical.api_message_id = Some("native-response".into());
+                complete
+                    .canonical
+                    .message
+                    .usage
+                    .as_mut()
+                    .unwrap()
+                    .input_tokens = Some(100);
                 let complete_rows = [complete];
                 let mut retry = request(&context, &complete_rows, None);
                 retry.discovery = Some(&discovery);
