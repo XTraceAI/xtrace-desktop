@@ -311,10 +311,41 @@ impl Fixture {
         Ok(())
     }
 
-    /// Execute the currently implemented F1 reference assertions against stored
+    /// Execute the currently implemented F1/F3 reference assertions against stored
     /// rows. This is fixture arithmetic, not the application's metric engine.
     pub fn assert_reference(&self) -> Result<()> {
         self.require_populated()?;
+        if self.manifest.id.to_string() == "F3" {
+            let db = self.build_db(false)?;
+            let mut records = 0;
+            let mut input_tokens = 0;
+            let mut output_tokens = 0;
+            let mut previous_records = 0;
+            let start = self.window_start.timestamp_millis();
+            let end = self.now.timestamp_millis();
+            for session in &self.sessions {
+                for row in db.store().records(&session.metadata.session_id)? {
+                    if row.ts_ms.is_some_and(|ts| (start..end).contains(&ts)) {
+                        records += 1;
+                        let usage = row
+                            .usage
+                            .ok_or_else(|| invalid("F3", "missing reference usage"))?;
+                        input_tokens += usage
+                            .input_tokens
+                            .ok_or_else(|| invalid("F3", "missing reference input"))?;
+                        output_tokens += usage
+                            .output_tokens
+                            .ok_or_else(|| invalid("F3", "missing reference output"))?;
+                    } else if row
+                        .ts_ms
+                        .is_some_and(|ts| (start - (end - start)..start).contains(&ts))
+                    {
+                        previous_records += 1;
+                    }
+                }
+            }
+            return self.assert_expectation("M-01", &serde_json::json!({"records":records,"input_tokens":input_tokens,"output_tokens":output_tokens,"previous_records":previous_records}));
+        }
         if self.manifest.id.to_string() != "F1" {
             return Err(invalid(
                 self.manifest.id.to_string(),

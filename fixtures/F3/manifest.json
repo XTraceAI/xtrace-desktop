@@ -1,6 +1,6 @@
 {
   "id": "F3",
-  "status": "skeleton",
+  "status": "populated",
   "author": "XTrace fixture maintainers",
   "shape": "A session with events on both sides of a fixed window boundary.",
   "proves": ["M-01"],
@@ -8,9 +8,10 @@
   "window_days": 7,
   "sessions": [
     {
-      "file": "input/sessions/session.jsonl",
+      "file": "input/boundary-events.jsonl",
       "session_id": "00000000-0000-4000-8000-000000000003",
-      "host": "claude"
+      "host": "claude",
+      "started_at": "2026-08-01T00:00:00Z"
     }
   ]
 }

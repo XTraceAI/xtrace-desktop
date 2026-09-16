@@ -1,1 +1,8 @@
-{}
+{
+  "M-01": {
+    "records": 2,
+    "input_tokens": 50,
+    "output_tokens": 5,
+    "previous_records": 1
+  }
+}

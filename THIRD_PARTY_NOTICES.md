@@ -15744,6 +15744,8 @@ DEALINGS IN THE SOFTWARE.
 
 - cargo: aho-corasick@1.1.5
 - cargo: byteorder@1.5.0
+- cargo: jiff-core@0.1.0
+- cargo: jiff@0.2.35
 - cargo: memchr@2.8.3
 - cargo: termcolor@1.4.1
 - cargo: walkdir@2.5.0
@@ -18505,6 +18507,8 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 
 - cargo: aho-corasick@1.1.5
 - cargo: byteorder@1.5.0
+- cargo: jiff-core@0.1.0
+- cargo: jiff@0.2.35
 - cargo: memchr@2.8.3
 - cargo: termcolor@1.4.1
 - cargo: walkdir@2.5.0
@@ -18537,6 +18541,8 @@ THE SOFTWARE.
 
 - cargo: aho-corasick@1.1.5
 - cargo: byteorder@1.5.0
+- cargo: jiff-core@0.1.0
+- cargo: jiff@0.2.35
 - cargo: memchr@2.8.3
 - cargo: same-file@1.0.6
 - cargo: termcolor@1.4.1

@@ -12,7 +12,7 @@ fn run(args: &[&str]) -> Output {
 }
 
 #[test]
-fn validate_reports_all_entries_and_only_one_asserted_fixture() {
+fn validate_reports_all_entries_and_both_asserted_fixtures() {
     let output = run(&["fixture-validate"]);
     assert!(
         output.status.success(),
@@ -25,18 +25,19 @@ fn validate_reports_all_entries_and_only_one_asserted_fixture() {
             .lines()
             .filter(|line| line.contains("SKELETON"))
             .count(),
-        20
+        19
     );
     assert_eq!(
         report
             .lines()
             .filter(|line| line.contains("POPULATED"))
             .count(),
-        1
+        2
     );
     assert!(report.contains("F21: SKELETON"));
+    assert!(report.contains("F3: POPULATED"));
     assert!(report.contains(
-        "21 entries structurally valid; 1 populated/asserted; 20 skeleton/unimplemented"
+        "21 entries structurally valid; 2 populated/asserted; 19 skeleton/unimplemented"
     ));
 }
 

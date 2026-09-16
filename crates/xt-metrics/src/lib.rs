@@ -1,3 +1,72 @@
-//! Metric projections, time-span unions, and versioned price data.
-//!
-//! Foundation scaffold: no product API is implemented yet.
+//! Read-only metrics over canonical work records and explicit event windows.
+mod window;
+pub use window::{DayBucket, Window};
+
+use rusqlite::{Connection, OpenFlags};
+use std::{path::Path, time::Duration};
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Invalid metric window")]
+    InvalidWindow,
+    #[error(transparent)]
+    Time(#[from] jiff::Error),
+    #[error(transparent)]
+    Sqlite(#[from] rusqlite::Error),
+}
+pub type Result<T> = std::result::Result<T, Error>;
+
+/// Opens an existing app-owned database, never creates or migrates one.
+/// The canonical writer installs the shared views after its migrations.
+pub struct MetricsDb {
+    connection: Connection,
+}
+impl MetricsDb {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let connection = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        connection.busy_timeout(Duration::from_secs(5))?;
+        connection.pragma_update(None, "query_only", true)?;
+        // Fail at open if the writer has not installed the current projection.
+        connection.prepare("SELECT uuid,session_id,ts_ms FROM v_session_events LIMIT 0")?;
+        Ok(Self { connection })
+    }
+
+    /// Global work-event count: copied contexts do not multiply canonical UUIDs.
+    /// Missing timestamps cannot be assigned to a window.
+    pub fn event_count(&self, window: Window) -> Result<u64> {
+        Ok(self.connection.query_row(
+            "SELECT count(*) FROM v_session_events WHERE ts_ms>=?1 AND ts_ms<?2",
+            [window.start_ms(), window.end_ms()],
+            |row| {
+                let count: i64 = row.get(0)?;
+                u64::try_from(count).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, count))
+            },
+        )?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn schema_contract_connection_rejects_writes() {
+        let db = xt_fixtures::TempDb::empty().unwrap();
+        let metrics = MetricsDb::open(db.path()).unwrap();
+        assert!(
+            metrics
+                .connection
+                .execute("DELETE FROM records", [])
+                .is_err()
+        );
+        assert!(
+            metrics
+                .connection
+                .execute_batch("CREATE TABLE forbidden(x)")
+                .is_err()
+        );
+        assert_eq!(db.store().counts().unwrap().records, 0);
+    }
+}
