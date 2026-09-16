@@ -130,6 +130,7 @@ pub(crate) fn upsert_records(
     let mut stats = WriteStats::default();
     let mut outcomes = Vec::with_capacity(records.len());
     let mut affected_owners = std::collections::BTreeMap::new();
+    let mut native_owners = std::collections::BTreeMap::<String, bool>::new();
     let mut changed_records = std::collections::BTreeMap::<String, bool>::new();
     for (input_index, input) in records.iter().enumerate() {
         let Some(uuid) = input.uuid.as_deref().filter(|id| !id.trim().is_empty()) else {
@@ -165,6 +166,20 @@ pub(crate) fn upsert_records(
         validate_session(&metadata)?;
         // Ownership/type conflicts do not exempt nonblank input from validation.
         let mut existing = existing_records.get_mut(uuid);
+        let native_owner = if native_history && let Some(stored) = existing.as_ref() {
+            if !native_owners.contains_key(&stored.session_id) {
+                let eligible = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sessions s JOIN discovered_sessions d
+                     ON d.conversation_id=s.session_id AND d.native_session_id=s.native_session_id
+                     WHERE s.session_id=?1 AND s.host='claude' AND s.source='transcript' AND d.host='claude')",
+                    [&stored.session_id], |row| row.get::<_, bool>(0),
+                )?;
+                native_owners.insert(stored.session_id.clone(), eligible);
+            }
+            native_owners[&stored.session_id]
+        } else {
+            false
+        };
         let copy_context_matches: bool = if native_history
             && existing
                 .as_ref()
@@ -179,6 +194,7 @@ pub(crate) fn upsert_records(
         };
         let mut repaired_usage = false;
         if native_history
+            && native_owner
             && copy_context_matches
             && confirmed_iteration_usage.get(input_index) == Some(&true)
             && let Some(stored) = existing.as_mut()
@@ -245,6 +261,7 @@ pub(crate) fn upsert_records(
             .transpose()?
             .unwrap_or(0);
         if native_history
+            && native_owner
             && let Some(stored) = existing.as_mut()
             && stored.session_id != session_id
         {

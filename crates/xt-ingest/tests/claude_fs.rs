@@ -2199,3 +2199,55 @@ fn same_session_parent_conflicts_cannot_supply_usage_repair_evidence() {
         "known-parent"
     );
 }
+
+#[test]
+fn native_copies_do_not_enrich_records_owned_by_other_import_kinds() {
+    let fork = "00000000-0000-4000-8000-000000000002";
+    for source in ["plugin", "fixture", "transcript"] {
+        for repair in [false, true] {
+            let temp = tempfile::TempDir::new().unwrap();
+            let home = temp.path().join("home");
+            let project = home.join(".claude/projects/synthetic");
+            fs::create_dir_all(&project).unwrap();
+            let mut row = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}});
+            let original = project.join(format!("{SID}.jsonl"));
+            fs::write(&original, native_line(row.clone(), SID) + "\n").unwrap();
+            let database = temp.path().join("index.sqlite");
+            let mut store = Store::open(&database).unwrap();
+            assert!(run(&mut store, &home).complete());
+            let sql = rusqlite::Connection::open(&database).unwrap();
+            sql.execute("UPDATE sessions SET source=?1", [source])
+                .unwrap();
+            if source == "transcript" {
+                // A generic transcript lacks native discovery evidence.
+                sql.execute("DELETE FROM discovered_sessions", []).unwrap();
+            }
+            fs::remove_file(original).unwrap();
+            if repair {
+                row["message"]["usage"]["input_tokens"] = json!(7);
+                row["message"]["usage"]["iterations"] = json!([{"type":"message","input_tokens":7,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}]);
+            }
+            fs::write(
+                project.join(format!("{fork}.jsonl")),
+                native_line(row, fork) + "\n",
+            )
+            .unwrap();
+            assert!(
+                !run(&mut store, &home).complete(),
+                "{source} repair={repair}"
+            );
+            assert_eq!(
+                sql.query_row("SELECT count(*) FROM native_record_copies", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                sql.query_row("SELECT input_tokens FROM usage", [], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(store.counts().unwrap().records, 1);
+        }
+    }
+}
