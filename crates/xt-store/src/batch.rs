@@ -20,6 +20,9 @@ pub struct IngestBatch<'a> {
     pub session: &'a SessionMeta,
     pub records: &'a [CanonicalRecord],
     pub keep_content: bool,
+    /// Native Claude file membership may reference an identical work record.
+    /// Never available to plugin receipts or generic transcript imports.
+    pub native_history: bool,
     pub namespace: Option<&'a str>,
     /// Empty means unknown; otherwise exactly one native identity per input.
     pub identities: &'a [crate::model::RecordIdentity],
@@ -51,6 +54,7 @@ impl<'a> IngestBatch<'a> {
             session,
             records,
             keep_content,
+            native_history: false,
             namespace: None,
             identities: &[],
             session_sources: &[],
@@ -169,6 +173,16 @@ impl Store {
     /// participating facts. There is no callback, nested commit or event hook.
     pub fn apply_ingest_batch(&mut self, batch: &IngestBatch<'_>) -> Result<IngestBatchOutcome> {
         write::validate_session(batch.session)?;
+        if batch.native_history
+            && (batch.session.host != crate::Host::Claude
+                || batch.session.source != SessionSource::Transcript
+                || batch.discovery.is_none()
+                || batch.receipt.is_some())
+        {
+            return Err(Error::InvalidInput(
+                "native copies require discovered Claude history",
+            ));
+        }
         if !batch.identities.is_empty() && batch.identities.len() != batch.records.len() {
             return Err(Error::InvalidInput(
                 "native identities must align with batch inputs",
@@ -236,6 +250,7 @@ impl Store {
             batch.records,
             keep_content,
             batch.identities,
+            batch.native_history,
         )?;
         outcome.session_changed |= session_changed;
         let rejected = outcome

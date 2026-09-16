@@ -57,7 +57,7 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let keep_content = crate::retention::allows_content(&transaction, keep_content)?;
-        let result = upsert_records(&transaction, session_id, records, keep_content, &[])?;
+        let result = upsert_records(&transaction, session_id, records, keep_content, &[], false)?;
         transaction.commit()?;
         Ok(result.stats)
     }
@@ -106,6 +106,7 @@ pub(crate) fn upsert_records(
     records: &[CanonicalRecord],
     keep_content: bool,
     identities: &[crate::model::RecordIdentity],
+    native_history: bool,
 ) -> Result<IngestBatchOutcome> {
     let mut session = read::session(connection, session_id)?.ok_or(Error::InvalidInput(
         "session must be created before writing records",
@@ -167,6 +168,51 @@ pub(crate) fn upsert_records(
             })
             .transpose()?
             .unwrap_or(0);
+        if native_history
+            && let Some(stored) = existing.as_ref()
+            && stored.session_id != session_id
+        {
+            // Compare immutable work facts independently of which file was
+            // discovered first. The primary record is never moved or rewritten.
+            let mut comparable = incoming.clone();
+            comparable.session_id = stored.session_id.clone();
+            comparable.identity.parent_uuid = stored.identity.parent_uuid.clone();
+            let owner =
+                read::session(connection, &stored.session_id)?.ok_or(Error::IncompatibleSchema)?;
+            let context_matches: bool = connection.query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM native_record_copies WHERE session_id=?1 AND record_uuid=?2 AND parent_uuid IS NOT ?3)",
+                params![session_id, uuid, incoming.identity.parent_uuid], |row| row.get(0),
+            )?;
+            if context_matches
+                && owner.meta.host == Host::Claude
+                && crate::measurement::Projection::from_stored(stored)?
+                    == crate::measurement::Projection::from_stored(&comparable)?
+                && (!keep_content || stored.content_json == incoming.content_json)
+            {
+                let added = connection.execute(
+                    "INSERT OR IGNORE INTO native_record_copies(session_id,record_uuid,parent_uuid) VALUES(?1,?2,?3)",
+                    params![session_id, uuid, incoming.identity.parent_uuid],
+                )? > 0;
+                let metadata_changed = merge_session(&mut session, &metadata, false);
+                if added || metadata_changed {
+                    stats.enriched += 1;
+                } else {
+                    stats.ignored += 1;
+                }
+                outcomes.push(RecordOutcome {
+                    input_index,
+                    uuid: Some(uuid.to_owned()),
+                    disposition: if added || metadata_changed {
+                        RecordDisposition::Enriched
+                    } else {
+                        RecordDisposition::Duplicate
+                    },
+                    conflict_fields: 0,
+                    stored_has_conflict: Some(stored.has_conflict),
+                });
+                continue;
+            }
+        }
         if let Some(stored) = existing.as_mut()
             && (stored.session_id != session_id || stored.record_type != incoming.record_type)
         {

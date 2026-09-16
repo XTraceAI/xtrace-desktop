@@ -287,14 +287,17 @@ fn claude_fs_reports_absent_roots_and_identity_disagreements_explicitly() {
     assert!(!report.complete());
 
     let project = fake_home(&home);
-    // A file whose records belong to another session cannot be imported under its name.
+    // Copied history is valid, but contradictory explicit identity labels are not.
     let other = "00000000-0000-4000-8000-000000000002";
     fs::write(
         project.join(format!("{other}.jsonl")),
         fixture_records()
             .into_iter()
             .take(3)
-            .map(|r| native_line(r, SID) + "\n")
+            .map(|mut r| {
+                r["native_session_id"] = json!(other);
+                native_line(r, SID) + "\n"
+            })
             .collect::<String>(),
     )
     .unwrap();
@@ -1498,4 +1501,223 @@ fn claude_fs_rejects_source_replacement_between_enumeration_and_open() {
         assert_eq!(store.counts().unwrap().records, 0);
         assert_eq!(fs::read_to_string(&external).unwrap(), bytes);
     }
+}
+
+#[test]
+fn inherited_work_has_one_record_and_each_session_context_in_either_scan_order() {
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    for rewritten in [false, true] {
+        for fork_first in [false, true] {
+            let temp = tempfile::TempDir::new().unwrap();
+            let home = temp.path().join("home");
+            let project = home.join(".claude/projects/synthetic");
+            fs::create_dir_all(&project).unwrap();
+            let original = project.join(format!("{SID}.jsonl"));
+            let fork = project.join(format!("{fork_id}.jsonl"));
+            let records = fixture_records();
+            fs::write(
+                &original,
+                records[..2]
+                    .iter()
+                    .map(|r| native_line(r.clone(), SID) + "\n")
+                    .collect::<String>(),
+            )
+            .unwrap();
+            let mut lines = records[..2]
+                .iter()
+                .map(|r| native_line(r.clone(), if rewritten { fork_id } else { SID }) + "\n")
+                .collect::<String>();
+            lines.push_str(&(native_line(records[2].clone(), fork_id) + "\n"));
+            fs::write(&fork, lines).unwrap();
+            for (path, newer) in [(&original, !fork_first), (&fork, fork_first)] {
+                fs::File::open(path)
+                    .unwrap()
+                    .set_times(fs::FileTimes::new().set_modified(
+                        std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(if newer { 200 } else { 100 }),
+                    ))
+                    .unwrap();
+            }
+            let before = hashes(&home);
+            let database = temp.path().join("index.sqlite");
+            let mut store = Store::open(&database).unwrap();
+            let report = run(&mut store, &home);
+            assert!(report.complete(), "{report:?}");
+            let sql = rusqlite::Connection::open(&database).unwrap();
+            let scalar = |query| sql.query_row(query, [], |r| r.get::<_, i64>(0)).unwrap();
+            assert_eq!(scalar("SELECT count(*) FROM records"), 3);
+            assert_eq!(scalar("SELECT count(*) FROM session_work_records"), 5);
+            assert_eq!(
+                scalar("SELECT count(DISTINCT record_uuid) FROM session_work_records"),
+                3
+            );
+            assert_eq!(
+                scalar(
+                    "SELECT count(*) FROM records WHERE content_json IS NOT NULL OR has_conflict=1"
+                ),
+                0
+            );
+            let pages = store.sessions_page("", None, None).unwrap();
+            assert_eq!(pages.iter().find(|r| r.id == SID).unwrap().record_count, 2);
+            assert_eq!(
+                pages.iter().find(|r| r.id == fork_id).unwrap().record_count,
+                3
+            );
+            assert!(pages.iter().all(|r| r.first_ts.is_some()));
+            assert!(run(&mut store, &home).complete());
+            assert_eq!(scalar("SELECT count(*) FROM records"), 3);
+            assert_eq!(scalar("SELECT count(*) FROM session_work_records"), 5);
+            assert_eq!(before, hashes(&home));
+        }
+    }
+}
+
+#[test]
+fn native_copy_conflicts_stay_rejected_and_failed_copy_writes_roll_back() {
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    for fail_transaction in [false, true] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/synthetic");
+        fs::create_dir_all(&project).unwrap();
+        let records = fixture_records();
+        fs::write(
+            project.join(format!("{SID}.jsonl")),
+            native_line(records[0].clone(), SID) + "\n",
+        )
+        .unwrap();
+        let database = temp.path().join("index.sqlite");
+        let mut store = Store::open(&database).unwrap();
+        assert!(run(&mut store, &home).complete());
+        let sql = rusqlite::Connection::open(&database).unwrap();
+        let mut copied = records[0].clone();
+        if fail_transaction {
+            sql.execute_batch("CREATE TRIGGER reject_copy BEFORE INSERT ON native_record_copies BEGIN SELECT RAISE(ABORT,'synthetic failure'); END;").unwrap();
+        } else {
+            copied["timestamp"] = json!("2026-09-08T00:00:00Z");
+        }
+        // A fresh record before the copy must also roll back on database failure.
+        fs::write(
+            project.join(format!("{fork_id}.jsonl")),
+            native_line(records[1].clone(), fork_id) + "\n" + &native_line(copied, fork_id) + "\n",
+        )
+        .unwrap();
+        let report = run(&mut store, &home);
+        assert!(!report.complete());
+        assert_eq!(
+            sql.query_row("SELECT count(*) FROM native_record_copies", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        if fail_transaction {
+            assert_eq!(store.counts().unwrap().records, 1);
+            assert!(store.session(fork_id).unwrap().is_none());
+        } else {
+            assert_eq!(store.counts().unwrap().records, 2);
+            assert_eq!(
+                sql.query_row(
+                    "SELECT count(*) FROM records WHERE has_conflict=1",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+                1
+            );
+        }
+    }
+}
+
+#[test]
+fn fork_parent_links_and_zeroed_aggregates_preserve_one_measured_inference() {
+    let fork_id = "00000000-0000-4000-8000-000000000002";
+    for fork_first in [false, true] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/synthetic");
+        fs::create_dir_all(&project).unwrap();
+        let usage = json!({"input_tokens":11,"output_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3});
+        let original = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","parentUuid":"original-parent","timestamp":"2026-01-01T00:00:00Z","message":{"id":"synthetic-api-id","role":"assistant","model":"fixture-model","content":[{"type":"text","text":"one measured inference"}],"usage":usage}});
+        let mut copied = original.clone();
+        copied["parentUuid"] = json!("fork-parent");
+        copied["message"]["usage"] = json!({"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"iterations":[{"type":"message","model":"fixture-model","input_tokens":11,"output_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3}]});
+        for (id, record, newer) in [(SID, original, !fork_first), (fork_id, copied, fork_first)] {
+            let path = project.join(format!("{id}.jsonl"));
+            fs::write(&path, native_line(record, id) + "\n").unwrap();
+            fs::File::open(path)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(
+                    std::time::SystemTime::UNIX_EPOCH
+                        + std::time::Duration::from_secs(if newer { 200 } else { 100 }),
+                ))
+                .unwrap();
+        }
+        let database = temp.path().join("index.sqlite");
+        let mut store = Store::open(&database).unwrap();
+        let report = run(&mut store, &home);
+        assert!(report.complete(), "{report:?}");
+        let sql = rusqlite::Connection::open(&database).unwrap();
+        assert_eq!(sql.query_row("SELECT sum(input_tokens+output_tokens+cache_read_tokens+cache_creation_tokens) FROM usage", [], |r| r.get::<_, i64>(0)).unwrap(),26);
+        assert_eq!(store.counts().unwrap().records, 1);
+        for (id, parent) in [(SID, "original-parent"), (fork_id, "fork-parent")] {
+            assert_eq!(
+                sql.query_row(
+                    "SELECT parent_uuid FROM session_work_records WHERE session_id=?1",
+                    [id],
+                    |r| r.get::<_, String>(0)
+                )
+                .unwrap(),
+                parent
+            );
+        }
+        assert!(run(&mut store, &home).complete());
+        assert_eq!(store.counts().unwrap().records, 1);
+        assert_eq!(
+            sql.query_row(
+                "SELECT count(*) FROM records WHERE has_conflict=1 OR content_json IS NOT NULL",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+    }
+}
+
+#[test]
+fn malformed_native_iteration_counters_do_not_become_measured_zeroes() {
+    for invalid in [json!(-1), json!("11"), json!(null)] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/synthetic");
+        fs::create_dir_all(&project).unwrap();
+        let record = json!({"type":"assistant","uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"iterations":[{"type":"message","input_tokens":invalid,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}]}}});
+        fs::write(
+            project.join(format!("{SID}.jsonl")),
+            native_line(record, SID) + "\n",
+        )
+        .unwrap();
+        let mut store = Store::open_in_memory().unwrap();
+        assert!(!run(&mut store, &home).complete());
+        assert_eq!(store.counts().unwrap().records, 0);
+    }
+}
+
+#[test]
+fn native_membership_normalization_does_not_erase_blank_identity_aliases() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/synthetic");
+    fs::create_dir_all(&project).unwrap();
+    let mut record = fixture_records()[0].clone();
+    record["native_session_id"] = json!(" ");
+    record.as_object_mut().unwrap().remove("sessionId");
+    fs::write(
+        project.join(format!("{SID}.jsonl")),
+        record.to_string() + "\n",
+    )
+    .unwrap();
+    let mut store = Store::open_in_memory().unwrap();
+    assert!(!run(&mut store, &home).complete());
+    assert_eq!(store.counts().unwrap().records, 0);
 }

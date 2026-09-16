@@ -216,6 +216,63 @@ fn label(value: Option<&String>) -> Option<String> {
     value.filter(|text| !text.trim().is_empty()).cloned()
 }
 
+// Fork snapshots can zero the aggregate counters while retaining the original
+// single-message iteration. Recover only that explicit same-model measurement;
+// this is not a zero-is-unknown merge rule or a multi-model cost calculation.
+fn restore_iteration_usage(record: &mut ParsedRecord, text: &str) -> Result<(), &'static str> {
+    let Some(usage) = record.canonical.message.usage.as_mut() else {
+        return Ok(());
+    };
+    if [
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.cache_read_input_tokens,
+        usage.cache_creation_input_tokens,
+    ]
+    .iter()
+    .any(|v| *v != Some(0))
+    {
+        return Ok(());
+    }
+    let raw: serde_json::Value = serde_json::from_str(text).map_err(|_| "invalid usage record")?;
+    let Some(iterations) = raw
+        .pointer("/message/usage/iterations")
+        .and_then(|v| v.as_array())
+    else {
+        return Ok(());
+    };
+    if iterations.len() != 1
+        || iterations[0].get("type").and_then(|v| v.as_str()) != Some("message")
+    {
+        return Ok(());
+    }
+    let iteration = &iterations[0];
+    if let Some(model) = iteration.get("model").filter(|v| !v.is_null()) {
+        let model = model.as_str().ok_or("invalid native iteration model")?;
+        if Some(model) != record.canonical.message.model.as_deref() {
+            return Ok(());
+        }
+    }
+    let parsed: xt_store::Usage =
+        serde_json::from_value(iteration.clone()).map_err(|_| "invalid native usage iteration")?;
+    if [
+        parsed.input_tokens,
+        parsed.output_tokens,
+        parsed.cache_read_input_tokens,
+        parsed.cache_creation_input_tokens,
+    ]
+    .iter()
+    .any(|v| v.is_none_or(|n| n < 0))
+    {
+        return Err("incomplete native usage iteration");
+    }
+    usage.input_tokens = parsed.input_tokens;
+    usage.output_tokens = parsed.output_tokens;
+    usage.cache_read_input_tokens = parsed.cache_read_input_tokens;
+    usage.cache_creation_input_tokens = parsed.cache_creation_input_tokens;
+    Ok(())
+}
+
 fn header(file: &ClaudeFile, first: &[ParsedRecord]) -> SessionHeader {
     SessionHeader {
         kind: "session".into(),
@@ -460,21 +517,36 @@ pub fn import_file(
         if !text.trim().is_empty() {
             match parse_with_context(text, &context) {
                 Ok(Parsed::Record(record)) => {
-                    // The file name is this session's identity; a record that
-                    // names another session stops the file before its metadata
-                    // could enrich the registered identity.
-                    if record
-                        .native
-                        .session_id
-                        .as_deref()
-                        .is_some_and(|id| id != file.session_id)
+                    // sessionId in a fork's inherited prefix can name its
+                    // original container. Work identity is the native UUID;
+                    // this file is an additional session context. Do not erase
+                    // contradictory explicit native labels during normalization.
+                    let mut record = record;
+                    if let Err(reason) = restore_iteration_usage(&mut record, text) {
+                        return Ok(stop(&writer, lines, reason));
+                    }
+                    if [
+                        record.native.session_id.as_deref(),
+                        record.canonical.native_session_id.as_deref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .any(|id| id.trim().is_empty())
+                        || record
+                            .canonical
+                            .native_session_id
+                            .as_ref()
+                            .zip(record.native.session_id.as_ref())
+                            .is_some_and(|(canonical, native)| canonical != native)
                     {
                         return Ok(stop(
                             &writer,
                             lines,
-                            "record identity disagrees with the file name",
+                            "native record identity labels disagree",
                         ));
                     }
+                    record.native.session_id = Some(file.session_id.clone());
+                    record.canonical.native_session_id = Some(file.session_id.clone());
                     if let Some(named) = label(record.canonical.source_surface.as_ref()) {
                         match &surface {
                             Some(known) if *known != named => {

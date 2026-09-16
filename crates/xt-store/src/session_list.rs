@@ -33,7 +33,7 @@ impl Store {
         }
         let mut statement = self.connection.prepare(
             "WITH selected AS (
-              SELECT session_id,host,coalesce(repo,cwd) repo,git_branch,first_ts,record_count,has_conflict,
+              SELECT session_id,host,coalesce(repo,cwd) repo,git_branch,first_ts,(SELECT count(*) FROM session_work_records m WHERE m.session_id=sessions.session_id) record_count,has_conflict,
                 coalesce(started_at_ms,cast((julianday(first_ts)-2440587.5)*86400000 AS INTEGER),-9223372036854775808) sort_time
               FROM sessions WHERE kind='user' AND (?2 IS NULL OR host=?2)
                 AND (?1='' OR instr(lower(coalesce(repo,cwd,'')),lower(?1))>0
@@ -42,7 +42,8 @@ impl Store {
             )
             SELECT session_id,host,repo,git_branch,first_ts,record_count,has_conflict,sort_time,
               (SELECT CASE WHEN count(DISTINCT model)>1 THEN 'Multiple models' ELSE min(model) END
-               FROM records WHERE records.session_id=selected.session_id)
+               FROM records JOIN session_work_records m ON m.record_uuid=records.uuid
+                WHERE m.session_id=selected.session_id)
             FROM selected WHERE ?3 IS NULL OR sort_time < ?3 OR (sort_time=?3 AND session_id < ?4)
             ORDER BY sort_time DESC,session_id DESC LIMIT 51")?;
         statement
