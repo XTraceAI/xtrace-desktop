@@ -19,6 +19,39 @@ pub struct SessionSummary {
     pub has_conflict: bool,
     pub cursor: SessionCursor,
 }
+const PAGE_SQL: &str = "WITH candidates AS MATERIALIZED (
+              SELECT s.session_id,s.host,coalesce(s.repo,s.cwd) repo,s.git_branch,s.has_conflict,s.started_at_ms,
+                (SELECT min(t) FROM (
+                  SELECT min(ts_ms) t FROM records WHERE session_id=s.session_id AND is_meta=0
+                  UNION ALL
+                  SELECT min(r.ts_ms) FROM native_record_copies m JOIN records r ON r.uuid=m.record_uuid
+                    WHERE m.session_id=s.session_id AND r.is_meta=0
+                )) first_ms
+              FROM sessions s WHERE s.kind='user' AND (?2 IS NULL OR s.host=?2)
+                AND (?1='' OR instr(lower(coalesce(s.repo,s.cwd,'')),lower(?1))>0
+                     OR instr(lower(coalesce(s.git_branch,'')),lower(?1))>0
+                     OR instr(lower(s.session_id),lower(?1))>0)
+            ), ranked AS (
+              SELECT *,coalesce(started_at_ms,first_ms,-9223372036854775808) sort_time FROM candidates
+            ), page AS MATERIALIZED (
+              SELECT * FROM ranked WHERE ?3 IS NULL OR sort_time < ?3 OR (sort_time=?3 AND session_id < ?4)
+              ORDER BY sort_time DESC,session_id DESC LIMIT 51
+            ), work AS (
+              SELECT session_id,count(*) record_count,
+                CASE WHEN min(model)<>max(model) THEN 'Multiple models' ELSE min(model) END model
+              FROM (
+                SELECT session_id,model FROM records
+                  WHERE session_id IN (SELECT session_id FROM page) AND is_meta=0
+                UNION ALL
+                SELECT m.session_id,r.model FROM native_record_copies m JOIN records r ON r.uuid=m.record_uuid
+                  WHERE m.session_id IN (SELECT session_id FROM page) AND r.is_meta=0
+              ) GROUP BY session_id
+            )
+            SELECT p.session_id,p.host,p.repo,p.git_branch,coalesce(w.record_count,0),p.has_conflict,
+              p.sort_time,w.model,p.first_ms
+            FROM page p LEFT JOIN work w ON w.session_id=p.session_id
+            ORDER BY p.sort_time DESC,p.session_id DESC LIMIT 51";
+
 impl Store {
     pub fn sessions_page(
         &self,
@@ -32,29 +65,7 @@ impl Store {
             return Err(Error::InvalidInput("invalid session filter"));
         }
         let snapshot = self.connection.unchecked_transaction()?;
-        let mut statement = snapshot.prepare(
-            "WITH work AS (
-              SELECT session_id,count(*) record_count,min(ts_ms) first_ms,
-                CASE WHEN min(model)<>max(model) THEN 'Multiple models' ELSE min(model) END model
-              FROM (
-                SELECT session_id,ts_ms,model FROM records WHERE is_meta=0
-                UNION ALL
-                SELECT m.session_id,r.ts_ms,r.model FROM native_record_copies m
-                  JOIN records r ON r.uuid=m.record_uuid WHERE r.is_meta=0
-              ) GROUP BY session_id
-            ), selected AS (
-              SELECT s.session_id,s.host,coalesce(s.repo,s.cwd) repo,s.git_branch,
-                coalesce(w.record_count,0) record_count,s.has_conflict,
-                coalesce(s.started_at_ms,w.first_ms,-9223372036854775808) sort_time,w.model,w.first_ms
-              FROM sessions s LEFT JOIN work w ON w.session_id=s.session_id
-              WHERE s.kind='user' AND (?2 IS NULL OR s.host=?2)
-                AND (?1='' OR instr(lower(coalesce(s.repo,s.cwd,'')),lower(?1))>0
-                     OR instr(lower(coalesce(s.git_branch,'')),lower(?1))>0
-                     OR instr(lower(s.session_id),lower(?1))>0)
-            )
-            SELECT session_id,host,repo,git_branch,record_count,has_conflict,sort_time,model,first_ms
-            FROM selected WHERE ?3 IS NULL OR sort_time < ?3 OR (sort_time=?3 AND session_id < ?4)
-            ORDER BY sort_time DESC,session_id DESC LIMIT 51")?;
+        let mut statement = snapshot.prepare(PAGE_SQL)?;
         let mut summaries = statement
             .query_map(
                 rusqlite::params![
@@ -96,5 +107,38 @@ impl Store {
         }
         snapshot.commit()?;
         Ok(summaries.into_iter().map(|(summary, _)| summary).collect())
+    }
+}
+
+#[cfg(test)]
+mod query_plan_tests {
+    use super::*;
+
+    #[test]
+    fn filtered_pages_do_not_plan_full_record_scans() {
+        let store = Store::open_in_memory().unwrap();
+        let mut statement = store
+            .connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {PAGE_SQL}"))
+            .unwrap();
+        let plan = statement
+            .query_map(
+                rusqlite::params!["no-match", None::<String>, None::<i64>, None::<String>],
+                |row| row.get::<_, String>(3),
+            )
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            plan.iter().any(|step| step.starts_with("SEARCH records ")),
+            "{plan:?}"
+        );
+        assert!(
+            !plan.iter().any(|step| step == "SCAN records"
+                || step.starts_with("SCAN records ")
+                || step == "SCAN r"
+                || step.starts_with("SCAN r ")),
+            "{plan:?}"
+        );
     }
 }
