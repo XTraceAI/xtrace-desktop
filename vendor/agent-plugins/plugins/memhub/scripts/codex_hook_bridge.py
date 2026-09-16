@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -22,11 +23,17 @@ _KNOWN_INSTALLS = (
 )
 _VERSION_PART = re.compile(r"\d+|[A-Za-z]+")
 _EDIT_TOOLS = {"Edit", "MultiEdit", "Write", "NotebookEdit", "apply_patch"}
-_SHELL_TOOLS = {"Bash", "shell", "local_shell"}
+_SHELL_TOOLS = {"Bash", "shell", "local_shell", "exec_command", "shell_command"}
 _GATE_TIMEOUT_S = 1
 _RECALL_TIMEOUT_S = 6
 _ARTIFACT_TIMEOUT_S = 7
 _PR_LINK_TIMEOUT_S = 15
+# SessionStart runs three children in parallel under one 8 s handler budget.
+# Each is stdlib-only and network-free on its synchronous path (the rulebook
+# lane's one blocking fetch is capped at SESSION_FETCH_TIMEOUT_S = 1 s and
+# only happens on a stale book); the budgets below are ceilings, not costs.
+_SESSION_TIMEOUT_S = 5
+_HEALTH_TIMEOUT_S = 3
 # A GitHub MCP server — the same coarse test the hook manifests use, so a tool
 # called `mcp__notes__github_summary` is not mistaken for a GitHub client while
 # a server whose name contains underscores (`github_enterprise`, or any
@@ -212,7 +219,8 @@ def _fail_open_job(job):
 
 def _dispatch_post(root: Path, payload: bytes, hook: dict) -> None:
     tool = hook.get("tool_name")
-    jobs = [lambda: _directive_result(root, payload, reactive=True)]
+    jobs = [lambda: _directive_result(root, payload, reactive=True),
+            lambda: _rulebook_result(root, payload, "post")]
     if tool in _EDIT_TOOLS:
         jobs.append(lambda: _artifact_sync_result(root, payload))
     # The MCP branch needs no byte scan — the tool NAME is the filter.
@@ -231,15 +239,59 @@ def _dispatch_post(root: Path, payload: bytes, hook: dict) -> None:
             futures = [executor.submit(_fail_open_job, job) for job in jobs]
             results = [future.result() for future in futures]
 
-    contexts = [context for result in results
-                if (context := _additional_context(result))]
+    _merge_results(results, "PostToolUse")
+
+
+def _rulebook_payload(payload: bytes) -> bytes:
+    hook = json.loads(payload or b"{}")
+    inp = hook.get("tool_input") or {}
+    if hook.get("tool_name") in _SHELL_TOOLS and isinstance(inp, dict):
+        command = inp.get("command", inp.get("cmd", ""))
+        if isinstance(command, list) and all(isinstance(p, str) for p in command):
+            # Codex's shell tool uses argv; only unwrap a real shell -c form.
+            if (len(command) == 3 and Path(command[0]).name in {"bash", "sh", "zsh", "dash"}
+                    and command[1] in {"-c", "-lc", "-cl"}):
+                command = command[2]
+            else:
+                command = shlex.join(command)
+        hook = {**hook, "tool_name": "Bash", "tool_input": {**inp, "command": command}}
+        if isinstance(inp.get("workdir"), str) and inp["workdir"]:
+            hook["cwd"] = inp["workdir"]
+    return json.dumps(hook).encode()
+
+
+def _rulebook_result(root: Path, payload: bytes, mode: str) -> subprocess.CompletedProcess:
+    return _run(root, "rulebook_hook.py", _rulebook_payload(payload),
+                "codex-pre" if mode == "pre" else mode,
+                timeout=_SESSION_TIMEOUT_S if mode == "session" else 7)
+
+
+def _merge_results(results, event: str) -> None:
+    contexts, messages = [], []
+    output = {"hookEventName": event}
+    for result in results:
+        if result is None:
+            continue
+        context = _additional_context(result)
+        if context:
+            contexts.append(context)
+        try:
+            doc = json.loads(result.stdout or b"{}")
+            specific = doc.get("hookSpecificOutput", {})
+            if specific.get("permissionDecision") == "deny":
+                output.update(permissionDecision="deny",
+                              permissionDecisionReason=specific.get("permissionDecisionReason", "Rulebook denied this call"))
+            if isinstance(doc.get("systemMessage"), str) and doc["systemMessage"]:
+                messages.append(doc["systemMessage"])
+        except (ValueError, TypeError, AttributeError):
+            pass
     if contexts:
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PostToolUse",
-                "additionalContext": "\n\n".join(contexts),
-            }
-        }))
+        output["additionalContext"] = "\n\n".join(contexts)
+    if contexts or messages or output.get("permissionDecision"):
+        doc = {"hookSpecificOutput": output}
+        if messages:
+            doc["systemMessage"] = "\n\n".join(messages)
+        print(json.dumps(doc))
 
 
 def _dispatch(root: Path, payload: bytes, event: str) -> None:
@@ -249,12 +301,34 @@ def _dispatch(root: Path, payload: bytes, event: str) -> None:
         return
     if not isinstance(hook, dict):
         return
-    if event == "PreToolUse":
-        _directive(root, payload, reactive=False)
+    if event == "SessionStart":
+        # The same three scripts Claude's SessionStart entry runs, unchanged:
+        # they key on session_id and cwd, which Codex's SessionStart payload
+        # also carries. capture_health is told the host so it reads Codex's
+        # flush state and finds the package without CLAUDE_PLUGIN_ROOT.
+        jobs = [
+            lambda: _rulebook_result(root, payload, "session"),
+            lambda: _run(root, "brain_brief.py", payload, "brief",
+                         timeout=_SESSION_TIMEOUT_S),
+            lambda: _run(root, "capture_health.py", payload, "--host", "codex",
+                         "--plugin-root", str(root), timeout=_HEALTH_TIMEOUT_S),
+        ]
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            results = list(executor.map(_fail_open_job, jobs))
+        _merge_results(results, event)
+    elif event == "PreToolUse":
+        jobs = [
+            lambda: _rulebook_result(root, payload, "pre"),
+            lambda: _directive_result(root, payload, reactive=False),
+        ]
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(_fail_open_job, jobs))
+        _merge_results(results, event)
     elif event == "PostToolUse":
         _dispatch_post(root, payload, hook)
     elif event == "Stop":
         _detach_flush(root, payload, "Stop")
+        _fail_open_job(lambda: _run(root, "rulebook_hook.py", payload, "flush", "final", timeout=7))
 
 
 def _detach_flush(root: Path, payload: bytes, event: str) -> None:
