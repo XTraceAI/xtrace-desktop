@@ -29,6 +29,39 @@ fn seed(id: &str) -> (Fixture, TempDb) {
     let f = fixture(id);
     let mut db = TempDb::empty().unwrap();
     let session = &f.sessions()[0].metadata;
+    if id == "F17" {
+        let root = db.path().parent().unwrap().join("native");
+        let project = root.join("synthetic");
+        std::fs::create_dir_all(&project).unwrap();
+        let file = project.join(format!("{}.jsonl", session.session_id));
+        let text = f.snapshots()["tokens"]["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.to_string() + "\n")
+            .collect::<String>();
+        std::fs::write(file, text).unwrap();
+        let file = xt_ingest::native::claude_fs::enumerate(&root)
+            .unwrap()
+            .0
+            .remove(0);
+        let result = xt_ingest::native::claude_fs::import_file(
+            db.store_mut(),
+            &file,
+            f.now().timestamp_millis(),
+            xt_ingest::native::ScanMode::Replay,
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                result.outcome,
+                xt_ingest::native::SessionOutcome::Imported { .. }
+            ),
+            "{:?}",
+            result.outcome
+        );
+        return (f, db);
+    }
     db.store_mut().upsert_session(session, false).unwrap();
     db.store_mut()
         .upsert_records(
@@ -409,4 +442,39 @@ fn tokens_all_rust_whitespace_ids_fall_back_without_collapsing_observations() {
         report.total.counters.total_tokens,
         Some((inputs.len() as u64 + 1) * 2)
     );
+}
+
+#[test]
+fn tokens_native_order_is_transitive_but_never_overrides_a_later_timestamp() {
+    let (_, mut db) = seed("F17");
+    let session = fixture("F17").sessions()[0].metadata.session_id.clone();
+    let middle:CanonicalRecord=serde_json::from_value(json!({"uuid":"hidden-middle","type":"assistant","isMeta":true,"requestId":"tie","timestamp":"2026-09-03T13:00:00Z","message":{"id":"tie","role":"assistant","usage":{"input_tokens":999,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}})).unwrap();
+    db.store_mut()
+        .upsert_records(&session, &[middle], false)
+        .unwrap();
+    let old = "03000000-0000-4000-8000-000000001708";
+    let new = "03000000-0000-4000-8000-000000001707";
+    let c = Connection::open(db.path()).unwrap();
+    c.execute(
+        "DELETE FROM native_response_order WHERE before_uuid=?1 AND after_uuid=?2",
+        [old, new],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO native_response_order VALUES(?1,'hidden-middle')",
+        [old],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO native_response_order VALUES('hidden-middle',?1)",
+        [new],
+    )
+    .unwrap();
+    assert_eq!(query(&db).total.counters.total_tokens, Some(44));
+    c.execute(
+        "UPDATE records SET ts='2026-09-03T13:00:00.001Z',ts_ms=?1 WHERE uuid=?2",
+        rusqlite::params![ms("2026-09-03T13:00:00.001Z"), old],
+    )
+    .unwrap();
+    assert_eq!(query(&db).total.counters.total_tokens, Some(43));
 }
