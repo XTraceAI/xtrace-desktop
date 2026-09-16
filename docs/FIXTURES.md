@@ -5,9 +5,9 @@ records, explicit clocks and file-backed SQLite. `xt-fixtures` is a development
 dependency; product crates must not depend on it by default. The desktop does not
 load these files.
 
-The catalog contains 21 structurally valid entries: **F1 is populated and has
-executable reference assertions; F2–F21 are skeletons with unimplemented rule
-acceptance.** A successful structural report does not establish product metric,
+The catalog contains 21 structurally valid entries: **F1 and F3 are populated and have
+executable reference assertions; the other entries remain skeletons with
+unimplemented rule acceptance.** A successful structural report does not establish product metric,
 privacy, ingestion, probe or rulebook acceptance.
 
 ## Commands
@@ -203,7 +203,7 @@ assertions. Follow [CI.md](CI.md) for combined-source validation.
 | --- | ----------------------------- | ------------------------------------------------------------------------------------------ |
 | F1  | Populated, reference asserted | Baseline human/assistant turns, response usage, activity, model                            |
 | F2  | Skeleton                      | Overlapping activity and concurrency                                                       |
-| F3  | Skeleton                      | Event window boundaries                                                                    |
+| F3  | Populated                     | Event window boundaries                                                                    |
 | F4  | Skeleton                      | Exact pull-request links and merged-PR statistics                                          |
 | F5  | Skeleton                      | Codex cumulative usage reader                                                              |
 | F6  | Skeleton                      | Cursor IDE hook usage attachment                                                           |

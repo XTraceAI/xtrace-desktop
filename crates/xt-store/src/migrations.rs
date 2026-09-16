@@ -3,7 +3,7 @@
 //! version. Unknown or non-prefix histories fail.
 
 use crate::{Error, Result, Store};
-use rusqlite::TransactionBehavior;
+use rusqlite::{OptionalExtension, TransactionBehavior};
 
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/0001_canonical.sql")),
@@ -55,6 +55,38 @@ impl Store {
             }
             transaction.commit()?;
         }
+        // Views follow the same writer-owned lifecycle; no second migration
+        // runner or version table. Replace only these named projections.
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let views = [
+            ("v_records", include_str!("../views/records.sql")),
+            (
+                "v_session_events",
+                include_str!("../views/session_events.sql"),
+            ),
+        ];
+        let mut changed = false;
+        for (name, sql) in views {
+            let current: Option<String> = transaction
+                .query_row(
+                    "SELECT sql FROM sqlite_schema WHERE type='view' AND name=?1",
+                    [name],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            changed |= current.as_deref() != Some(sql.trim().trim_end_matches(';'));
+        }
+        if changed {
+            transaction.execute_batch(
+                "DROP VIEW IF EXISTS v_session_events; DROP VIEW IF EXISTS v_records;",
+            )?;
+            for (_, sql) in views {
+                transaction.execute_batch(sql)?;
+            }
+        }
+        transaction.commit()?;
         Ok(())
     }
 }
