@@ -101,6 +101,55 @@ fn native_order_preserves_ties_across_append_replay_and_copied_prefixes() {
     );
 }
 #[test]
+fn native_order_combines_overlapping_copies_in_either_arrival_order() {
+    let child = "00000000-0000-4000-8000-000000000010";
+    for child_first in [false, true] {
+        for overlap_only in [false, true] {
+            let (_temp, project, file, mut store, c) = setup();
+            append(&file, &row(NEW, 20));
+            let copy = project.join(format!("{child}.jsonl"));
+            // Shift the copy's offsets. In the overlap case neither source alone
+            // proves OLD -> LAST: the shared NEW joins their evidence.
+            let prefix = if overlap_only {
+                String::new()
+            } else {
+                row(OLD, 10)
+            };
+            fs::write(
+                &copy,
+                format!(
+                    "{{\"type\":\"attachment\"}}\n{prefix}{}{}",
+                    row(NEW, 20),
+                    row(LAST, 30)
+                ),
+            )
+            .unwrap();
+            let order = if child_first {
+                [child, SID]
+            } else {
+                [SID, child]
+            };
+            complete(scan(&mut store, &project, order[0], ScanMode::Resume));
+            if overlap_only {
+                assert!(!precedes(&c, OLD, LAST));
+            }
+            complete(scan(&mut store, &project, order[1], ScanMode::Resume));
+            assert!(precedes(&c, OLD, NEW));
+            assert!(precedes(&c, NEW, LAST));
+            assert!(precedes(&c, OLD, LAST));
+            assert!(!precedes(&c, LAST, OLD));
+            assert_eq!(edges(&c), 2);
+            assert_eq!(store.counts().unwrap().records, 3);
+            for id in order {
+                complete(scan(&mut store, &project, id, ScanMode::Replay));
+                assert_eq!(edges(&c), 2);
+                assert_eq!(store.counts().unwrap().records, 3);
+                assert!(precedes(&c, OLD, LAST));
+            }
+        }
+    }
+}
+#[test]
 fn native_order_and_continuation_roll_back_with_failed_checkpoint() {
     let (_temp, project, file, mut store, c) = setup();
     complete(scan(&mut store, &project, SID, ScanMode::Resume));
