@@ -441,3 +441,164 @@ fn tokens_timestamp_then_uuid_selection_is_independent_of_arrival_order() {
         assert_eq!(query(&db).total.counters.total_tokens, Some(44));
     }
 }
+
+const RANKED_USAGE_ORACLE: &str = "CREATE TEMP VIEW ranked_usage_oracle AS
+SELECT * FROM (
+    SELECT *, row_number() OVER (
+        PARTITION BY host,
+          CASE WHEN response_keyed THEN 1 ELSE 0 END,
+          CASE WHEN response_keyed THEN api_message_id ELSE uuid END,
+          CASE WHEN response_keyed THEN request_id ELSE '' END
+        ORDER BY ts_ms DESC, uuid DESC
+    ) AS response_rank FROM v_usage_records
+) WHERE response_rank=1;";
+
+#[test]
+fn tokens_narrow_window_work_is_independent_of_irrelevant_history() {
+    let mut steps = Vec::new();
+    for count in [100, 1000] {
+        let (mut db, session, row) = one(
+            json!({"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}),
+        );
+        let history: Vec<_> = (0..count)
+            .map(|i| {
+                let mut record = row.clone();
+                record.uuid = Some(format!("history-{i:04}"));
+                record.api_message_id = Some(format!("response-{i:04}"));
+                record.request_id = Some("history-request".into());
+                record.timestamp = Some("2026-08-01T00:00:00Z".into());
+                record
+            })
+            .collect();
+        db.store_mut()
+            .upsert_records(&session.session_id, &history, false)
+            .unwrap();
+        let c = Connection::open(db.path()).unwrap();
+        c.execute(
+            "UPDATE records SET api_message_id='candidate',request_id='candidate' WHERE uuid='row'",
+            [],
+        )
+        .unwrap();
+        let plan: Vec<String> = c.prepare("EXPLAIN QUERY PLAN SELECT uuid FROM v_response_usage WHERE ts_ms>=?1 AND ts_ms<?2 ORDER BY uuid").unwrap()
+            .query_map([window().start_ms(), window().end_ms()], |row| row.get(3)).unwrap().collect::<Result<_,_>>().unwrap();
+        assert!(
+            plan.iter().any(|line| line.contains("records_ts")),
+            "{plan:?}"
+        );
+        assert!(
+            plan.iter().any(|line| line.contains("records_response")),
+            "{plan:?}"
+        );
+        let mut statement = c
+            .prepare("SELECT uuid FROM v_response_usage WHERE ts_ms>=?1 AND ts_ms<?2 ORDER BY uuid")
+            .unwrap();
+        let selected: Vec<String> = statement
+            .query_map([window().start_ms(), window().end_ms()], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(selected, ["row"]);
+        steps.push(statement.get_status(rusqlite::StatementStatus::VmStep));
+    }
+    eprintln!("100/1000 irrelevant observations: {steps:?} VM steps");
+    assert!(
+        steps[1] <= steps[0] * 2,
+        "narrow window scanned irrelevant history: {steps:?}"
+    );
+}
+
+#[test]
+fn tokens_indexed_selection_matches_ranked_whole_row_oracle() {
+    let (mut db, base, row) = one(
+        json!({"input_tokens":10,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}),
+    );
+    for (label, host) in [
+        ("claude", Host::Claude),
+        ("codex", Host::Codex),
+        ("cursor", Host::Cursor),
+    ] {
+        let session = SessionMeta {
+            session_id: label.into(),
+            host,
+            surface: Some(label.into()),
+            ..base.clone()
+        };
+        db.store_mut().upsert_session(&session, false).unwrap();
+        let mut inputs = Vec::new();
+        for (key, api, request) in [
+            ("keyed", Some("response"), Some("request")),
+            ("null-keyed", Some("null-response"), Some("request")),
+            ("missing-api", None, Some("request")),
+            ("missing-request", Some("response"), None),
+            ("blank-api", Some("\u{2003}"), Some("request")),
+            ("blank-request", Some("response"), Some("\t")),
+        ] {
+            for (time, timestamp) in [
+                None,
+                Some("2026-09-01T00:00:00Z"),
+                Some("2026-09-07T12:00:00Z"),
+                Some("2026-09-08T00:00:00Z"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                for variant in 0..3 {
+                    let mut record = row.clone();
+                    record.uuid = Some(format!("{label}-{key}-{time}-{variant}"));
+                    record.api_message_id = api.map(str::to_owned);
+                    record.request_id = request.map(str::to_owned);
+                    record.timestamp = if key == "null-keyed" {
+                        None
+                    } else {
+                        timestamp.map(str::to_owned)
+                    };
+                    record.message.model = Some(format!("model-{variant}"));
+                    record.message.usage = match variant {
+                        0 => None,
+                        1 => Some(serde_json::from_value(json!({"input_tokens":100})).unwrap()),
+                        _ => Some(serde_json::from_value(json!({"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0})).unwrap()),
+                    };
+                    inputs.push(record);
+                }
+            }
+        }
+        db.store_mut()
+            .upsert_records(&session.session_id, &inputs, false)
+            .unwrap();
+    }
+    let c = Connection::open(db.path()).unwrap();
+    c.execute_batch(RANKED_USAGE_ORACLE).unwrap();
+    let selected = |view: &str, predicate: &str| {
+        c.prepare(&format!("SELECT * FROM {view} {predicate} ORDER BY uuid"))
+            .unwrap()
+            .query_map([], |row| {
+                (0..row.as_ref().column_count())
+                    .map(|i| row.get::<_, rusqlite::types::Value>(i))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    };
+    for mutation in [
+        "SELECT 1;",
+        "UPDATE records SET is_meta=1 WHERE uuid LIKE '%-3-2';",
+        "UPDATE records SET model='<synthetic>' WHERE uuid LIKE '%-2-2';",
+        "UPDATE sessions SET kind='judge' WHERE session_id='claude';",
+    ] {
+        c.execute_batch(mutation).unwrap();
+        for predicate in [
+            "",
+            "WHERE ts_ms IS NULL",
+            "WHERE ts_ms<1788220800000",
+            "WHERE ts_ms>=1788220800000 AND ts_ms<1788825600000",
+            "WHERE ts_ms>=1788825600000",
+        ] {
+            assert_eq!(
+                selected("v_response_usage", predicate),
+                selected("ranked_usage_oracle", predicate),
+                "{predicate}"
+            );
+        }
+    }
+}
