@@ -179,14 +179,17 @@ fn tokens_f18_enrichment_converges_in_both_orders_and_replays() {
                 .upsert_records(&session.session_id, &rows(&data[source]), false)
                 .unwrap();
         }
-        for _ in 0..2 {
-            assert_eq!(
-                value(&metric.tokens(window(), TimeZone::UTC).unwrap().total),
-                data["expected"]
-            );
+        let stable_uuid = rows(&data["native"])[0].uuid.clone().unwrap();
+        let expected = metric.tokens(window(), TimeZone::UTC).unwrap();
+        assert_eq!(value(&expected.total), data["expected"]);
+        for source in order {
             db.store_mut()
-                .upsert_records(&session.session_id, &rows(&data["native"]), false)
+                .upsert_records(&session.session_id, &rows(&data[source]), false)
                 .unwrap();
+            assert_eq!(metric.tokens(window(), TimeZone::UTC).unwrap(), expected);
+            let stored = db.store().records(&session.session_id).unwrap();
+            assert_eq!(stored.len(), 1);
+            assert_eq!(stored[0].uuid, stable_uuid);
         }
         assert_eq!(db.store().counts().unwrap().records, 1);
         assert_eq!(
@@ -460,6 +463,8 @@ fn tokens_native_order_is_transitive_but_never_overrides_a_later_timestamp() {
         [old, new],
     )
     .unwrap();
+    // With no comparable native evidence, the greater UUID wins the tie.
+    assert_eq!(query(&db).total.counters.total_tokens, Some(43));
     c.execute(
         "INSERT INTO native_response_order VALUES(?1,'hidden-middle')",
         [old],
@@ -477,4 +482,66 @@ fn tokens_native_order_is_transitive_but_never_overrides_a_later_timestamp() {
     )
     .unwrap();
     assert_eq!(query(&db).total.counters.total_tokens, Some(43));
+}
+
+#[test]
+fn tokens_strictly_increasing_history_does_not_compute_global_order_closure() {
+    let mut work = Vec::new();
+    for count in [100, 1000] {
+        let (mut db, session, row) = one(
+            json!({"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}),
+        );
+        let history: Vec<_> = (0..count)
+            .map(|i| {
+                let mut record = row.clone();
+                record.uuid = Some(format!("history-{i:04}"));
+                record.api_message_id = Some("history-response".into());
+                record.request_id = Some("history-request".into());
+                record.timestamp = Some(
+                    Timestamp::from_millisecond(window().start_ms() + i)
+                        .unwrap()
+                        .to_string(),
+                );
+                record
+            })
+            .collect();
+        db.store_mut()
+            .upsert_records(&session.session_id, &history, false)
+            .unwrap();
+        let c = Connection::open(db.path()).unwrap();
+        let measure = || {
+            let mut statement = c
+                .prepare("SELECT uuid FROM v_response_usage ORDER BY uuid")
+                .unwrap();
+            let selected: Vec<String> = statement
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            assert_eq!(
+                selected,
+                [format!("history-{:04}", count - 1), "row".into()]
+            );
+            statement.get_status(rusqlite::StatementStatus::VmStep)
+        };
+        let without_edges = measure();
+        for i in 1..count {
+            c.execute(
+                "INSERT INTO native_response_order VALUES(?1,?2)",
+                [format!("history-{:04}", i - 1), format!("history-{i:04}")],
+            )
+            .unwrap();
+        }
+        let with_edges = measure();
+        eprintln!(
+            "history={count}: without_edges={without_edges}, with_edges={with_edges} VM steps"
+        );
+        // No timestamp ties need native comparison. An irrelevant chain must
+        // not cause quadratic transitive-closure work on the same observations.
+        work.push((with_edges, without_edges));
+    }
+    assert!(
+        work.iter().all(|(with, without)| *with <= without * 2),
+        "irrelevant history VM steps: {work:?}"
+    );
 }

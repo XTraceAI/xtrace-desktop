@@ -3,7 +3,9 @@
 `MetricsDb::tokens` returns one report with totals and host, model, host/surface,
 and local-day breakdowns. All use the same selected responses and one SQLite read
 snapshot. This PR supplies Rust result types; Dashboard commands and UI follow
-separately. Cost, favorite-model selection and capture-health policy are separate.
+separately. Cost, favorite-model selection and capture-health policy are separate. The partial-usage
+tests verify the nullable inputs to favorite-model selection; its aggregation
+assertion remains outstanding in the separate favorite-model implementation.
 
 ## Selection and unknowns
 
@@ -16,7 +18,8 @@ keys cannot merge unrelated records.
 For each response, select the latest usage observation by stored `ts_ms`, then
 apply proven native snapshot precedence for equal milliseconds. UUID is only the
 final deterministic tie when no observed native relationship distinguishes the
-candidates. Ordering evidence comes from the native importer, including copied
+candidates. Native traversal starts only from tied latest candidates, while
+retaining paths through excluded or older intermediate observations. Ordering evidence comes from the native importer, including copied
 contexts; file offsets and arrival order are not used. Only persisted usage observations participate; content-only rows neither
 supersede usage nor become phantom responses. Absent usage is unmeasured. Selection happens before
 filtering the selected timestamp to the window or local day. Missing timestamps
@@ -58,3 +61,9 @@ and three tool calls remain stored after usage selection.
 `cargo test -p xt-metrics tokens` additionally covers partial/absent/zero usage,
 post-open enrichment, metadata/judge/synthetic exclusion, copied contexts,
 missing and blank IDs, non-Claude response keys, local days and overflow.
+
+The increasing-timestamp history regression uses bundled SQLite statement VM-step
+counts on 100 and 1,000 observations. Adding a native chain without timestamp ties
+must stay within twice the same query's work without edges; no wall-clock threshold
+or production timing claim is used. F18 replays both native and enriching sources
+in each initial arrival order and checks the full report and stable stored UUID.
