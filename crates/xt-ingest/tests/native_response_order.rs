@@ -241,3 +241,148 @@ fn native_order_is_unavailable_to_generic_batches() {
     assert_eq!(edges(&c), 0);
     assert_eq!(store.counts().unwrap().records, 0);
 }
+
+fn try_write_native(
+    store: &mut Store,
+    session: &str,
+    ids: &[&str],
+    observe_order: bool,
+) -> xt_store::Result<xt_ingest::writer::BatchOutcome> {
+    use xt_ingest::{
+        canonical::{Parsed, SourceContext, parse_line},
+        writer::{WriteBatch, write_batch},
+    };
+    let context = SourceContext {
+        conversation_id: Some(session.into()),
+        native_session_id: Some(session.into()),
+        source: Some(xt_store::SessionSource::Transcript),
+        source_surface: Some(format!("surface-{session}")),
+        ..Default::default()
+    };
+    let records: Vec<_> = ids
+        .iter()
+        .map(|id| {
+            let mut value: serde_json::Value = serde_json::from_str(&row(id, 10)).unwrap();
+            value.as_object_mut().unwrap().remove("sessionId");
+            if id.starts_with("middle-") {
+                value["timestamp"] = json!("2026-09-07T11:00:00Z");
+            }
+            if *id == "other-api" {
+                value["message"]["id"] = json!("other-response");
+            }
+            if *id == "other-request" {
+                value["requestId"] = json!("other-request");
+            }
+            match parse_line(&value.to_string()).unwrap() {
+                Parsed::Record(record) => *record,
+                _ => panic!("expected record"),
+            }
+        })
+        .collect();
+    let discovery = xt_store::ingest::DiscoveredSession {
+        host: xt_store::Host::Claude,
+        native_session_id: session.into(),
+        conversation_id: Some(session.into()),
+        surface: context.source_surface.clone(),
+        started_at_ms: None,
+        last_observed_at: 100,
+        discovery_complete: true,
+    };
+    let order = xt_store::batch::NativeOrderSource {
+        key: session.into(),
+        reset: true,
+    };
+    write_batch(
+        store,
+        &WriteBatch {
+            context: &context,
+            declared_host: Some(xt_store::Host::Claude),
+            records: &records,
+            title: None,
+            cwd: None,
+            git_branch: None,
+            namespace: None,
+            keep_content: false,
+            observed_at: 100,
+            receipt: None,
+            cursor: None,
+            discovery: Some(&discovery),
+            checkpoint: None,
+            native_order: observe_order.then_some(&order),
+        },
+    )
+}
+
+fn write_native(
+    store: &mut Store,
+    session: &str,
+    ids: &[&str],
+    observe_order: bool,
+) -> xt_ingest::writer::BatchOutcome {
+    try_write_native(store, session, ids, observe_order).unwrap()
+}
+
+fn assert_invalidated(output: &xt_ingest::writer::BatchOutcome, expected: &[&str]) {
+    let mut ids = output
+        .events
+        .iter()
+        .map(|event| event.conversation_id.as_str())
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    assert_eq!(ids, expected);
+    for event in &output.events {
+        assert!(event.invalidate_measurements && event.invalidate_cost);
+        assert_eq!((event.records_new, event.records_enriched), (0, 0));
+        assert_eq!(
+            event.surface,
+            Some(format!("surface-{}", event.conversation_id))
+        );
+    }
+}
+
+#[test]
+fn native_order_new_edge_invalidates_existing_copied_context() {
+    let (_temp, _project, _file, mut store, c) = setup();
+    write_native(&mut store, "owner", &[OLD, NEW], false);
+    write_native(&mut store, "copy", &[OLD, NEW], false);
+    write_native(&mut store, "importer", &[OLD, NEW], false);
+    write_native(&mut store, "other-api", &["other-api"], false);
+    write_native(&mut store, "other-request", &["other-request"], false);
+    let before = store.counts().unwrap();
+    c.execute_batch(&format!("CREATE TRIGGER fail_order BEFORE INSERT ON native_response_heads WHEN NEW.record_uuid='{NEW}' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END;")).unwrap();
+    assert!(try_write_native(&mut store, "importer", &[OLD, NEW], true).is_err());
+    assert_eq!(edges(&c), 0);
+    assert_eq!(store.counts().unwrap(), before);
+    assert_eq!(
+        c.query_row("SELECT count(*) FROM native_response_heads", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    c.execute_batch("DROP TRIGGER fail_order").unwrap();
+    let output = write_native(&mut store, "importer", &[OLD, NEW, NEW], true);
+    assert!(precedes(&c, OLD, NEW));
+    assert_invalidated(&output, &["copy", "importer", "owner"]);
+    let replay = write_native(&mut store, "importer", &[OLD, NEW], true);
+    assert_eq!(replay.events.len(), 1);
+    assert!(!replay.events[0].invalidate_measurements && !replay.events[0].invalidate_cost);
+}
+
+#[test]
+fn native_order_bridge_invalidates_context_without_either_endpoint() {
+    const FIRST: &str = "middle-first";
+    const MIDDLE: &str = "middle-second";
+    let (_temp, _project, _file, mut store, c) = setup();
+    write_native(&mut store, "owner", &[OLD, FIRST, MIDDLE, LAST], false);
+    write_native(&mut store, "copy", &[OLD, LAST], false);
+    write_native(&mut store, "left", &[OLD, FIRST], true);
+    write_native(&mut store, "right", &[MIDDLE, LAST], true);
+    write_native(&mut store, "bridge", &[FIRST, MIDDLE], false);
+    assert!(!precedes(&c, OLD, LAST));
+    let output = write_native(&mut store, "bridge", &[FIRST, MIDDLE], true);
+    assert!(precedes(&c, OLD, LAST));
+    assert_eq!((output.records_new, output.records_enriched), (0, 0));
+    let endpoints: i64 = c.query_row("SELECT count(*) FROM session_work_records WHERE session_id='copy' AND record_uuid IN (?1,?2)", [FIRST, MIDDLE], |r| r.get(0)).unwrap();
+    assert_eq!(endpoints, 0);
+    assert_invalidated(&output, &["bridge", "copy", "left", "owner", "right"]);
+}
