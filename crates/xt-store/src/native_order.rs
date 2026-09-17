@@ -25,17 +25,17 @@ pub(crate) fn observe(
             [&source.key],
         )?;
     }
-    let mut changed = BTreeSet::new();
+    let mut changed_responses = BTreeSet::new();
     for input in records {
         let Some(uuid) = input.uuid.as_deref().filter(|id| accepted.contains(id)) else {
             continue;
         };
-        let record: Option<(String,String,String)> = connection.query_row(
-            "SELECT r.api_message_id,r.request_id,r.session_id FROM records r JOIN sessions s ON s.session_id=r.session_id
+        let record: Option<(String,String)> = connection.query_row(
+            "SELECT r.api_message_id,r.request_id FROM records r JOIN sessions s ON s.session_id=r.session_id
              JOIN usage u ON u.uuid=r.uuid WHERE r.uuid=?1 AND s.host='claude' AND r.type='assistant' AND r.is_meta=0 AND r.has_conflict=0
-             AND r.api_message_id IS NOT NULL AND r.request_id IS NOT NULL",[uuid],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+             AND r.api_message_id IS NOT NULL AND r.request_id IS NOT NULL",[uuid],|row|Ok((row.get(0)?,row.get(1)?)),
         ).optional()?;
-        let Some((api, request, owner)) = record else {
+        let Some((api, request)) = record else {
             continue;
         };
         if api.trim().is_empty() || request.trim().is_empty() {
@@ -56,17 +56,27 @@ pub(crate) fn observe(
                     "INSERT INTO native_response_order(before_uuid,after_uuid) VALUES(?1,?2)",
                     [previous.as_str(), uuid],
                 )?;
-                changed.insert(owner);
-                changed.insert(connection.query_row(
-                    "SELECT session_id FROM records WHERE uuid=?1",
-                    [&previous],
-                    |row| row.get(0),
-                )?);
+                changed_responses.insert((api.clone(), request.clone()));
             }
         }
         connection.execute("INSERT INTO native_response_heads(source_key,api_message_id,request_id,record_uuid) VALUES(?1,?2,?3,?4)
             ON CONFLICT(source_key,api_message_id,request_id) DO UPDATE SET record_uuid=excluded.record_uuid",
             params![source.key,api,request,uuid])?;
+    }
+    let mut changed = BTreeSet::new();
+    // A new bridge can change selection for contexts containing only earlier
+    // or later snapshots, not either endpoint. Invalidate the response's full
+    // context set once, including canonical owners and native copies.
+    let mut contexts = connection.prepare(
+        "SELECT DISTINCT m.session_id FROM records r
+         JOIN sessions s ON s.session_id=r.session_id
+         JOIN session_work_records m ON m.record_uuid=r.uuid
+         WHERE s.host='claude' AND r.api_message_id=?1 AND r.request_id=?2",
+    )?;
+    for (api, request) in changed_responses {
+        for session in contexts.query_map(params![api, request], |row| row.get::<_, String>(0))? {
+            changed.insert(session?);
+        }
     }
     Ok(changed)
 }

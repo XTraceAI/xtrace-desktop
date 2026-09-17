@@ -18,7 +18,8 @@ a full reread resets it. Only the discovered Claude file adapter supplies this
 state, never JSON input, plugin receipts or generic imports. Rejected/conflicting
 records cannot acquire ordering evidence. Records, relationships, continuation
 state and carried checkpoints commit or roll back together. New relationships
-invalidate measurements for the importing session and affected record owners.
+invalidate measurements and cost for the importing session and every canonical or
+copied context containing that response, including transitive non-endpoint contexts.
 An empty/inert full read clears its obsolete continuation state before its
 standalone checkpoint is recorded.
 
@@ -36,7 +37,9 @@ transcript content.
 - checkpoint failure rolling back new records, order and continuation together;
 - inert rewrites clearing continuation without losing proven historical order;
 - upgrading an existing index and rereading unchanged sources;
-- generic imports being refused access to native ordering.
+- generic imports being refused access to native ordering;
+- response-context invalidation for direct edges and transitive bridges, with
+  distinct events, unrelated-response isolation, rollback and unchanged replay.
 
 Token selection consumes this evidence in the dependent metrics PR; this
 prerequisite does not change the Dashboard or expose a new user setting.
