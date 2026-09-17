@@ -5135,7 +5135,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "xt-fixtures",
- "xt-ingest",
  "xt-store",
 ]
 

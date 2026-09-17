@@ -12,7 +12,6 @@ pub mod ingest;
 pub mod measurement;
 mod migrations;
 pub mod model;
-mod native_order;
 mod read;
 pub mod retention;
 mod server_settings;

@@ -129,7 +129,7 @@ Tests alter both an input counter and a golden total to prove each mismatch fail
 
 These checks exercise F1's baseline shapes for M-02/M-03/M-04/M-05/M-10. They do
 not implement the production metric engine or establish whole-rule coverage.
-Prices, unknown counters, tie-breaking by native sequence, other host adapters,
+Prices, unknown counters, deterministic UUID tie-breaking, other host adapters,
 window boundaries and other edge cases require their owning fixtures and product
 tests. The bounded reference checker rejects unsupported F1 shapes. It checks the
 persisted session host and conflict flag as well as record flags: contradictory

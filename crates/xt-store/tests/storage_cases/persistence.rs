@@ -30,7 +30,7 @@ fn file_wal_migrations_and_readers() {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .unwrap();
-    assert_eq!(history, (5, 5, "migration-once".into()));
+    assert_eq!(history, (4, 4, "migration-once".into()));
     store.upsert_session(&session(SESSION), true).unwrap();
     let batch: Vec<_> = (0..100)
         .map(|n| record(&format!("synthetic-{n}")))

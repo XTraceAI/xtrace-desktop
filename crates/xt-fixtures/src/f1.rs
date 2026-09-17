@@ -92,7 +92,7 @@ pub(crate) fn assert_rows(fixture: &Fixture, store: &Store) -> Result<()> {
             if previous.ts_ms == row.ts_ms {
                 return Err(invalid(
                     "F1:M-04",
-                    "reference input must not require native sequence tie-breaking",
+                    "reference input must not require equal-timestamp tie-breaking",
                 ));
             }
             if previous.ts_ms > row.ts_ms {

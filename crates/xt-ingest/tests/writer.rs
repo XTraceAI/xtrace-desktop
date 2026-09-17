@@ -57,7 +57,6 @@ fn request<'a>(
         cursor: None,
         discovery: None,
         checkpoint: None,
-        native_order: None,
     }
 }
 

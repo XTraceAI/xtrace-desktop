@@ -36,7 +36,6 @@ fn batch<'a>(context: &'a SourceContext, records: &'a [ParsedRecord]) -> WriteBa
         cursor: None,
         discovery: None,
         checkpoint: None,
-        native_order: None,
     }
 }
 fn content(sql: &Connection) -> (Option<String>, Option<String>, Option<String>) {

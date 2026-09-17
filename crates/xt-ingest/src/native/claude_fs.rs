@@ -501,10 +501,6 @@ pub fn import_file(
         Ok(started) => started,
         Err(skipped) => return Ok(*skipped),
     };
-    writer.native_order = Some(xt_store::batch::NativeOrderSource {
-        key: key.clone(),
-        reset: resume.basis != ResumeBasis::Appended,
-    });
     // For a session the index knows, the surface is settled already: the
     // index holds the one its records named, persisted with its rows. The
     // report names it from the start, whether the file is read behind its
@@ -670,10 +666,6 @@ pub fn import_file(
         position: 0,
         updated_at: observed_at,
     };
-    let reset_order = writer
-        .native_order
-        .as_ref()
-        .is_some_and(|order| order.reset);
     let result = writer.complete(store, Some(&cursor));
     if !gapless || !matches!(result.outcome, SessionOutcome::Imported { .. }) {
         return Ok(result);
@@ -681,12 +673,6 @@ pub fn import_file(
     // Progress no batch carried is recorded on its own, after the rows: the
     // last complete lines were inert, or the scan consumed nothing under a
     // new generation, whose stale checkpoint is then forgotten.
-    if reset_order && let Err(error) = store.clear_native_order_source(&key) {
-        return Ok(skipped(
-            file,
-            format!("native order could not be reset: {error}"),
-        ));
-    }
     let recorded = if position == 0 {
         store.clear_native_checkpoint(SessionSource::Transcript, &key)
     } else if carried {

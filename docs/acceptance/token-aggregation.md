@@ -15,15 +15,14 @@ record's UUID. Other hosts keep their canonical UUIDs. Keys use separate SQL
 columns, including a response/fallback discriminator, so concatenation or null
 keys cannot merge unrelated records.
 
-For each response, select the latest usage observation by stored `ts_ms`, then
-apply proven native snapshot precedence for equal milliseconds. UUID is only the
-final deterministic tie when no observed native relationship distinguishes the
-candidates. Native traversal starts only from tied latest candidates, while
-retaining paths through excluded or older intermediate observations. Ordering evidence comes from the native importer, including copied
-contexts; file offsets and arrival order are not used. Only persisted usage observations participate; content-only rows neither
-supersede usage nor become phantom responses. Absent usage is unmeasured. Selection happens before
-filtering the selected timestamp to the window or local day. Missing timestamps
-cannot be assigned to a window. Content/tool records are never removed.
+For each response, select one actual usage observation by latest stored `ts_ms`,
+then greatest UUID for equal timestamps. UUID provides a deterministic tie-break;
+it does not establish chronology. Counters and attribution come from that one
+selected row. Only persisted usage observations participate; content-only rows
+neither supersede usage nor become phantom responses. Absent usage is unmeasured.
+Selection happens before filtering the selected timestamp to the window or local
+day. Missing timestamps cannot be assigned to a window. Content/tool records are
+never removed.
 
 Each counter is nullable independently. If any selected response omits a
 component, that component's aggregate is unknown; the total requires all four
@@ -49,12 +48,12 @@ skeleton status. F1's populated M-04 golden is also exercised.
 | F1      | 10 selected responses; 750 input + 150 output + 150 cache read + 50 cache creation = 1,100    |
 | F5      | 70 fresh input + 40 output + 30 cache read = 140; informational reasoning is not added again  |
 | F6      | Repeated generation UUID gives one response and 48 tokens                                     |
-| F17     | Selected UUID suffixes 1702, 1705, 1706, 1707; 39 input + 5 output = 44 in the current window |
+| F17     | Selected UUID suffixes 1702, 1705, 1706, 1708; 38 input + 5 output = 43 in the current window |
 | F18     | Native then hook, hook then native and replay all converge to one record and 48 tokens        |
 
-F17 is imported through the actual native Claude adapter. Its 1701/1702 pair crosses midnight; only 1702 contributes on September 2 UTC.
+F17 uses the canonical writer. Its 1701/1702 pair crosses midnight; only 1702 contributes on September 2 UTC.
 The 1703/1704 pair crosses the window end; only 1704 contributes in the next
-window. Equal-time 1708/1707 selects the later native row 1707 despite its lower UUID. Missing-ID rows 1705/1706 remain
+window. Equal-time 1708/1707 selects 1708 by UUID, independently of insertion order. Missing-ID rows 1705/1706 remain
 independent; 1705 retains its unknown model and sidechain work. All eight records
 and three tool calls remain stored after usage selection.
 
@@ -62,8 +61,6 @@ and three tool calls remain stored after usage selection.
 post-open enrichment, metadata/judge/synthetic exclusion, copied contexts,
 missing and blank IDs, non-Claude response keys, local days and overflow.
 
-The increasing-timestamp history regression uses bundled SQLite statement VM-step
-counts on 100 and 1,000 observations. Adding a native chain without timestamp ties
-must stay within twice the same query's work without edges; no wall-clock threshold
-or production timing claim is used. F18 replays both native and enriching sources
-in each initial arrival order and checks the full report and stable stored UUID.
+F18 replays both native and enriching sources in each initial arrival order and
+checks the full report and stable stored UUID. A separate F17 test reverses input
+order and verifies timestamp priority over the deterministic UUID tie-break.

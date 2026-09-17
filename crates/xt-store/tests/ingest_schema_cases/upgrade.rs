@@ -88,7 +88,7 @@ fn upgrade_real_base_schema() {
                 names.len()
             );
         }
-        assert_eq!(scalar(&current, "SELECT count(*) FROM schema_version"), 5);
+        assert_eq!(scalar(&current, "SELECT count(*) FROM schema_version"), 4);
         assert_eq!(scalar(&current, "SELECT record_count FROM sessions"), 1);
         assert_eq!(
             scalar(&current, "SELECT count(*) FROM pragma_foreign_key_check"),
