@@ -36,3 +36,34 @@ pub fn parse(value: &str) -> Result<(InstantKey, i64)> {
         parsed.timestamp_millis(),
     ))
 }
+
+/// Register the precise timestamp comparator required by the response-usage view.
+/// Raw SQLite readers must register it before querying that view. No database
+/// state is read or written; invalid stored timestamps return a SQLite error.
+pub fn register_sqlite(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    connection.create_scalar_function(
+        "xt_timestamp_cmp",
+        2,
+        FunctionFlags::SQLITE_UTF8
+            | FunctionFlags::SQLITE_DETERMINISTIC
+            | FunctionFlags::SQLITE_INNOCUOUS,
+        |context| {
+            let instant = |index| -> rusqlite::Result<Option<InstantKey>> {
+                context
+                    .get::<Option<String>>(index)?
+                    .map(|value| {
+                        parse(&value)
+                            .map(|(key, _)| key)
+                            .map_err(|error| rusqlite::Error::UserFunctionError(Box::new(error)))
+                    })
+                    .transpose()
+            };
+            Ok(match instant(0)?.cmp(&instant(1)?) {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            })
+        },
+    )
+}

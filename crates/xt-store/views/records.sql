@@ -1,5 +1,5 @@
 CREATE VIEW v_records AS
-SELECT r.uuid,r.session_id,r.type,r.ts_ms,r.api_message_id,r.request_id,
+SELECT r.uuid,r.session_id,r.type,r.ts,r.ts_ms,r.api_message_id,r.request_id,
        r.is_sidechain,r.role,r.model,r.is_tool_result_carrier,r.text_len,
        r.tool_use_count,r.is_human,r.is_command,r.is_interrupted,r.is_system_reminder,
        r.parent_uuid,r.agent_id,r.subtype,r.has_conflict,

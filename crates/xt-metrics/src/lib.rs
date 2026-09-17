@@ -33,6 +33,7 @@ impl MetricsDb {
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
+        xt_store::timestamp::register_sqlite(&connection)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "query_only", true)?;
         // Fail at open if the writer has not installed the current projection.

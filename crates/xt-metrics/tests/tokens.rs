@@ -99,6 +99,7 @@ fn tokens_f17_selects_before_window_and_day_without_deleting_content_rows() {
     assert_eq!(value(&r.total), golden["expected"]);
     breakdowns_match(&r);
     let c = Connection::open(db.path()).unwrap();
+    xt_store::timestamp::register_sqlite(&c).unwrap();
     let selected: Vec<String> = c
         .prepare("SELECT uuid FROM v_response_usage WHERE ts_ms>=?1 AND ts_ms<?2 ORDER BY uuid")
         .unwrap()
@@ -228,6 +229,7 @@ fn tokens_unknown_partial_and_zero_are_distinct_and_enrichment_is_visible() {
 fn tokens_excludes_metadata_judges_synthetic_and_does_not_multiply_copies() {
     let (f, db) = seed("F17");
     let c = Connection::open(db.path()).unwrap();
+    xt_store::timestamp::register_sqlite(&c).unwrap();
     let before = query(&db);
     c.execute("INSERT INTO native_record_copies(session_id,record_uuid) SELECT session_id,uuid FROM records",[]).unwrap();
     assert_eq!(query(&db), before);
@@ -368,6 +370,7 @@ fn tokens_local_day_buckets_use_the_same_selected_responses() {
 fn tokens_open_rejects_missing_or_incomplete_response_projection() {
     let db = TempDb::empty().unwrap();
     let c = Connection::open(db.path()).unwrap();
+    xt_store::timestamp::register_sqlite(&c).unwrap();
     c.execute_batch("DROP VIEW v_response_usage;").unwrap();
     assert!(MetricsDb::open(db.path()).is_err());
     c.execute_batch("CREATE VIEW v_response_usage AS SELECT session_id,host,model,surface,ts_ms,input_tokens,output_tokens,cache_read_tokens FROM v_usage_records;").unwrap();
@@ -432,6 +435,7 @@ fn tokens_timestamp_then_uuid_selection_is_independent_of_arrival_order() {
         // and the lower UUID carries a larger counter.
         assert_eq!(query(&db).total.counters.total_tokens, Some(43));
         let c = Connection::open(db.path()).unwrap();
+        xt_store::timestamp::register_sqlite(&c).unwrap();
         let lower = "03000000-0000-4000-8000-000000001707";
         c.execute(
             "UPDATE records SET ts='2026-09-03T13:00:00.001Z',ts_ms=?1 WHERE uuid=?2",
@@ -474,6 +478,7 @@ fn tokens_narrow_window_work_is_independent_of_irrelevant_history() {
             .upsert_records(&session.session_id, &history, false)
             .unwrap();
         let c = Connection::open(db.path()).unwrap();
+        xt_store::timestamp::register_sqlite(&c).unwrap();
         c.execute(
             "UPDATE records SET api_message_id='candidate',request_id='candidate' WHERE uuid='row'",
             [],
@@ -567,6 +572,7 @@ fn tokens_indexed_selection_matches_ranked_whole_row_oracle() {
             .unwrap();
     }
     let c = Connection::open(db.path()).unwrap();
+    xt_store::timestamp::register_sqlite(&c).unwrap();
     c.execute_batch(RANKED_USAGE_ORACLE).unwrap();
     let selected = |view: &str, predicate: &str| {
         c.prepare(&format!("SELECT * FROM {view} {predicate} ORDER BY uuid"))
@@ -598,6 +604,109 @@ fn tokens_indexed_selection_matches_ranked_whole_row_oracle() {
                 selected("v_response_usage", predicate),
                 selected("ranked_usage_oracle", predicate),
                 "{predicate}"
+            );
+        }
+    }
+}
+
+#[test]
+fn tokens_precise_instants_precede_uuid_including_leap_seconds() {
+    for (name, a, z, expected) in [
+        (
+            "submillisecond",
+            Some("2026-09-07T12:00:00.0009Z"),
+            Some("2026-09-07T12:00:00.0001Z"),
+            "a",
+        ),
+        (
+            "beyond-nanoseconds",
+            Some("2026-09-07T12:00:00.0000000009Z"),
+            Some("2026-09-07T12:00:00.0000000001Z"),
+            "a",
+        ),
+        (
+            "offset",
+            Some("2026-09-07T14:00:00+02:00"),
+            Some("2026-09-07T12:00:00Z"),
+            "z",
+        ),
+        (
+            "zero-tail",
+            Some("2026-09-07T12:00:00.10000000000Z"),
+            Some("2026-09-07T12:00:00.1Z"),
+            "z",
+        ),
+        (
+            "equal",
+            Some("2026-09-07T12:00:00Z"),
+            Some("2026-09-07T12:00:00Z"),
+            "z",
+        ),
+        ("known", Some("2026-09-07T12:00:00Z"), None, "a"),
+        ("unknown", None, None, "z"),
+        (
+            "leap-overlap",
+            Some("2017-01-01T00:00:00.1Z"),
+            Some("2016-12-31T23:59:60.9Z"),
+            "a",
+        ),
+    ] {
+        let (mut db, session, row) = one(
+            json!({"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}),
+        );
+        for (uuid, timestamp, input) in [("a", a, 9), ("z", z, 3)] {
+            let mut record = row.clone();
+            record.uuid = Some(uuid.into());
+            record.timestamp = timestamp.map(str::to_owned);
+            record.api_message_id = Some("response".into());
+            record.request_id = Some("request".into());
+            record.message.usage.as_mut().unwrap().input_tokens = Some(input);
+            db.store_mut()
+                .upsert_records(&session.session_id, &[record], false)
+                .unwrap();
+        }
+        let c = Connection::open_with_flags(db.path(), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+        assert!(c.prepare("SELECT * FROM v_response_usage").is_err());
+        xt_store::timestamp::register_sqlite(&c).unwrap();
+        assert!(c.execute("DELETE FROM records", []).is_err());
+        let selected: String = c
+            .query_row(
+                "SELECT uuid FROM v_response_usage WHERE response_keyed",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(selected, expected, "{name}");
+        let w = if name == "leap-overlap" {
+            Window::new(ms("2016-12-31T00:00:00Z"), ms("2017-01-02T00:00:00Z")).unwrap()
+        } else {
+            window()
+        };
+        let report = MetricsDb::open(db.path())
+            .unwrap()
+            .tokens(w, TimeZone::UTC)
+            .unwrap();
+        let expected_input = if name == "unknown" {
+            1
+        } else {
+            (if expected == "a" { 9 } else { 3 }) + i64::from(name != "leap-overlap")
+        };
+        assert_eq!(
+            report.total.counters.input_tokens,
+            Some(expected_input as u64),
+            "{name}"
+        );
+        if name == "submillisecond" {
+            Connection::open(db.path())
+                .unwrap()
+                .execute("UPDATE records SET ts='invalid' WHERE uuid='a'", [])
+                .unwrap();
+            assert!(
+                MetricsDb::open(db.path())
+                    .unwrap()
+                    .tokens(w, TimeZone::UTC)
+                    .is_err()
             );
         }
     }

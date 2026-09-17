@@ -15,14 +15,22 @@ record's UUID. Other hosts keep their canonical UUIDs. Keys use separate SQL
 columns, including a response/fallback discriminator, so concatenation or null
 keys cannot merge unrelated records.
 
-For each response, select one actual usage observation by latest stored `ts_ms`,
-then greatest UUID for equal timestamps. UUID provides a deterministic tie-break;
+For each response, select one actual usage observation by its precise native
+instant, then greatest UUID only for equal instants. UUID provides a deterministic tie-break;
 it does not establish chronology. Counters and attribution come from that one
 selected row. Only persisted usage observations participate; content-only rows
 neither supersede usage nor become phantom responses. Absent usage is unmeasured.
 Selection happens before filtering the selected timestamp to the window or local
 day. Missing timestamps cannot be assigned to a window. Content/tool records are
-never removed.
+never removed. The raw timestamp preserves fractional digits beyond nanoseconds;
+normalized offsets and trailing zeroes identify the same instant. The existing
+`ts_ms` index restricts window candidates, while precise comparison checks all
+successors, including leap-second overlap.
+
+`Store` and `MetricsDb` register the shared timestamp comparator on their connections.
+Direct SQLite consumers of `v_response_usage` must call
+`xt_store::timestamp::register_sqlite` first; this also works on read-only connections.
+Malformed stored timestamps return an error rather than acquiring an invented order.
 
 Each counter is nullable independently. If any selected response omits a
 component, that component's aggregate is unknown; the total requires all four

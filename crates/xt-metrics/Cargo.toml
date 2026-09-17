@@ -8,6 +8,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+xt-store = { path = "../xt-store" }
 serde.workspace = true
 jiff = "=0.2.35"
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
@@ -16,5 +17,4 @@ thiserror = "=2.0.20"
 [dev-dependencies]
 serde_json = "=1.0.151"
 tempfile = "=3.27.0"
-xt-store = { path = "../xt-store" }
 xt-fixtures = { path = "../xt-fixtures" }
