@@ -458,61 +458,6 @@ SELECT * FROM (
 ) WHERE response_rank=1;";
 
 #[test]
-fn tokens_narrow_window_work_is_independent_of_irrelevant_history() {
-    let mut steps = Vec::new();
-    for count in [100, 1000] {
-        let (mut db, session, row) = one(
-            json!({"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}),
-        );
-        let history: Vec<_> = (0..count)
-            .map(|i| {
-                let mut record = row.clone();
-                record.uuid = Some(format!("history-{i:04}"));
-                record.api_message_id = Some(format!("response-{i:04}"));
-                record.request_id = Some("history-request".into());
-                record.timestamp = Some("2026-08-01T00:00:00Z".into());
-                record
-            })
-            .collect();
-        db.store_mut()
-            .upsert_records(&session.session_id, &history, false)
-            .unwrap();
-        let c = Connection::open(db.path()).unwrap();
-        xt_store::timestamp::register_sqlite(&c).unwrap();
-        c.execute(
-            "UPDATE records SET api_message_id='candidate',request_id='candidate' WHERE uuid='row'",
-            [],
-        )
-        .unwrap();
-        let plan: Vec<String> = c.prepare("EXPLAIN QUERY PLAN SELECT uuid FROM v_response_usage WHERE ts_ms>=?1 AND ts_ms<?2 ORDER BY uuid").unwrap()
-            .query_map([window().start_ms(), window().end_ms()], |row| row.get(3)).unwrap().collect::<Result<_,_>>().unwrap();
-        assert!(
-            plan.iter().any(|line| line.contains("records_ts")),
-            "{plan:?}"
-        );
-        assert!(
-            plan.iter().any(|line| line.contains("records_response")),
-            "{plan:?}"
-        );
-        let mut statement = c
-            .prepare("SELECT uuid FROM v_response_usage WHERE ts_ms>=?1 AND ts_ms<?2 ORDER BY uuid")
-            .unwrap();
-        let selected: Vec<String> = statement
-            .query_map([window().start_ms(), window().end_ms()], |r| r.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert_eq!(selected, ["row"]);
-        steps.push(statement.get_status(rusqlite::StatementStatus::VmStep));
-    }
-    eprintln!("100/1000 irrelevant observations: {steps:?} VM steps");
-    assert!(
-        steps[1] <= steps[0] * 2,
-        "narrow window scanned irrelevant history: {steps:?}"
-    );
-}
-
-#[test]
 fn tokens_indexed_selection_matches_ranked_whole_row_oracle() {
     let (mut db, base, row) = one(
         json!({"input_tokens":10,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}),
@@ -709,5 +654,92 @@ fn tokens_precise_instants_precede_uuid_including_leap_seconds() {
                     .is_err()
             );
         }
+    }
+}
+
+#[test]
+fn tokens_precise_window_and_day_membership_keeps_leaps_before_midnight() {
+    let (mut db, session, row) = one(
+        json!({"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}),
+    );
+    for (id, ts, input, response) in [
+        ("leap", "2016-12-31T23:59:60.5Z", 7, None),
+        ("start", "2017-01-01T00:00:00Z", 11, None),
+        ("subms", "2017-01-01T00:00:00.0009Z", 13, None),
+        ("millisecond-end", "2017-01-01T00:00:00.001Z", 29, None),
+        ("end", "2017-01-02T00:00:00Z", 17, None),
+        ("suppressed", "2016-12-31T23:59:60.9Z", 19, Some("crossing")),
+        (
+            "successor",
+            "2017-01-01T00:00:00.0001Z",
+            23,
+            Some("crossing"),
+        ),
+    ] {
+        let mut r = row.clone();
+        r.uuid = Some(id.into());
+        r.timestamp = Some(ts.into());
+        r.api_message_id = response.map(str::to_owned);
+        r.request_id = response.map(str::to_owned);
+        r.message.usage.as_mut().unwrap().input_tokens = Some(input);
+        db.store_mut()
+            .upsert_records(&session.session_id, &[r], false)
+            .unwrap();
+    }
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    let boundary = ms("2017-01-01T00:00:00Z");
+    let end = ms("2017-01-02T00:00:00Z");
+    let left = metrics
+        .tokens(
+            Window::new(boundary - 86_400_000, boundary).unwrap(),
+            TimeZone::UTC,
+        )
+        .unwrap();
+    let right = metrics
+        .tokens(Window::new(boundary, end).unwrap(), TimeZone::UTC)
+        .unwrap();
+    let combined = metrics
+        .tokens(
+            Window::new(boundary - 86_400_000, end).unwrap(),
+            TimeZone::UTC,
+        )
+        .unwrap();
+    assert_eq!(left.total.counters.input_tokens, Some(7));
+    assert_eq!(right.total.counters.input_tokens, Some(76));
+    assert_eq!(combined.total.counters.input_tokens, Some(83));
+    assert_eq!(combined.by_day[0].tokens, left.total);
+    assert_eq!(combined.by_day[1].tokens, right.total);
+    assert_eq!(
+        left.total.selected_responses + right.total.selected_responses,
+        combined.total.selected_responses
+    );
+    breakdowns_match(&left);
+    breakdowns_match(&right);
+    breakdowns_match(&combined);
+    let millisecond = metrics
+        .tokens(Window::new(boundary, boundary + 1).unwrap(), TimeZone::UTC)
+        .unwrap();
+    assert_eq!(millisecond.total.counters.input_tokens, Some(47));
+    let after = metrics
+        .tokens(
+            Window::new(boundary + 1, boundary + 2).unwrap(),
+            TimeZone::UTC,
+        )
+        .unwrap();
+    assert_eq!(after.total.counters.input_tokens, Some(29));
+}
+
+#[test]
+fn tokens_empty_windows_preserve_numeric_boundary_domain() {
+    let db = TempDb::empty().unwrap();
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    for start in [
+        ms("-000001-01-01T00:00:00Z"),
+        Timestamp::MAX.as_second() * 1000 - 1,
+    ] {
+        let report = metrics
+            .tokens(Window::new(start, start + 1).unwrap(), TimeZone::UTC)
+            .unwrap();
+        assert_eq!(report.total.selected_responses, 0);
     }
 }

@@ -2,9 +2,19 @@ use crate::{Error, MetricsDb, Result, Window};
 use jiff::tz::TimeZone;
 use serde::Serialize;
 use std::collections::BTreeMap;
+use xt_store::timestamp::{self, InstantKey};
 
-pub(crate) const QUERY: &str = "SELECT session_id,host,model,surface,ts_ms,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens
+pub(crate) const QUERY: &str = "SELECT session_id,host,model,surface,ts,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens
              FROM v_response_usage WHERE ts_ms>=?1 AND ts_ms<?2";
+
+// Chrono's coarse projection puts a leap second into the following POSIX
+// second. Include that overlap, then filter exact instants before accumulation.
+fn candidate_end_ms(window: Window) -> Result<i64> {
+    window
+        .end_ms()
+        .checked_add(1000)
+        .ok_or(Error::InvalidWindow)
+}
 
 /// None is unknown, not zero. Components are independently measurable.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -113,19 +123,37 @@ impl MetricsDb {
     /// share one SQLite statement/snapshot and one checked, nullable accumulator.
     pub fn tokens(&self, window: Window, zone: TimeZone) -> Result<TokenReport> {
         let days = window.local_days(zone)?;
+        let start = InstantKey::from_millisecond(window.start_ms());
+        let end = InstantKey::from_millisecond(window.end_ms());
+        let day_ends: Vec<_> = days
+            .iter()
+            .map(|day| InstantKey::from_millisecond(day.window.end_ms()))
+            .collect();
         let mut daily: Vec<Totals> = days.iter().map(|_| Totals::default()).collect();
         let mut total = Totals::default();
         let mut hosts = BTreeMap::<String, Totals>::new();
         let mut models = BTreeMap::<Option<String>, Totals>::new();
         let mut surfaces = BTreeMap::<(String, Option<String>), Totals>::new();
         let mut statement = self.connection.prepare(QUERY)?;
-        let mut rows = statement.query([window.start_ms(), window.end_ms()])?;
+        let mut rows = statement.query([window.start_ms(), candidate_end_ms(window)?])?;
         while let Some(row) = rows.next()? {
+            let raw_ts: String = row.get(4)?;
+            let ts = timestamp::parse(&raw_ts)
+                .map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?
+                .0;
+            if ts < start || ts >= end {
+                continue;
+            }
             let session: String = row.get(0)?;
             let host: String = row.get(1)?;
             let model: Option<String> = row.get(2)?;
             let surface: Option<String> = row.get(3)?;
-            let ts: i64 = row.get(4)?;
             let mut values = [None; 4];
             for (i, value) in values.iter_mut().enumerate() {
                 *value = row
@@ -146,7 +174,7 @@ impl MetricsDb {
                 .entry((host, surface))
                 .or_default()
                 .push(&session, values)?;
-            let day = days.partition_point(|d| d.window.end_ms() <= ts);
+            let day = day_ends.partition_point(|end| end <= &ts);
             daily[day].push(&session, values)?;
         }
         Ok(TokenReport {
@@ -192,5 +220,77 @@ impl MetricsDb {
                 })
                 .collect::<Result<_>>()?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn tokens_narrow_window_work_is_independent_of_irrelevant_history() {
+        let mut steps = Vec::new();
+        for count in [100, 1000] {
+            let fixture = xt_fixtures::Fixture::load(
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/F1"),
+            )
+            .unwrap();
+            let mut db = xt_fixtures::TempDb::empty().unwrap();
+            let session = &fixture.sessions()[0].metadata;
+            db.store_mut().upsert_session(session, false).unwrap();
+            let row: xt_store::CanonicalRecord = serde_json::from_value(json!({"uuid":"row","type":"assistant","timestamp":"2026-09-07T12:00:00Z","message":{"role":"assistant","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}})).unwrap();
+            db.store_mut()
+                .upsert_records(&session.session_id, std::slice::from_ref(&row), false)
+                .unwrap();
+            let window = Window::new(1788220800000, 1788825600000).unwrap();
+            let bounds = [window.start_ms(), candidate_end_ms(window).unwrap()];
+            let history: Vec<_> = (0..count)
+                .map(|i| {
+                    let mut record = row.clone();
+                    record.uuid = Some(format!("history-{i:04}"));
+                    record.api_message_id = Some(format!("response-{i:04}"));
+                    record.request_id = Some("history-request".into());
+                    record.timestamp = Some("2026-08-01T00:00:00Z".into());
+                    record
+                })
+                .collect();
+            db.store_mut()
+                .upsert_records(&session.session_id, &history, false)
+                .unwrap();
+            let c = rusqlite::Connection::open(db.path()).unwrap();
+            xt_store::timestamp::register_sqlite(&c).unwrap();
+            c.execute(
+                "UPDATE records SET api_message_id='candidate',request_id='candidate' WHERE uuid='row'",
+                [],
+            ).unwrap();
+            let plan: Vec<String> = c
+                .prepare(&format!("EXPLAIN QUERY PLAN {QUERY}"))
+                .unwrap()
+                .query_map(bounds, |row| row.get(3))
+                .unwrap()
+                .collect::<std::result::Result<_, _>>()
+                .unwrap();
+            assert!(
+                plan.iter().any(|line| line.contains("records_ts")),
+                "{plan:?}"
+            );
+            assert!(
+                plan.iter().any(|line| line.contains("records_response")),
+                "{plan:?}"
+            );
+            let mut statement = c.prepare(QUERY).unwrap();
+            let selected: Vec<String> = statement
+                .query_map(bounds, |r| r.get(0))
+                .unwrap()
+                .collect::<std::result::Result<_, _>>()
+                .unwrap();
+            assert_eq!(selected, std::slice::from_ref(&session.session_id));
+            steps.push(statement.get_status(rusqlite::StatementStatus::VmStep));
+        }
+        eprintln!("100/1000 irrelevant observations: {steps:?} VM steps");
+        assert!(
+            steps[1] <= steps[0] * 2,
+            "narrow window scanned irrelevant history: {steps:?}"
+        );
     }
 }

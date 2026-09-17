@@ -24,8 +24,10 @@ Selection happens before filtering the selected timestamp to the window or local
 day. Missing timestamps cannot be assigned to a window. Content/tool records are
 never removed. The raw timestamp preserves fractional digits beyond nanoseconds;
 normalized offsets and trailing zeroes identify the same instant. The existing
-`ts_ms` index restricts window candidates, while precise comparison checks all
-successors, including leap-second overlap.
+`ts_ms` index restricts candidates with a one-second upper overlap for leap
+seconds, while precise comparison checks all successors. Exact native instants
+then determine half-open window membership and local-day assignment before any
+counter is accumulated; a leap second before midnight stays in the preceding day.
 
 `Store` and `MetricsDb` register the shared timestamp comparator on their connections.
 Direct SQLite consumers of `v_response_usage` must call

@@ -10,6 +10,18 @@ pub struct InstantKey {
 }
 
 impl InstantKey {
+    /// A POSIX millisecond boundary denotes an ordinary second, never a leap
+    /// second. Euclidean division preserves the fraction for pre-epoch bounds.
+    pub fn from_millisecond(value: i64) -> Self {
+        Self {
+            second: value.div_euclid(1000),
+            leap_second: false,
+            fraction: format!("{:03}", value.rem_euclid(1000))
+                .trim_end_matches('0')
+                .to_owned(),
+        }
+    }
+
     pub(crate) fn components(self) -> (i64, bool, String) {
         (self.second, self.leap_second, self.fraction)
     }
@@ -66,4 +78,19 @@ pub fn register_sqlite(connection: &rusqlite::Connection) -> rusqlite::Result<()
             })
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn millisecond_boundaries_match_native_instants_across_epoch() {
+        for (ms, text) in [
+            (-1, "1969-12-31T23:59:59.999Z"),
+            (0, "1970-01-01T00:00:00Z"),
+            (1, "1970-01-01T00:00:00.001Z"),
+        ] {
+            assert!(InstantKey::from_millisecond(ms) == parse(text).unwrap().0);
+        }
+    }
 }
