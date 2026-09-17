@@ -31,6 +31,8 @@ transcript content.
 
 - equal timestamps with the later native UUID sorting lower;
 - append/resume, full replay and shifted copied prefixes without duplicate work;
+- copied prefixes in either arrival order and overlapping sources whose combined
+  relationships prove an order neither source proves alone;
 - checkpoint failure rolling back new records, order and continuation together;
 - inert rewrites clearing continuation without losing proven historical order;
 - upgrading an existing index and rereading unchanged sources;
