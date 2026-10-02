@@ -31,3 +31,14 @@ export function useTokensByHost(range: TimeRange) {
     enabled: source.kind !== 'preview',
   });
 }
+
+/** M-17 usage beside configured facts; keyed by range, refreshed with every `metrics` query. */
+export function useEnvironmentReport(range: TimeRange) {
+  const { source } = useData();
+  const days = rangeDays[range];
+  return useQuery({
+    queryKey: queryKeys.environment(days),
+    queryFn: () => source.environment(days),
+    enabled: source.kind !== 'preview',
+  });
+}

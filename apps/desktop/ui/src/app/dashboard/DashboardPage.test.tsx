@@ -150,9 +150,13 @@ it('renders the generated F1 report with honest unknowns and the shared sidebar 
   for (const [title, reason] of [
     ['Caught by your rules', 'Rule-fire data is unavailable'],
     ['Effort by type', 'Work-type data is unavailable'],
-    ['Environment', 'Environment data is unavailable'],
   ])
     expect(within(card(title)).getAllByText(new RegExp(reason)).length).toBeGreaterThan(0);
+  // Environment reads its own observed usage instead of the report's unavailable entry.
+  expect(
+    (await within(card('Environment')).findByTestId('environment-summary')).textContent,
+  ).toContain('5 observed calls · 1 identity · last 7d');
+  expect(card('Environment').textContent).not.toContain('Environment data is unavailable');
   // F1 is legitimately unpriced: no total, no subtotal masquerading as one.
   const cost = within(card('API-equivalent cost'));
   expect(screen.getByTestId('cost-total').textContent).toContain('Unmeasured');

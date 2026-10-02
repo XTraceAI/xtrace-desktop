@@ -201,6 +201,7 @@
 .xt-hero-value:focus-visible,
 .xt-dash-extra-details summary:focus-visible,
 .xt-lanes-scroll:focus-visible,
+.xt-env-list:focus-visible,
 .xt-dash-details summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -536,4 +537,205 @@
   justify-content: flex-end;
   max-width: 100%;
   margin-left: auto;
+}
+
+/* Environment (M-17): observed identities in report order, configured facts behind a dialog. */
+.xt-env {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.xt-env-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  margin: 0;
+  color: var(--secondary);
+  font:
+    400 10.5px/1.5 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-env-unresolved {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 4px 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--control-tone) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--control-tone) 8%, transparent);
+  color: var(--body);
+  font:
+    400 10.5px/1.45 'Geist Mono',
+    Menlo,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.xt-env-unresolved p,
+.xt-env-unresolved ul {
+  margin: 0;
+}
+.xt-env-unresolved strong {
+  color: var(--control-tone);
+  font-weight: 600;
+}
+.xt-env-unresolved > .xt-button {
+  flex: none;
+}
+.xt-env-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* The dialog list scrolls inside the window; the card list shows about six 24px rows. */
+.xt-env-modal .xt-env-list {
+  max-height: min(420px, calc(100vh - 220px));
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.xt-env-list[data-compact] {
+  --env-row: 24px;
+  gap: 0;
+  max-height: calc(var(--env-row) * 6);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-block: 1px solid var(--divider);
+}
+.xt-env-list[data-compact] .xt-env-row {
+  grid-template-columns: auto minmax(0, 1fr) auto 98px;
+  grid-template-areas: 'kind name calls strip';
+  gap: 0 8px;
+  height: var(--env-row);
+  padding-right: 2px;
+}
+.xt-env-list[data-compact] .xt-env-row + .xt-env-row {
+  border-top: 1px solid color-mix(in srgb, var(--divider) 60%, transparent);
+}
+.xt-env-list[data-compact] .xt-kind {
+  grid-area: kind;
+  max-width: 72px;
+  overflow: hidden;
+  padding: 0 4px;
+  font-size: 8.5px;
+  line-height: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-env-list[data-compact] .xt-env-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-env-list[data-compact] .xt-day-strip {
+  width: 98px;
+}
+@container dashboard (max-width: 1040px) {
+  .xt-env-list[data-compact] .xt-env-row {
+    grid-template-columns: auto minmax(0, 1fr) auto 70px;
+    gap: 0 6px;
+  }
+  .xt-env-list[data-compact] .xt-day-strip {
+    width: 70px;
+    gap: 1px;
+  }
+  .xt-env-list[data-compact] .xt-kind {
+    max-width: 52px;
+  }
+}
+.xt-env-host {
+  color: var(--meta);
+  font-size: 9.5px;
+}
+.xt-env-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'name calls'
+    'context strip';
+  gap: 0 10px;
+  align-items: center;
+  min-width: 0;
+  font:
+    400 10.5px/14px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-env-name {
+  grid-area: name;
+  min-width: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.xt-env-name small {
+  color: var(--warning);
+  font-size: 9.5px;
+}
+.xt-env-calls {
+  grid-area: calls;
+  justify-self: end;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.xt-env-context {
+  grid-area: context;
+  min-width: 0;
+  color: var(--meta);
+  font-size: 9.5px;
+  line-height: 15px;
+  overflow-wrap: anywhere;
+}
+.xt-env-context .xt-kind {
+  padding: 0 4px;
+  font-size: 8.5px;
+  line-height: 12px;
+}
+.xt-env-row .xt-day-strip {
+  grid-area: strip;
+  width: 110px;
+}
+.xt-env-row .xt-day-strip > span {
+  height: 8px;
+}
+.xt-env-note {
+  margin: 0;
+}
+.xt-env-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+}
+.xt-env-modal {
+  display: grid;
+  gap: 14px;
+  width: min(760px, calc(100vw - 16px));
+}
+.xt-env-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.xt-env-modal h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+.xt-env-modal section {
+  display: grid;
+  gap: 4px;
+}
+.xt-env-modal .xt-dash-note,
+.xt-env-modal .xt-dash-list {
+  margin: 0;
+}
+.xt-env-lead {
+  color: var(--body);
 }
