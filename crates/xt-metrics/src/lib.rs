@@ -1,15 +1,21 @@
 //! Read-only metrics over canonical work records and explicit event windows.
+mod cost;
 mod counts;
 mod coverage;
 mod favorite;
 mod hands_off;
 mod human;
+mod prices;
 mod sessions;
 mod spans;
 mod stats;
 mod sweep;
 mod tokens;
 mod window;
+pub use cost::{
+    CostReport, CostSummary, DayCost, HostCost, ModelCost, SurfaceCost, UnpricedCost,
+    UnpricedReason,
+};
 pub use counts::{Counts, TypingRate};
 pub use coverage::{
     CaptureGap, Coverage, CoverageSurface, DiscoveryHealth, HostUsageCoverage, InventoryState,
@@ -18,6 +24,7 @@ pub use coverage::{
 pub use favorite::{FavoriteComparison, FavoriteModel, FavoriteUnknown};
 pub use hands_off::{ExcludedSurface, HandsOff};
 pub use human::HumanTime;
+pub use prices::{COST_BASIS, PriceCatalog};
 pub use sessions::{DaySessions, SessionsPerDay};
 pub use spans::{ActiveSpan, ActiveSpanReport};
 pub use stats::Delta;
@@ -40,6 +47,8 @@ pub enum Error {
     InvalidTypingRate,
     #[error("Duplicate discovery health context for a host/surface")]
     InvalidCoverageContext,
+    #[error("Invalid price catalog")]
+    InvalidPriceCatalog,
     #[error(transparent)]
     Time(#[from] jiff::Error),
     #[error(transparent)]
@@ -78,6 +87,7 @@ impl MetricsDb {
         connection.prepare(&format!("{} LIMIT 0", sessions::QUERY))?;
         connection.prepare(&format!("{} LIMIT 0", favorite::OUTPUT_QUERY))?;
         connection.prepare(&format!("{} LIMIT 0", favorite::TURN_QUERY))?;
+        connection.prepare(&format!("{} LIMIT 0", cost::QUERY))?;
         Ok(Self { connection })
     }
 

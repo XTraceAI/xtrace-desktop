@@ -1,0 +1,111 @@
+{
+  "version": "synthetic-v1",
+  "as_of": "2026-09-17",
+  "basis": "Global public token API-equivalent, using recorded service tier; excludes unrecorded regional/speed modifiers, tool fees, and subscriptions.",
+  "sources": ["https://example.test/synthetic-prices"],
+  "models": [
+    {
+      "id": "test-flat",
+      "aliases": ["test-flat-alias"],
+      "cache_write_mode": "flat",
+      "bands": [
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["standard"],
+              "rates": {
+                "input": 1000,
+                "output": 10000,
+                "cache_read": 100,
+                "cache_write": 1250,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["test-fast"],
+              "rates": {
+                "input": 2000,
+                "output": 20000,
+                "cache_read": 200,
+                "cache_write": 2500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fixture-model",
+      "aliases": ["fixture-model-v1"],
+      "cache_write_mode": "flat",
+      "bands": [
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["standard"],
+              "rates": {
+                "input": 1000,
+                "output": 10000,
+                "cache_read": 100,
+                "cache_write": 1250,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["test-fast"],
+              "rates": {
+                "input": 2000,
+                "output": 20000,
+                "cache_read": 200,
+                "cache_write": 2500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "test-claude",
+      "aliases": [],
+      "cache_write_mode": "ttl_split",
+      "bands": [
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["standard"],
+              "rates": {
+                "input": 1000,
+                "output": 10000,
+                "cache_read": 100,
+                "cache_write": null,
+                "cache_write_5m": 1250,
+                "cache_write_1h": 2000
+              }
+            },
+            {
+              "names": ["test-fast"],
+              "rates": {
+                "input": 2000,
+                "output": 20000,
+                "cache_read": 200,
+                "cache_write": null,
+                "cache_write_5m": 2500,
+                "cache_write_1h": 4000
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "rate_unit": "nano_usd_per_token"
+}

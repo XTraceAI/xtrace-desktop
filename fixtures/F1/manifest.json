@@ -17,6 +17,7 @@
     }
   ],
   "snapshots": {
-    "hands_off": "input/hands-off.json"
+    "hands_off": "input/hands-off.json",
+    "prices": "input/prices.test.json"
   }
 }
