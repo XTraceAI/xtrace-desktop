@@ -30,6 +30,11 @@ impl Window {
     pub fn end_ms(self) -> i64 {
         self.end_ms
     }
+    // Chrono's coarse projection puts a leap second into the following POSIX
+    // second. Include that overlap, then filter exact instants before accumulation.
+    pub(crate) fn candidate_end_ms(self) -> Result<i64> {
+        self.end_ms().checked_add(1000).ok_or(Error::InvalidWindow)
+    }
     pub fn previous(self) -> Result<Self> {
         let start = self
             .start_ms

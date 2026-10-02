@@ -1,6 +1,8 @@
 //! Read-only metrics over canonical work records and explicit event windows.
+mod spans;
 mod tokens;
 mod window;
+pub use spans::{ActiveSpan, ActiveSpanReport};
 pub use tokens::{
     DayTokens, HostTokens, ModelTokens, SurfaceTokens, TokenCounters, TokenReport, TokenSummary,
 };
@@ -39,6 +41,7 @@ impl MetricsDb {
         // Fail at open if the writer has not installed the current projection.
         connection.prepare("SELECT uuid,session_id,ts_ms FROM v_session_events LIMIT 0")?;
         connection.prepare(&format!("{} LIMIT 0", tokens::QUERY))?;
+        connection.prepare(&format!("{} LIMIT 0", spans::QUERY))?;
         Ok(Self { connection })
     }
 
