@@ -710,6 +710,29 @@ pub(crate) fn prepare(
 }
 
 fn merge_record(old: &mut StoredRecord, incoming: &StoredRecord) -> bool {
+    fn agrees<T: PartialEq>(old: &Option<T>, incoming: &Option<T>) -> bool {
+        old.as_ref()
+            .zip(incoming.as_ref())
+            .is_none_or(|(a, b)| a == b)
+    }
+    // Capture compatibility before any fields are filled. Human classification
+    // may only enrich from an observation compatible with its retained inputs;
+    // unrelated timestamp/model/usage conflicts do not invalidate that evidence.
+    let human_compatible = old.is_meta == incoming.is_meta
+        && old.is_sidechain == incoming.is_sidechain
+        && agrees(&old.role, &incoming.role)
+        && agrees(
+            &old.classification.is_command,
+            &incoming.classification.is_command,
+        )
+        && agrees(
+            &old.classification.is_interrupted,
+            &incoming.classification.is_interrupted,
+        )
+        && agrees(
+            &old.classification.is_system_reminder,
+            &incoming.classification.is_system_reminder,
+        );
     let mut change = Change {
         conflict: old.is_meta != incoming.is_meta || old.is_sidechain != incoming.is_sidechain,
         ..Change::default()
@@ -748,10 +771,12 @@ fn merge_record(old: &mut StoredRecord, incoming: &StoredRecord) -> bool {
     change.fill(&mut old.model, &incoming.model);
     let content_change = merge_content(old, incoming);
     if !content_change.conflict {
-        change.fill(
-            &mut old.classification.is_human,
-            &incoming.classification.is_human,
-        );
+        if human_compatible {
+            change.fill(
+                &mut old.classification.is_human,
+                &incoming.classification.is_human,
+            );
+        }
         change.fill(
             &mut old.classification.is_command,
             &incoming.classification.is_command,
@@ -935,8 +960,20 @@ fn save_record(connection: &Connection, record: &StoredRecord) -> Result<()> {
 mod tests;
 
 fn classify(input: &CanonicalRecord) -> crate::model::RecordClassification {
+    // A known exclusion is sufficient even when role/content is absent. Missing
+    // content otherwise stays unknown: it is not an observed empty message.
+    let excluded = input.is_meta
+        || input.is_sidechain
+        || input
+            .message
+            .role
+            .as_deref()
+            .is_some_and(|role| role != "user");
     let Some(blocks) = &input.message.content else {
-        return Default::default();
+        return crate::model::RecordClassification {
+            is_human: excluded.then_some(false),
+            ..Default::default()
+        };
     };
     let text = blocks
         .iter()
@@ -946,11 +983,24 @@ fn classify(input: &CanonicalRecord) -> crate::model::RecordClassification {
     let command = text.starts_with("<command-name>") || text.starts_with("<local-command-stdout>");
     let interrupted = text.starts_with("[Request interrupted");
     let reminder = text.starts_with("<system-reminder>");
+    // Keep the existing raw-prefix fields stable for old measurement revisions.
+    // Human classification uses the rule's trimmed, joined text independently.
+    let trimmed = text.trim();
+    let excluded = excluded
+        || blocks
+            .iter()
+            .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
+        || trimmed.is_empty()
+        || trimmed.starts_with("<command-name>")
+        || trimmed.starts_with("<local-command-stdout>")
+        || trimmed.starts_with("[Request interrupted")
+        || trimmed.starts_with("<system-reminder>");
     crate::model::RecordClassification {
-        // The role-sensitive human rule belongs to its classification consumer.
-        // Keep only facts that would
-        // be lost by content discard; record type does not establish role.
-        is_human: None,
+        is_human: if excluded {
+            Some(false)
+        } else {
+            input.message.role.as_deref().map(|role| role == "user")
+        },
         is_command: Some(command),
         is_interrupted: Some(interrupted),
         is_system_reminder: Some(reminder),

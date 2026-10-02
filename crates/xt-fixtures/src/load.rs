@@ -311,10 +311,27 @@ impl Fixture {
         Ok(())
     }
 
-    /// Execute the currently implemented F1/F3 reference assertions against stored
+    /// Execute the currently implemented F1/F3/F8 reference assertions against stored
     /// rows. This is fixture arithmetic, not the application's metric engine.
     pub fn assert_reference(&self) -> Result<()> {
         self.require_populated()?;
+        if self.manifest.id.to_string() == "F8" {
+            let db = self.build_db(false)?;
+            let mut human_messages = 0;
+            for session in &self.sessions {
+                for row in db.store().records(&session.metadata.session_id)? {
+                    let human = row
+                        .classification
+                        .is_human
+                        .ok_or_else(|| invalid("F8", "human classification must be measured"))?;
+                    human_messages += usize::from(human);
+                }
+            }
+            return self.assert_expectation(
+                "M-02",
+                &serde_json::json!({"human_messages": human_messages}),
+            );
+        }
         if self.manifest.id.to_string() == "F3" {
             let db = self.build_db(false)?;
             let mut records = 0;

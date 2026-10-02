@@ -630,12 +630,14 @@ fn writer_shared_f1_and_bounded_native_chunks_replay_without_new_records() {
         .unwrap();
     assert_eq!(saved.meta.host, session.metadata.host);
     assert_eq!(saved.meta.source_platform, None);
-    assert!(
+    assert_eq!(
         db.store()
             .records(&session.metadata.session_id)
             .unwrap()
             .iter()
-            .all(|row| row.classification.is_human.is_none())
+            .filter(|row| row.classification.is_human == Some(true))
+            .count(),
+        5
     );
     let context = context(SessionSource::ReadersCli);
     let rows = (0..2501)
@@ -690,7 +692,7 @@ fn writer_hygiene_is_derived_before_discard_with_unknowns_preserved() {
         .collect::<Vec<_>>();
     write_batch(db.store_mut(), &request(&context, &rows, None)).unwrap();
     for row in db.store().records("cursor-native").unwrap() {
-        assert_eq!(row.classification.is_human, None);
+        assert_eq!(row.classification.is_human, Some(row.uuid == "human"));
         assert_eq!(row.classification.is_command, Some(row.uuid == "command"));
         assert_eq!(
             row.classification.is_interrupted,
@@ -716,7 +718,10 @@ fn writer_hygiene_is_derived_before_discard_with_unknowns_preserved() {
         .into_iter()
         .filter(|row| row.uuid.starts_with("role-"))
     {
-        assert_eq!(row.classification.is_human, None);
+        assert_eq!(
+            row.classification.is_human,
+            (row.uuid == "role-mismatch").then_some(false)
+        );
         assert_eq!(
             row.role.as_deref(),
             if row.uuid == "role-mismatch" {
@@ -1333,5 +1338,155 @@ fn native_codex_repairs_compare_retained_content_before_privacy_stripping() {
                 assert_eq!(corrected.content_json, before.content_json);
             }
         }
+    }
+}
+
+#[test]
+fn hygiene_f8_exact_prefix_contract_and_unicode_metadata_invariance() {
+    use std::path::PathBuf;
+    use xt_fixtures::Fixture;
+    use xt_store::retention::RetentionMode;
+    let fixture =
+        Fixture::load(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/F8")).unwrap();
+    fixture.assert_reference().unwrap();
+    let mut measurements = Vec::new();
+    for keep_content in [false, true] {
+        let mut db = TempDb::empty().unwrap();
+        if keep_content {
+            db.store_mut()
+                .set_retention_mode(RetentionMode::FullContent)
+                .unwrap();
+        }
+        let input = &fixture.sessions()[0];
+        let rows = input
+            .records
+            .iter()
+            .map(|row| parsed(serde_json::to_value(row).unwrap()))
+            .collect::<Vec<_>>();
+        let ctx = SourceContext {
+            conversation_id: Some(input.metadata.session_id.clone()),
+            source: Some(SessionSource::Fixture),
+            ..Default::default()
+        };
+        let mut batch = request(&ctx, &rows, None);
+        batch.keep_content = keep_content;
+        write_batch(db.store_mut(), &batch).unwrap();
+        let saved = db.store().records(&input.metadata.session_id).unwrap();
+        fixture.assert_expectation("M-02", &json!({"human_messages":saved.iter().filter(|row| row.classification.is_human==Some(true)).count()})).unwrap();
+        let human = saved
+            .iter()
+            .find(|row| row.classification.is_human == Some(true))
+            .unwrap();
+        assert_eq!(human.text_len, Some(6)); // H, i, space, emoji, e, combining acute.
+        assert!(
+            saved
+                .iter()
+                .all(|row| row.content_json.is_some() == keep_content)
+        );
+        assert!(
+            saved
+                .iter()
+                .flat_map(|row| &row.tool_uses)
+                .all(|tool| tool.input_json.is_some() == keep_content)
+        );
+        assert_eq!(
+            db.store()
+                .session(&input.metadata.session_id)
+                .unwrap()
+                .unwrap()
+                .meta
+                .title
+                .is_some(),
+            keep_content
+        );
+        let projection = saved
+            .iter()
+            .map(|row| {
+                (
+                    row.uuid.clone(),
+                    row.classification.clone(),
+                    row.text_len,
+                    row.tool_use_count,
+                )
+            })
+            .collect::<Vec<_>>();
+        measurements.push(projection);
+    }
+    assert_eq!(measurements[0], measurements[1]);
+    // No invented contains rule: an interior prefix remains ordinary human text.
+    let middle = parsed(
+        json!({"uuid":"middle","type":"user","message":{"role":"user","content":"Explain <command-name> in the middle"}}),
+    );
+    let mut db = TempDb::empty().unwrap();
+    write_batch(
+        db.store_mut(),
+        &request(&context(SessionSource::ReadersCli), &[middle], None),
+    )
+    .unwrap();
+    assert_eq!(
+        db.store().records("cursor-native").unwrap()[0]
+            .classification
+            .is_human,
+        Some(true)
+    );
+}
+
+#[test]
+fn hygiene_receipt_classification_enrichment_never_rewrites_old_coverage() {
+    let plugin = context(SessionSource::Plugin);
+    let native = context(SessionSource::ReadersCli);
+    let incomplete = parsed(json!({"uuid":"human","type":"user","message":{"role":"user"}}));
+    let complete = parsed(
+        json!({"uuid":"human","type":"user","message":{"role":"user","content":[{"type":"text","text":"Hi "},{"type":"text","text":"🙂e\u{0301}"},{"type":"tool_use","name":"Read","input":{"text":"must not count"}}]}}),
+    );
+    let human_bit = 1_i64
+        << xt_store::measurement::FIELDS
+            .iter()
+            .position(|name| *name == "is_human")
+            .unwrap();
+    for native_first in [false, true] {
+        let mut db = TempDb::empty().unwrap();
+        if native_first {
+            write_batch(
+                db.store_mut(),
+                &request(&native, std::slice::from_ref(&complete), None),
+            )
+            .unwrap();
+        }
+        write_batch(
+            db.store_mut(),
+            &request(
+                &plugin,
+                std::slice::from_ref(&incomplete),
+                Some(&receipt("incomplete")),
+            ),
+        )
+        .unwrap();
+        let old = db.store().capture_coverage("incomplete").unwrap();
+        assert_eq!(old[0].metric_field_mask & human_bit, 0);
+        write_batch(
+            db.store_mut(),
+            &request(&native, std::slice::from_ref(&complete), None),
+        )
+        .unwrap();
+        let saved = db.store().records("cursor-native").unwrap().remove(0);
+        assert_eq!(saved.classification.is_human, Some(true));
+        assert_eq!(saved.text_len, Some(6));
+        assert!(saved.content_json.is_none());
+        assert!(saved.tool_uses[0].input_json.is_none());
+        assert_eq!(db.store().capture_coverage("incomplete").unwrap(), old);
+        assert!(!matches_current(&old[0], &saved).unwrap());
+        write_batch(
+            db.store_mut(),
+            &request(
+                &plugin,
+                std::slice::from_ref(&complete),
+                Some(&receipt("complete")),
+            ),
+        )
+        .unwrap();
+        let new = db.store().capture_coverage("complete").unwrap();
+        assert_ne!(new[0].metric_field_mask & human_bit, 0);
+        assert!(matches_current(&new[0], &saved).unwrap());
     }
 }
