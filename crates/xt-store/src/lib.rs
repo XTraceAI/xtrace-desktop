@@ -17,6 +17,7 @@ pub mod retention;
 mod server_settings;
 pub mod session_list;
 pub mod timestamp;
+pub mod tool_use;
 mod write;
 
 pub use model::{

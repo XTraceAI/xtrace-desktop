@@ -33,6 +33,11 @@ pub struct IngestBatch<'a> {
     pub identities: &'a [crate::model::RecordIdentity],
     pub session_sources: &'a [SessionSourceObservation],
     pub record_sources: &'a [RecordSourceObservation],
+    /// Structural tool events this batch covers: slash commands and hook
+    /// summaries, which are not assistant tool calls and belong to no record.
+    /// They commit with the rows and the checkpoint, never beside them, and a
+    /// conflicting replay of one fails the whole batch.
+    pub tool_events: &'a [crate::ingest::ToolEvent],
     pub receipt: Option<SubmittedReceipt<'a>>,
     /// Exact retry matching happens under this batch's write transaction.
     pub receipt_replay: ReceiptReplay,
@@ -66,6 +71,7 @@ impl<'a> IngestBatch<'a> {
             identities: &[],
             session_sources: &[],
             record_sources: &[],
+            tool_events: &[],
             receipt: None,
             receipt_replay: ReceiptReplay::Reject,
             evidence_policy: EvidencePolicy::RequireAll,
@@ -218,6 +224,10 @@ impl Store {
             .iter()
             .any(|observation| observation.session_id != batch.session.session_id)
             || batch
+                .tool_events
+                .iter()
+                .any(|event| event.session_id != batch.session.session_id)
+            || batch
                 .receipt
                 .as_ref()
                 .is_some_and(|submitted| submitted.receipt.session_id != batch.session.session_id)
@@ -226,9 +236,11 @@ impl Store {
                 "batch facts must belong to its canonical session",
             ));
         }
-        if batch.checkpoint.is_some() && batch.records.is_empty() {
+        // Structural events are rows this batch covers too: a stretch of input
+        // whose only storable lines were hook summaries still carries progress.
+        if batch.checkpoint.is_some() && batch.records.is_empty() && batch.tool_events.is_empty() {
             return Err(Error::InvalidInput(
-                "a checkpoint commits only with the records it covers",
+                "a checkpoint commits only with the rows it covers",
             ));
         }
         if batch.discovery.is_some_and(|discovery| {
@@ -354,6 +366,25 @@ impl Store {
                 batch.receipt_replay == ReceiptReplay::MatchExact,
                 batch.evidence_policy == EvidencePolicy::AcceptedOnly,
             )?;
+        }
+        // Inside the destination savepoint: a batch whose rows are all rolled
+        // back leaves no structural event behind either. A retry of an event
+        // already stored is recognised, and a conflicting one fails the batch.
+        // The event is stored under the session that owns its identity, so a
+        // copied native context adds no second row.
+        for event in batch
+            .tool_events
+            .iter()
+            .filter(|event| !rejected.contains(event.source_event_id.as_str()))
+        {
+            // A slash command's identity is its user record's, so a record this
+            // batch could not store states nothing here, whoever else owns the
+            // UUID. Reading the owner instead would let a rejected occurrence
+            // write a command onto a session that never stored that record: the
+            // rejection is exactly the evidence that this input is not a
+            // trustworthy account of it. An accepted native copy is not
+            // rejected, so it still resolves to the canonical record's owner.
+            ingest::insert_tool_event(&transaction, event)?;
         }
         if provisional {
             if !outcome

@@ -48,6 +48,7 @@ fn request<'a>(
         context,
         declared_host: None,
         records,
+        hook_summaries: &[],
         title: Some("synthetic title"),
         cwd: None,
         git_branch: None,

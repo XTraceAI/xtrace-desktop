@@ -94,6 +94,9 @@ pub(crate) fn apply(store: &mut Store, args: ImportArgs) -> Result<ImportOutcome
         context: &context,
         declared_host: None,
         records: &records,
+        // The endpoint accepts canonical records; native hook summaries keep
+        // their dedicated consumer and are not delivered through this path.
+        hook_summaries: &[],
         title: args.title.as_deref(),
         cwd: None,
         git_branch: None,

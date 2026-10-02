@@ -11,7 +11,7 @@ use super::checkpoint::{self, FileIdentity, ResumeBasis, TailWindow};
 use super::readers_cli::ReaderDiagnostic;
 use super::stream::{SessionHeader, expected_conversation_id};
 use super::{ScanMode, SessionOutcome, SessionResult, SessionWriter};
-use crate::canonical::{Parsed, ParsedRecord, SourceContext, parse_with_context};
+use crate::canonical::{Parsed, ParsedRecord, SourceContext, StopHookSummary, parse_with_context};
 use crate::writer::MAX_BATCH_RECORDS;
 use sha2::Digest;
 use std::{
@@ -531,6 +531,10 @@ pub fn import_file(
     snapshot.rewind()?;
     let mut reader = BufReader::new(snapshot);
     let mut batch: Vec<ParsedRecord> = Vec::new();
+    // Structural hook summaries read from the same lines as `batch`. They are
+    // not records, so they are counted and committed separately, never as
+    // assistant tool calls.
+    let mut summaries: Vec<StopHookSummary> = Vec::new();
     let mut dropped = 0;
     let mut lines = resume.lines;
     let mut consumed: u64 = 0;
@@ -596,7 +600,66 @@ pub fn import_file(
                     batch.push(*record);
                 }
                 Ok(Parsed::Dropped(_)) => dropped += 1,
-                Ok(Parsed::Inert | Parsed::StructuralEvent(_) | Parsed::PrLink(_)) => {}
+                Ok(Parsed::StructuralEvent(summary)) => {
+                    // The summary's own UUID is its stable identity; without one
+                    // the event is unsupported and is never given an arrival ID.
+                    let mut summary = summary;
+                    if summary
+                        .uuid
+                        .as_deref()
+                        .is_none_or(|uuid| uuid.trim().is_empty())
+                    {
+                        return Ok(stop(
+                            &writer,
+                            lines,
+                            "structural summary has no stable identity",
+                        ));
+                    }
+                    // A summary names the same native identity a record does and
+                    // is reconciled by the same rules: blank labels are no
+                    // labels, the line's own two spellings must agree, and this
+                    // file is the session context whatever a fork's inherited
+                    // prefix still calls itself.
+                    if [
+                        summary.native.session_id.as_deref(),
+                        summary.source.native_session_id.as_deref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .any(|id| id.trim().is_empty())
+                        || summary
+                            .source
+                            .native_session_id
+                            .as_ref()
+                            .zip(summary.native.session_id.as_ref())
+                            .is_some_and(|(source, native)| source != native)
+                    {
+                        return Ok(stop(
+                            &writer,
+                            lines,
+                            "structural summary identity labels disagree",
+                        ));
+                    }
+                    summary.native.session_id = Some(file.session_id.clone());
+                    summary.source.native_session_id = Some(file.session_id.clone());
+                    let named = label(summary.source.source_surface.as_ref())
+                        .or_else(|| label(summary.native.entrypoint.as_ref()));
+                    if let Some(named) = named {
+                        match &surface {
+                            Some(known) if *known != named => {
+                                return Ok(stop(
+                                    &writer,
+                                    lines,
+                                    "structural summary surface disagrees with the file's surface",
+                                ));
+                            }
+                            Some(_) => {}
+                            None => surface = Some(named),
+                        }
+                    }
+                    summaries.push(*summary);
+                }
+                Ok(Parsed::Inert | Parsed::PrLink(_)) => {}
                 Err(_) => {
                     return Ok(stop(
                         &writer,
@@ -626,12 +689,17 @@ pub fn import_file(
                     observed_at,
                 )
             });
-            if let Err(skipped) =
-                writer.write_with_checkpoint(store, &batch, observed_at, progress.as_ref())
-            {
+            if let Err(skipped) = writer.write_with_checkpoint(
+                store,
+                &batch,
+                &summaries,
+                observed_at,
+                progress.as_ref(),
+            ) {
                 return Ok(*skipped);
             }
             batch.clear();
+            summaries.clear();
         }
     }
     writer.note_dropped(dropped);
@@ -653,9 +721,9 @@ pub fn import_file(
     // A file without a storable record (empty, or inert lines only) keeps its
     // discovered identity and nothing else: an empty batch commits no row,
     // and no cursor is recorded without a committed batch.
-    let carried = !batch.is_empty();
+    let carried = !batch.is_empty() || !summaries.is_empty();
     if let Err(skipped) =
-        writer.write_with_checkpoint(store, &batch, observed_at, progress.as_ref())
+        writer.write_with_checkpoint(store, &batch, &summaries, observed_at, progress.as_ref())
     {
         return Ok(*skipped);
     }
