@@ -11,6 +11,11 @@ import { ThemeProvider } from '../theme/ThemeProvider';
 import { AppRoutes } from './AppRoutes';
 // JSON imports widen literal unions; the export is the generated shape.
 const exported = fixture as FixtureExport;
+const dashboard = async () => exported.dashboards[0];
+const tokensByHost = async () => ({
+  window: exported.dashboards[0].window,
+  hosts: exported.dashboards[0].tokens_by_host,
+});
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => false }));
 afterEach(() => {
   cleanup();
@@ -73,6 +78,8 @@ it('shows the typed native index status as reported and refreshes it on its even
     kind: 'native',
     appInfo: async () => exported.app_info,
     dbCounts: async () => exported.db_counts,
+    dashboard,
+    tokensByHost,
     sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: vi.fn(async () => status),
     subscribe: vi.fn(async (event, callback) => {
@@ -127,6 +134,8 @@ it('polls a transient status until it settles, so a ready event that precedes th
     kind: 'native',
     appInfo: async () => exported.app_info,
     dbCounts: vi.fn(async () => exported.db_counts),
+    dashboard,
+    tokensByHost,
     sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: vi.fn(async () => status),
     // No event ever arrives: the listener registered after the only `ready`.
@@ -161,6 +170,8 @@ it('reconciles the data queries when the first status seen is already settled', 
     kind: 'native',
     appInfo: async () => exported.app_info,
     dbCounts: vi.fn(async () => exported.db_counts),
+    dashboard,
+    tokensByHost,
     sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: vi.fn(async () => ready),
     subscribe: async () => () => {},

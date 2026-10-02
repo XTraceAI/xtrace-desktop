@@ -7,10 +7,12 @@ fn generated_shell_export_uses_ipc_structs_and_rejects_skeletons() {
         .output()
         .unwrap();
     assert!(output.status.success());
+    // Byte parity: parsed floats are not round-trip exact under serde_json defaults.
+    assert_eq!(
+        std::str::from_utf8(&output.stdout).unwrap(),
+        include_str!("../../apps/desktop/ui/fixtures/F1.json")
+    );
     let actual: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let expected: serde_json::Value =
-        serde_json::from_str(include_str!("../../apps/desktop/ui/fixtures/F1.json")).unwrap();
-    assert_eq!(actual, expected);
     assert_eq!(actual["app_info"]["data_dir"], "fixture://F1");
     for id in ["F2", "F20"] {
         let output = Command::new(env!("CARGO_BIN_EXE_xtask"))

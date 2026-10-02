@@ -74,6 +74,11 @@ it('shows native metadata failure safely, retries, and preserves native drag exc
       .mockRejectedValueOnce(new Error('backend-specific detail'))
       .mockResolvedValue(exported.app_info),
     dbCounts: async () => exported.db_counts,
+    dashboard: async () => exported.dashboards[0],
+    tokensByHost: async () => ({
+      window: exported.dashboards[0].window,
+      hosts: exported.dashboards[0].tokens_by_host,
+    }),
     sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: async () => exported.native_index,
     subscribe: async () => () => {},

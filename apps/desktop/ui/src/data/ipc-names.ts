@@ -1,4 +1,6 @@
 export const commands = {
+  dashboard: 'metrics_dashboard',
+  tokensByHost: 'tokens_by_host',
   sessionsList: 'sessions_list',
   appInfo: 'app_info',
   dbCounts: 'db_counts',

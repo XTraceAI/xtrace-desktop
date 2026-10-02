@@ -5189,6 +5189,7 @@ dependencies = [
 name = "xtrace-desktop"
 version = "0.1.0"
 dependencies = [
+ "jiff",
  "libc",
  "objc2-app-kit",
  "serde",
@@ -5201,6 +5202,7 @@ dependencies = [
  "ts-rs",
  "xt-fixtures",
  "xt-ingest",
+ "xt-metrics",
  "xt-store",
 ]
 

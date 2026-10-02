@@ -21,6 +21,14 @@ pub enum StateError {
     Closed,
     #[error("database count exceeds the exact JSON integer range")]
     CountRange,
+    #[error("metric query failed")]
+    Metrics(#[from] xt_metrics::Error),
+    #[error("metric response could not be represented safely")]
+    MetricEncoding,
+    #[error("metric range must be 7, 14, or 30 days")]
+    InvalidMetricWindow,
+    #[error("system time zone is unavailable")]
+    MetricTimezone,
     /// The data directory would put the database inside the native history it
     /// indexes (or aliased to it); nothing is created there.
     #[error("data directory cannot hold the index: {0}")]
@@ -112,8 +120,19 @@ pub struct AppState {
     native_home: Option<PathBuf>,
 }
 
+enum MetricContext {
+    System,
+    #[cfg(all(debug_assertions, feature = "fixtures"))]
+    Fixture {
+        now_ms: i64,
+        catalog: xt_metrics::PriceCatalog,
+    },
+}
+
 struct Database {
     store: Store,
+    metrics_path: PathBuf,
+    metric_context: MetricContext,
     // Declared last: SQLite closes before the temporary directory is removed.
     _fixture_directory: Option<tempfile::TempDir>,
 }
@@ -155,6 +174,7 @@ impl AppState {
             None,
             Some(db_path),
             Some(native_home),
+            MetricContext::System,
         )
     }
     fn from_store(
@@ -164,6 +184,7 @@ impl AppState {
         directory: Option<tempfile::TempDir>,
         db_path: Option<PathBuf>,
         native_home: Option<PathBuf>,
+        metric_context: MetricContext,
     ) -> Result<Self, StateError> {
         let info = AppInfo {
             name: "XTrace Desktop".into(),
@@ -176,6 +197,8 @@ impl AppState {
         Ok(Self {
             database: Mutex::new(Some(Database {
                 store,
+                metrics_path: data_dir.join("xtrace.db"),
+                metric_context,
                 _fixture_directory: directory,
             })),
             info,
@@ -205,6 +228,10 @@ impl AppState {
             .write_db(&path, true)
             .map_err(|_| StateError::FixtureInvalid)?;
         let store = Store::open(path)?;
+        let metric_context = MetricContext::Fixture {
+            now_ms: fixture.now().timestamp_millis(),
+            catalog: crate::dashboard::fixture_catalog(fixture.snapshots().get("prices"))?,
+        };
         Self::from_store(
             store,
             directory.path().to_owned(),
@@ -212,6 +239,7 @@ impl AppState {
             Some(directory),
             None,
             None,
+            metric_context,
         )
     }
     #[cfg(not(all(debug_assertions, feature = "fixtures")))]
@@ -256,6 +284,64 @@ impl AppState {
             after,
         )
         .map_err(Into::into)
+    }
+
+    /// Reads run under the state lock, so shutdown cannot remove a fixture's
+    /// temporary database while a metric connection is using it.
+    fn with_metrics<T>(
+        &self,
+        window_days: u32,
+        read: impl FnOnce(
+            &xt_metrics::MetricsDb,
+            i64,
+            jiff::tz::TimeZone,
+            crate::dto::MetricClock,
+            Option<&xt_metrics::PriceCatalog>,
+        ) -> Result<T, StateError>,
+    ) -> Result<T, StateError> {
+        crate::dashboard::validate_window(window_days)?;
+        let guard = self.database.lock().map_err(|_| StateError::Poisoned)?;
+        let database = guard.as_ref().ok_or(StateError::Closed)?;
+        let (now, zone, clock, catalog) = match &database.metric_context {
+            MetricContext::System => (
+                jiff::Timestamp::now().as_millisecond(),
+                jiff::tz::TimeZone::try_system().map_err(|_| StateError::MetricTimezone)?,
+                crate::dto::MetricClock::System,
+                None,
+            ),
+            #[cfg(all(debug_assertions, feature = "fixtures"))]
+            MetricContext::Fixture { now_ms, catalog } => (
+                *now_ms,
+                jiff::tz::TimeZone::UTC,
+                crate::dto::MetricClock::Fixture,
+                Some(catalog),
+            ),
+        };
+        let metrics = xt_metrics::MetricsDb::open(&database.metrics_path)?;
+        read(&metrics, now, zone, clock, catalog)
+    }
+
+    pub fn metrics_dashboard(
+        &self,
+        window_days: u32,
+    ) -> Result<crate::dto::DashboardMetrics, StateError> {
+        self.with_metrics(window_days, |metrics, now, zone, clock, catalog| {
+            let bundled;
+            let catalog = match catalog {
+                Some(catalog) => catalog,
+                None => {
+                    bundled = xt_metrics::PriceCatalog::bundled()?;
+                    &bundled
+                }
+            };
+            crate::dashboard::assemble(metrics, window_days, now, zone, clock, catalog)
+        })
+    }
+
+    pub fn tokens_by_host(&self, window_days: u32) -> Result<crate::dto::TokensByHost, StateError> {
+        self.with_metrics(window_days, |metrics, now, zone, clock, _| {
+            crate::dashboard::tokens_by_host(metrics, window_days, now, zone, clock)
+        })
     }
 
     /// Tauri exits the process without dropping managed state. Close resources
