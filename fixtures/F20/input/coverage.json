@@ -1,0 +1,87 @@
+{
+  "scope": "coverage-consumer-only",
+  "discovery": [
+    {
+      "host": "claude",
+      "native_session_id": "coverage-native-cli",
+      "conversation_id": "coverage-cli",
+      "surface": "claude-cli",
+      "started_at_ms": 1788782400000,
+      "last_observed_at": 1788782401000,
+      "discovery_complete": true
+    },
+    {
+      "host": "claude",
+      "native_session_id": "coverage-native-desktop",
+      "conversation_id": "coverage-desktop",
+      "surface": "claude-desktop",
+      "started_at_ms": 1788782400000,
+      "last_observed_at": 1788782401000,
+      "discovery_complete": true
+    },
+    {
+      "host": "claude",
+      "native_session_id": "coverage-native-new",
+      "conversation_id": "coverage-new",
+      "surface": "future.app",
+      "started_at_ms": 1788782400000,
+      "last_observed_at": 1788782401000,
+      "discovery_complete": true
+    },
+    {
+      "host": "claude",
+      "native_session_id": "coverage-native-unknown-surface",
+      "conversation_id": "coverage-unknown",
+      "surface": null,
+      "started_at_ms": 1788782400000,
+      "last_observed_at": 1788782401000,
+      "discovery_complete": true
+    },
+    {
+      "host": "claude",
+      "native_session_id": "coverage-native-missing-identity",
+      "conversation_id": null,
+      "surface": "identity-missing",
+      "started_at_ms": 1788782400000,
+      "last_observed_at": 1788782401000,
+      "discovery_complete": true
+    },
+    {
+      "host": "claude",
+      "native_session_id": "coverage-native-missing-start",
+      "conversation_id": "coverage-missing-start",
+      "surface": "claude-cli",
+      "started_at_ms": null,
+      "last_observed_at": 1788782401000,
+      "discovery_complete": true
+    },
+    {
+      "host": "claude",
+      "native_session_id": "coverage-native-old-start",
+      "conversation_id": "coverage-old-start",
+      "surface": "claude-cli",
+      "started_at_ms": 1788134400000,
+      "last_observed_at": 1788782401000,
+      "discovery_complete": true
+    },
+    {
+      "host": "claude",
+      "native_session_id": "coverage-native-incomplete",
+      "conversation_id": "coverage-incomplete",
+      "surface": "incomplete.app",
+      "started_at_ms": 1788782400000,
+      "last_observed_at": 1788782401000,
+      "discovery_complete": false
+    }
+  ],
+  "notes": {
+    "cli": "sealed partial receipt; capture health only",
+    "desktop": "no receipt; CLI receipt cannot count here",
+    "new": "known native start and conversation; no canonical import yet",
+    "unknown-surface": "unknown surface cannot match unknown receipt surface",
+    "missing-identity": "native identity discovered without canonical conversation mapping",
+    "missing-start": "cannot assign to native-start cohort",
+    "old-start": "event in display window does not move native-start cohort",
+    "incomplete": "stored incomplete discovery suppresses authoritative ratio"
+  }
+}

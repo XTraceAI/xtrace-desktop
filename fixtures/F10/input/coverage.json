@@ -1,0 +1,21 @@
+{
+  "scope": "usage-coverage-only",
+  "surface": "claude-cli",
+  "records": [
+    {
+      "uuid": "coverage-aborted",
+      "type": "assistant",
+      "timestamp": "2026-09-07T12:00:00Z",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Synthetic response"
+          }
+        ]
+      }
+    }
+  ],
+  "expected_measured": 0
+}
