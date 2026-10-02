@@ -51,6 +51,42 @@ it('invokes the native metric commands with the selected range', async () => {
   expect(invoke).toHaveBeenNthCalledWith(2, 'tokens_by_host', { windowDays: 30 });
 });
 
+it('invokes the native Environment command with the selected range', async () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  const [report] = exported.environments;
+  vi.mocked(invoke).mockResolvedValue(report);
+  const source = await createDataSource();
+  expect(await source.environment(14)).toEqual(report);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('metrics_environment', { windowDays: 14 });
+});
+
+it('serves fixture Environment ranges as isolated copies with an unknown inventory', async () => {
+  const fixture = await loadFixtureDataSource('F1');
+  const strips = new Set<number>();
+  for (const days of [7, 14, 30]) {
+    const report = await fixture.environment(days);
+    expect(report).toEqual(exported.environments.find((entry) => entry.window.days === days));
+    expect(report.window.days).toBe(days);
+    // The strip is the same fixed 14 local dates whatever range is selected.
+    expect(report.strip_window.days).toBe(14);
+    strips.add(report.strip_window.start_ms);
+    expect(report.inventory).toBe('unknown');
+    expect(report.selected.hosts.every((host) => host.inventory === 'unknown')).toBe(true);
+    for (const row of report.identities) expect(row.strip).toHaveLength(14);
+    expect(report.identities.map((row) => row.order)).toEqual(
+      report.identities.map((_, index) => index),
+    );
+    report.totals.selected_calls = -1;
+    expect((await fixture.environment(days)).totals.selected_calls).not.toBe(-1);
+  }
+  expect(strips.size).toBe(1);
+  for (const days of [0, 15, 90])
+    await expect(fixture.environment(days)).rejects.toThrow(
+      'Metric range must be 7, 14, or 30 days',
+    );
+  expect(invoke).not.toHaveBeenCalled();
+});
+
 it('serves fixture Dashboard ranges from the generated export as isolated copies', async () => {
   const fixture = await loadFixtureDataSource('F1');
   for (const days of [7, 14, 30]) {
@@ -115,5 +151,6 @@ it('keeps ordinary and production browsers explicitly unavailable even with a pr
   await expect(source.dbCounts()).rejects.toThrow('Native data is unavailable');
   await expect(source.dashboard(7)).rejects.toThrow('Native data is unavailable');
   await expect(source.tokensByHost(7)).rejects.toThrow('Native data is unavailable');
+  await expect(source.environment(7)).rejects.toThrow('Native data is unavailable');
   expect(invoke).not.toHaveBeenCalled();
 });

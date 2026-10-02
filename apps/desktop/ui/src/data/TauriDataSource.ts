@@ -1,5 +1,6 @@
 import type { DashboardMetrics } from './generated/DashboardMetrics';
 import type { TokensByHost } from './generated/TokensByHost';
+import type { EnvironmentMetrics } from './generated/EnvironmentMetrics';
 import type { SessionPage } from './generated/SessionPage';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -16,6 +17,9 @@ export class TauriDataSource implements DataSource {
   }
   tokensByHost(windowDays: number) {
     return invoke<TokensByHost>(commands.tokensByHost, { windowDays });
+  }
+  environment(windowDays: number) {
+    return invoke<EnvironmentMetrics>(commands.environment, { windowDays });
   }
   sessionsList(search: string, host: string | null, after: string | null) {
     return invoke<SessionPage>(commands.sessionsList, { search, host, after });

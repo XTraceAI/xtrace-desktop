@@ -167,6 +167,52 @@ it('refreshes range-keyed Dashboard queries after imports, enrichment and index 
   expect(dashboard).not.toHaveBeenCalled();
 });
 
+it('refreshes range-keyed Environment queries after imports, enrichment and index status events', async () => {
+  vi.useFakeTimers();
+  const source = new FixtureDataSource(exported);
+  const environment = vi.spyOn(source, 'environment');
+  function Environment() {
+    const week = useQuery({
+      queryKey: queryKeys.environment(7),
+      queryFn: () => source.environment(7),
+    });
+    const month = useQuery({
+      queryKey: queryKeys.environment(30),
+      queryFn: () => source.environment(30),
+    });
+    return (
+      <output aria-label="Environment ranges">
+        {week.data?.window.days ?? '-'}/{month.data?.window.days ?? '-'}
+      </output>
+    );
+  }
+  render(
+    <DataProvider source={source}>
+      <Environment />
+    </DataProvider>,
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByRole('status').textContent).toBe('7/30');
+  expect(queryKeys.environment(14)).toEqual(['metrics', 'environment', 14]);
+  for (const event of [events.importReceived, events.turnCompleted, events.nativeIndexStatus]) {
+    environment.mockClear();
+    await act(async () => {
+      source.emit(event);
+      await vi.advanceTimersByTimeAsync(501);
+    });
+    expect(environment.mock.calls.map(([days]) => days).sort((a, b) => a - b)).toEqual([7, 30]);
+  }
+  environment.mockClear();
+  await act(async () => {
+    source.emit(events.fireReceived);
+    source.emit(events.prsRefreshed);
+    await vi.advanceTimersByTimeAsync(501);
+  });
+  expect(environment).not.toHaveBeenCalled();
+});
+
 it('balances delayed async subscriptions under StrictMode and cancels pending invalidations', async () => {
   vi.useFakeTimers();
   const registrations: {
@@ -181,6 +227,7 @@ it('balances delayed async subscriptions under StrictMode and cancels pending in
       window: exported.dashboards[0].window,
       hosts: exported.dashboards[0].tokens_by_host,
     }),
+    environment: async () => exported.environments[0],
     appInfo: async () => exported.app_info,
     dbCounts: async () => exported.db_counts,
     sessionsList: async () => ({ rows: [], next: null }),

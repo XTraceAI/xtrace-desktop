@@ -79,6 +79,7 @@ it('shows native metadata failure safely, retries, and preserves native drag exc
       window: exported.dashboards[0].window,
       hosts: exported.dashboards[0].tokens_by_host,
     }),
+    environment: async () => exported.environments[0],
     sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: async () => exported.native_index,
     subscribe: async () => () => {},

@@ -71,7 +71,7 @@ fn check_integers(value: &serde_json::Value) -> Result<(), StateError> {
     }
     Ok(())
 }
-fn checked_value(value: &impl Serialize) -> Result<serde_json::Value, StateError> {
+pub(crate) fn checked_value(value: &impl Serialize) -> Result<serde_json::Value, StateError> {
     let value = serde_json::to_value(value).map_err(|_| StateError::MetricEncoding)?;
     check_integers(&value)?;
     Ok(value)
@@ -79,7 +79,9 @@ fn checked_value(value: &impl Serialize) -> Result<serde_json::Value, StateError
 /// Generated DTOs mirror core report shapes. The conversion must reproduce the
 /// core JSON exactly, so a renamed or removed core field fails instead of
 /// silently becoming an unknown (`null`) value.
-fn convert<T: Serialize + DeserializeOwned>(value: &impl Serialize) -> Result<T, StateError> {
+pub(crate) fn convert<T: Serialize + DeserializeOwned>(
+    value: &impl Serialize,
+) -> Result<T, StateError> {
     let source = checked_value(value)?;
     let converted: T =
         serde_json::from_value(source.clone()).map_err(|_| StateError::MetricEncoding)?;
@@ -128,14 +130,14 @@ fn tile(
 fn unavailable(reason: &str, unit: &str, rule: &str) -> Result<MetricTile, StateError> {
     tile(None, None, (None, None, "unavailable"), unit, rule, reason)
 }
-fn selected_window(days: u32, now_ms: i64) -> Result<Window, StateError> {
+pub(crate) fn selected_window(days: u32, now_ms: i64) -> Result<Window, StateError> {
     validate_window(days)?;
     let start = now_ms
         .checked_sub(i64::from(days) * DAY_MS)
         .ok_or(StateError::InvalidMetricWindow)?;
     Ok(Window::new(start, now_ms)?)
 }
-fn dashboard_window(
+pub(crate) fn dashboard_window(
     days: u32,
     window: Window,
     zone: &TimeZone,

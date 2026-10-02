@@ -7,6 +7,7 @@ export function createQueryClient() {
 export const queryKeys = {
   dashboard: (windowDays: number) => ['metrics', 'dashboard', windowDays] as const,
   tokensByHost: (windowDays: number) => ['metrics', 'tokens-by-host', windowDays] as const,
+  environment: (windowDays: number) => ['metrics', 'environment', windowDays] as const,
   sessions: ['sessions', 'list'],
   appInfo: ['app', 'info'],
   dbCounts: ['database', 'counts'],

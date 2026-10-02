@@ -2328,5 +2328,2638 @@
         }
       ]
     }
+  ],
+  "environments": [
+    {
+      "window": {
+        "days": 7,
+        "start_ms": 1788220800000,
+        "end_ms": 1788825600000,
+        "timezone": "UTC",
+        "clock": "fixture"
+      },
+      "strip_window": {
+        "days": 14,
+        "start_ms": 1787616000000,
+        "end_ms": 1788825600000,
+        "timezone": "UTC",
+        "clock": "fixture"
+      },
+      "inventory": "unknown",
+      "selected": {
+        "window_start_ms": 1788220800000,
+        "window_end_ms": 1788825600000,
+        "observed": [
+          {
+            "host": "claude",
+            "surface": "cli",
+            "calls": 5,
+            "by_day": [
+              {
+                "date": "2026-09-01",
+                "start_ms": 1788220800000,
+                "end_ms": 1788307200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-02",
+                "start_ms": 1788307200000,
+                "end_ms": 1788393600000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-03",
+                "start_ms": 1788393600000,
+                "end_ms": 1788480000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-04",
+                "start_ms": 1788480000000,
+                "end_ms": 1788566400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-05",
+                "start_ms": 1788566400000,
+                "end_ms": 1788652800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-06",
+                "start_ms": 1788652800000,
+                "end_ms": 1788739200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-07",
+                "start_ms": 1788739200000,
+                "end_ms": 1788825600000,
+                "calls": 5
+              }
+            ],
+            "by_identity": [
+              {
+                "identity": {
+                  "kind": "builtin",
+                  "name": "Read",
+                  "server": null,
+                  "tool": null,
+                  "skill": null
+                },
+                "calls": 5,
+                "by_day": [
+                  {
+                    "date": "2026-09-01",
+                    "start_ms": 1788220800000,
+                    "end_ms": 1788307200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-02",
+                    "start_ms": 1788307200000,
+                    "end_ms": 1788393600000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-03",
+                    "start_ms": 1788393600000,
+                    "end_ms": 1788480000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-04",
+                    "start_ms": 1788480000000,
+                    "end_ms": 1788566400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-05",
+                    "start_ms": 1788566400000,
+                    "end_ms": 1788652800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-06",
+                    "start_ms": 1788652800000,
+                    "end_ms": 1788739200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-07",
+                    "start_ms": 1788739200000,
+                    "end_ms": 1788825600000,
+                    "calls": 5
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "hosts": [
+          {
+            "host": "claude",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          },
+          {
+            "host": "codex",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          },
+          {
+            "host": "cursor",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          }
+        ],
+        "unresolved": []
+      },
+      "strip": {
+        "window_start_ms": 1787616000000,
+        "window_end_ms": 1788825600000,
+        "observed": [
+          {
+            "host": "claude",
+            "surface": "cli",
+            "calls": 5,
+            "by_day": [
+              {
+                "date": "2026-08-25",
+                "start_ms": 1787616000000,
+                "end_ms": 1787702400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-26",
+                "start_ms": 1787702400000,
+                "end_ms": 1787788800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-27",
+                "start_ms": 1787788800000,
+                "end_ms": 1787875200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-28",
+                "start_ms": 1787875200000,
+                "end_ms": 1787961600000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-29",
+                "start_ms": 1787961600000,
+                "end_ms": 1788048000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-30",
+                "start_ms": 1788048000000,
+                "end_ms": 1788134400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-31",
+                "start_ms": 1788134400000,
+                "end_ms": 1788220800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-01",
+                "start_ms": 1788220800000,
+                "end_ms": 1788307200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-02",
+                "start_ms": 1788307200000,
+                "end_ms": 1788393600000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-03",
+                "start_ms": 1788393600000,
+                "end_ms": 1788480000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-04",
+                "start_ms": 1788480000000,
+                "end_ms": 1788566400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-05",
+                "start_ms": 1788566400000,
+                "end_ms": 1788652800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-06",
+                "start_ms": 1788652800000,
+                "end_ms": 1788739200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-07",
+                "start_ms": 1788739200000,
+                "end_ms": 1788825600000,
+                "calls": 5
+              }
+            ],
+            "by_identity": [
+              {
+                "identity": {
+                  "kind": "builtin",
+                  "name": "Read",
+                  "server": null,
+                  "tool": null,
+                  "skill": null
+                },
+                "calls": 5,
+                "by_day": [
+                  {
+                    "date": "2026-08-25",
+                    "start_ms": 1787616000000,
+                    "end_ms": 1787702400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-26",
+                    "start_ms": 1787702400000,
+                    "end_ms": 1787788800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-27",
+                    "start_ms": 1787788800000,
+                    "end_ms": 1787875200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-28",
+                    "start_ms": 1787875200000,
+                    "end_ms": 1787961600000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-29",
+                    "start_ms": 1787961600000,
+                    "end_ms": 1788048000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-30",
+                    "start_ms": 1788048000000,
+                    "end_ms": 1788134400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-31",
+                    "start_ms": 1788134400000,
+                    "end_ms": 1788220800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-01",
+                    "start_ms": 1788220800000,
+                    "end_ms": 1788307200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-02",
+                    "start_ms": 1788307200000,
+                    "end_ms": 1788393600000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-03",
+                    "start_ms": 1788393600000,
+                    "end_ms": 1788480000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-04",
+                    "start_ms": 1788480000000,
+                    "end_ms": 1788566400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-05",
+                    "start_ms": 1788566400000,
+                    "end_ms": 1788652800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-06",
+                    "start_ms": 1788652800000,
+                    "end_ms": 1788739200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-07",
+                    "start_ms": 1788739200000,
+                    "end_ms": 1788825600000,
+                    "calls": 5
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "hosts": [
+          {
+            "host": "claude",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          },
+          {
+            "host": "codex",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          },
+          {
+            "host": "cursor",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          }
+        ],
+        "unresolved": []
+      },
+      "identities": [
+        {
+          "order": 0,
+          "host": "claude",
+          "identity": {
+            "kind": "builtin",
+            "name": "Read",
+            "server": null,
+            "tool": null,
+            "skill": null
+          },
+          "calls": 5,
+          "strip_calls": 5,
+          "strip": [
+            {
+              "date": "2026-08-25",
+              "start_ms": 1787616000000,
+              "end_ms": 1787702400000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-26",
+              "start_ms": 1787702400000,
+              "end_ms": 1787788800000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-27",
+              "start_ms": 1787788800000,
+              "end_ms": 1787875200000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-28",
+              "start_ms": 1787875200000,
+              "end_ms": 1787961600000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-29",
+              "start_ms": 1787961600000,
+              "end_ms": 1788048000000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-30",
+              "start_ms": 1788048000000,
+              "end_ms": 1788134400000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-31",
+              "start_ms": 1788134400000,
+              "end_ms": 1788220800000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-01",
+              "start_ms": 1788220800000,
+              "end_ms": 1788307200000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-02",
+              "start_ms": 1788307200000,
+              "end_ms": 1788393600000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-03",
+              "start_ms": 1788393600000,
+              "end_ms": 1788480000000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-04",
+              "start_ms": 1788480000000,
+              "end_ms": 1788566400000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-05",
+              "start_ms": 1788566400000,
+              "end_ms": 1788652800000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-06",
+              "start_ms": 1788652800000,
+              "end_ms": 1788739200000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-07",
+              "start_ms": 1788739200000,
+              "end_ms": 1788825600000,
+              "calls": 5
+            }
+          ]
+        }
+      ],
+      "totals": {
+        "selected_calls": 5,
+        "strip_calls": 5,
+        "selected_unresolved_calls": 0,
+        "identities": 1,
+        "configured_components": 14
+      },
+      "configured": [
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "home",
+          "kind": "skill",
+          "name": "deep-review",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "repository",
+          "kind": "skill",
+          "name": "repo-only",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_user_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "github",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_user_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "memhub",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_project_mcp_config",
+          "scope": "repository",
+          "kind": "mcp_server",
+          "name": "memhub",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_project_mcp_config",
+          "scope": "repository",
+          "kind": "mcp_server",
+          "name": "repo-only",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_plugin_registry",
+          "scope": "home",
+          "kind": "plugin",
+          "name": "memhub@memhub",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_enabled_plugins",
+          "scope": "home",
+          "kind": "plugin",
+          "name": "cloudflare@cloudflare",
+          "enabled": false
+        },
+        {
+          "host": "claude",
+          "source": "claude_enabled_plugins",
+          "scope": "home",
+          "kind": "plugin",
+          "name": "memhub@memhub",
+          "enabled": true
+        },
+        {
+          "host": "claude",
+          "source": "claude_hook_config",
+          "scope": "home",
+          "kind": "hook",
+          "name": "PreToolUse:Bash",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_hook_config",
+          "scope": "home",
+          "kind": "hook",
+          "name": "Stop:*",
+          "enabled": null
+        },
+        {
+          "host": "codex",
+          "source": "codex_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "memhub",
+          "enabled": null
+        },
+        {
+          "host": "codex",
+          "source": "codex_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "stitch",
+          "enabled": null
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "html.to.design",
+          "enabled": null
+        }
+      ],
+      "sources": [
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "incomplete",
+            "stated": 2,
+            "skipped": 1,
+            "reason": "unproven_entry"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_user_mcp_config",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 2
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_plugin_registry",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "incomplete",
+            "stated": 2,
+            "skipped": 1,
+            "reason": "unproven_entry"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_enabled_plugins",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "incomplete",
+            "stated": 3,
+            "skipped": 1,
+            "reason": "unproven_entry"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_hook_config",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "incomplete",
+            "stated": 3,
+            "skipped": 1,
+            "reason": "unproven_entry"
+          }
+        },
+        {
+          "host": "codex",
+          "source": "codex_mcp_config",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 2
+          }
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_mcp_config",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "repository",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_project_mcp_config",
+          "scope": "repository",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 2
+          }
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_mcp_config",
+          "scope": "repository",
+          "root_index": 0,
+          "status": {
+            "state": "missing"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "repository",
+          "root_index": 1,
+          "status": {
+            "state": "missing"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_project_mcp_config",
+          "scope": "repository",
+          "root_index": 1,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_mcp_config",
+          "scope": "repository",
+          "root_index": 1,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        }
+      ],
+      "cache": [
+        {
+          "host": "codex",
+          "source": "codex_plugin_cache",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_plugin_cache",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "missing"
+          }
+        }
+      ],
+      "roots": [
+        {
+          "scope": "home",
+          "index": 0,
+          "state": "read"
+        },
+        {
+          "scope": "repository",
+          "index": 0,
+          "state": "read"
+        },
+        {
+          "scope": "repository",
+          "index": 1,
+          "state": "read"
+        }
+      ]
+    },
+    {
+      "window": {
+        "days": 14,
+        "start_ms": 1787616000000,
+        "end_ms": 1788825600000,
+        "timezone": "UTC",
+        "clock": "fixture"
+      },
+      "strip_window": {
+        "days": 14,
+        "start_ms": 1787616000000,
+        "end_ms": 1788825600000,
+        "timezone": "UTC",
+        "clock": "fixture"
+      },
+      "inventory": "unknown",
+      "selected": {
+        "window_start_ms": 1787616000000,
+        "window_end_ms": 1788825600000,
+        "observed": [
+          {
+            "host": "claude",
+            "surface": "cli",
+            "calls": 5,
+            "by_day": [
+              {
+                "date": "2026-08-25",
+                "start_ms": 1787616000000,
+                "end_ms": 1787702400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-26",
+                "start_ms": 1787702400000,
+                "end_ms": 1787788800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-27",
+                "start_ms": 1787788800000,
+                "end_ms": 1787875200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-28",
+                "start_ms": 1787875200000,
+                "end_ms": 1787961600000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-29",
+                "start_ms": 1787961600000,
+                "end_ms": 1788048000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-30",
+                "start_ms": 1788048000000,
+                "end_ms": 1788134400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-31",
+                "start_ms": 1788134400000,
+                "end_ms": 1788220800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-01",
+                "start_ms": 1788220800000,
+                "end_ms": 1788307200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-02",
+                "start_ms": 1788307200000,
+                "end_ms": 1788393600000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-03",
+                "start_ms": 1788393600000,
+                "end_ms": 1788480000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-04",
+                "start_ms": 1788480000000,
+                "end_ms": 1788566400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-05",
+                "start_ms": 1788566400000,
+                "end_ms": 1788652800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-06",
+                "start_ms": 1788652800000,
+                "end_ms": 1788739200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-07",
+                "start_ms": 1788739200000,
+                "end_ms": 1788825600000,
+                "calls": 5
+              }
+            ],
+            "by_identity": [
+              {
+                "identity": {
+                  "kind": "builtin",
+                  "name": "Read",
+                  "server": null,
+                  "tool": null,
+                  "skill": null
+                },
+                "calls": 5,
+                "by_day": [
+                  {
+                    "date": "2026-08-25",
+                    "start_ms": 1787616000000,
+                    "end_ms": 1787702400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-26",
+                    "start_ms": 1787702400000,
+                    "end_ms": 1787788800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-27",
+                    "start_ms": 1787788800000,
+                    "end_ms": 1787875200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-28",
+                    "start_ms": 1787875200000,
+                    "end_ms": 1787961600000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-29",
+                    "start_ms": 1787961600000,
+                    "end_ms": 1788048000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-30",
+                    "start_ms": 1788048000000,
+                    "end_ms": 1788134400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-31",
+                    "start_ms": 1788134400000,
+                    "end_ms": 1788220800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-01",
+                    "start_ms": 1788220800000,
+                    "end_ms": 1788307200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-02",
+                    "start_ms": 1788307200000,
+                    "end_ms": 1788393600000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-03",
+                    "start_ms": 1788393600000,
+                    "end_ms": 1788480000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-04",
+                    "start_ms": 1788480000000,
+                    "end_ms": 1788566400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-05",
+                    "start_ms": 1788566400000,
+                    "end_ms": 1788652800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-06",
+                    "start_ms": 1788652800000,
+                    "end_ms": 1788739200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-07",
+                    "start_ms": 1788739200000,
+                    "end_ms": 1788825600000,
+                    "calls": 5
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "hosts": [
+          {
+            "host": "claude",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          },
+          {
+            "host": "codex",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          },
+          {
+            "host": "cursor",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          }
+        ],
+        "unresolved": []
+      },
+      "strip": {
+        "window_start_ms": 1787616000000,
+        "window_end_ms": 1788825600000,
+        "observed": [
+          {
+            "host": "claude",
+            "surface": "cli",
+            "calls": 5,
+            "by_day": [
+              {
+                "date": "2026-08-25",
+                "start_ms": 1787616000000,
+                "end_ms": 1787702400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-26",
+                "start_ms": 1787702400000,
+                "end_ms": 1787788800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-27",
+                "start_ms": 1787788800000,
+                "end_ms": 1787875200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-28",
+                "start_ms": 1787875200000,
+                "end_ms": 1787961600000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-29",
+                "start_ms": 1787961600000,
+                "end_ms": 1788048000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-30",
+                "start_ms": 1788048000000,
+                "end_ms": 1788134400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-31",
+                "start_ms": 1788134400000,
+                "end_ms": 1788220800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-01",
+                "start_ms": 1788220800000,
+                "end_ms": 1788307200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-02",
+                "start_ms": 1788307200000,
+                "end_ms": 1788393600000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-03",
+                "start_ms": 1788393600000,
+                "end_ms": 1788480000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-04",
+                "start_ms": 1788480000000,
+                "end_ms": 1788566400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-05",
+                "start_ms": 1788566400000,
+                "end_ms": 1788652800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-06",
+                "start_ms": 1788652800000,
+                "end_ms": 1788739200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-07",
+                "start_ms": 1788739200000,
+                "end_ms": 1788825600000,
+                "calls": 5
+              }
+            ],
+            "by_identity": [
+              {
+                "identity": {
+                  "kind": "builtin",
+                  "name": "Read",
+                  "server": null,
+                  "tool": null,
+                  "skill": null
+                },
+                "calls": 5,
+                "by_day": [
+                  {
+                    "date": "2026-08-25",
+                    "start_ms": 1787616000000,
+                    "end_ms": 1787702400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-26",
+                    "start_ms": 1787702400000,
+                    "end_ms": 1787788800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-27",
+                    "start_ms": 1787788800000,
+                    "end_ms": 1787875200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-28",
+                    "start_ms": 1787875200000,
+                    "end_ms": 1787961600000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-29",
+                    "start_ms": 1787961600000,
+                    "end_ms": 1788048000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-30",
+                    "start_ms": 1788048000000,
+                    "end_ms": 1788134400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-31",
+                    "start_ms": 1788134400000,
+                    "end_ms": 1788220800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-01",
+                    "start_ms": 1788220800000,
+                    "end_ms": 1788307200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-02",
+                    "start_ms": 1788307200000,
+                    "end_ms": 1788393600000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-03",
+                    "start_ms": 1788393600000,
+                    "end_ms": 1788480000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-04",
+                    "start_ms": 1788480000000,
+                    "end_ms": 1788566400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-05",
+                    "start_ms": 1788566400000,
+                    "end_ms": 1788652800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-06",
+                    "start_ms": 1788652800000,
+                    "end_ms": 1788739200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-07",
+                    "start_ms": 1788739200000,
+                    "end_ms": 1788825600000,
+                    "calls": 5
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "hosts": [
+          {
+            "host": "claude",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          },
+          {
+            "host": "codex",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          },
+          {
+            "host": "cursor",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          }
+        ],
+        "unresolved": []
+      },
+      "identities": [
+        {
+          "order": 0,
+          "host": "claude",
+          "identity": {
+            "kind": "builtin",
+            "name": "Read",
+            "server": null,
+            "tool": null,
+            "skill": null
+          },
+          "calls": 5,
+          "strip_calls": 5,
+          "strip": [
+            {
+              "date": "2026-08-25",
+              "start_ms": 1787616000000,
+              "end_ms": 1787702400000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-26",
+              "start_ms": 1787702400000,
+              "end_ms": 1787788800000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-27",
+              "start_ms": 1787788800000,
+              "end_ms": 1787875200000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-28",
+              "start_ms": 1787875200000,
+              "end_ms": 1787961600000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-29",
+              "start_ms": 1787961600000,
+              "end_ms": 1788048000000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-30",
+              "start_ms": 1788048000000,
+              "end_ms": 1788134400000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-31",
+              "start_ms": 1788134400000,
+              "end_ms": 1788220800000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-01",
+              "start_ms": 1788220800000,
+              "end_ms": 1788307200000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-02",
+              "start_ms": 1788307200000,
+              "end_ms": 1788393600000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-03",
+              "start_ms": 1788393600000,
+              "end_ms": 1788480000000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-04",
+              "start_ms": 1788480000000,
+              "end_ms": 1788566400000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-05",
+              "start_ms": 1788566400000,
+              "end_ms": 1788652800000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-06",
+              "start_ms": 1788652800000,
+              "end_ms": 1788739200000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-07",
+              "start_ms": 1788739200000,
+              "end_ms": 1788825600000,
+              "calls": 5
+            }
+          ]
+        }
+      ],
+      "totals": {
+        "selected_calls": 5,
+        "strip_calls": 5,
+        "selected_unresolved_calls": 0,
+        "identities": 1,
+        "configured_components": 14
+      },
+      "configured": [
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "home",
+          "kind": "skill",
+          "name": "deep-review",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "repository",
+          "kind": "skill",
+          "name": "repo-only",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_user_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "github",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_user_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "memhub",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_project_mcp_config",
+          "scope": "repository",
+          "kind": "mcp_server",
+          "name": "memhub",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_project_mcp_config",
+          "scope": "repository",
+          "kind": "mcp_server",
+          "name": "repo-only",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_plugin_registry",
+          "scope": "home",
+          "kind": "plugin",
+          "name": "memhub@memhub",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_enabled_plugins",
+          "scope": "home",
+          "kind": "plugin",
+          "name": "cloudflare@cloudflare",
+          "enabled": false
+        },
+        {
+          "host": "claude",
+          "source": "claude_enabled_plugins",
+          "scope": "home",
+          "kind": "plugin",
+          "name": "memhub@memhub",
+          "enabled": true
+        },
+        {
+          "host": "claude",
+          "source": "claude_hook_config",
+          "scope": "home",
+          "kind": "hook",
+          "name": "PreToolUse:Bash",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_hook_config",
+          "scope": "home",
+          "kind": "hook",
+          "name": "Stop:*",
+          "enabled": null
+        },
+        {
+          "host": "codex",
+          "source": "codex_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "memhub",
+          "enabled": null
+        },
+        {
+          "host": "codex",
+          "source": "codex_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "stitch",
+          "enabled": null
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "html.to.design",
+          "enabled": null
+        }
+      ],
+      "sources": [
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "incomplete",
+            "stated": 2,
+            "skipped": 1,
+            "reason": "unproven_entry"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_user_mcp_config",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 2
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_plugin_registry",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "incomplete",
+            "stated": 2,
+            "skipped": 1,
+            "reason": "unproven_entry"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_enabled_plugins",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "incomplete",
+            "stated": 3,
+            "skipped": 1,
+            "reason": "unproven_entry"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_hook_config",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "incomplete",
+            "stated": 3,
+            "skipped": 1,
+            "reason": "unproven_entry"
+          }
+        },
+        {
+          "host": "codex",
+          "source": "codex_mcp_config",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 2
+          }
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_mcp_config",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "repository",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_project_mcp_config",
+          "scope": "repository",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 2
+          }
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_mcp_config",
+          "scope": "repository",
+          "root_index": 0,
+          "status": {
+            "state": "missing"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "repository",
+          "root_index": 1,
+          "status": {
+            "state": "missing"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_project_mcp_config",
+          "scope": "repository",
+          "root_index": 1,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_mcp_config",
+          "scope": "repository",
+          "root_index": 1,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        }
+      ],
+      "cache": [
+        {
+          "host": "codex",
+          "source": "codex_plugin_cache",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_plugin_cache",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "missing"
+          }
+        }
+      ],
+      "roots": [
+        {
+          "scope": "home",
+          "index": 0,
+          "state": "read"
+        },
+        {
+          "scope": "repository",
+          "index": 0,
+          "state": "read"
+        },
+        {
+          "scope": "repository",
+          "index": 1,
+          "state": "read"
+        }
+      ]
+    },
+    {
+      "window": {
+        "days": 30,
+        "start_ms": 1786233600000,
+        "end_ms": 1788825600000,
+        "timezone": "UTC",
+        "clock": "fixture"
+      },
+      "strip_window": {
+        "days": 14,
+        "start_ms": 1787616000000,
+        "end_ms": 1788825600000,
+        "timezone": "UTC",
+        "clock": "fixture"
+      },
+      "inventory": "unknown",
+      "selected": {
+        "window_start_ms": 1786233600000,
+        "window_end_ms": 1788825600000,
+        "observed": [
+          {
+            "host": "claude",
+            "surface": "cli",
+            "calls": 5,
+            "by_day": [
+              {
+                "date": "2026-08-09",
+                "start_ms": 1786233600000,
+                "end_ms": 1786320000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-10",
+                "start_ms": 1786320000000,
+                "end_ms": 1786406400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-11",
+                "start_ms": 1786406400000,
+                "end_ms": 1786492800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-12",
+                "start_ms": 1786492800000,
+                "end_ms": 1786579200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-13",
+                "start_ms": 1786579200000,
+                "end_ms": 1786665600000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-14",
+                "start_ms": 1786665600000,
+                "end_ms": 1786752000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-15",
+                "start_ms": 1786752000000,
+                "end_ms": 1786838400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-16",
+                "start_ms": 1786838400000,
+                "end_ms": 1786924800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-17",
+                "start_ms": 1786924800000,
+                "end_ms": 1787011200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-18",
+                "start_ms": 1787011200000,
+                "end_ms": 1787097600000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-19",
+                "start_ms": 1787097600000,
+                "end_ms": 1787184000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-20",
+                "start_ms": 1787184000000,
+                "end_ms": 1787270400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-21",
+                "start_ms": 1787270400000,
+                "end_ms": 1787356800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-22",
+                "start_ms": 1787356800000,
+                "end_ms": 1787443200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-23",
+                "start_ms": 1787443200000,
+                "end_ms": 1787529600000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-24",
+                "start_ms": 1787529600000,
+                "end_ms": 1787616000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-25",
+                "start_ms": 1787616000000,
+                "end_ms": 1787702400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-26",
+                "start_ms": 1787702400000,
+                "end_ms": 1787788800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-27",
+                "start_ms": 1787788800000,
+                "end_ms": 1787875200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-28",
+                "start_ms": 1787875200000,
+                "end_ms": 1787961600000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-29",
+                "start_ms": 1787961600000,
+                "end_ms": 1788048000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-30",
+                "start_ms": 1788048000000,
+                "end_ms": 1788134400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-31",
+                "start_ms": 1788134400000,
+                "end_ms": 1788220800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-01",
+                "start_ms": 1788220800000,
+                "end_ms": 1788307200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-02",
+                "start_ms": 1788307200000,
+                "end_ms": 1788393600000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-03",
+                "start_ms": 1788393600000,
+                "end_ms": 1788480000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-04",
+                "start_ms": 1788480000000,
+                "end_ms": 1788566400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-05",
+                "start_ms": 1788566400000,
+                "end_ms": 1788652800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-06",
+                "start_ms": 1788652800000,
+                "end_ms": 1788739200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-07",
+                "start_ms": 1788739200000,
+                "end_ms": 1788825600000,
+                "calls": 5
+              }
+            ],
+            "by_identity": [
+              {
+                "identity": {
+                  "kind": "builtin",
+                  "name": "Read",
+                  "server": null,
+                  "tool": null,
+                  "skill": null
+                },
+                "calls": 5,
+                "by_day": [
+                  {
+                    "date": "2026-08-09",
+                    "start_ms": 1786233600000,
+                    "end_ms": 1786320000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-10",
+                    "start_ms": 1786320000000,
+                    "end_ms": 1786406400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-11",
+                    "start_ms": 1786406400000,
+                    "end_ms": 1786492800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-12",
+                    "start_ms": 1786492800000,
+                    "end_ms": 1786579200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-13",
+                    "start_ms": 1786579200000,
+                    "end_ms": 1786665600000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-14",
+                    "start_ms": 1786665600000,
+                    "end_ms": 1786752000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-15",
+                    "start_ms": 1786752000000,
+                    "end_ms": 1786838400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-16",
+                    "start_ms": 1786838400000,
+                    "end_ms": 1786924800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-17",
+                    "start_ms": 1786924800000,
+                    "end_ms": 1787011200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-18",
+                    "start_ms": 1787011200000,
+                    "end_ms": 1787097600000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-19",
+                    "start_ms": 1787097600000,
+                    "end_ms": 1787184000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-20",
+                    "start_ms": 1787184000000,
+                    "end_ms": 1787270400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-21",
+                    "start_ms": 1787270400000,
+                    "end_ms": 1787356800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-22",
+                    "start_ms": 1787356800000,
+                    "end_ms": 1787443200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-23",
+                    "start_ms": 1787443200000,
+                    "end_ms": 1787529600000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-24",
+                    "start_ms": 1787529600000,
+                    "end_ms": 1787616000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-25",
+                    "start_ms": 1787616000000,
+                    "end_ms": 1787702400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-26",
+                    "start_ms": 1787702400000,
+                    "end_ms": 1787788800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-27",
+                    "start_ms": 1787788800000,
+                    "end_ms": 1787875200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-28",
+                    "start_ms": 1787875200000,
+                    "end_ms": 1787961600000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-29",
+                    "start_ms": 1787961600000,
+                    "end_ms": 1788048000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-30",
+                    "start_ms": 1788048000000,
+                    "end_ms": 1788134400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-31",
+                    "start_ms": 1788134400000,
+                    "end_ms": 1788220800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-01",
+                    "start_ms": 1788220800000,
+                    "end_ms": 1788307200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-02",
+                    "start_ms": 1788307200000,
+                    "end_ms": 1788393600000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-03",
+                    "start_ms": 1788393600000,
+                    "end_ms": 1788480000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-04",
+                    "start_ms": 1788480000000,
+                    "end_ms": 1788566400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-05",
+                    "start_ms": 1788566400000,
+                    "end_ms": 1788652800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-06",
+                    "start_ms": 1788652800000,
+                    "end_ms": 1788739200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-07",
+                    "start_ms": 1788739200000,
+                    "end_ms": 1788825600000,
+                    "calls": 5
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "hosts": [
+          {
+            "host": "claude",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          },
+          {
+            "host": "codex",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          },
+          {
+            "host": "cursor",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          }
+        ],
+        "unresolved": []
+      },
+      "strip": {
+        "window_start_ms": 1787616000000,
+        "window_end_ms": 1788825600000,
+        "observed": [
+          {
+            "host": "claude",
+            "surface": "cli",
+            "calls": 5,
+            "by_day": [
+              {
+                "date": "2026-08-25",
+                "start_ms": 1787616000000,
+                "end_ms": 1787702400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-26",
+                "start_ms": 1787702400000,
+                "end_ms": 1787788800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-27",
+                "start_ms": 1787788800000,
+                "end_ms": 1787875200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-28",
+                "start_ms": 1787875200000,
+                "end_ms": 1787961600000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-29",
+                "start_ms": 1787961600000,
+                "end_ms": 1788048000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-30",
+                "start_ms": 1788048000000,
+                "end_ms": 1788134400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-08-31",
+                "start_ms": 1788134400000,
+                "end_ms": 1788220800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-01",
+                "start_ms": 1788220800000,
+                "end_ms": 1788307200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-02",
+                "start_ms": 1788307200000,
+                "end_ms": 1788393600000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-03",
+                "start_ms": 1788393600000,
+                "end_ms": 1788480000000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-04",
+                "start_ms": 1788480000000,
+                "end_ms": 1788566400000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-05",
+                "start_ms": 1788566400000,
+                "end_ms": 1788652800000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-06",
+                "start_ms": 1788652800000,
+                "end_ms": 1788739200000,
+                "calls": 0
+              },
+              {
+                "date": "2026-09-07",
+                "start_ms": 1788739200000,
+                "end_ms": 1788825600000,
+                "calls": 5
+              }
+            ],
+            "by_identity": [
+              {
+                "identity": {
+                  "kind": "builtin",
+                  "name": "Read",
+                  "server": null,
+                  "tool": null,
+                  "skill": null
+                },
+                "calls": 5,
+                "by_day": [
+                  {
+                    "date": "2026-08-25",
+                    "start_ms": 1787616000000,
+                    "end_ms": 1787702400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-26",
+                    "start_ms": 1787702400000,
+                    "end_ms": 1787788800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-27",
+                    "start_ms": 1787788800000,
+                    "end_ms": 1787875200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-28",
+                    "start_ms": 1787875200000,
+                    "end_ms": 1787961600000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-29",
+                    "start_ms": 1787961600000,
+                    "end_ms": 1788048000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-30",
+                    "start_ms": 1788048000000,
+                    "end_ms": 1788134400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-08-31",
+                    "start_ms": 1788134400000,
+                    "end_ms": 1788220800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-01",
+                    "start_ms": 1788220800000,
+                    "end_ms": 1788307200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-02",
+                    "start_ms": 1788307200000,
+                    "end_ms": 1788393600000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-03",
+                    "start_ms": 1788393600000,
+                    "end_ms": 1788480000000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-04",
+                    "start_ms": 1788480000000,
+                    "end_ms": 1788566400000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-05",
+                    "start_ms": 1788566400000,
+                    "end_ms": 1788652800000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-06",
+                    "start_ms": 1788652800000,
+                    "end_ms": 1788739200000,
+                    "calls": 0
+                  },
+                  {
+                    "date": "2026-09-07",
+                    "start_ms": 1788739200000,
+                    "end_ms": 1788825600000,
+                    "calls": 5
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "hosts": [
+          {
+            "host": "claude",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          },
+          {
+            "host": "codex",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          },
+          {
+            "host": "cursor",
+            "inventory": "unknown",
+            "unresolved_calls": 0
+          }
+        ],
+        "unresolved": []
+      },
+      "identities": [
+        {
+          "order": 0,
+          "host": "claude",
+          "identity": {
+            "kind": "builtin",
+            "name": "Read",
+            "server": null,
+            "tool": null,
+            "skill": null
+          },
+          "calls": 5,
+          "strip_calls": 5,
+          "strip": [
+            {
+              "date": "2026-08-25",
+              "start_ms": 1787616000000,
+              "end_ms": 1787702400000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-26",
+              "start_ms": 1787702400000,
+              "end_ms": 1787788800000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-27",
+              "start_ms": 1787788800000,
+              "end_ms": 1787875200000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-28",
+              "start_ms": 1787875200000,
+              "end_ms": 1787961600000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-29",
+              "start_ms": 1787961600000,
+              "end_ms": 1788048000000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-30",
+              "start_ms": 1788048000000,
+              "end_ms": 1788134400000,
+              "calls": 0
+            },
+            {
+              "date": "2026-08-31",
+              "start_ms": 1788134400000,
+              "end_ms": 1788220800000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-01",
+              "start_ms": 1788220800000,
+              "end_ms": 1788307200000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-02",
+              "start_ms": 1788307200000,
+              "end_ms": 1788393600000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-03",
+              "start_ms": 1788393600000,
+              "end_ms": 1788480000000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-04",
+              "start_ms": 1788480000000,
+              "end_ms": 1788566400000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-05",
+              "start_ms": 1788566400000,
+              "end_ms": 1788652800000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-06",
+              "start_ms": 1788652800000,
+              "end_ms": 1788739200000,
+              "calls": 0
+            },
+            {
+              "date": "2026-09-07",
+              "start_ms": 1788739200000,
+              "end_ms": 1788825600000,
+              "calls": 5
+            }
+          ]
+        }
+      ],
+      "totals": {
+        "selected_calls": 5,
+        "strip_calls": 5,
+        "selected_unresolved_calls": 0,
+        "identities": 1,
+        "configured_components": 14
+      },
+      "configured": [
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "home",
+          "kind": "skill",
+          "name": "deep-review",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "repository",
+          "kind": "skill",
+          "name": "repo-only",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_user_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "github",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_user_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "memhub",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_project_mcp_config",
+          "scope": "repository",
+          "kind": "mcp_server",
+          "name": "memhub",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_project_mcp_config",
+          "scope": "repository",
+          "kind": "mcp_server",
+          "name": "repo-only",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_plugin_registry",
+          "scope": "home",
+          "kind": "plugin",
+          "name": "memhub@memhub",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_enabled_plugins",
+          "scope": "home",
+          "kind": "plugin",
+          "name": "cloudflare@cloudflare",
+          "enabled": false
+        },
+        {
+          "host": "claude",
+          "source": "claude_enabled_plugins",
+          "scope": "home",
+          "kind": "plugin",
+          "name": "memhub@memhub",
+          "enabled": true
+        },
+        {
+          "host": "claude",
+          "source": "claude_hook_config",
+          "scope": "home",
+          "kind": "hook",
+          "name": "PreToolUse:Bash",
+          "enabled": null
+        },
+        {
+          "host": "claude",
+          "source": "claude_hook_config",
+          "scope": "home",
+          "kind": "hook",
+          "name": "Stop:*",
+          "enabled": null
+        },
+        {
+          "host": "codex",
+          "source": "codex_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "memhub",
+          "enabled": null
+        },
+        {
+          "host": "codex",
+          "source": "codex_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "stitch",
+          "enabled": null
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_mcp_config",
+          "scope": "home",
+          "kind": "mcp_server",
+          "name": "html.to.design",
+          "enabled": null
+        }
+      ],
+      "sources": [
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "incomplete",
+            "stated": 2,
+            "skipped": 1,
+            "reason": "unproven_entry"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_user_mcp_config",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 2
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_plugin_registry",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "incomplete",
+            "stated": 2,
+            "skipped": 1,
+            "reason": "unproven_entry"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_enabled_plugins",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "incomplete",
+            "stated": 3,
+            "skipped": 1,
+            "reason": "unproven_entry"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_hook_config",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "incomplete",
+            "stated": 3,
+            "skipped": 1,
+            "reason": "unproven_entry"
+          }
+        },
+        {
+          "host": "codex",
+          "source": "codex_mcp_config",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 2
+          }
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_mcp_config",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "repository",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_project_mcp_config",
+          "scope": "repository",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 2
+          }
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_mcp_config",
+          "scope": "repository",
+          "root_index": 0,
+          "status": {
+            "state": "missing"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_skill_directory",
+          "scope": "repository",
+          "root_index": 1,
+          "status": {
+            "state": "missing"
+          }
+        },
+        {
+          "host": "claude",
+          "source": "claude_project_mcp_config",
+          "scope": "repository",
+          "root_index": 1,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_mcp_config",
+          "scope": "repository",
+          "root_index": 1,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        }
+      ],
+      "cache": [
+        {
+          "host": "codex",
+          "source": "codex_plugin_cache",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "read",
+            "stated": 1
+          }
+        },
+        {
+          "host": "cursor",
+          "source": "cursor_plugin_cache",
+          "scope": "home",
+          "root_index": 0,
+          "status": {
+            "state": "missing"
+          }
+        }
+      ],
+      "roots": [
+        {
+          "scope": "home",
+          "index": 0,
+          "state": "read"
+        },
+        {
+          "scope": "repository",
+          "index": 0,
+          "state": "read"
+        },
+        {
+          "scope": "repository",
+          "index": 1,
+          "state": "read"
+        }
+      ]
+    }
   ]
 }

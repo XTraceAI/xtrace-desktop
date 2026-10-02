@@ -72,6 +72,11 @@ function nativeSource(report: (days: number) => DashboardMetrics | Promise<Dashb
       const current = await report(days);
       return { window: current.window, hosts: current.tokens_by_host };
     }),
+    environment: vi.fn(async (days: number) => {
+      const report = exported.environments.find((entry) => entry.window.days === days);
+      if (!report) throw new Error('Metric range must be 7, 14, or 30 days.');
+      return report;
+    }),
     subscribe: async (event: DataEvent, listener: () => void) => {
       const set = listeners.get(event) ?? new Set();
       set.add(listener);

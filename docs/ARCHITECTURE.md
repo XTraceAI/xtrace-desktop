@@ -27,25 +27,25 @@ identity without Git) with a discovered Python 3.10+ interpreter, and exposes th
 result as the typed `native_index_status` command and `native-index://status`
 event; see [native import](acceptance/native-import.md#app-integration). The app
 exposes `app_info` and `db_counts` as well, but does not start the capture server
-automatically. Production metric calculation, product data queries and the
+automatically. `xt-probes` reads a documented, bounded list of host configuration files under explicitly supplied roots and backs the `metrics_environment` command; see [Environment](ENVIRONMENT.md). Production metric calculation, product data queries and the
 remaining subsystem behavior are separate work.
 
 The following table names each subsystem's responsibility. A reserved directory
 or compiling placeholder does not establish implemented behavior.
 
-| Path                      | Subsystem responsibility                                                                             |
-| ------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `crates/xt-store/`        | Storage, canonical schema, migrations, and transactional writes.                                     |
-| `crates/xt-ingest/`       | Normalization, parsers, native source import through the pinned readers, and the canonical writer.   |
-| `crates/xt-server/`       | Guarded loopback HTTP/MCP endpoints and the headless core interface.                                 |
-| `crates/xt-metrics/`      | Metric definitions, SQL views, aggregation, and shared result DTOs.                                  |
-| `crates/xt-probes/`       | Host/plugin discovery, executable environment resolution, and `gh`/Git probes.                       |
-| `crates/xt-rulebook/`     | Rule lifecycle, local proposals, verification, and fire history.                                     |
-| `crates/xt-judge/`        | Isolated configured judge CLI routes and separate judge-usage accounting.                            |
-| `crates/xt-fixtures/`     | Development-only fixture loading, database construction, and expected-result assertions.             |
-| `xtask/`                  | Developer commands for shared fixture validation, database creation, and export.                     |
-| `apps/desktop/src-tauri/` | Native lifecycle, Tauri commands, window chrome, and later tray, updater, and telemetry integration. |
-| `apps/desktop/ui/src/`    | React shell, UI components, screens, and the typed data-access boundary.                             |
+| Path                      | Subsystem responsibility                                                                                  |
+| ------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `crates/xt-store/`        | Storage, canonical schema, migrations, and transactional writes.                                          |
+| `crates/xt-ingest/`       | Normalization, parsers, native source import through the pinned readers, and the canonical writer.        |
+| `crates/xt-server/`       | Guarded loopback HTTP/MCP endpoints and the headless core interface.                                      |
+| `crates/xt-metrics/`      | Metric definitions, SQL views, aggregation, and shared result DTOs.                                       |
+| `crates/xt-probes/`       | Host/plugin discovery (configured-environment probe implemented), executable resolution, `gh`/Git probes. |
+| `crates/xt-rulebook/`     | Rule lifecycle, local proposals, verification, and fire history.                                          |
+| `crates/xt-judge/`        | Isolated configured judge CLI routes and separate judge-usage accounting.                                 |
+| `crates/xt-fixtures/`     | Development-only fixture loading, database construction, and expected-result assertions.                  |
+| `xtask/`                  | Developer commands for shared fixture validation, database creation, and export.                          |
+| `apps/desktop/src-tauri/` | Native lifecycle, Tauri commands, window chrome, and later tray, updater, and telemetry integration.      |
+| `apps/desktop/ui/src/`    | React shell, UI components, screens, and the typed data-access boundary.                                  |
 
 All renderer code lives under the UI path above. Native lifecycle and window
 behavior belong to the Tauri application.

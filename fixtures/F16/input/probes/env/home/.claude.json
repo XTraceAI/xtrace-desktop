@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "github": {
+      "command": "/synthetic/bin/github-mcp",
+      "args": ["serve"],
+      "env": { "GITHUB_TOKEN": "SYNTHETIC-FIXTURE-VALUE" }
+    },
+    "memhub": {
+      "type": "http",
+      "url": "https://synthetic.invalid/mcp?access=SYNTHETIC-FIXTURE-VALUE"
+    }
+  }
+}
