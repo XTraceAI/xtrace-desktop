@@ -174,7 +174,20 @@ report whether receipt facts committed; the store itself returns no plugin ack.
 
 An optional per-input `RecordIdentity` preserves native ancestry and first-seen
 metadata. Command/interrupt/reminder prefix flags are derived before content
-retention is applied; `is_human` remains unset for its owning rule. `measurement::Projection` defines the fixed versioned,
+retention is applied. The same preparation path derives `is_human` from explicit
+role, metadata/sidechain flags, tool-result presence, and trimmed joined text.
+Missing role or content stays unknown unless another known fact excludes a human
+message. `text_len` counts Unicode scalar values across text blocks without
+separators, including whitespace, and excludes tool payloads. Human typing
+consumers use this length only when `is_human` is true.
+
+Existing unknown classifications are not automatically backfilled: they can be
+enriched by replaying sufficient original canonical input. Old receipt masks and
+measurement revisions remain immutable; later classification enrichment cannot
+retroactively establish capture coverage. Existing raw command/interrupt/reminder
+prefix flags retain their original untrimmed semantics.
+
+`measurement::Projection` defines the fixed versioned,
 content-free field ordering shared with readers. Per-input measurement conflict
 bits come from the merger's locked snapshot and only accumulate into source
 fields actually reported by that observation. Session metadata changes are also

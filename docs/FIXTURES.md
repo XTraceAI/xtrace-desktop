@@ -5,7 +5,7 @@ records, explicit clocks and file-backed SQLite. `xt-fixtures` is a development
 dependency; product crates must not depend on it by default. The desktop does not
 load these files.
 
-The catalog contains 21 structurally valid entries: **F1 and F3 are populated and have
+The catalog contains 21 structurally valid entries: **F1, F3 and F8 are populated and have
 executable reference assertions; the other entries remain skeletons with
 unimplemented rule acceptance.** A successful structural report does not establish product metric,
 privacy, ingestion, probe or rulebook acceptance.
@@ -135,6 +135,13 @@ tests. The bounded reference checker rejects unsupported F1 shapes. It checks th
 persisted session host and conflict flag as well as record flags: contradictory
 platform, surface or native session identity cannot pass reference acceptance.
 
+F8 supplies one genuine multiblock Unicode human message and twelve excluded or
+assistant records. Its persisted classification has exactly one human; leading
+whitespace before the four excluded prefixes does not change that decision.
+Ingest tests compare full-content and metadata-only retention, including six
+Unicode scalar values in the genuine message. These fixtures do not imply
+automatic classification backfill of existing metadata-only records.
+
 ## Ownership and test loop
 
 `xt-fixtures` owns the sole `Fixture::load/all` loader, typed canonical inputs,
@@ -208,7 +215,7 @@ assertions. Follow [CI.md](CI.md) for combined-source validation.
 | F5  | Skeleton                      | Codex cumulative usage reader                                                              |
 | F6  | Skeleton                      | Cursor IDE hook usage attachment                                                           |
 | F7  | Skeleton                      | Cursor Agent CLI unmeasured usage                                                          |
-| F8  | Skeleton                      | Human-message exclusions                                                                   |
+| F8  | Populated                     | Human-message exclusions                                                                   |
 | F9  | Skeleton                      | Batched timestamp latency                                                                  |
 | F10 | Skeleton                      | Aborted turn without counters                                                              |
 | F11 | Skeleton                      | Weekly model comparisons                                                                   |

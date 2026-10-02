@@ -272,3 +272,206 @@ fn malformed_metadata_on_conflicting_uuids_rolls_back_the_whole_batch() {
         }
     }
 }
+
+#[test]
+fn hygiene_unknown_facts_and_known_exclusions_share_projection() {
+    use crate::{measurement::Projection, model::RecordIdentity};
+    let cases = [
+        (json!({"message":{}}), None),
+        (json!({"message":{"role":"user"}}), None),
+        (
+            json!({"message":{"content":[{"type":"text","text":"Hello"}]}}),
+            None,
+        ),
+        (json!({"message":{"role":"assistant"}}), Some(false)),
+        (json!({"isMeta":true,"message":{}}), Some(false)),
+        (json!({"isSidechain":true,"message":{}}), Some(false)),
+        (json!({"message":{"content":[]}}), Some(false)),
+        (
+            json!({"message":{"content":[{"type":"tool_result","content":"Synthetic"}]}}),
+            Some(false),
+        ),
+        (
+            json!({"message":{"role":"user","content":[{"type":"text","text":"Ordinary <command-name> in the middle"}]}}),
+            Some(true),
+        ),
+        (
+            json!({"message":{"role":"user","content":[{"type":"text","text":" \n<com"},{"type":"text","text":"mand-name>/synthetic"}]}}),
+            Some(false),
+        ),
+    ];
+    let mut store = Store::open_in_memory().unwrap();
+    session(&mut store, "hygiene");
+    for (index, (mut value, expected)) in cases.into_iter().enumerate() {
+        value["uuid"] = json!(format!("hygiene-{index}"));
+        // Explicit role is authoritative even when the record type disagrees.
+        value["type"] = json!("assistant");
+        let input: CanonicalRecord = serde_json::from_value(value).unwrap();
+        store
+            .upsert_records("hygiene", std::slice::from_ref(&input), false)
+            .unwrap();
+        let saved = store
+            .records("hygiene")
+            .unwrap()
+            .into_iter()
+            .find(|row| row.uuid == input.uuid.as_deref().unwrap())
+            .unwrap();
+        assert_eq!(saved.classification.is_human, expected, "case {index}");
+        assert_eq!(
+            Projection::from_canonical("hygiene", &input, &RecordIdentity::default()).unwrap(),
+            Projection::from_stored(&saved).unwrap()
+        );
+        assert!(saved.content_json.is_none());
+    }
+}
+
+#[test]
+fn hygiene_legacy_null_requires_replay_and_preserves_conflicts_and_prefix_flags() {
+    let mut store = Store::open_in_memory().unwrap();
+    session(&mut store, "legacy-hygiene");
+    let input: CanonicalRecord = serde_json::from_value(json!({"uuid":"human","type":"user","message":{"role":"user","content":[{"type":"text","text":" Hello"}]}})).unwrap();
+    let command: CanonicalRecord = serde_json::from_value(json!({"uuid":"command","type":"user","message":{"role":"user","content":[{"type":"text","text":" <command-name>/synthetic"}]}})).unwrap();
+    store
+        .upsert_records("legacy-hygiene", &[input.clone(), command.clone()], false)
+        .unwrap();
+    store
+        .connection
+        .execute("UPDATE records SET is_human=NULL", [])
+        .unwrap();
+    assert!(
+        store
+            .records("legacy-hygiene")
+            .unwrap()
+            .iter()
+            .all(|row| row.classification.is_human.is_none())
+    );
+    let stats = store
+        .upsert_records("legacy-hygiene", &[input.clone(), command.clone()], false)
+        .unwrap();
+    assert_eq!((stats.inserted, stats.enriched), (0, 2));
+    let stats = store
+        .upsert_records("legacy-hygiene", &[input.clone(), command], false)
+        .unwrap();
+    assert_eq!((stats.inserted, stats.enriched, stats.ignored), (0, 0, 2));
+    let rows = store.records("legacy-hygiene").unwrap();
+    let command = rows.iter().find(|row| row.uuid == "command").unwrap();
+    assert_eq!(command.classification.is_human, Some(false));
+    assert_eq!(command.classification.is_command, Some(false));
+    assert!(!command.has_conflict);
+    let mut conflicting = input;
+    conflicting.message.role = Some("assistant".into());
+    store
+        .upsert_records("legacy-hygiene", &[conflicting], false)
+        .unwrap();
+    let row = store
+        .records("legacy-hygiene")
+        .unwrap()
+        .into_iter()
+        .find(|row| row.uuid == "human")
+        .unwrap();
+    assert!(row.has_conflict);
+    assert_eq!(row.classification.is_human, Some(true));
+    assert_eq!(row.role.as_deref(), Some("user"));
+    assert!(row.content_json.is_none());
+}
+
+#[test]
+fn hygiene_legacy_null_does_not_acquire_classification_from_conflicting_role() {
+    let mut store = Store::open_in_memory().unwrap();
+    session(&mut store, "legacy-conflict");
+    let mut input: CanonicalRecord = serde_json::from_value(json!({"uuid":"row","type":"user","message":{"role":"assistant","content":[{"type":"text","text":"Hello"}]}})).unwrap();
+    store
+        .upsert_records("legacy-conflict", std::slice::from_ref(&input), false)
+        .unwrap();
+    store
+        .connection
+        .execute("UPDATE records SET is_human=NULL", [])
+        .unwrap();
+    input.message.role = Some("user".into());
+    store
+        .upsert_records("legacy-conflict", &[input], false)
+        .unwrap();
+    let saved = store.records("legacy-conflict").unwrap().remove(0);
+    assert!(saved.has_conflict);
+    assert_eq!(saved.role.as_deref(), Some("assistant"));
+    assert_eq!(saved.classification.is_human, None);
+}
+
+#[test]
+fn hygiene_legacy_null_does_not_acquire_classification_from_conflicting_prefix() {
+    let mut store = Store::open_in_memory().unwrap();
+    session(&mut store, "legacy-prefix");
+    let text = "<command-name>/synthetic";
+    let mut input: CanonicalRecord = serde_json::from_value(json!({"uuid":"row","type":"user","message":{"role":"user","content":[{"type":"text","text":text}]}})).unwrap();
+    store
+        .upsert_records("legacy-prefix", std::slice::from_ref(&input), false)
+        .unwrap();
+    store
+        .connection
+        .execute("UPDATE records SET is_human=NULL", [])
+        .unwrap();
+    input.message.content = Some(vec![json!({"type":"text","text":"x".repeat(text.len())})]);
+    store
+        .upsert_records("legacy-prefix", &[input], false)
+        .unwrap();
+    let saved = store.records("legacy-prefix").unwrap().remove(0);
+    assert!(saved.has_conflict);
+    assert_eq!(saved.classification.is_command, Some(true));
+    assert_eq!(saved.classification.is_human, None);
+}
+
+#[test]
+fn hygiene_legacy_null_metadata_conflicts_wait_for_compatible_replay() {
+    for sidechain in [false, true] {
+        let mut store = Store::open_in_memory().unwrap();
+        session(&mut store, "legacy-flags");
+        let original: CanonicalRecord = serde_json::from_value(json!({"uuid":"row","type":"user","message":{"role":"user","content":[{"type":"text","text":"Hello"}]}})).unwrap();
+        store
+            .upsert_records("legacy-flags", std::slice::from_ref(&original), false)
+            .unwrap();
+        store
+            .connection
+            .execute("UPDATE records SET is_human=NULL", [])
+            .unwrap();
+        let mut bad = original.clone();
+        if sidechain {
+            bad.is_sidechain = true;
+        } else {
+            bad.is_meta = true;
+        }
+        store.upsert_records("legacy-flags", &[bad], false).unwrap();
+        let saved = store.records("legacy-flags").unwrap().remove(0);
+        assert!(saved.has_conflict);
+        assert_eq!(saved.classification.is_human, None);
+        let stats = store
+            .upsert_records("legacy-flags", &[original], false)
+            .unwrap();
+        assert_eq!(stats.enriched, 1);
+        let saved = store.records("legacy-flags").unwrap().remove(0);
+        assert!(saved.has_conflict);
+        assert_eq!(saved.classification.is_human, Some(true));
+    }
+}
+
+#[test]
+fn hygiene_compatible_classification_enriches_despite_unrelated_conflicts() {
+    let mut store = Store::open_in_memory().unwrap();
+    session(&mut store, "unrelated");
+    let mut input: CanonicalRecord = serde_json::from_value(json!({"uuid":"row","type":"user","timestamp":"2026-09-07T00:00:00Z","message":{"role":"user","model":"original","content":[{"type":"text","text":"Hello"}],"usage":{"input_tokens":10}}})).unwrap();
+    store
+        .upsert_records("unrelated", std::slice::from_ref(&input), false)
+        .unwrap();
+    store
+        .connection
+        .execute("UPDATE records SET is_human=NULL", [])
+        .unwrap();
+    input.timestamp = Some("2026-09-07T00:00:01Z".into());
+    input.message.model = Some("conflicting".into());
+    input.message.usage.as_mut().unwrap().input_tokens = Some(20);
+    store.upsert_records("unrelated", &[input], false).unwrap();
+    let saved = store.records("unrelated").unwrap().remove(0);
+    assert!(saved.has_conflict);
+    assert_eq!(saved.classification.is_human, Some(true));
+    assert_eq!(saved.model.as_deref(), Some("original"));
+    assert_eq!(saved.usage.unwrap().input_tokens, Some(10));
+}
