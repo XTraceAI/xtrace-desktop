@@ -1,8 +1,10 @@
 //! Read-only metrics over canonical work records and explicit event windows.
 mod spans;
+mod sweep;
 mod tokens;
 mod window;
 pub use spans::{ActiveSpan, ActiveSpanReport};
+pub use sweep::Concurrency;
 pub use tokens::{
     DayTokens, HostTokens, ModelTokens, SurfaceTokens, TokenCounters, TokenReport, TokenSummary,
 };
