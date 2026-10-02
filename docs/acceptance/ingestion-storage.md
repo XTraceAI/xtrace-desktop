@@ -36,7 +36,7 @@ PR's exact source and base:
 - `cargo clippy -p xt-store -p xt-fixtures -p xtask --all-targets --locked --offline -- -D warnings`
 - `cargo fmt --all -- --check` and `git diff --check`.
 - `cargo --offline xtask fixture-validate`: expect 21 structurally valid entries;
-  F1 is populated and asserted, and 20 remain skeleton/unimplemented.
+  F1, F3 and F8 are populated and asserted, and 18 remain skeleton/unimplemented.
 - `pnpm fixtures:export` regenerates the shell fixture from the real store;
   its schema version is 2 and canonical counts remain 1 session / 25 records /
   15 usage rows. The committed export and native app startup tests must agree.
