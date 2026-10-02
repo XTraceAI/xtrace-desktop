@@ -1,0 +1,126 @@
+{
+  "scope": "counts-and-retention-only",
+  "native": [
+    {
+      "uuid": "04000000-0000-4000-8000-000000001801",
+      "type": "user",
+      "timestamp": "2026-09-07T12:00:00Z",
+      "message": {
+        "role": "user"
+      }
+    },
+    {
+      "uuid": "04000000-0000-4000-8000-000000001802",
+      "type": "assistant",
+      "timestamp": "2026-09-07T12:00:01Z",
+      "message": {
+        "role": "assistant",
+        "id": "synthetic-response",
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "text": "synthetic payload"
+            }
+          }
+        ]
+      },
+      "requestId": "synthetic-request"
+    },
+    {
+      "uuid": "04000000-0000-4000-8000-000000001803",
+      "type": "assistant",
+      "timestamp": "2026-09-07T12:00:02Z",
+      "message": {
+        "role": "assistant",
+        "id": "synthetic-response",
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "text": "synthetic payload"
+            }
+          }
+        ]
+      },
+      "requestId": "synthetic-request"
+    }
+  ],
+  "hook": [
+    {
+      "uuid": "04000000-0000-4000-8000-000000001801",
+      "type": "user",
+      "timestamp": "2026-09-07T12:00:00Z",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Hi 🙂"
+          }
+        ]
+      }
+    },
+    {
+      "uuid": "04000000-0000-4000-8000-000000001802",
+      "type": "assistant",
+      "timestamp": "2026-09-07T12:00:01Z",
+      "message": {
+        "role": "assistant",
+        "id": "synthetic-response",
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "text": "synthetic payload"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 1,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      },
+      "requestId": "synthetic-request"
+    },
+    {
+      "uuid": "04000000-0000-4000-8000-000000001803",
+      "type": "assistant",
+      "timestamp": "2026-09-07T12:00:02Z",
+      "message": {
+        "role": "assistant",
+        "id": "synthetic-response",
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "text": "synthetic payload"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 2,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      },
+      "requestId": "synthetic-request"
+    }
+  ],
+  "expected": {
+    "sessions": 1,
+    "human_messages": 1,
+    "assistant_turns": 1,
+    "assistant_records": 2,
+    "tool_calls": 2,
+    "human_chars": 4,
+    "typing_minutes_est": 0.02
+  }
+}

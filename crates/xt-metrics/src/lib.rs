@@ -1,8 +1,10 @@
 //! Read-only metrics over canonical work records and explicit event windows.
+mod counts;
 mod spans;
 mod sweep;
 mod tokens;
 mod window;
+pub use counts::{Counts, TypingRate};
 pub use spans::{ActiveSpan, ActiveSpanReport};
 pub use sweep::Concurrency;
 pub use tokens::{
@@ -17,8 +19,10 @@ use std::{path::Path, time::Duration};
 pub enum Error {
     #[error("Invalid metric window")]
     InvalidWindow,
-    #[error("Token counter overflow")]
+    #[error("Metric counter overflow")]
     CounterOverflow,
+    #[error("Typing rate must be positive characters per minute")]
+    InvalidTypingRate,
     #[error(transparent)]
     Time(#[from] jiff::Error),
     #[error(transparent)]
@@ -44,6 +48,7 @@ impl MetricsDb {
         connection.prepare("SELECT uuid,session_id,ts_ms FROM v_session_events LIMIT 0")?;
         connection.prepare(&format!("{} LIMIT 0", tokens::QUERY))?;
         connection.prepare(&format!("{} LIMIT 0", spans::QUERY))?;
+        connection.prepare(&format!("{} LIMIT 0", counts::QUERY))?;
         Ok(Self { connection })
     }
 
