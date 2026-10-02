@@ -33,6 +33,44 @@ it('native presence always chooses real IPC, including when Vite asks for a fixt
   expect(stop).toHaveBeenCalledOnce();
 });
 
+it('invokes the native metric commands with the selected range', async () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  const [report] = exported.dashboards;
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === commands.dashboard
+      ? report
+      : { window: report.window, hosts: report.tokens_by_host },
+  );
+  const source = await createDataSource();
+  expect(await source.dashboard(14)).toEqual(report);
+  expect(await source.tokensByHost(30)).toEqual({
+    window: report.window,
+    hosts: report.tokens_by_host,
+  });
+  expect(invoke).toHaveBeenNthCalledWith(1, 'metrics_dashboard', { windowDays: 14 });
+  expect(invoke).toHaveBeenNthCalledWith(2, 'tokens_by_host', { windowDays: 30 });
+});
+
+it('serves fixture Dashboard ranges from the generated export as isolated copies', async () => {
+  const fixture = await loadFixtureDataSource('F1');
+  for (const days of [7, 14, 30]) {
+    const report = await fixture.dashboard(days);
+    expect(report.window.days).toBe(days);
+    expect(report).toEqual(exported.dashboards.find((entry) => entry.window.days === days));
+    expect(await fixture.tokensByHost(days)).toEqual({
+      window: report.window,
+      hosts: report.tokens_by_host,
+    });
+    report.tiles.sessions.value = -1;
+    expect((await fixture.dashboard(days)).tiles.sessions.value).not.toBe(-1);
+  }
+  for (const days of [0, 15, 90]) {
+    await expect(fixture.dashboard(days)).rejects.toThrow('Metric range must be 7, 14, or 30 days');
+    await expect(fixture.tokensByHost(days)).rejects.toThrow('Metric range');
+  }
+  expect(invoke).not.toHaveBeenCalled();
+});
+
 it('loads the canonical generated F1 shapes and emits only subscribed fixture events', async () => {
   vi.mocked(isTauri).mockReturnValue(false);
   vi.stubEnv('VITE_XTRACE_FIXTURE', 'F1');
@@ -75,5 +113,7 @@ it('keeps ordinary and production browsers explicitly unavailable even with a pr
   expect(source.kind).toBe('preview');
   await expect(source.appInfo()).rejects.toThrow('Native data is unavailable');
   await expect(source.dbCounts()).rejects.toThrow('Native data is unavailable');
+  await expect(source.dashboard(7)).rejects.toThrow('Native data is unavailable');
+  await expect(source.tokensByHost(7)).rejects.toThrow('Native data is unavailable');
   expect(invoke).not.toHaveBeenCalled();
 });

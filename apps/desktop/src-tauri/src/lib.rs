@@ -3,6 +3,8 @@ compile_error!("fixtures feature is forbidden in release builds");
 
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+pub mod dashboard;
+mod dashboard_dto;
 pub mod dto;
 pub mod native_index;
 pub mod state;
@@ -31,6 +33,26 @@ fn sessions_list(
     state
         .sessions_list(&search, host.as_deref(), after.as_deref())
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn metrics_dashboard(
+    state: tauri::State<'_, state::AppState>,
+    window_days: u32,
+) -> Result<dto::DashboardMetrics, String> {
+    state
+        .metrics_dashboard(window_days)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn tokens_by_host(
+    state: tauri::State<'_, state::AppState>,
+    window_days: u32,
+) -> Result<dto::TokensByHost, String> {
+    state
+        .tokens_by_host(window_days)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -110,7 +132,9 @@ pub fn run() {
             app_info,
             db_counts,
             sessions_list,
-            native_index_status
+            native_index_status,
+            metrics_dashboard,
+            tokens_by_host
         ])
         .build(tauri::generate_context!())
         .expect("Could not start XTrace Desktop")

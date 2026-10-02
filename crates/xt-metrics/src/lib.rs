@@ -91,6 +91,21 @@ impl MetricsDb {
         Ok(Self { connection })
     }
 
+    /// Compose read-only reports against one snapshot. Nested metric methods
+    /// reuse it; an existing caller transaction remains owned by that caller.
+    pub fn read_snapshot<T>(&self, read: impl FnOnce(&Self) -> Result<T>) -> Result<T> {
+        let snapshot = self
+            .connection
+            .is_autocommit()
+            .then(|| self.connection.unchecked_transaction())
+            .transpose()?;
+        let result = read(self)?;
+        if let Some(snapshot) = snapshot {
+            snapshot.commit()?;
+        }
+        Ok(result)
+    }
+
     /// Global work-event count: copied contexts do not multiply canonical UUIDs.
     /// Missing timestamps cannot be assigned to a window.
     pub fn event_count(&self, window: Window) -> Result<u64> {

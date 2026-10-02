@@ -7,6 +7,7 @@ import { DataProvider, useData } from './DataProvider';
 import { FixtureDataSource } from './FixtureDataSource';
 import type { DataSource } from './DataSource';
 import { events } from './ipc-names';
+import { queryKeys } from './query-client';
 import type { FixtureExport } from './generated/FixtureExport';
 // JSON imports widen literal unions; the export is the generated shape.
 const exported = fixture as FixtureExport;
@@ -110,6 +111,62 @@ it('coalesces repeated events within 500ms and invalidates only explicit hierarc
   expect(queries['metrics-other']).not.toHaveBeenCalled();
 });
 
+it('refreshes range-keyed Dashboard queries after imports, enrichment and index status events', async () => {
+  vi.useFakeTimers();
+  const source = new FixtureDataSource(exported);
+  const dashboard = vi.spyOn(source, 'dashboard');
+  const tokensByHost = vi.spyOn(source, 'tokensByHost');
+  function Metrics() {
+    const week = useQuery({
+      queryKey: queryKeys.dashboard(7),
+      queryFn: () => source.dashboard(7),
+    });
+    const month = useQuery({
+      queryKey: queryKeys.dashboard(30),
+      queryFn: () => source.dashboard(30),
+    });
+    const hosts = useQuery({
+      queryKey: queryKeys.tokensByHost(7),
+      queryFn: () => source.tokensByHost(7),
+    });
+    return (
+      <output aria-label="Dashboard ranges">
+        {week.data?.window.days ?? '-'}/{month.data?.window.days ?? '-'}/
+        {hosts.data?.window.days ?? '-'}
+      </output>
+    );
+  }
+  render(
+    <DataProvider source={source}>
+      <Metrics />
+    </DataProvider>,
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByRole('status').textContent).toBe('7/30/7');
+  expect(dashboard.mock.calls).toEqual([[7], [30]]);
+  // Insertion, zero-new-record enrichment (a turn or reconcile) and receipts all
+  // reach the Dashboard through the shared `metrics` prefix.
+  for (const event of [events.importReceived, events.turnCompleted, events.nativeIndexStatus]) {
+    dashboard.mockClear();
+    tokensByHost.mockClear();
+    await act(async () => {
+      source.emit(event);
+      await vi.advanceTimersByTimeAsync(501);
+    });
+    expect(dashboard.mock.calls.map(([days]) => days).sort((a, b) => a - b)).toEqual([7, 30]);
+    expect(tokensByHost).toHaveBeenCalledExactlyOnceWith(7);
+  }
+  dashboard.mockClear();
+  await act(async () => {
+    source.emit(events.fireReceived);
+    source.emit(events.prsRefreshed);
+    await vi.advanceTimersByTimeAsync(501);
+  });
+  expect(dashboard).not.toHaveBeenCalled();
+});
+
 it('balances delayed async subscriptions under StrictMode and cancels pending invalidations', async () => {
   vi.useFakeTimers();
   const registrations: {
@@ -119,6 +176,11 @@ it('balances delayed async subscriptions under StrictMode and cancels pending in
   }[] = [];
   const source: DataSource = {
     kind: 'fixture',
+    dashboard: async () => exported.dashboards[0],
+    tokensByHost: async () => ({
+      window: exported.dashboards[0].window,
+      hosts: exported.dashboards[0].tokens_by_host,
+    }),
     appInfo: async () => exported.app_info,
     dbCounts: async () => exported.db_counts,
     sessionsList: async () => ({ rows: [], next: null }),

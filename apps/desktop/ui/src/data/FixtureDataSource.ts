@@ -8,6 +8,18 @@ export class FixtureDataSource implements DataSource {
   readonly kind = 'fixture';
   private listeners = new Map<DataEvent, Set<() => void>>();
   constructor(private readonly fixture: FixtureExport) {}
+  private report(windowDays: number) {
+    const report = this.fixture.dashboards.find((entry) => entry.window.days === windowDays);
+    if (!report) throw new Error('Metric range must be 7, 14, or 30 days.');
+    return report;
+  }
+  async dashboard(windowDays: number) {
+    return structuredClone(this.report(windowDays));
+  }
+  async tokensByHost(windowDays: number) {
+    const report = this.report(windowDays);
+    return structuredClone({ window: report.window, hosts: report.tokens_by_host });
+  }
   async sessionsList(
     search: string,
     host: string | null,

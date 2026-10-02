@@ -20,6 +20,8 @@ fixtures = ["dep:xt-fixtures"]
 serde.workspace = true
 serde_json = "=1.0.151"
 ts-rs = "=12.0.1"
+jiff = "=0.2.35"
+xt-metrics = { path = "../../../crates/xt-metrics" }
 xt-store = { path = "../../../crates/xt-store" }
 xt-ingest = { path = "../../../crates/xt-ingest" }
 xt-fixtures = { path = "../../../crates/xt-fixtures", optional = true }

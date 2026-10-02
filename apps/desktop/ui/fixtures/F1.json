@@ -46,5 +46,2287 @@
       }
     ],
     "next": null
-  }
+  },
+  "dashboards": [
+    {
+      "window": {
+        "days": 7,
+        "start_ms": 1788220800000,
+        "end_ms": 1788825600000,
+        "timezone": "UTC",
+        "clock": "fixture"
+      },
+      "tiles": {
+        "agent_hours": {
+          "value": 0.38333333333333336,
+          "unit": "hours",
+          "rule_id": "M-05",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "agent_hours_per_day": {
+          "value": 0.05476190476190477,
+          "unit": "hours_per_day",
+          "rule_id": "M-05",
+          "reason": null,
+          "note": "Selected agent hours divided by 7 reported local date buckets, including zero and partial days; previous denominator: 7.",
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "human_hours_est": {
+          "value": 0.13558333333333333,
+          "unit": "hours_est",
+          "rule_id": "M-07",
+          "reason": null,
+          "note": "Wall-clock union; summed session unions: 0.136 hours est.",
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "ratio": {
+          "value": 2.827289489858636,
+          "unit": "ratio",
+          "rule_id": "M-08",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "concurrency_max": {
+          "value": 1.0,
+          "unit": "sessions",
+          "rule_id": "M-06",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "concurrency_mean": {
+          "value": 1.0,
+          "unit": "sessions",
+          "rule_id": "M-06",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "hands_off_median": {
+          "value": 3.0,
+          "unit": "minutes",
+          "rule_id": "M-09",
+          "reason": null,
+          "note": null,
+          "current_n": 5,
+          "previous_n": 0,
+          "sample_unit": "stretches",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "hands_off_p90": {
+          "value": 3.0,
+          "unit": "minutes",
+          "rule_id": "M-09",
+          "reason": null,
+          "note": null,
+          "current_n": 5,
+          "previous_n": 0,
+          "sample_unit": "stretches",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "sessions": {
+          "value": 1.0,
+          "unit": "sessions",
+          "rule_id": "M-16",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "human_messages": {
+          "value": 5.0,
+          "unit": "messages",
+          "rule_id": "M-02",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "assistant_turns": {
+          "value": 5.0,
+          "unit": "turns",
+          "rule_id": "M-03",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "tool_calls": {
+          "value": 5.0,
+          "unit": "calls",
+          "rule_id": "M-17",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "sessions_per_day": {
+          "value": 0.14285714285714285,
+          "unit": "sessions_per_day",
+          "rule_id": "M-16",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "tokens": {
+          "value": 1100.0,
+          "unit": "tokens",
+          "rule_id": "M-04",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "cost": {
+          "value": null,
+          "unit": "usd_api_equivalent",
+          "rule_id": "M-04",
+          "reason": "Selected usage is absent or unpriced; see cost reasons",
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "merged_prs": {
+          "value": null,
+          "unit": "prs",
+          "rule_id": "M-14",
+          "reason": "Merged PR data is unavailable",
+          "note": null,
+          "current_n": null,
+          "previous_n": null,
+          "sample_unit": "unavailable",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "rule_fires": {
+          "value": null,
+          "unit": "fires",
+          "rule_id": "R-05",
+          "reason": "Rule-fire data is unavailable",
+          "note": null,
+          "current_n": null,
+          "previous_n": null,
+          "sample_unit": "unavailable",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        }
+      },
+      "hands_off_excluded_surfaces": [],
+      "favorite": {
+        "current": {
+          "model": "fixture-model-v1",
+          "output_tokens": 150,
+          "unknown_reason": null
+        },
+        "previous": {
+          "model": null,
+          "output_tokens": null,
+          "unknown_reason": "no_measured_output"
+        },
+        "rule_id": "M-10"
+      },
+      "tokens": {
+        "selected_responses": 10,
+        "measured_responses": 10,
+        "sessions": 1,
+        "measured_sessions": 1,
+        "counters": {
+          "input_tokens": 750,
+          "output_tokens": 150,
+          "cache_read_tokens": 150,
+          "cache_creation_tokens": 50,
+          "total_tokens": 1100
+        }
+      },
+      "tokens_by_host": [
+        {
+          "host": "claude",
+          "tokens": {
+            "selected_responses": 10,
+            "measured_responses": 10,
+            "sessions": 1,
+            "measured_sessions": 1,
+            "counters": {
+              "input_tokens": 750,
+              "output_tokens": 150,
+              "cache_read_tokens": 150,
+              "cache_creation_tokens": 50,
+              "total_tokens": 1100
+            }
+          }
+        }
+      ],
+      "days": [
+        {
+          "date": "2026-09-01",
+          "start_ms": 1788220800000,
+          "end_ms": 1788307200000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-02",
+          "start_ms": 1788307200000,
+          "end_ms": 1788393600000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-03",
+          "start_ms": 1788393600000,
+          "end_ms": 1788480000000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-04",
+          "start_ms": 1788480000000,
+          "end_ms": 1788566400000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-05",
+          "start_ms": 1788566400000,
+          "end_ms": 1788652800000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-06",
+          "start_ms": 1788652800000,
+          "end_ms": 1788739200000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-07",
+          "start_ms": 1788739200000,
+          "end_ms": 1788825600000,
+          "tokens": {
+            "selected_responses": 10,
+            "measured_responses": 10,
+            "sessions": 1,
+            "measured_sessions": 1,
+            "counters": {
+              "input_tokens": 750,
+              "output_tokens": 150,
+              "cache_read_tokens": 150,
+              "cache_creation_tokens": 50,
+              "total_tokens": 1100
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 1
+        }
+      ],
+      "lanes": [
+        {
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "host": "claude",
+          "start_ms": 1788782400000,
+          "end_ms": 1788783780000
+        }
+      ],
+      "lane_start_ms": 1788652800000,
+      "lane_end_ms": 1788825600000,
+      "lanes_total": 1,
+      "lanes_truncated": false,
+      "usage_coverage": {
+        "total": {
+          "sessions": 1,
+          "measured": 1,
+          "pct": 100.0,
+          "gaps": []
+        },
+        "by_host": [
+          {
+            "host": "claude",
+            "usage": {
+              "sessions": 1,
+              "measured": 1,
+              "pct": 100.0,
+              "gaps": []
+            }
+          }
+        ],
+        "by_surface": [
+          {
+            "host": "claude",
+            "surface": "cli",
+            "usage": {
+              "sessions": 1,
+              "measured": 1,
+              "pct": 100.0,
+              "gaps": []
+            }
+          }
+        ]
+      },
+      "usage_gate_14d": {
+        "window_start_ms": 1787616000000,
+        "window_end_ms": 1788825600000,
+        "eligible_sessions": 1,
+        "measured_sessions": 1,
+        "pct": 100.0,
+        "passes": true,
+        "excluded_surfaces": []
+      },
+      "capture_inventory": "unknown",
+      "capture_coverage": [],
+      "cost": {
+        "price_version": "synthetic-v1",
+        "as_of": "2026-09-17",
+        "basis": "Global public token API-equivalent, using recorded service tier; excludes unrecorded regional/speed modifiers, tool fees, and subscriptions.",
+        "total_usd": null,
+        "priced_subtotal_usd": 0.0,
+        "selected_observations": 10,
+        "priced_observations": 0,
+        "unpriced_observations": 10,
+        "unpriced": [
+          {
+            "model": "fixture-model-v1",
+            "service_tier": null,
+            "reason": "missing_service_tier",
+            "observations": 10
+          }
+        ]
+      },
+      "unavailable": [
+        {
+          "key": "merged_prs",
+          "reason": "Merged PR data is unavailable"
+        },
+        {
+          "key": "rule_fires",
+          "reason": "Rule-fire data is unavailable"
+        },
+        {
+          "key": "environment",
+          "reason": "Environment data is unavailable"
+        },
+        {
+          "key": "work_type",
+          "reason": "Work-type data is unavailable"
+        }
+      ]
+    },
+    {
+      "window": {
+        "days": 14,
+        "start_ms": 1787616000000,
+        "end_ms": 1788825600000,
+        "timezone": "UTC",
+        "clock": "fixture"
+      },
+      "tiles": {
+        "agent_hours": {
+          "value": 0.38333333333333336,
+          "unit": "hours",
+          "rule_id": "M-05",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "agent_hours_per_day": {
+          "value": 0.027380952380952384,
+          "unit": "hours_per_day",
+          "rule_id": "M-05",
+          "reason": null,
+          "note": "Selected agent hours divided by 14 reported local date buckets, including zero and partial days; previous denominator: 14.",
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "human_hours_est": {
+          "value": 0.13558333333333333,
+          "unit": "hours_est",
+          "rule_id": "M-07",
+          "reason": null,
+          "note": "Wall-clock union; summed session unions: 0.136 hours est.",
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "ratio": {
+          "value": 2.827289489858636,
+          "unit": "ratio",
+          "rule_id": "M-08",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "concurrency_max": {
+          "value": 1.0,
+          "unit": "sessions",
+          "rule_id": "M-06",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "concurrency_mean": {
+          "value": 1.0,
+          "unit": "sessions",
+          "rule_id": "M-06",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "hands_off_median": {
+          "value": 3.0,
+          "unit": "minutes",
+          "rule_id": "M-09",
+          "reason": null,
+          "note": null,
+          "current_n": 5,
+          "previous_n": 0,
+          "sample_unit": "stretches",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "hands_off_p90": {
+          "value": 3.0,
+          "unit": "minutes",
+          "rule_id": "M-09",
+          "reason": null,
+          "note": null,
+          "current_n": 5,
+          "previous_n": 0,
+          "sample_unit": "stretches",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "sessions": {
+          "value": 1.0,
+          "unit": "sessions",
+          "rule_id": "M-16",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "human_messages": {
+          "value": 5.0,
+          "unit": "messages",
+          "rule_id": "M-02",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "assistant_turns": {
+          "value": 5.0,
+          "unit": "turns",
+          "rule_id": "M-03",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "tool_calls": {
+          "value": 5.0,
+          "unit": "calls",
+          "rule_id": "M-17",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "sessions_per_day": {
+          "value": 0.07142857142857142,
+          "unit": "sessions_per_day",
+          "rule_id": "M-16",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "tokens": {
+          "value": 1100.0,
+          "unit": "tokens",
+          "rule_id": "M-04",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "cost": {
+          "value": null,
+          "unit": "usd_api_equivalent",
+          "rule_id": "M-04",
+          "reason": "Selected usage is absent or unpriced; see cost reasons",
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "merged_prs": {
+          "value": null,
+          "unit": "prs",
+          "rule_id": "M-14",
+          "reason": "Merged PR data is unavailable",
+          "note": null,
+          "current_n": null,
+          "previous_n": null,
+          "sample_unit": "unavailable",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "rule_fires": {
+          "value": null,
+          "unit": "fires",
+          "rule_id": "R-05",
+          "reason": "Rule-fire data is unavailable",
+          "note": null,
+          "current_n": null,
+          "previous_n": null,
+          "sample_unit": "unavailable",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        }
+      },
+      "hands_off_excluded_surfaces": [],
+      "favorite": {
+        "current": {
+          "model": "fixture-model-v1",
+          "output_tokens": 150,
+          "unknown_reason": null
+        },
+        "previous": {
+          "model": null,
+          "output_tokens": null,
+          "unknown_reason": "no_measured_output"
+        },
+        "rule_id": "M-10"
+      },
+      "tokens": {
+        "selected_responses": 10,
+        "measured_responses": 10,
+        "sessions": 1,
+        "measured_sessions": 1,
+        "counters": {
+          "input_tokens": 750,
+          "output_tokens": 150,
+          "cache_read_tokens": 150,
+          "cache_creation_tokens": 50,
+          "total_tokens": 1100
+        }
+      },
+      "tokens_by_host": [
+        {
+          "host": "claude",
+          "tokens": {
+            "selected_responses": 10,
+            "measured_responses": 10,
+            "sessions": 1,
+            "measured_sessions": 1,
+            "counters": {
+              "input_tokens": 750,
+              "output_tokens": 150,
+              "cache_read_tokens": 150,
+              "cache_creation_tokens": 50,
+              "total_tokens": 1100
+            }
+          }
+        }
+      ],
+      "days": [
+        {
+          "date": "2026-08-25",
+          "start_ms": 1787616000000,
+          "end_ms": 1787702400000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-26",
+          "start_ms": 1787702400000,
+          "end_ms": 1787788800000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-27",
+          "start_ms": 1787788800000,
+          "end_ms": 1787875200000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-28",
+          "start_ms": 1787875200000,
+          "end_ms": 1787961600000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-29",
+          "start_ms": 1787961600000,
+          "end_ms": 1788048000000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-30",
+          "start_ms": 1788048000000,
+          "end_ms": 1788134400000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-31",
+          "start_ms": 1788134400000,
+          "end_ms": 1788220800000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-01",
+          "start_ms": 1788220800000,
+          "end_ms": 1788307200000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-02",
+          "start_ms": 1788307200000,
+          "end_ms": 1788393600000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-03",
+          "start_ms": 1788393600000,
+          "end_ms": 1788480000000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-04",
+          "start_ms": 1788480000000,
+          "end_ms": 1788566400000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-05",
+          "start_ms": 1788566400000,
+          "end_ms": 1788652800000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-06",
+          "start_ms": 1788652800000,
+          "end_ms": 1788739200000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-07",
+          "start_ms": 1788739200000,
+          "end_ms": 1788825600000,
+          "tokens": {
+            "selected_responses": 10,
+            "measured_responses": 10,
+            "sessions": 1,
+            "measured_sessions": 1,
+            "counters": {
+              "input_tokens": 750,
+              "output_tokens": 150,
+              "cache_read_tokens": 150,
+              "cache_creation_tokens": 50,
+              "total_tokens": 1100
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 1
+        }
+      ],
+      "lanes": [
+        {
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "host": "claude",
+          "start_ms": 1788782400000,
+          "end_ms": 1788783780000
+        }
+      ],
+      "lane_start_ms": 1788652800000,
+      "lane_end_ms": 1788825600000,
+      "lanes_total": 1,
+      "lanes_truncated": false,
+      "usage_coverage": {
+        "total": {
+          "sessions": 1,
+          "measured": 1,
+          "pct": 100.0,
+          "gaps": []
+        },
+        "by_host": [
+          {
+            "host": "claude",
+            "usage": {
+              "sessions": 1,
+              "measured": 1,
+              "pct": 100.0,
+              "gaps": []
+            }
+          }
+        ],
+        "by_surface": [
+          {
+            "host": "claude",
+            "surface": "cli",
+            "usage": {
+              "sessions": 1,
+              "measured": 1,
+              "pct": 100.0,
+              "gaps": []
+            }
+          }
+        ]
+      },
+      "usage_gate_14d": {
+        "window_start_ms": 1787616000000,
+        "window_end_ms": 1788825600000,
+        "eligible_sessions": 1,
+        "measured_sessions": 1,
+        "pct": 100.0,
+        "passes": true,
+        "excluded_surfaces": []
+      },
+      "capture_inventory": "unknown",
+      "capture_coverage": [],
+      "cost": {
+        "price_version": "synthetic-v1",
+        "as_of": "2026-09-17",
+        "basis": "Global public token API-equivalent, using recorded service tier; excludes unrecorded regional/speed modifiers, tool fees, and subscriptions.",
+        "total_usd": null,
+        "priced_subtotal_usd": 0.0,
+        "selected_observations": 10,
+        "priced_observations": 0,
+        "unpriced_observations": 10,
+        "unpriced": [
+          {
+            "model": "fixture-model-v1",
+            "service_tier": null,
+            "reason": "missing_service_tier",
+            "observations": 10
+          }
+        ]
+      },
+      "unavailable": [
+        {
+          "key": "merged_prs",
+          "reason": "Merged PR data is unavailable"
+        },
+        {
+          "key": "rule_fires",
+          "reason": "Rule-fire data is unavailable"
+        },
+        {
+          "key": "environment",
+          "reason": "Environment data is unavailable"
+        },
+        {
+          "key": "work_type",
+          "reason": "Work-type data is unavailable"
+        }
+      ]
+    },
+    {
+      "window": {
+        "days": 30,
+        "start_ms": 1786233600000,
+        "end_ms": 1788825600000,
+        "timezone": "UTC",
+        "clock": "fixture"
+      },
+      "tiles": {
+        "agent_hours": {
+          "value": 0.38333333333333336,
+          "unit": "hours",
+          "rule_id": "M-05",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "agent_hours_per_day": {
+          "value": 0.012777777777777779,
+          "unit": "hours_per_day",
+          "rule_id": "M-05",
+          "reason": null,
+          "note": "Selected agent hours divided by 30 reported local date buckets, including zero and partial days; previous denominator: 30.",
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "human_hours_est": {
+          "value": 0.13558333333333333,
+          "unit": "hours_est",
+          "rule_id": "M-07",
+          "reason": null,
+          "note": "Wall-clock union; summed session unions: 0.136 hours est.",
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "ratio": {
+          "value": 2.827289489858636,
+          "unit": "ratio",
+          "rule_id": "M-08",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "concurrency_max": {
+          "value": 1.0,
+          "unit": "sessions",
+          "rule_id": "M-06",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "concurrency_mean": {
+          "value": 1.0,
+          "unit": "sessions",
+          "rule_id": "M-06",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "hands_off_median": {
+          "value": 3.0,
+          "unit": "minutes",
+          "rule_id": "M-09",
+          "reason": null,
+          "note": null,
+          "current_n": 5,
+          "previous_n": 0,
+          "sample_unit": "stretches",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "hands_off_p90": {
+          "value": 3.0,
+          "unit": "minutes",
+          "rule_id": "M-09",
+          "reason": null,
+          "note": null,
+          "current_n": 5,
+          "previous_n": 0,
+          "sample_unit": "stretches",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "sessions": {
+          "value": 1.0,
+          "unit": "sessions",
+          "rule_id": "M-16",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "human_messages": {
+          "value": 5.0,
+          "unit": "messages",
+          "rule_id": "M-02",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "assistant_turns": {
+          "value": 5.0,
+          "unit": "turns",
+          "rule_id": "M-03",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "tool_calls": {
+          "value": 5.0,
+          "unit": "calls",
+          "rule_id": "M-17",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "sessions_per_day": {
+          "value": 0.03333333333333333,
+          "unit": "sessions_per_day",
+          "rule_id": "M-16",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": 0.0,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "tokens": {
+          "value": 1100.0,
+          "unit": "tokens",
+          "rule_id": "M-04",
+          "reason": null,
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "cost": {
+          "value": null,
+          "unit": "usd_api_equivalent",
+          "rule_id": "M-04",
+          "reason": "Selected usage is absent or unpriced; see cost reasons",
+          "note": null,
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "merged_prs": {
+          "value": null,
+          "unit": "prs",
+          "rule_id": "M-14",
+          "reason": "Merged PR data is unavailable",
+          "note": null,
+          "current_n": null,
+          "previous_n": null,
+          "sample_unit": "unavailable",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
+        "rule_fires": {
+          "value": null,
+          "unit": "fires",
+          "rule_id": "R-05",
+          "reason": "Rule-fire data is unavailable",
+          "note": null,
+          "current_n": null,
+          "previous_n": null,
+          "sample_unit": "unavailable",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        }
+      },
+      "hands_off_excluded_surfaces": [],
+      "favorite": {
+        "current": {
+          "model": "fixture-model-v1",
+          "output_tokens": 150,
+          "unknown_reason": null
+        },
+        "previous": {
+          "model": null,
+          "output_tokens": null,
+          "unknown_reason": "no_measured_output"
+        },
+        "rule_id": "M-10"
+      },
+      "tokens": {
+        "selected_responses": 10,
+        "measured_responses": 10,
+        "sessions": 1,
+        "measured_sessions": 1,
+        "counters": {
+          "input_tokens": 750,
+          "output_tokens": 150,
+          "cache_read_tokens": 150,
+          "cache_creation_tokens": 50,
+          "total_tokens": 1100
+        }
+      },
+      "tokens_by_host": [
+        {
+          "host": "claude",
+          "tokens": {
+            "selected_responses": 10,
+            "measured_responses": 10,
+            "sessions": 1,
+            "measured_sessions": 1,
+            "counters": {
+              "input_tokens": 750,
+              "output_tokens": 150,
+              "cache_read_tokens": 150,
+              "cache_creation_tokens": 50,
+              "total_tokens": 1100
+            }
+          }
+        }
+      ],
+      "days": [
+        {
+          "date": "2026-08-09",
+          "start_ms": 1786233600000,
+          "end_ms": 1786320000000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-10",
+          "start_ms": 1786320000000,
+          "end_ms": 1786406400000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-11",
+          "start_ms": 1786406400000,
+          "end_ms": 1786492800000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-12",
+          "start_ms": 1786492800000,
+          "end_ms": 1786579200000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-13",
+          "start_ms": 1786579200000,
+          "end_ms": 1786665600000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-14",
+          "start_ms": 1786665600000,
+          "end_ms": 1786752000000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-15",
+          "start_ms": 1786752000000,
+          "end_ms": 1786838400000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-16",
+          "start_ms": 1786838400000,
+          "end_ms": 1786924800000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-17",
+          "start_ms": 1786924800000,
+          "end_ms": 1787011200000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-18",
+          "start_ms": 1787011200000,
+          "end_ms": 1787097600000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-19",
+          "start_ms": 1787097600000,
+          "end_ms": 1787184000000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-20",
+          "start_ms": 1787184000000,
+          "end_ms": 1787270400000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-21",
+          "start_ms": 1787270400000,
+          "end_ms": 1787356800000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-22",
+          "start_ms": 1787356800000,
+          "end_ms": 1787443200000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-23",
+          "start_ms": 1787443200000,
+          "end_ms": 1787529600000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-24",
+          "start_ms": 1787529600000,
+          "end_ms": 1787616000000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-25",
+          "start_ms": 1787616000000,
+          "end_ms": 1787702400000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-26",
+          "start_ms": 1787702400000,
+          "end_ms": 1787788800000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-27",
+          "start_ms": 1787788800000,
+          "end_ms": 1787875200000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-28",
+          "start_ms": 1787875200000,
+          "end_ms": 1787961600000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-29",
+          "start_ms": 1787961600000,
+          "end_ms": 1788048000000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-30",
+          "start_ms": 1788048000000,
+          "end_ms": 1788134400000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-08-31",
+          "start_ms": 1788134400000,
+          "end_ms": 1788220800000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-01",
+          "start_ms": 1788220800000,
+          "end_ms": 1788307200000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-02",
+          "start_ms": 1788307200000,
+          "end_ms": 1788393600000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-03",
+          "start_ms": 1788393600000,
+          "end_ms": 1788480000000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-04",
+          "start_ms": 1788480000000,
+          "end_ms": 1788566400000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-05",
+          "start_ms": 1788566400000,
+          "end_ms": 1788652800000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-06",
+          "start_ms": 1788652800000,
+          "end_ms": 1788739200000,
+          "tokens": {
+            "selected_responses": 0,
+            "measured_responses": 0,
+            "sessions": 0,
+            "measured_sessions": 0,
+            "counters": {
+              "input_tokens": null,
+              "output_tokens": null,
+              "cache_read_tokens": null,
+              "cache_creation_tokens": null,
+              "total_tokens": null
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 0
+        },
+        {
+          "date": "2026-09-07",
+          "start_ms": 1788739200000,
+          "end_ms": 1788825600000,
+          "tokens": {
+            "selected_responses": 10,
+            "measured_responses": 10,
+            "sessions": 1,
+            "measured_sessions": 1,
+            "counters": {
+              "input_tokens": 750,
+              "output_tokens": 150,
+              "cache_read_tokens": 150,
+              "cache_creation_tokens": 50,
+              "total_tokens": 1100
+            }
+          },
+          "cost_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "sessions": 1
+        }
+      ],
+      "lanes": [
+        {
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "host": "claude",
+          "start_ms": 1788782400000,
+          "end_ms": 1788783780000
+        }
+      ],
+      "lane_start_ms": 1788652800000,
+      "lane_end_ms": 1788825600000,
+      "lanes_total": 1,
+      "lanes_truncated": false,
+      "usage_coverage": {
+        "total": {
+          "sessions": 1,
+          "measured": 1,
+          "pct": 100.0,
+          "gaps": []
+        },
+        "by_host": [
+          {
+            "host": "claude",
+            "usage": {
+              "sessions": 1,
+              "measured": 1,
+              "pct": 100.0,
+              "gaps": []
+            }
+          }
+        ],
+        "by_surface": [
+          {
+            "host": "claude",
+            "surface": "cli",
+            "usage": {
+              "sessions": 1,
+              "measured": 1,
+              "pct": 100.0,
+              "gaps": []
+            }
+          }
+        ]
+      },
+      "usage_gate_14d": {
+        "window_start_ms": 1787616000000,
+        "window_end_ms": 1788825600000,
+        "eligible_sessions": 1,
+        "measured_sessions": 1,
+        "pct": 100.0,
+        "passes": true,
+        "excluded_surfaces": []
+      },
+      "capture_inventory": "unknown",
+      "capture_coverage": [],
+      "cost": {
+        "price_version": "synthetic-v1",
+        "as_of": "2026-09-17",
+        "basis": "Global public token API-equivalent, using recorded service tier; excludes unrecorded regional/speed modifiers, tool fees, and subscriptions.",
+        "total_usd": null,
+        "priced_subtotal_usd": 0.0,
+        "selected_observations": 10,
+        "priced_observations": 0,
+        "unpriced_observations": 10,
+        "unpriced": [
+          {
+            "model": "fixture-model-v1",
+            "service_tier": null,
+            "reason": "missing_service_tier",
+            "observations": 10
+          }
+        ]
+      },
+      "unavailable": [
+        {
+          "key": "merged_prs",
+          "reason": "Merged PR data is unavailable"
+        },
+        {
+          "key": "rule_fires",
+          "reason": "Rule-fire data is unavailable"
+        },
+        {
+          "key": "environment",
+          "reason": "Environment data is unavailable"
+        },
+        {
+          "key": "work_type",
+          "reason": "Work-type data is unavailable"
+        }
+      ]
+    }
+  ]
 }

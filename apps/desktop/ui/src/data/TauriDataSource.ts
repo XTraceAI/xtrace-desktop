@@ -1,3 +1,5 @@
+import type { DashboardMetrics } from './generated/DashboardMetrics';
+import type { TokensByHost } from './generated/TokensByHost';
 import type { SessionPage } from './generated/SessionPage';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -9,6 +11,12 @@ import { commands, type DataEvent } from './ipc-names';
 
 export class TauriDataSource implements DataSource {
   readonly kind = 'native';
+  dashboard(windowDays: number) {
+    return invoke<DashboardMetrics>(commands.dashboard, { windowDays });
+  }
+  tokensByHost(windowDays: number) {
+    return invoke<TokensByHost>(commands.tokensByHost, { windowDays });
+  }
   sessionsList(search: string, host: string | null, after: string | null) {
     return invoke<SessionPage>(commands.sessionsList, { search, host, after });
   }

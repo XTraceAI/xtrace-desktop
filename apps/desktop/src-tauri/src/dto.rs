@@ -1,4 +1,5 @@
 //! Serialized IPC and fixture contracts. Integer constructors enforce JSON precision.
+pub use crate::dashboard_dto::*;
 use serde::Serialize;
 use ts_rs::TS;
 use xt_store::StoreCounts;
@@ -136,15 +137,17 @@ pub enum NativeHostState {
     Cancelled,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, TS)]
 pub struct FixtureExport {
     pub app_info: AppInfo,
     pub db_counts: DbCounts,
     pub native_index: NativeIndexStatus,
     pub sessions: SessionPage,
+    pub dashboards: Vec<DashboardMetrics>,
 }
 
 pub fn export_types(directory: impl AsRef<std::path::Path>) -> Result<(), ts_rs::ExportError> {
+    TokensByHost::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
     SessionPage::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
     FixtureExport::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))
 }

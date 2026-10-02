@@ -125,6 +125,11 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                     schema_version: database.store().schema_version()?,
                     listening: false,
                 },
+                dashboards: xtrace_desktop::dashboard::fixture_reports(
+                    database.path(),
+                    fixture.now().timestamp_millis(),
+                    fixture.snapshots().get("prices"),
+                )?,
                 db_counts: database.store().counts()?.try_into()?,
                 sessions: xtrace_desktop::dto::session_page(database.store(), "", None, None)?,
                 native_index: xtrace_desktop::dto::NativeIndexStatus {

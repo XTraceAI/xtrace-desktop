@@ -1,6 +1,6 @@
 # App data and routing
 
-The shell reads app metadata and database counts through `DataSource`. It does not calculate metrics or populate future screens. DTOs are generated from Rust into `apps/desktop/ui/src/data/generated/`; regenerate and verify them with `cargo xtask dto-export` and `bash scripts/ci/check-dto.sh`. Generated files retain the generator's formatting.
+The shell reads app metadata, database counts and Dashboard metric reports through `DataSource`. The UI does not calculate metrics; the Rust application assembles them from `xt-metrics`. DTOs are generated from Rust into `apps/desktop/ui/src/data/generated/`; regenerate and verify them with `cargo xtask dto-export` and `bash scripts/ci/check-dto.sh`. Generated files retain the generator's formatting.
 
 ## Selecting a source
 
@@ -13,7 +13,7 @@ pnpm fixtures:export
 VITE_XTRACE_FIXTURE=F1 pnpm dev
 ```
 
-`FixtureDataSource` reads the generated `apps/desktop/ui/fixtures/F1.json` shell export. It returns copies of the same `AppInfo` and `DbCounts` shapes used by native IPC. The export contains a portable `fixture://F1` label and canonical counts of 1 session, 25 records, and 15 usage rows. Its `emit(event)` helper delivers deterministic test events without timers or a simulated ingestion service. F2, F20, and unrecognized fixture names fail explicitly; they have no populated shell export.
+`FixtureDataSource` reads the generated `apps/desktop/ui/fixtures/F1.json` shell export. It returns copies of the same `AppInfo`, `DbCounts` and Dashboard report shapes used by native IPC. The export contains a portable `fixture://F1` label and canonical counts of 1 session, 25 records, and 15 usage rows. Its `emit(event)` helper delivers deterministic test events without timers or a simulated ingestion service. F2, F20, and unrecognized fixture names fail explicitly; they have no populated shell export.
 
 The fixture adapter is dynamically imported only inside a Vite `DEV` condition. A production build ignores `VITE_XTRACE_FIXTURE`, even when it is set during compilation, and excludes the adapter chunk and fixture JSON. A browser without an enabled development fixture shows an explicit unavailable preview. It never falls back to sample data. Native fixture selection and temporary database ownership are enforced separately by the Rust application.
 
@@ -33,7 +33,20 @@ The provider registers each event once per mounted lifecycle. A single 500ms win
 | `prs://refreshed`            | `prs`, `gh`                                          |
 | `native-index://status`      | `native`, `database`, `metrics`, `sessions`, `hosts` |
 
-These are structural query-key prefixes, not wildcard strings. Future screen queries must include all input dimensions, including range, in their keys. Tests exercise a harness query with reversed request completion; the old range's result cannot replace the current range. No metric query method or output is introduced by this shell.
+These are structural query-key prefixes, not wildcard strings. Future screen queries must include all input dimensions, including range, in their keys. Tests exercise a harness query with reversed request completion; the old range's result cannot replace the current range. The Dashboard keys are `['metrics', 'dashboard', days]` and `['metrics', 'tokens-by-host', days]`, so every ingest and index status event above refreshes them, including a reconcile that enriches existing records without adding any.
+
+## Dashboard metrics
+
+`dashboard(days)` and `tokensByHost(days)` invoke `metrics_dashboard` and `tokens_by_host` with `{ windowDays }`. Only 7, 14 and 30 days are accepted; other values fail before storage is opened. Both return generated DTOs (`DashboardMetrics`, `TokensByHost`).
+
+- **Clock and zone.** The native app uses the system clock and time zone. Fixture mode uses the fixture manifest's pinned `now` and UTC, and reports `clock: "fixture"`. Fixture reports come from the same assembler as native reports, and `pnpm fixtures:export` writes all three ranges into `F1.json`. Reports never contain database paths.
+- **One snapshot.** Current and previous windows (the previous window has the same length and ends where the current one starts), coverage and lanes are read in one SQLite read transaction.
+- **Tiles.** Each tile has fixed fields: `value`, `unit`, `rule_id`, a `reason` when the value is unknown, an optional `note`, sample counts and a `delta`. `null` means unknown; a measured zero stays `0`. `delta.pct` is in percentage points (`50` means +50%). It is `null` and `suppressed` when either window has fewer than five samples or the previous value is zero. The previous value is kept either way. Samples are sessions for session-derived tiles (token and cost tiles count distinct sessions with selected usage, not responses) and stretches for hands-off. Surfaces excluded from hands-off for unhealthy timestamps are listed in `hands_off_excluded_surfaces` with their qualifying and degenerate session counts. Agent hours per day divides agent hours by the number of local calendar days in the range, including empty days, partial first and last days, and DST days. The tile's `note` states the divisor.
+- **Lanes.** Activity lanes always cover the most recent 48 hours (`lane_start_ms`–`lane_end_ms`), whatever range is selected. They are sorted by end, then start (both descending), then session and host, and capped at 200 rows. `lanes_total` and `lanes_truncated` report the cap. The cap affects only which rows are displayed; concurrency and other aggregates use every span.
+- **Coverage and cost.** Usage coverage and session capture coverage are reported separately (`pct` is 0–100). `capture_inventory` stays `unknown` because the app does not yet supply a runtime discovery inventory. Capture receipts and native index status do not change it. Cost is labelled API-equivalent and includes the price version, `as_of` date and basis. `total_usd` is `null` when any selected response is unpriced; `priced_subtotal_usd` and the named unpriced reasons (for example, a missing service tier) are reported separately.
+- **Unavailable sections.** Merged PRs, rule fires, environment and work type are listed in `unavailable` with reasons; they never report zero.
+
+Integers above JavaScript's safe range and non-finite values fail the command rather than being rounded or turned into `null`.
 
 Cleanup cancels the timer and query promises, releases installed listeners, and immediately releases listeners whose asynchronous registration finishes after cleanup. Late callbacks cannot invalidate a disposed client. A subscription failure produces a controlled live-update warning without backend error text. Query cancellation prevents late cache updates; it does not promise to abort an already-running native command.
 
