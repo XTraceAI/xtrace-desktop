@@ -1752,7 +1752,7 @@ fn v3_upgrade_replays_unchanged_forks_and_repairs_only_confirmed_zeroed_usage() 
                 .unwrap()
                 > 0
         );
-        sql.execute_batch("UPDATE usage SET input_tokens=0,output_tokens=0,cache_read_tokens=0,cache_creation_tokens=0; UPDATE records SET has_conflict=1; DROP VIEW session_work_records; DROP TABLE native_record_copies; DELETE FROM schema_version WHERE version=4;").unwrap();
+        sql.execute_batch("UPDATE usage SET input_tokens=0,output_tokens=0,cache_read_tokens=0,cache_creation_tokens=0; UPDATE records SET has_conflict=1; DROP VIEW session_work_records; DROP TABLE native_record_copies; DELETE FROM schema_version WHERE version>=4;").unwrap();
         if let Some(first) = original_first {
             record["message"]["usage"]["input_tokens"] = json!(11);
             record["message"]["usage"]["output_tokens"] = json!(7);
