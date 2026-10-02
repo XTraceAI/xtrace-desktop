@@ -12,5 +12,8 @@
       "session_id": "00000000-0000-4000-8000-000000000009",
       "host": "claude"
     }
-  ]
+  ],
+  "snapshots": {
+    "hands_off": "input/hands-off.json"
+  }
 }

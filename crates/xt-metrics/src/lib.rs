@@ -1,11 +1,14 @@
 //! Read-only metrics over canonical work records and explicit event windows.
 mod counts;
+mod hands_off;
 mod human;
 mod spans;
+mod stats;
 mod sweep;
 mod tokens;
 mod window;
 pub use counts::{Counts, TypingRate};
+pub use hands_off::{ExcludedSurface, HandsOff};
 pub use human::HumanTime;
 pub use spans::{ActiveSpan, ActiveSpanReport};
 pub use sweep::Concurrency;
@@ -52,6 +55,7 @@ impl MetricsDb {
         connection.prepare(&format!("{} LIMIT 0", spans::QUERY))?;
         connection.prepare(&format!("{} LIMIT 0", counts::QUERY))?;
         connection.prepare(&format!("{} LIMIT 0", human::QUERY))?;
+        connection.prepare(&format!("{} LIMIT 0", hands_off::QUERY))?;
         Ok(Self { connection })
     }
 
