@@ -4,7 +4,7 @@
     "version": "0.1.0",
     "data_dir": "fixture://F1",
     "fixture": "F1",
-    "schema_version": 5,
+    "schema_version": 6,
     "listening": false
   },
   "db_counts": {

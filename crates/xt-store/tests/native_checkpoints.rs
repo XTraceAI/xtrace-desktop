@@ -1,7 +1,7 @@
 //! Native resume checkpoints: opaque generation plus position per source key,
 //! replaced as a whole (a new generation may move the position backwards),
-//! committed only with the batch rows they cover, and removable. Migration 5
-//! invalidates transcript checkpoints once and nothing else.
+//! committed only with the batch rows they cover, and removable. Migrations 5
+//! and 6 each invalidate transcript checkpoints once and nothing else.
 use rusqlite::Connection;
 use xt_fixtures::TempDb;
 use xt_store::{
@@ -193,7 +193,7 @@ fn migration_5_clears_only_transcript_checkpoints_once() {
     }
     // Exact schema-4 history: the reset has not been applied yet.
     let sql = Connection::open(&path).unwrap();
-    sql.execute("DELETE FROM schema_version WHERE version=5", [])
+    sql.execute("DELETE FROM schema_version WHERE version>=5", [])
         .unwrap();
     let count = |query: &str| sql.query_row(query, [], |r| r.get::<_, i64>(0)).unwrap();
     assert_eq!(count("SELECT count(*) FROM native_checkpoints"), 2);
@@ -226,7 +226,7 @@ fn migration_5_clears_only_transcript_checkpoints_once() {
         .collect::<Vec<_>>();
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 5);
+    assert_eq!(store.schema_version().unwrap(), 6);
     assert!(
         store
             .native_checkpoint(SessionSource::Transcript, transcript_key)
@@ -242,13 +242,126 @@ fn migration_5_clears_only_transcript_checkpoints_once() {
     drop(store);
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 5);
+        assert_eq!(store.schema_version().unwrap(), 6);
         assert_eq!(
             store
                 .native_checkpoint(SessionSource::Transcript, transcript_key)
                 .unwrap(),
             Some(recreated.clone())
         );
-        assert_eq!(count("SELECT count(*) FROM schema_version"), 5);
+        assert_eq!(count("SELECT count(*) FROM schema_version"), 6);
+    }
+}
+
+/// Migration 6 exists because tool calls now carry structural kinds and Claude
+/// native scans now keep hook summaries: unchanged transcripts must be proven
+/// again once. It may reset nothing else, and only once.
+#[test]
+fn migration_6_resets_transcripts_once_and_keeps_everything_else() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let path = directory.path().join("v5.sqlite");
+    let transcript_key = "claude:/home/.claude/projects/p/s.jsonl";
+    let reader_key = "codex:/home/.codex";
+    {
+        let mut store = Store::open(&path).unwrap();
+        let session = SessionMeta::new("s", "claude", SessionSource::Transcript);
+        let records: [CanonicalRecord; 1] = [serde_json::from_value(serde_json::json!({
+            "uuid":"u1","type":"user","timestamp":"2026-09-07T12:00:00Z",
+            "message":{"role":"user","content":[{"type":"text","text":"Human turn."}]}
+        }))
+        .unwrap()];
+        let progress = checkpoint(transcript_key, r#"{"kind":"file","ino":7}"#, 120, 10);
+        let mut batch = IngestBatch::new(&session, &records, false);
+        batch.checkpoint = Some(&progress);
+        store.apply_ingest_batch(&batch).unwrap();
+        let mut reader = checkpoint(reader_key, r#"{"kind":"scan","at":10}"#, 0, 10);
+        reader.source = SessionSource::ReadersCli;
+        store.record_native_checkpoint(&reader).unwrap();
+        store
+            .insert_capture_receipt(
+                &CaptureReceipt {
+                    receipt_id: "r1".into(),
+                    session_id: "s".into(),
+                    surface: None,
+                    received_at: 10,
+                },
+                &[RecordCoverage {
+                    record_uuid: "u1".into(),
+                    metric_field_mask: 3,
+                    measurement_revision: "a".repeat(64),
+                    digest_schema_version: 1,
+                }],
+            )
+            .unwrap();
+        // Migration 5's work: the classification derived before content discard.
+        assert_eq!(
+            store.records("s").unwrap()[0].classification.is_human,
+            Some(true)
+        );
+    }
+    // Exact schema-5 history: migration 6 has not been applied yet.
+    let sql = Connection::open(&path).unwrap();
+    sql.execute("DELETE FROM schema_version WHERE version=6", [])
+        .unwrap();
+    let count = |query: &str| sql.query_row(query, [], |r| r.get::<_, i64>(0)).unwrap();
+    assert_eq!(count("SELECT count(*) FROM native_checkpoints"), 2);
+    let snapshot = |table: &str| {
+        let mut statement = sql
+            .prepare(&format!("SELECT * FROM {table} ORDER BY 1"))
+            .unwrap();
+        let width = statement.column_count();
+        statement
+            .query_map([], |row| {
+                (0..width)
+                    .map(|i| row.get::<_, rusqlite::types::Value>(i))
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    };
+    let tables = [
+        "sessions",
+        "records",
+        "tool_uses",
+        "source_cursors",
+        "capture_receipts",
+        "capture_record_coverage",
+    ];
+    let before = tables.map(snapshot);
+    let reader_before = snapshot("native_checkpoints")
+        .into_iter()
+        .filter(|row| row[0] == rusqlite::types::Value::Text("readers_cli".into()))
+        .collect::<Vec<_>>();
+
+    let mut store = Store::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 6);
+    assert!(
+        store
+            .native_checkpoint(SessionSource::Transcript, transcript_key)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(snapshot("native_checkpoints"), reader_before);
+    assert_eq!(tables.map(snapshot), before);
+    assert_eq!(
+        store.records("s").unwrap()[0].classification.is_human,
+        Some(true)
+    );
+
+    // A checkpoint recreated after the upgrade survives every later open.
+    let recreated = checkpoint(transcript_key, r#"{"kind":"file","ino":7}"#, 120, 20);
+    store.record_native_checkpoint(&recreated).unwrap();
+    drop(store);
+    for _ in 0..2 {
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 6);
+        assert_eq!(
+            store
+                .native_checkpoint(SessionSource::Transcript, transcript_key)
+                .unwrap(),
+            Some(recreated.clone())
+        );
+        assert_eq!(count("SELECT count(*) FROM schema_version"), 6);
     }
 }

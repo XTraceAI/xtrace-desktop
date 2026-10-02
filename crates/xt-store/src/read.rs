@@ -15,12 +15,20 @@ pub struct StoredSession {
     pub has_conflict: bool,
 }
 
+/// One assistant tool call, bound to its record by UUID plus block index.
+/// The structural classification is derived before content retention decides
+/// about `input_json`, so it survives metadata-only storage; a row written by an
+/// older build simply has no classification yet and may acquire one on replay.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredToolUse {
     pub id: i64,
     pub block_index: i64,
     pub name: String,
     pub input_json: Option<Value>,
+    pub kind: Option<crate::ingest::ToolKind>,
+    pub server: Option<String>,
+    pub tool: Option<String>,
+    pub skill: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -203,7 +211,7 @@ const RECORD_FIELDS: &str = "r.uuid,r.session_id,r.type,r.ts,r.ts_ms,r.api_messa
 const USAGE_FIELDS: &str =
     "u.input_tokens,u.output_tokens,u.cache_read_tokens,u.cache_creation_tokens,
     u.cache_creation_5m,u.cache_creation_1h,u.service_tier";
-const TOOL_FIELDS: &str = "t.id,t.block_index,t.name,t.input_json";
+const TOOL_FIELDS: &str = "t.id,t.block_index,t.name,t.input_json,t.kind,t.server,t.tool,t.skill";
 
 /// Read only the incoming UUID set, in groups below SQLite's minimum default
 /// variable limit (999). The caller owns the transaction/snapshot for all groups.
@@ -330,6 +338,10 @@ fn tool_from_row(row: &Row<'_>, start: usize) -> rusqlite::Result<StoredToolUse>
         block_index: row.get(start + 1)?,
         name: row.get(start + 2)?,
         input_json: json_column(row, start + 3)?,
+        kind: row.get(start + 4)?,
+        server: row.get(start + 5)?,
+        tool: row.get(start + 6)?,
+        skill: row.get(start + 7)?,
     })
 }
 

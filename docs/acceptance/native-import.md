@@ -134,7 +134,9 @@ the existing writer.
   regardless and still records checkpoints. Reader hosts have nothing to migrate.
   Store migration 5 deletes existing transcript checkpoints once so the next
   scan replays unchanged Claude files through the human classifier; see
-  [human classification replay](human-classification-replay.md).
+  [human classification replay](human-classification-replay.md). Migration 6
+  does the same once more for structural tool extraction; see
+  [structural tool kinds](structural-tool-kinds.md).
 - **Watching.** `xt_ingest::native::watch::Tailer` registers a recursive `notify`
   watcher (FSEvents on macOS, inotify on Linux) on each existing host root before the
   initial scan; an absent root is covered by a non-recursive watch on its nearest

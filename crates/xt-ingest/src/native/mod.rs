@@ -886,19 +886,20 @@ impl SessionWriter {
         records: &[crate::canonical::ParsedRecord],
         observed_at: i64,
     ) -> Result<(), Box<SessionResult>> {
-        self.write_with_checkpoint(store, records, observed_at, None)
+        self.write_with_checkpoint(store, records, &[], observed_at, None)
     }
 
-    /// `write`, with resume progress that commits only if this batch commits
-    /// and every record of it is stored.
+    /// `write`, with the structural hook summaries read alongside those records
+    /// and resume progress; all three commit together or not at all.
     pub fn write_with_checkpoint(
         &mut self,
         store: &mut Store,
         records: &[crate::canonical::ParsedRecord],
+        summaries: &[crate::canonical::StopHookSummary],
         observed_at: i64,
         checkpoint: Option<&NativeCheckpoint>,
     ) -> Result<(), Box<SessionResult>> {
-        if records.is_empty() {
+        if records.is_empty() && summaries.is_empty() {
             return Ok(());
         }
         let discovery = self.discovery(observed_at);
@@ -906,6 +907,7 @@ impl SessionWriter {
             context: &self.context,
             declared_host: Some(self.host),
             records,
+            hook_summaries: summaries,
             title: None,
             cwd: self.cwd.as_deref(),
             git_branch: self.git_branch.as_deref(),

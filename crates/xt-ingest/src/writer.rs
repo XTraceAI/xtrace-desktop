@@ -1,7 +1,10 @@
 //! Synchronous ingestion composition. Returned acknowledgements and events exist
 //! only after the single store transaction commits; adapters publish them later.
 
-use crate::canonical::{ParsedRecord, SourceContext};
+use crate::{
+    canonical::{ParsedRecord, SourceContext, StopHookSummary},
+    tool_use,
+};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use xt_store::{
@@ -22,6 +25,10 @@ pub struct WriteBatch<'a> {
     /// A known adapter host need not manufacture an absent raw platform label.
     pub declared_host: Option<Host>,
     pub records: &'a [ParsedRecord],
+    /// Native stop-hook summaries read from the same input as `records`. They
+    /// are structural events, not records: they carry no content, never enter a
+    /// record's tool-call count, and commit with this batch or not at all.
+    pub hook_summaries: &'a [StopHookSummary],
     pub title: Option<&'a str>,
     /// Session facts a source header states outside its records (a reader's
     /// `cwd`/`git_branch`); merged with fill semantics, conflicts are flagged.
@@ -175,7 +182,23 @@ pub fn write_batch(store: &mut Store, request: &WriteBatch<'_>) -> Result<BatchO
         .iter()
         .map(|r| r.native.iteration_usage_confirmed)
         .collect::<Vec<_>>();
+    // Derive structural events here, against the session identity this batch
+    // resolved, so an event can never be attributed to a session the records
+    // were not written to. Their IDs are the native records' own UUIDs.
+    let mut tool_events = Vec::new();
+    for record in request.records {
+        if let Some(event) = tool_use::command_event(record, &session.session_id, source) {
+            tool_events.push(event);
+        }
+    }
+    for summary in request.hook_summaries {
+        let event = tool_use::hook_event(summary, &session.session_id, source).ok_or(
+            Error::InvalidInput("structural tool event requires a stable source event ID"),
+        )?;
+        tool_events.push(event);
+    }
     let mut batch = IngestBatch::new(&session, &records, request.keep_content);
+    batch.tool_events = &tool_events;
     batch.identities = &identities;
     batch.native_history = source == SessionSource::Transcript
         && session.host == Host::Claude
@@ -381,6 +404,51 @@ pub fn resolve_session(request: &WriteBatch<'_>) -> Result<SessionMeta> {
         agree(
             &mut context.source_surface,
             record.canonical.source_surface.as_ref(),
+        )?;
+    }
+    // A hook summary is not a record, but it names the same native identity and
+    // is reconciled by the same rules before anything it implies is persisted.
+    // A summary disagreeing with its file or its records fails the batch, so
+    // neither the event nor the checkpoint covering it commits.
+    for summary in request.hook_summaries {
+        for observed in [&summary.context, &summary.source] {
+            agree(
+                &mut context.conversation_id,
+                observed.conversation_id.as_ref(),
+            )?;
+            agree(
+                &mut context.native_session_id,
+                observed.native_session_id.as_ref(),
+            )?;
+            agree(
+                &mut context.source_platform,
+                observed.source_platform.as_ref(),
+            )?;
+            agree(
+                &mut context.source_surface,
+                observed.source_surface.as_ref(),
+            )?;
+            if let Some(value) = &observed.started_at {
+                let incoming = xt_store::timestamp::parse(value)?;
+                if started.as_ref().is_some_and(|old| old != &incoming) {
+                    return Err(Error::InvalidInput("native start instants disagree"));
+                }
+                started.get_or_insert(incoming);
+            }
+            if observed.source.is_some_and(|value| value != source) {
+                return Err(Error::InvalidInput(
+                    "record source disagrees with its import",
+                ));
+            }
+        }
+        agree(
+            &mut context.native_session_id,
+            summary.native.session_id.as_ref(),
+        )?;
+        // The summary's own entrypoint is a surface label like a record's.
+        agree(
+            &mut context.source_surface,
+            summary.native.entrypoint.as_ref(),
         )?;
     }
     let host = context

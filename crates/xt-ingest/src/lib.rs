@@ -7,4 +7,6 @@ pub mod canonical;
 
 pub mod native;
 
+pub mod tool_use;
+
 pub mod writer;

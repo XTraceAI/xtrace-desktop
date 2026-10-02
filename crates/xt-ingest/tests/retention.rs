@@ -27,6 +27,7 @@ fn batch<'a>(context: &'a SourceContext, records: &'a [ParsedRecord]) -> WriteBa
         context,
         declared_host: None,
         records,
+        hook_summaries: &[],
         title: Some("Synthetic title"),
         cwd: None,
         git_branch: None,

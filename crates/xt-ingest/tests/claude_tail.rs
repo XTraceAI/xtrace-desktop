@@ -1852,7 +1852,7 @@ fn claude_tail_v4_upgrade_replays_unchanged_history_once_to_enrich_human_classif
     let legacy_checkpoint = checkpoint(&store, &path).unwrap();
     assert_eq!(legacy_checkpoint.1, file_len(&path));
     drop(store);
-    sql.execute("DELETE FROM schema_version WHERE version=5", [])
+    sql.execute("DELETE FROM schema_version WHERE version>=5", [])
         .unwrap();
     let evidence = || {
         sql.prepare(
@@ -1889,7 +1889,7 @@ fn claude_tail_v4_upgrade_replays_unchanged_history_once_to_enrich_human_classif
     );
     tailer.stop();
     let store = home.store();
-    assert_eq!(store.schema_version().unwrap(), 5);
+    assert_eq!(store.schema_version().unwrap(), 6);
     assert_eq!(classified(&store), expected);
     assert_metadata_only(&store, A);
     let rows = store.records(A).unwrap();
