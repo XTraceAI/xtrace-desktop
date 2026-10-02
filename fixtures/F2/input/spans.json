@@ -13,18 +13,30 @@
         },
         {
           "uuid": "f2-a-10",
-          "type": "assistant",
+          "type": "user",
           "timestamp": "2026-09-07T12:10:00Z",
           "message": {
-            "role": "assistant"
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic human message"
+              }
+            ]
           }
         },
         {
           "uuid": "f2-a-20",
-          "type": "assistant",
+          "type": "user",
           "timestamp": "2026-09-07T12:20:00Z",
           "message": {
-            "role": "assistant"
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic human message"
+              }
+            ]
           }
         },
         {
@@ -37,18 +49,30 @@
         },
         {
           "uuid": "f2-a-40",
-          "type": "assistant",
+          "type": "user",
           "timestamp": "2026-09-07T12:40:00Z",
           "message": {
-            "role": "assistant"
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic human message"
+              }
+            ]
           }
         },
         {
           "uuid": "f2-a-50",
-          "type": "assistant",
+          "type": "user",
           "timestamp": "2026-09-07T12:50:00Z",
           "message": {
-            "role": "assistant"
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic human message"
+              }
+            ]
           }
         }
       ],
@@ -68,18 +92,30 @@
         },
         {
           "uuid": "f2-b-20",
-          "type": "assistant",
+          "type": "user",
           "timestamp": "2026-09-07T12:20:00Z",
           "message": {
-            "role": "assistant"
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic human message"
+              }
+            ]
           }
         },
         {
           "uuid": "f2-b-30",
-          "type": "assistant",
+          "type": "user",
           "timestamp": "2026-09-07T12:30:00Z",
           "message": {
-            "role": "assistant"
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic human message"
+              }
+            ]
           }
         }
       ],
@@ -99,18 +135,30 @@
         },
         {
           "uuid": "f2-c-30",
-          "type": "assistant",
+          "type": "user",
           "timestamp": "2026-09-07T12:30:00Z",
           "message": {
-            "role": "assistant"
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic human message"
+              }
+            ]
           }
         },
         {
           "uuid": "f2-c-40",
-          "type": "assistant",
+          "type": "user",
           "timestamp": "2026-09-07T12:40:00Z",
           "message": {
-            "role": "assistant"
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic human message"
+              }
+            ]
           }
         }
       ],
