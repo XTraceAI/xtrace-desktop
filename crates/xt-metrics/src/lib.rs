@@ -1,8 +1,10 @@
 //! Read-only metrics over canonical work records and explicit event windows.
 mod counts;
 mod coverage;
+mod favorite;
 mod hands_off;
 mod human;
+mod sessions;
 mod spans;
 mod stats;
 mod sweep;
@@ -13,9 +15,12 @@ pub use coverage::{
     CaptureGap, Coverage, CoverageSurface, DiscoveryHealth, HostUsageCoverage, InventoryState,
     SurfaceCapture, SurfaceUsageCoverage, UsageCoverage, UsageCoverageSummary, UsageGap, UsageGate,
 };
+pub use favorite::{FavoriteComparison, FavoriteModel, FavoriteUnknown};
 pub use hands_off::{ExcludedSurface, HandsOff};
 pub use human::HumanTime;
+pub use sessions::{DaySessions, SessionsPerDay};
 pub use spans::{ActiveSpan, ActiveSpanReport};
+pub use stats::Delta;
 pub use sweep::Concurrency;
 pub use tokens::{
     DayTokens, HostTokens, ModelTokens, SurfaceTokens, TokenCounters, TokenReport, TokenSummary,
@@ -70,6 +75,9 @@ impl MetricsDb {
         ] {
             connection.prepare(&format!("{query} LIMIT 0"))?;
         }
+        connection.prepare(&format!("{} LIMIT 0", sessions::QUERY))?;
+        connection.prepare(&format!("{} LIMIT 0", favorite::OUTPUT_QUERY))?;
+        connection.prepare(&format!("{} LIMIT 0", favorite::TURN_QUERY))?;
         Ok(Self { connection })
     }
 

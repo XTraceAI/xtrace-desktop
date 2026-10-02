@@ -44,6 +44,25 @@ impl Window {
         Self::new(start, self.start_ms)
     }
 
+    /// The complete Monday-to-Monday ISO week containing the explicit anchor
+    /// in the supplied zone. Calendar arithmetic preserves DST transitions.
+    pub fn iso_week(anchor_ms: i64, zone: TimeZone) -> Result<Self> {
+        let local = Timestamp::from_millisecond(anchor_ms)?.to_zoned(zone);
+        let monday = local
+            .start_of_day()?
+            .checked_sub(
+                jiff::Span::new().days(i64::from(local.weekday().to_monday_zero_offset())),
+            )?
+            .start_of_day()?;
+        let next = monday
+            .checked_add(jiff::Span::new().days(7))?
+            .start_of_day()?;
+        Self::new(
+            monday.timestamp().as_millisecond(),
+            next.timestamp().as_millisecond(),
+        )
+    }
+
     /// Split the selected interval at local calendar boundaries, clipping the
     /// first and final days. Callers supply the zone and now; no implicit clock.
     pub fn local_days(self, zone: TimeZone) -> Result<Vec<DayBucket>> {
