@@ -35,6 +35,7 @@ impl Window {
     pub(crate) fn candidate_end_ms(self) -> Result<i64> {
         self.end_ms().checked_add(1000).ok_or(Error::InvalidWindow)
     }
+
     pub fn previous(self) -> Result<Self> {
         let start = self
             .start_ms
