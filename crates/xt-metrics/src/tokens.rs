@@ -7,15 +7,6 @@ use xt_store::timestamp::{self, InstantKey};
 pub(crate) const QUERY: &str = "SELECT session_id,host,model,surface,ts,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens
              FROM v_response_usage WHERE ts_ms>=?1 AND ts_ms<?2";
 
-// Chrono's coarse projection puts a leap second into the following POSIX
-// second. Include that overlap, then filter exact instants before accumulation.
-fn candidate_end_ms(window: Window) -> Result<i64> {
-    window
-        .end_ms()
-        .checked_add(1000)
-        .ok_or(Error::InvalidWindow)
-}
-
 /// None is unknown, not zero. Components are independently measurable.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct TokenCounters {
@@ -135,7 +126,7 @@ impl MetricsDb {
         let mut models = BTreeMap::<Option<String>, Totals>::new();
         let mut surfaces = BTreeMap::<(String, Option<String>), Totals>::new();
         let mut statement = self.connection.prepare(QUERY)?;
-        let mut rows = statement.query([window.start_ms(), candidate_end_ms(window)?])?;
+        let mut rows = statement.query([window.start_ms(), window.candidate_end_ms()?])?;
         while let Some(row) = rows.next()? {
             let raw_ts: String = row.get(4)?;
             let ts = timestamp::parse(&raw_ts)
@@ -243,7 +234,7 @@ mod tests {
                 .upsert_records(&session.session_id, std::slice::from_ref(&row), false)
                 .unwrap();
             let window = Window::new(1788220800000, 1788825600000).unwrap();
-            let bounds = [window.start_ms(), candidate_end_ms(window).unwrap()];
+            let bounds = [window.start_ms(), window.candidate_end_ms().unwrap()];
             let history: Vec<_> = (0..count)
                 .map(|i| {
                     let mut record = row.clone();
