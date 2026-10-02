@@ -144,3 +144,13 @@ body:has(.native-mac) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+.xt-topbar-period {
+  /* Rendered with the TopBar's trailing content, shown immediately before the range presets. */
+  order: -1;
+  color: var(--secondary);
+  font:
+    400 11px 'Geist Mono',
+    Menlo,
+    monospace;
+  white-space: nowrap;
+}

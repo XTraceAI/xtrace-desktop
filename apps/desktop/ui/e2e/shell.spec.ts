@@ -22,7 +22,7 @@ test('navigates real shell routes with canonical F1 counts, shortcuts and both t
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.goto('/');
   await expect(page).toHaveURL(/\/dashboard$/);
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Dashboard');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('What your agents did');
   await expect(
     page.getByRole('status', { name: '' }).filter({ hasText: 'fixture F1' }),
   ).toBeVisible();
@@ -68,19 +68,17 @@ test('navigates real shell routes with canonical F1 counts, shortcuts and both t
   await page.getByRole('combobox', { name: 'Appearance' }).selectOption('light');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Dashboard');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('What your agents did');
   await page.mouse.move(600, 300);
   await assertFits(page);
   await page.screenshot({ path: info.outputPath('shell-light.png') });
   expect(errors).toEqual([]);
 });
 
-test('reloads every placeholder route and preserves canonical PR query context', async ({
-  page,
-}) => {
+test('reloads every route and preserves canonical PR query context', async ({ page }) => {
   for (const [path, title] of [
     ['/first-launch', 'Welcome to XTrace'],
-    ['/dashboard', 'Dashboard'],
+    ['/dashboard', 'What your agents did'],
     ['/sessions', 'Sessions'],
     ['/prs', 'Pull requests'],
     ['/rulebook', 'Rulebook'],

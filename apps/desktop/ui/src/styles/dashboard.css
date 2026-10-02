@@ -1,0 +1,539 @@
+.xt-shell-outlet:has(> .xt-dashboard) {
+  padding: 0;
+}
+.xt-dashboard {
+  container: dashboard / inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 13px 16px 28px;
+}
+.xt-dashboard h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 29px;
+  letter-spacing: -0.02em;
+}
+.xt-dash-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: -8px 0 4px;
+  color: var(--secondary);
+  font:
+    400 11px/1.6 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-dash-summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.xt-dash-inline-metric {
+  display: inline-flex;
+  min-width: 0;
+  line-height: inherit;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: help;
+}
+.xt-dash-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+}
+.xt-dash-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+.xt-dash-hero-row {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+}
+.xt-dash-main-row {
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+}
+.xt-dash-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+@container dashboard (max-width: 1040px) {
+  .xt-dash-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container dashboard (max-width: 720px) {
+  .xt-dash-row,
+  .xt-dash-hero-row,
+  .xt-dash-main-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.xt-dash-card,
+.xt-dash-extra {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.xt-dash-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.xt-dash-card-header h2 {
+  margin: 0;
+  color: var(--meta);
+  font:
+    400 10px/14px 'Geist Mono',
+    Menlo,
+    monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.xt-hero-line,
+.xt-hero-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin: 0;
+  min-width: 0;
+}
+.xt-hero-line {
+  gap: 2px 6px;
+}
+.xt-hero-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: help;
+}
+.xt-hero-line .xt-metric-cell {
+  font-weight: 600;
+  line-height: 30px;
+}
+.xt-hero-sep {
+  color: var(--meta);
+  font:
+    400 20px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-hero-unit,
+.xt-hero-est,
+.xt-hero-sub {
+  color: var(--secondary);
+  font:
+    400 11px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-hero-est {
+  color: var(--warning);
+}
+.xt-hero-sub .xt-metric-cell {
+  color: var(--ink);
+  font-weight: 600;
+}
+.xt-hero-sub > span {
+  color: var(--meta);
+}
+.xt-reserved-card {
+  min-height: 132px;
+}
+
+.xt-dash-note,
+.xt-dash-line,
+.xt-dash-empty {
+  margin: 10px 0 0;
+  color: var(--meta);
+  font:
+    400 10.5px/1.5 'Geist Mono',
+    Menlo,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.xt-dash-line {
+  margin-top: 6px;
+  color: var(--body);
+}
+.xt-dash-empty {
+  margin: 8px 0;
+}
+.xt-dash-link {
+  color: var(--accent-ink);
+  font:
+    400 10.5px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-dash-link:focus-visible,
+.xt-dash-inline-metric:focus-visible,
+.xt-hero-value:focus-visible,
+.xt-dash-extra-details summary:focus-visible,
+.xt-lanes-scroll:focus-visible,
+.xt-dash-details summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.xt-dash-unavailable {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+}
+.xt-reserved-card .xt-dash-unavailable {
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--divider);
+  border-radius: 8px;
+}
+.xt-dash-extras {
+  display: grid;
+  gap: 8px;
+}
+.xt-dash-extra {
+  gap: 4px;
+  padding: 8px 16px;
+}
+.xt-dash-extra-meta {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--meta);
+  font:
+    400 10.5px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-dash-extra-details > summary {
+  width: max-content;
+  color: var(--accent-ink);
+  font:
+    400 10.5px 'Geist Mono',
+    Menlo,
+    monospace;
+  cursor: pointer;
+}
+.xt-dash-extra-body {
+  padding: 10px 0 4px;
+}
+.xt-dash-index {
+  margin: 0;
+  padding: 0 16px;
+}
+.xt-dash-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 10px 0 0;
+  font:
+    400 11px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-dash-facts dt {
+  color: var(--meta);
+}
+.xt-dash-facts dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.xt-dash-list {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--body);
+  font:
+    400 10.5px/1.45 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-dash-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.xt-dash-list li > span:last-child {
+  color: var(--secondary);
+}
+.xt-cost-total {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.xt-cost-total .xt-metric-cell {
+  font-weight: 600;
+}
+.xt-coverage {
+  display: grid;
+  gap: 16px;
+}
+.xt-coverage h3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.xt-token-chart {
+  display: grid;
+  gap: 10px;
+}
+.xt-token-series,
+.xt-token-axis {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 12px;
+  align-items: end;
+}
+.xt-token-series-label {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr);
+  column-gap: 6px;
+  align-items: center;
+  color: var(--secondary);
+  font:
+    400 10.5px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-token-series-label > .xt-control-tone {
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background: var(--control-tone);
+}
+.xt-token-series-label small {
+  grid-column: 2;
+  color: var(--meta);
+  font-size: 9.5px;
+}
+.xt-token-bars {
+  display: grid;
+  grid-template-columns: repeat(var(--days), minmax(0, 1fr));
+  gap: 2px;
+  height: 40px;
+  border-bottom: 1px solid var(--divider);
+}
+.xt-token-slot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  min-width: 0;
+  height: 100%;
+}
+.xt-token-bar {
+  display: block;
+  width: min(100%, 14px);
+  min-height: 1px;
+  border-radius: 2px 2px 0 0;
+  background: var(--control-tone);
+}
+.xt-token-bar[data-state='none'],
+.xt-token-bar[data-zero='true'] {
+  min-height: 0;
+  height: 0;
+}
+.xt-token-bar[data-state='unknown'] {
+  border: 1px dashed var(--meta);
+  border-bottom: 0;
+  background: transparent;
+}
+.xt-token-ticks {
+  display: flex;
+  justify-content: space-between;
+  color: var(--meta);
+  font:
+    400 9.5px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-dash-details summary {
+  color: var(--secondary);
+  font:
+    400 10.5px 'Geist Mono',
+    Menlo,
+    monospace;
+  cursor: pointer;
+}
+.xt-dash-table-scroll {
+  max-height: 240px;
+  margin-top: 8px;
+  overflow: auto;
+}
+.xt-dash-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--body);
+  font:
+    400 10.5px 'Geist Mono',
+    Menlo,
+    monospace;
+  font-variant-numeric: tabular-nums;
+}
+.xt-dash-table th,
+.xt-dash-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--divider);
+  text-align: right;
+  white-space: nowrap;
+}
+.xt-dash-table th:first-child {
+  text-align: left;
+}
+.xt-dash-table thead th {
+  color: var(--meta);
+  font-weight: 400;
+}
+
+.xt-lanes {
+  display: grid;
+  gap: 6px;
+}
+.xt-lanes-axis,
+.xt-lane {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+.xt-lanes-ticks {
+  position: relative;
+  height: 14px;
+  color: var(--meta);
+  font:
+    400 9.5px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-lanes-ticks > span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.xt-lanes-ticks > span:first-child {
+  transform: none;
+}
+.xt-lanes-ticks > span:last-child {
+  transform: translateX(-100%);
+}
+.xt-lanes-scroll {
+  max-height: 264px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.xt-lanes-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.xt-lane-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--secondary);
+  font:
+    400 10.5px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-lane-track {
+  position: relative;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--subtle);
+}
+.xt-lane-track > i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--divider);
+}
+.xt-lane-span {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  min-width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.xt-dash-line .xt-metric-cell,
+.xt-dash-note .xt-metric-cell,
+.xt-dash-list .xt-metric-cell {
+  /* Inline values share the sentence baseline instead of the clipped box edge. */
+  overflow: visible;
+}
+.xt-dash-label,
+.xt-coverage h3 {
+  color: var(--meta);
+  font:
+    400 10px/12px 'Geist Mono',
+    Menlo,
+    monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+/*
+ * Dense values (mean, change and max) can exceed a quarter-width tile. Labels keep their full
+ * natural width; the value row wraps below the label instead of truncating it.
+ */
+.xt-dash-tiles .xt-stat-tile {
+  flex-wrap: wrap;
+  row-gap: 4px;
+  height: auto;
+  min-height: 52px;
+}
+.xt-dash-tiles .xt-stat-label-group {
+  flex-shrink: 0;
+}
+.xt-dash-tiles .xt-stat-row {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
+  margin-left: auto;
+}

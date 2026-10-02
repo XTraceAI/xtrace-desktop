@@ -57,7 +57,7 @@ Native windows use `HashRouter` so navigation survives reloads under the native 
 | Route                          | Placeholder / breadcrumb                            |
 | ------------------------------ | --------------------------------------------------- |
 | `/first-launch`                | Welcome to XTrace / `first-launch`                  |
-| `/dashboard`                   | Dashboard / `dashboard`                             |
+| `/dashboard`                   | What your agents did / `dashboard`; metric report   |
 | `/sessions?pr=<canonical URL>` | Sessions / `sessions`; retains PR query context     |
 | `/prs`                         | Pull requests / `pull-requests`                     |
 | `/rulebook`                    | Rulebook / `rulebook`                               |
@@ -69,6 +69,8 @@ Native windows use `HashRouter` so navigation survives reloads under the native 
 The root route redirects to Dashboard. Unrecognized routes show a page-not-found placeholder. Sidebar selection and breadcrumb derive from the route; Settings and first launch do not highlight an unrelated navigation item. Query parameters are displayed as text only at this stage; there is no session filtering implementation yet.
 
 Cmd+, opens Settings. Cmd+K focuses an enabled page Search if one is present; placeholder screens do not add an unwired search field. Appearance follows the existing system/light/dark preference and persistence behavior. A fixture badge uses `app_info.fixture`, so it also identifies native fixture runs. Missing host and capture data remain explicitly unknown rather than becoming fabricated zeros.
+
+The Shell owns one selected range (7d default, 14d, 30d). The TopBar presets are shown on Dashboard only; the custom-range control stays disabled. The same range keys the Dashboard report and the sidebar `tokensByHost` query, and it is kept when navigating to other routes. The sidebar lists each known host's recorded `total_tokens` for that range, captioned "Recorded tokens · <range>"; an incomplete total shows `—`. Its bar is the host's share of the recorded totals shown, not a quota, limit or reset. The plugin listener stays `unknown`/`off` and capture status stays unknown: historical capture receipts do not mean a surface is capturing now. See [Dashboard acceptance](acceptance/dashboard.md).
 
 On macOS, the platform-specific Tauri configuration uses its built-in `sidebar` window material with a transparent webview. Only the sidebar background is translucent; the content pane, text and controls remain opaque. The native material follows window focus, the selected appearance is also applied to the native window, and Reduce Transparency uses the system opaque material plus a CSS fallback. Other platforms and browser previews retain an opaque sidebar.
 
