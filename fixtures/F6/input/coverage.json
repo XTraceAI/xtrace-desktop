@@ -1,0 +1,173 @@
+{
+  "scope": "usage-coverage-only",
+  "sessions": [
+    {
+      "session_id": "coverage-zero",
+      "surface": "cursor-desktop",
+      "records": [
+        {
+          "uuid": "coverage-zero",
+          "type": "assistant",
+          "timestamp": "2026-09-07T12:00:00Z",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic response"
+              }
+            ],
+            "model": "synthetic-model",
+            "usage": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            }
+          }
+        },
+        {
+          "uuid": "coverage-zero-content",
+          "type": "assistant",
+          "timestamp": "2026-09-07T12:00:00Z",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic response"
+              }
+            ],
+            "model": "synthetic-model"
+          }
+        }
+      ],
+      "measured": true
+    },
+    {
+      "session_id": "coverage-mixed",
+      "surface": "cursor-desktop",
+      "records": [
+        {
+          "uuid": "coverage-mixed-complete",
+          "type": "assistant",
+          "timestamp": "2026-09-07T12:00:00Z",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic response"
+              }
+            ],
+            "model": "synthetic-model",
+            "usage": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            }
+          }
+        },
+        {
+          "uuid": "coverage-mixed-partial",
+          "type": "assistant",
+          "timestamp": "2026-09-07T12:00:00Z",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic response"
+              }
+            ],
+            "model": "synthetic-model",
+            "usage": {
+              "input_tokens": 1
+            }
+          }
+        }
+      ],
+      "measured": false
+    },
+    {
+      "session_id": "coverage-blank-model",
+      "surface": "future.surface",
+      "records": [
+        {
+          "uuid": "coverage-blank-model",
+          "type": "assistant",
+          "timestamp": "2026-09-07T12:00:00Z",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic response"
+              }
+            ],
+            "model": "  \t",
+            "usage": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            }
+          }
+        }
+      ],
+      "measured": false
+    },
+    {
+      "session_id": "coverage-missing-model",
+      "surface": null,
+      "records": [
+        {
+          "uuid": "coverage-missing-model",
+          "type": "assistant",
+          "timestamp": "2026-09-07T12:00:00Z",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic response"
+              }
+            ],
+            "usage": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 0
+            }
+          }
+        }
+      ],
+      "measured": false
+    },
+    {
+      "session_id": "coverage-no-usage",
+      "surface": "cursor-desktop",
+      "records": [
+        {
+          "uuid": "coverage-no-usage",
+          "type": "assistant",
+          "timestamp": "2026-09-07T12:00:00Z",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Synthetic response"
+              }
+            ],
+            "model": "synthetic-model"
+          }
+        }
+      ],
+      "measured": false
+    }
+  ],
+  "expected_sessions": 5,
+  "expected_measured": 1
+}

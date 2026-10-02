@@ -1,5 +1,6 @@
 //! Read-only metrics over canonical work records and explicit event windows.
 mod counts;
+mod coverage;
 mod hands_off;
 mod human;
 mod spans;
@@ -8,6 +9,10 @@ mod sweep;
 mod tokens;
 mod window;
 pub use counts::{Counts, TypingRate};
+pub use coverage::{
+    CaptureGap, Coverage, CoverageSurface, DiscoveryHealth, HostUsageCoverage, InventoryState,
+    SurfaceCapture, SurfaceUsageCoverage, UsageCoverage, UsageCoverageSummary, UsageGap, UsageGate,
+};
 pub use hands_off::{ExcludedSurface, HandsOff};
 pub use human::HumanTime;
 pub use spans::{ActiveSpan, ActiveSpanReport};
@@ -28,6 +33,8 @@ pub enum Error {
     CounterOverflow,
     #[error("Typing rate must be positive characters per minute")]
     InvalidTypingRate,
+    #[error("Duplicate discovery health context for a host/surface")]
+    InvalidCoverageContext,
     #[error(transparent)]
     Time(#[from] jiff::Error),
     #[error(transparent)]
@@ -56,6 +63,13 @@ impl MetricsDb {
         connection.prepare(&format!("{} LIMIT 0", counts::QUERY))?;
         connection.prepare(&format!("{} LIMIT 0", human::QUERY))?;
         connection.prepare(&format!("{} LIMIT 0", hands_off::QUERY))?;
+        for query in [
+            coverage::EVENTS_QUERY,
+            coverage::USAGE_QUERY,
+            coverage::CAPTURE_QUERY,
+        ] {
+            connection.prepare(&format!("{query} LIMIT 0"))?;
+        }
         Ok(Self { connection })
     }
 
