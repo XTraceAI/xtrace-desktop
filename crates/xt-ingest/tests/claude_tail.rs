@@ -1711,3 +1711,230 @@ fn claude_tail_rebuilds_its_watches_after_a_watcher_error() {
     assert_eq!(records(&home.store(), A), 3);
     tailer.stop();
 }
+
+/// A schema-4 index resumed unchanged Claude files behind checkpoints written
+/// before the writer derived human classification. Migration 5 invalidates
+/// those checkpoints once; the watcher's normal initial scan replays each file
+/// through the writer's classifier, which only enriches unknown facts.
+#[test]
+fn claude_tail_v4_upgrade_replays_unchanged_history_once_to_enrich_human_classification() {
+    const MARKER: &str = "synthetic-replay-marker-5c1e";
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    let uuid = |index: usize| format!("7777a0a1-7777-4777-8777-{index:012}");
+    let row = |index: usize, role: &str, content: serde_json::Value| {
+        json!({
+            "uuid": uuid(index),
+            "type": role,
+            "sessionId": A,
+            "entrypoint": "cli",
+            "cwd": "/repo/fixture",
+            "timestamp": format!("2026-09-07T12:00:{index:02}Z"),
+            "message": {"role": role, "content": content}
+        })
+        .to_string()
+            + "\n"
+    };
+    // Every explicit user row except the first is excluded by content, so a
+    // role-based inference would disagree with the classifier.
+    let rows = [
+        row(
+            0,
+            "user",
+            json!([{"type":"text","text":format!("  {MARKER} prompt")}]),
+        ),
+        row(
+            1,
+            "assistant",
+            json!([{"type":"text","text":"answer"},{"type":"tool_use","id":"t1","name":"Read","input":{"path":MARKER}}]),
+        ),
+        row(
+            2,
+            "user",
+            json!([{"type":"tool_result","tool_use_id":"t1","content":MARKER}]),
+        ),
+        row(
+            3,
+            "user",
+            json!([{"type":"text","text":"<command-name>/synthetic"}]),
+        ),
+        row(
+            4,
+            "user",
+            json!([{"type":"text","text":"[Request interrupted by user]"}]),
+        ),
+    ];
+    fs::write(home.file(A), rows.concat()).unwrap();
+    let path = home.file(A);
+    let request = ImportRequest {
+        home: &home.root,
+        hosts: &[Host::Claude],
+        producer: &ProducerSource::Checkout {
+            pin: repo().join(".plugin-pin"),
+            plugin_root: None,
+        },
+        python: None,
+        observed_at: 1,
+        cancel: None,
+    };
+    let classified = |store: &Store| {
+        store
+            .records(A)
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.uuid, r.session_id, r.classification.is_human, r.text_len))
+            .collect::<Vec<_>>()
+    };
+    let mut store = home.store();
+    assert!(scan_native(&mut store, &request, ScanMode::Resume).complete());
+    let expected = classified(&store);
+    assert_eq!(
+        expected.iter().map(|r| r.2).collect::<Vec<_>>(),
+        [
+            Some(true),
+            Some(false),
+            Some(false),
+            Some(false),
+            Some(false)
+        ]
+    );
+    assert_eq!(expected[0].3, Some(MARKER.chars().count() as i64 + 9));
+
+    // Legacy facts: unknown classification and length, sealed receipt coverage
+    // over that poorer measurement, and a checkpoint proving the file at EOF.
+    let sql = Connection::open(&home.db).unwrap();
+    sql.execute("UPDATE records SET is_human=NULL,text_len=NULL", [])
+        .unwrap();
+    let revision = |row: &xt_store::StoredRecord| {
+        let projection = xt_store::measurement::Projection::from_stored(row).unwrap();
+        (
+            projection.field_mask(),
+            format!("{:x}", Sha256::digest(projection.canonical_bytes())),
+        )
+    };
+    let legacy = store.records(A).unwrap();
+    store
+        .insert_capture_receipt(
+            &xt_store::ingest::CaptureReceipt {
+                receipt_id: "synthetic-receipt".into(),
+                session_id: A.into(),
+                surface: Some("cli".into()),
+                received_at: 1,
+            },
+            &legacy
+                .iter()
+                .map(|row| {
+                    let (mask, revision) = revision(row);
+                    xt_store::ingest::RecordCoverage {
+                        record_uuid: row.uuid.clone(),
+                        metric_field_mask: mask,
+                        measurement_revision: revision,
+                        digest_schema_version: 1,
+                    }
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+    // Without the reset, the proven checkpoint skips the file: nothing enriches.
+    let report = scan_native(&mut store, &request, ScanMode::Resume);
+    assert_eq!(
+        report.hosts[0].sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 0,
+            records_enriched: 0
+        }
+    );
+    assert!(
+        classified(&store)
+            .iter()
+            .all(|r| r.2.is_none() && r.3.is_none())
+    );
+    let legacy_checkpoint = checkpoint(&store, &path).unwrap();
+    assert_eq!(legacy_checkpoint.1, file_len(&path));
+    drop(store);
+    sql.execute("DELETE FROM schema_version WHERE version=5", [])
+        .unwrap();
+    let evidence = || {
+        sql.prepare(
+            "SELECT r.receipt_id,r.session_id,r.surface,r.received_at,r.coverage_sealed,
+                    c.record_uuid,c.metric_field_mask,c.measurement_revision,c.digest_schema_version
+             FROM capture_receipts r JOIN capture_record_coverage c USING(receipt_id)
+             ORDER BY c.record_uuid",
+        )
+        .unwrap()
+        .query_map([], |r| {
+            (0..9)
+                .map(|i| r.get::<_, rusqlite::types::Value>(i))
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+    };
+    let receipts = evidence();
+    assert_eq!(receipts.len(), 5);
+    let sources = home.hashes();
+
+    // The app path: the tailer opens (and migrates) the store, then scans.
+    let (tailer, _events) = home.start(None);
+    let ready = tailer.wait_ready(WAIT).expect("ready");
+    assert!(ready.report.complete(), "{ready:?}");
+    assert_eq!(
+        ready.report.hosts[0].sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 0,
+            records_enriched: 5
+        },
+        "the unchanged file was replayed from byte zero"
+    );
+    tailer.stop();
+    let store = home.store();
+    assert_eq!(store.schema_version().unwrap(), 5);
+    assert_eq!(classified(&store), expected);
+    assert_metadata_only(&store, A);
+    let rows = store.records(A).unwrap();
+    assert_eq!(rows[1].tool_uses.len(), 1);
+    assert!(rows[1].tool_uses[0].input_json.is_none());
+    assert_eq!(evidence(), receipts, "receipt coverage is immutable");
+    for (row, old) in rows.iter().zip(&legacy) {
+        assert_ne!(
+            revision(row),
+            revision(old),
+            "enrichment does not upgrade the receipt's measurement"
+        );
+    }
+    let replayed = checkpoint(&store, &path).unwrap();
+    assert_eq!(replayed.1, file_len(&path));
+    assert_eq!(home.hashes(), sources, "sources are never modified");
+    drop(store);
+
+    // Restart: version 5 does not reset again, so the file is proven unchanged.
+    let (tailer, _events) = home.start(None);
+    let ready = tailer.wait_ready(WAIT).expect("ready");
+    assert!(ready.report.complete(), "{ready:?}");
+    assert_eq!(
+        ready.report.hosts[0].sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 0,
+            records_enriched: 0
+        }
+    );
+    tailer.stop();
+    let store = home.store();
+    assert_eq!(checkpoint(&store, &path).unwrap(), replayed);
+    assert_eq!(classified(&store), expected);
+    assert_eq!(evidence(), receipts);
+    drop(store);
+    drop(sql);
+    // No transcript content reached any index file, including WAL sidecars.
+    for entry in fs::read_dir(temp.path()).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            let bytes = fs::read(&path).unwrap();
+            assert!(
+                !bytes.windows(MARKER.len()).any(|w| w == MARKER.as_bytes()),
+                "{path:?} retained transcript content"
+            );
+        }
+    }
+}

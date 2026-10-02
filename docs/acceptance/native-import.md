@@ -132,6 +132,9 @@ the existing writer.
   (the locator proves nothing), adds no rows, and records checkpoints; the next scan
   then proves them. `xtrace-core import-native --replay` rereads every transcript
   regardless and still records checkpoints. Reader hosts have nothing to migrate.
+  Store migration 5 deletes existing transcript checkpoints once so the next
+  scan replays unchanged Claude files through the human classifier; see
+  [human classification replay](human-classification-replay.md).
 - **Watching.** `xt_ingest::native::watch::Tailer` registers a recursive `notify`
   watcher (FSEvents on macOS, inotify on Linux) on each existing host root before the
   initial scan; an absent root is covered by a non-recursive watch on its nearest

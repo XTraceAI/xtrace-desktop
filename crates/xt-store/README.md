@@ -181,8 +181,13 @@ message. `text_len` counts Unicode scalar values across text blocks without
 separators, including whitespace, and excludes tool payloads. Human typing
 consumers use this length only when `is_human` is true.
 
-Existing unknown classifications are not automatically backfilled: they can be
-enriched by replaying sufficient original canonical input. Old receipt masks and
+Existing unknown classifications are never inferred in SQL: they can be
+enriched only by replaying sufficient original canonical input. Migration
+`0005_human_classification_replay.sql` therefore deletes transcript rows from
+`native_checkpoints` once, so the next native scan replays unchanged Claude files
+through this preparation path and records new checkpoints. Reader-host
+checkpoints, records, receipts, coverage and content are untouched, and later
+opens do not repeat the reset. Old receipt masks and
 measurement revisions remain immutable; later classification enrichment cannot
 retroactively establish capture coverage. Existing raw command/interrupt/reminder
 prefix flags retain their original untrimmed semantics.
