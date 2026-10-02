@@ -7,6 +7,7 @@ import { MetricCell } from '../kit/MetricCell';
 import { SectionCard } from '../kit/SectionCard';
 import { useAppInfo, useDbCounts, useNativeIndexStatus } from './useAppInfo';
 import type { NativeIndexStatus } from '../data/generated/NativeIndexStatus';
+import { freshnessText, phaseText } from './native-index-text';
 
 export function PlaceholderPage({ title }: { title: string }) {
   const { pathname } = useLocation();
@@ -96,30 +97,6 @@ export function PlaceholderPage({ title }: { title: string }) {
   );
 }
 
-const phaseText = (status: NativeIndexStatus) => {
-  const { phase } = status;
-  switch (phase.phase) {
-    case 'disabled':
-      return `Disabled: ${phase.reason}`;
-    case 'scanning':
-      return `Scanning (${status.files_scanned} Claude transcripts read)`;
-    case 'ready':
-      return `Ready (${status.reconciles} reconciliations)`;
-    case 'stopped':
-      return 'Stopped';
-  }
-};
-const freshnessText = (status: NativeIndexStatus) => {
-  const { freshness } = status;
-  switch (freshness.freshness) {
-    case 'unknown':
-      return 'Not watching yet';
-    case 'live':
-      return 'Live: changes are reconciled as they happen';
-    case 'degraded':
-      return `Degraded: ${freshness.reason}`;
-  }
-};
 const hostText = (host: NativeIndexStatus['hosts'][number]) => {
   const parts = [
     host.state,

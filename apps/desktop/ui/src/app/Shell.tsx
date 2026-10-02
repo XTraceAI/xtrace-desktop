@@ -1,11 +1,15 @@
+import { useState } from 'react';
 import { matchRoutes, Outlet, useLocation, useNavigate } from 'react-router';
 import { useData } from '../data/DataProvider';
 import { Sidebar, type SidebarKey } from '../kit/Sidebar';
-import { TopBar } from '../kit/TopBar';
+import { TopBar, type TimeRange } from '../kit/TopBar';
 import { useTheme } from '../theme/ThemeProvider';
 import { useAppInfo } from './useAppInfo';
 import { pages } from './routes';
 import { useShellShortcuts } from './useShellShortcuts';
+import { useTokensByHost, type ShellOutletContext } from './dashboard/range';
+import { hostTokenRows } from './dashboard/host-tokens';
+import { windowLabel, zoneLabel } from './dashboard/present';
 import '../styles/shell.css';
 
 export function Shell() {
@@ -17,6 +21,14 @@ export function Shell() {
   const page = matchRoutes(pages, location)?.at(-1);
   const current = page?.route;
   const nativeMac = source.kind === 'native' && navigator.platform.startsWith('Mac');
+  // One selected range for the Dashboard, its TopBar presets and the sidebar token totals.
+  const [range, setRange] = useState<TimeRange>('7d');
+  const tokens = useTokensByHost(range);
+  const hosts = hostTokenRows(tokens.data);
+  const outlet: ShellOutletContext = { range };
+  const onDashboard = current?.path === '/dashboard';
+  // The report window for the selected range; absent until that range has loaded.
+  const period = onDashboard ? tokens.data?.window : undefined;
   useShellShortcuts();
   function onNavigate(key: SidebarKey) {
     void navigate(`/${key}`);
@@ -27,7 +39,10 @@ export function Shell() {
         activeKey={current?.active}
         onNavigate={onNavigate}
         leaderboardEnabled
-        hosts={[]}
+        hosts={hosts}
+        tokensCaption={
+          tokens.isError ? 'Recorded tokens unavailable' : `Recorded tokens · ${range}`
+        }
         surfaces={[]}
         listener={{ status: info.data?.listening === false ? 'off' : 'unknown' }}
         version={info.data?.version ?? '…'}
@@ -41,10 +56,20 @@ export function Shell() {
         <TopBar
           crumb={current?.crumb ?? 'not-found'}
           subcrumb={location.pathname === '/rulebook/fires' ? 'fires' : page?.params.ruleId}
-          showRange={false}
+          {...(onDashboard ? { range, onRange: setRange } : { showRange: false as const })}
           nativeDrag={nativeMac}
           right={
             <>
+              {period && (
+                <span
+                  className="xt-topbar-period"
+                  data-testid="report-period"
+                  title={`${windowLabel(period)} · ${zoneLabel(period)}`}
+                >
+                  {windowLabel(period)}
+                  <span className="sr-only">, time zone {zoneLabel(period)}</span>
+                </span>
+              )}
               {info.data?.fixture && (
                 <span className="xt-fixture-badge" role="status">
                   fixture {info.data.fixture}
@@ -75,7 +100,7 @@ export function Shell() {
               Live updates are unavailable.
             </p>
           )}
-          <Outlet />
+          <Outlet context={outlet} />
         </main>
       </div>
     </div>

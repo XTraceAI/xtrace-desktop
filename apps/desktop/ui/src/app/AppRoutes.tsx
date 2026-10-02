@@ -1,4 +1,5 @@
 import { SessionsPage } from './SessionsPage';
+import { DashboardPage } from './dashboard/DashboardPage';
 import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router';
 import { Shell } from './Shell';
@@ -29,7 +30,13 @@ export function AppRoutes() {
             key={page.path}
             path={page.path}
             element={
-              page.path === '/sessions' ? <SessionsPage /> : <PlaceholderPage title={page.title} />
+              page.path === '/sessions' ? (
+                <SessionsPage />
+              ) : page.path === '/dashboard' ? (
+                <DashboardPage />
+              ) : (
+                <PlaceholderPage title={page.title} />
+              )
             }
           />
         ))}
