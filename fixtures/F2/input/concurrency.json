@@ -1,0 +1,34 @@
+{
+  "occupancy_intervals": [
+    {
+      "start_minute": 0,
+      "end_minute": 10,
+      "occupancy": 1
+    },
+    {
+      "start_minute": 10,
+      "end_minute": 20,
+      "occupancy": 2
+    },
+    {
+      "start_minute": 20,
+      "end_minute": 30,
+      "occupancy": 3
+    },
+    {
+      "start_minute": 30,
+      "end_minute": 40,
+      "occupancy": 2
+    },
+    {
+      "start_minute": 40,
+      "end_minute": 50,
+      "occupancy": 1
+    }
+  ],
+  "expected": {
+    "max": 3,
+    "mean": 1.8,
+    "wall_active_ms": 3000000
+  }
+}

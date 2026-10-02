@@ -14,6 +14,7 @@
     }
   ],
   "snapshots": {
-    "spans": "input/spans.json"
+    "spans": "input/spans.json",
+    "concurrency": "input/concurrency.json"
   }
 }
