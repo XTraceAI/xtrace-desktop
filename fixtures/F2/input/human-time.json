@@ -1,0 +1,18 @@
+{
+  "scope": "human-time-on-shared-spans",
+  "session_unions_minutes": {
+    "f2-lane-a": [
+      [0, 20],
+      [30, 50]
+    ],
+    "f2-lane-b": [[10, 30]],
+    "f2-lane-c": [[20, 40]]
+  },
+  "wall_union_minutes": [[0, 50]],
+  "expected": {
+    "human_minutes_est": 50.0,
+    "summed_session_minutes_est": 80.0,
+    "agent_minutes": 90.0,
+    "agent_to_human_ratio": 1.8
+  }
+}
