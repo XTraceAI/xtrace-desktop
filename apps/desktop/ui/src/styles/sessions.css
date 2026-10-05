@@ -1,9 +1,124 @@
 .xt-sessions {
-  padding: 12px 16px;
+  /* The summary tiles reflow against this page's own width, not the window's:
+     the sidebar is outside it, and the outlet may be scrolled. */
+  container: sessions / inline-size;
+  padding: 12px 16px 12px;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+/* The reference fills the window: heading, summary and the list's header keep
+   their height, and the list's rows take whatever is left and scroll inside
+   their own panel, so one scrollbar moves the rows and the page stays put.
+   When the window is too short to leave the list a usable height, the list
+   keeps that minimum and the outlet scrolls instead of rows being lost. */
+.xt-sessions > * {
+  flex-shrink: 0;
+}
+.xt-sessions > .xt-section-card {
+  flex: 1 1 0;
+  min-height: 260px;
+}
+.xt-sessions > .xt-section-card > .xt-section-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.xt-sessions > .xt-section-card .xt-table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.xt-sessions-recent {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 3px;
   min-width: 0;
+  padding: 6px 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--subtle);
+  font-size: 11px;
+}
+.xt-sessions-recent-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 6px 14px;
+  flex-wrap: wrap;
+}
+.xt-sessions-recent h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+}
+.xt-sessions-recent p {
+  margin: 0;
+  color: var(--meta);
+}
+.xt-sessions-recent-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 14px;
+}
+.xt-sessions-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 152px;
+  margin: 1px 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.xt-sessions-recent-list li {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  border-top: 1px solid var(--divider);
+}
+.xt-sessions-recent-host,
+.xt-sessions-recent-id,
+.xt-sessions-recent-list time {
+  color: var(--meta);
+  font:
+    400 10px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-sessions-recent-list a {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--accent-ink);
+  text-decoration: none;
+}
+.xt-sessions-recent-list a:hover,
+.xt-sessions-recent-list a:focus-visible {
+  text-decoration: underline;
+}
+.xt-sessions-recent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-sessions-recent-id {
+  overflow-wrap: anywhere;
+}
+.xt-sessions-recent-limit {
+  color: var(--warning) !important;
+}
+@container sessions (max-width: 650px) {
+  .xt-sessions-recent-list li {
+    grid-template-columns: 66px minmax(0, 1fr);
+  }
+  .xt-sessions-recent-list time {
+    grid-column: 2;
+  }
 }
 .xt-sessions-heading {
   display: flex;
@@ -12,59 +127,256 @@
   gap: 16px;
   flex-wrap: wrap;
 }
+/* The title and its one-line subtitle keep their width; when the controls do
+   not fit beside them they take a line of their own and keep to the right, so
+   the warning flag at their end is always at the heading's right edge. */
+.xt-sessions-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.xt-sessions-title p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .xt-sessions h1 {
   margin: 0;
   font-size: 20px;
   font-weight: 800;
   color: var(--ink);
 }
-.xt-sessions p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--secondary);
+.xt-sessions-heading p {
+  margin: 2px 0 0;
+  color: var(--meta);
+  font:
+    400 10.5px/1.4 'Geist Mono',
+    Menlo,
+    monospace;
 }
 .xt-sessions-filters {
   display: flex;
   gap: 8px;
   align-items: center;
+  margin-left: auto;
 }
-.xt-sessions-filters select {
-  background: var(--surface);
-  color: var(--body);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 10px;
+/* The reference's compact controls: search, host glyph menu, PR switch. */
+.xt-sessions-filters .xt-search {
+  width: 350px;
+  max-width: 100%;
+}
+.xt-sessions-filters .xt-toggle {
+  height: 30px;
+  font-size: 11px;
+}
+@container sessions (max-width: 760px) {
+  .xt-sessions-filters {
+    flex-wrap: wrap;
+  }
+  .xt-sessions-filters .xt-search {
+    width: 100%;
+  }
 }
 .xt-session-name {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 3px;
+  gap: 1px;
 }
-.xt-session-name strong,
-.xt-session-name span {
+.xt-session-name .xt-session-open,
+.xt-session-name .xt-session-meta {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.xt-session-name strong {
+/* A saved title, or the session's identity, leads the cell and opens it; the
+   repository, branch and model sit under it. */
+.xt-session-name .xt-session-open {
   font-size: 12px;
   color: var(--ink);
-  font-weight: 600;
+  font-weight: 500;
+  text-decoration: none;
 }
-.xt-session-name span {
-  font-size: 10px;
+.xt-session-name .xt-session-open:hover,
+.xt-session-name .xt-session-open:focus-visible {
+  text-decoration: underline;
+}
+.xt-session-branch {
+  color: var(--secondary);
+}
+.xt-session-flag {
+  color: var(--warning);
+}
+/* Up to two recorded links, then a count; the dot is each link's evidence. */
+.xt-session-prs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+.xt-session-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--subtle);
+  color: var(--accent-ink);
+  font:
+    400 10px 'Geist Mono',
+    Menlo,
+    monospace;
+  white-space: nowrap;
+}
+/* An inferred link is never drawn like an exact one. */
+.xt-session-pr[data-confidence='inferred'] {
+  border-style: dashed;
+  background: transparent;
+  color: var(--secondary);
+}
+.xt-session-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+  font:
+    400 10.5px/1.5 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-session-details dt {
+  color: var(--meta);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 9.5px;
+}
+.xt-session-details dd {
+  margin: 0;
+  color: var(--body);
+}
+.xt-session-details dd[data-flagged] {
+  color: var(--warning);
+}
+.xt-session-details small {
   color: var(--meta);
 }
-.xt-sessions-notice a {
+.xt-session-details ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.xt-session-name .xt-session-meta {
+  color: var(--meta);
+  font:
+    400 10px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+/* The heading's warning flag opens the index state and untimed history in a
+   dialog over the page; its Settings link reads as a link there too. */
+.xt-sessions-issue a {
   color: var(--accent-ink);
 }
+.xt-sessions-issue a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+/* Stays under the rows, outside their scroll, so it is always reachable. */
 .xt-sessions-more {
   display: flex;
+  flex-shrink: 0;
   justify-content: center;
-  padding-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--divider);
 }
 
 .xt-shell-outlet:has(> .xt-sessions) {
+  display: flex;
+  flex-direction: column;
   padding: 0;
+}
+
+/* Reference density: measured and structural cells share the mono scale. */
+.xt-session-mono {
+  display: block;
+  overflow: hidden;
+  color: var(--secondary);
+  font:
+    400 10.5px 'Geist Mono',
+    Menlo,
+    monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-session-mono[data-flagged] {
+  color: var(--warning);
+}
+
+/* The reference's four measurements above the list, on the Dashboard's grid. */
+.xt-sessions-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.xt-sessions-summary-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0;
+  color: var(--warning);
+  font:
+    400 10.5px/1.4 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-sessions-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+/* A long label keeps its full width and the value wraps beneath it, so no
+   measurement is abbreviated to fit; below two tiles' worth of width the row
+   halves instead. */
+.xt-sessions-tiles .xt-stat-tile {
+  flex-wrap: wrap;
+  row-gap: 4px;
+  height: auto;
+  min-height: 52px;
+}
+.xt-sessions-tiles .xt-stat-label-group {
+  flex-shrink: 0;
+}
+.xt-sessions-tiles .xt-stat-row {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
+  margin-left: auto;
+}
+@container sessions (max-width: 760px) {
+  .xt-sessions-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* A sub-session's second line: its parent first, then the row's own context,
+   which gives way to the ellipsis first. The row keeps its 40px. */
+.xt-session-line {
+  container: subsession / inline-size;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.xt-session-line .xt-session-parent {
+  max-width: 60%;
+}
+.xt-session-line .xt-session-meta {
+  flex: 1 1 0;
+  min-width: 0;
 }

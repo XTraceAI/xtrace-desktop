@@ -1,0 +1,445 @@
+/* Transcript presentation. Tokens only: the screen has to read correctly in both themes,
+   and nothing here knows which one it is in. */
+
+.xt-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 16px 24px;
+}
+
+/* A statement about the record, never about the reader's luck. Stands apart from the turns
+   so it is not mistaken for one of them. */
+.xt-transcript-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--body);
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.xt-transcript-notice[data-state='unavailable'] {
+  border-color: var(--warning-tint);
+}
+.xt-transcript-notice p {
+  margin: 0;
+}
+.xt-transcript-note {
+  color: var(--meta);
+  font-size: 11.5px;
+}
+
+.xt-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 10px 12px;
+}
+/* The person's own turns sit on the sunken fill. Full width and left aligned like every
+   other turn: a transcript is a record being read, not a chat being held. */
+.xt-turn[data-role='user'] {
+  background: var(--subtle);
+}
+
+.xt-turn-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--meta);
+  font:
+    500 9.5px/1.4 'Geist Mono',
+    Menlo,
+    monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.xt-turn-time {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.xt-turn-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Inert text. `pre-wrap` keeps the record's own line breaks without asking a parser to decide
+   what they meant, and `anywhere` keeps a pasted hash inside the column. */
+.xt-tx-text {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.xt-tx-text[data-block='thinking'] {
+  border-left: 2px solid var(--divider);
+  padding-left: 10px;
+  color: var(--secondary);
+  font-style: italic;
+  font-size: 12.5px;
+}
+
+.xt-tx-unsupported {
+  color: var(--meta);
+  font-size: 11.5px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Formatted answer ------------------------------------------------------- */
+
+/* The agent's text, drawn from its Markdown (see TranscriptMarkdown). The same type as inert
+   text above, so formatting reads as the same voice, and tokens only, so it is right in both
+   themes. `anywhere` sits on the root because an escaped raw-HTML line arrives as a bare text
+   node with no element for a descendant rule to reach. */
+.xt-md {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.xt-md p,
+.xt-md ul,
+.xt-md ol,
+.xt-md blockquote,
+.xt-md hr,
+.xt-md-heading {
+  margin: 0;
+}
+.xt-md-heading {
+  color: var(--ink);
+  font-weight: 650;
+  line-height: 1.35;
+  margin-top: 4px;
+}
+.xt-md-heading[data-level='1'] {
+  font-size: 15px;
+}
+.xt-md-heading[data-level='2'] {
+  font-size: 14px;
+}
+.xt-md-heading[data-level='3'],
+.xt-md-heading[data-level='4'],
+.xt-md-heading[data-level='5'],
+.xt-md-heading[data-level='6'] {
+  font-size: 13px;
+}
+.xt-md ul,
+.xt-md ol {
+  padding-left: 20px;
+}
+.xt-md ul {
+  list-style: disc;
+}
+.xt-md ol {
+  list-style: decimal;
+}
+.xt-md li + li {
+  margin-top: 2px;
+}
+.xt-md li[data-task] {
+  list-style: none;
+}
+.xt-md-task {
+  color: var(--meta);
+  font:
+    400 11.5px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-md blockquote {
+  border-left: 2px solid var(--divider);
+  padding-left: 10px;
+  color: var(--secondary);
+}
+.xt-md strong {
+  font-weight: 650;
+}
+.xt-md hr {
+  border: 0;
+  border-top: 1px solid var(--divider);
+}
+.xt-md-code {
+  border-radius: 4px;
+  background: var(--track);
+  color: var(--ink);
+  padding: 1px 4px;
+  font:
+    400 11.5px 'Geist Mono',
+    Menlo,
+    monospace;
+  overflow-wrap: anywhere;
+}
+/* Inert, and drawn as inert: a link is text in the answer's colour with a quiet underline, and
+   its destination follows in the meta colour — never the accent, which on this screen means
+   "a control you can press". */
+.xt-md-link {
+  text-decoration: underline dotted;
+  text-decoration-color: var(--meta);
+  text-underline-offset: 2px;
+}
+.xt-md-link-target,
+.xt-md-image {
+  color: var(--meta);
+  font-size: 12px;
+}
+.xt-md-image {
+  font-style: italic;
+}
+
+/* A table scrolls inside its own box in both directions, like a code surface: one wide or
+   long table cannot push the transcript sideways or off the page, and the box is a named,
+   focusable stop so the keyboard can scroll it (see CodeSurface for why that matters in
+   WebKit). */
+.xt-md-table {
+  max-width: 100%;
+  max-height: 20rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.xt-md-table:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.xt-md table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  min-width: 100%;
+}
+.xt-md th,
+.xt-md td {
+  border-bottom: 1px solid var(--divider);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: normal;
+}
+.xt-md th + th,
+.xt-md td + td {
+  border-left: 1px solid var(--divider);
+}
+.xt-md th {
+  position: sticky;
+  top: 0;
+  background: var(--subtle);
+  color: var(--ink);
+  font-weight: 600;
+}
+.xt-md tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Clamp ------------------------------------------------------------------- */
+
+.xt-clamp-box[data-clamped] {
+  overflow: hidden;
+  /* A mask, not a gradient onto a fill: the clamped block sits on two different backgrounds
+     and a mask fades the content's own alpha, so it is right on either. */
+  mask-image: linear-gradient(to bottom, black calc(100% - 2.5rem), transparent);
+}
+.xt-clamp-toggle {
+  margin-top: 4px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--secondary);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.xt-clamp-toggle:hover {
+  background: var(--track);
+  color: var(--ink);
+}
+
+/* Code and payloads ------------------------------------------------------- */
+
+.xt-tx-code {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.xt-tx-code-label {
+  color: var(--meta);
+  font:
+    600 9.5px/1.3 'Geist Mono',
+    Menlo,
+    monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+/* Bounded and scrolling inside its own box: a recorded tool result is routinely tens of
+   kilobytes, and letting one push the conversation off the page costs the reader the thing
+   the result belongs to. */
+/* The box is focusable (see CodeSurface), so the ring has to be drawn: index.css styles
+   `button:focus-visible` only, and a tab stop nobody can see is a tab stop nobody can use. */
+.xt-tx-code pre:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.xt-tx-code pre {
+  margin: 0;
+  max-height: 16rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--canvas);
+  color: var(--secondary);
+  padding: 8px 10px;
+  font:
+    400 11px/1.5 'Geist Mono',
+    Menlo,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+/* Tool strip -------------------------------------------------------------- */
+
+.xt-tool-strip {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.xt-tool-group + .xt-tool-group {
+  border-top: 1px solid var(--divider);
+}
+.xt-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--body);
+  padding: 7px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.xt-tool-row:hover {
+  background: var(--track);
+}
+.xt-tool-chevron {
+  flex: none;
+  color: var(--meta);
+  transition: transform 120ms ease;
+}
+.xt-tool-row[aria-expanded='true'] .xt-tool-chevron {
+  transform: rotate(90deg);
+}
+.xt-tool-summary {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--body);
+}
+.xt-tool-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--meta);
+  font:
+    400 10.5px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-tool-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 10px 8px;
+}
+/* Stated, not inherited: `display: flex` above and the user agent's `[hidden]` rule carry the
+   same specificity, so which one wins would otherwise depend on the order two stylesheets
+   happened to be bundled in — and losing that race would leave every collapsed row open. */
+.xt-tool-cards[hidden] {
+  display: none;
+}
+
+.xt-tool-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 8px 10px;
+  min-width: 0;
+}
+.xt-tool-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.xt-tool-name {
+  flex: none;
+  color: var(--ink);
+  font:
+    600 11.5px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-tool-arg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--meta);
+  font:
+    400 11px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-tool-note {
+  margin: 0;
+  color: var(--meta);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.xt-tool-note[data-tone='error'] {
+  color: var(--danger);
+}
+
+/* A closed row's stand-in for one call: an addressable node with no size, no text and
+   nothing to paint. It exists so a jump target does, before anybody opens the row. */
+.xt-tool-anchor {
+  display: none;
+}
+
+/* The card a reveal landed on. An outline rather than a fill, so the card's own content and
+   its failure colouring read exactly as they do unhighlighted. */
+.xt-tool-card[data-highlighted] {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .xt-tool-card {
+    transition: outline-color 160ms ease-out;
+  }
+}

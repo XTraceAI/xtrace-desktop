@@ -1,0 +1,170 @@
+/* The menu-bar popover: a fixed 360x540 panel in a transparent native window. */
+:root[data-surface='tray'],
+:root[data-surface='tray'] body {
+  background: transparent;
+  overflow: hidden;
+}
+.xt-tray {
+  box-sizing: border-box;
+  width: 360px;
+  height: 540px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--menu);
+  color: var(--body);
+  font-family: var(--font-sans);
+}
+.xt-tray-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+}
+.xt-tray-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.xt-tray-brand img {
+  display: block;
+  object-fit: contain;
+}
+.xt-tray-status {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-tray-card {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--lift);
+}
+.xt-tray-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.xt-tray-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+}
+.xt-tray-label,
+.xt-tray-heading {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.xt-tray-label {
+  color: var(--meta);
+}
+.xt-tray-heading {
+  color: var(--ink);
+  font-weight: 600;
+}
+.xt-tray-value {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.xt-tray-unit {
+  margin-left: 3px;
+  color: var(--secondary);
+  font-size: 12px;
+}
+/* Wraps rather than truncates: a partial cost must never lose "not a total". */
+.xt-tray-meta {
+  color: var(--meta);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.xt-tray-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+}
+.xt-tray-unavailable {
+  margin: 0;
+  color: var(--meta);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.xt-tray-message {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px;
+  color: var(--secondary);
+  font-size: 12px;
+}
+.xt-tray-stale {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--warning-tint);
+  color: var(--warning);
+  font-size: 11px;
+}
+.xt-tray-retry {
+  flex: none;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.xt-tray-footnote {
+  margin: 0;
+  padding: 0 4px;
+  color: var(--meta);
+  font-size: 10.5px;
+}
+.xt-tray-spacer {
+  flex: 1;
+}
+.xt-tray-open {
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--btn-ink);
+  color: var(--btn-ink-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}

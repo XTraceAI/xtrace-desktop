@@ -143,6 +143,7 @@ impl Home {
                 },
                 python: None,
                 debounce: Duration::from_millis(100),
+                spawn_limits: xt_ingest::native::session_creation::spawn_limits(),
                 probe,
             },
             sink,
@@ -1147,6 +1148,7 @@ fn claude_tail_reports_a_watcher_failure_as_degraded_never_silent_ready() {
             },
             python: None,
             debounce: Duration::from_millis(100),
+            spawn_limits: xt_ingest::native::session_creation::spawn_limits(),
             probe: None,
         },
         sink,
@@ -1289,6 +1291,7 @@ fn claude_tail_watches_the_cursor_parent_so_a_sibling_root_is_seen_when_it_appea
             },
             python: None,
             debounce: Duration::from_millis(100),
+            spawn_limits: xt_ingest::native::session_creation::spawn_limits(),
             probe: None,
         },
         sink,
@@ -1354,6 +1357,7 @@ fn claude_tail_watches_the_cursor_hook_state_pins_so_a_pin_change_is_reconciled(
             },
             python: None,
             debounce: Duration::from_millis(100),
+            spawn_limits: xt_ingest::native::session_creation::spawn_limits(),
             probe: None,
         },
         sink,
@@ -1381,6 +1385,82 @@ fn claude_tail_watches_the_cursor_hook_state_pins_so_a_pin_change_is_reconciled(
         unreachable!()
     };
     assert_eq!(report.hosts[0].host, Host::Cursor);
+    tailer.stop();
+}
+
+#[test]
+fn cursor_ide_appearance_recreation_and_wal_changes_are_watched_without_alias_duplicates() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    fs::create_dir_all(&home).unwrap();
+    let events = Events::default();
+    let sink = {
+        let events = events.clone();
+        Box::new(move |event: TailEvent| events.0.lock().unwrap().push(event))
+            as Box<dyn Fn(TailEvent) + Send>
+    };
+    let tailer = Tailer::start(
+        Store::open(temp.path().join("index.sqlite")).unwrap(),
+        WatchConfig {
+            home: home.clone(),
+            hosts: vec![Host::Cursor],
+            producer: ProducerSource::Checkout {
+                pin: repo().join(".plugin-pin"),
+                plugin_root: None,
+            },
+            python: None,
+            debounce: Duration::from_millis(100),
+            spawn_limits: xt_ingest::native::session_creation::spawn_limits(),
+            probe: None,
+        },
+        sink,
+    );
+    tailer.wait_ready(WAIT).expect("ready");
+    assert_eq!(tailer.status().watched.len(), 1, "one physical fallback");
+    let relative = "Library/Application Support/Cursor/User/globalStorage";
+    let global = home.join(relative);
+    let mut seen = tailer.status().reconciles;
+    fs::create_dir_all(&global).unwrap();
+    fs::write(global.join("state.vscdb"), b"synthetic watch-only fixture").unwrap();
+    seen = settle(&tailer, seen);
+    assert!(tailer.status().watched.iter().any(|path| Path::new(path).canonicalize().ok() == Some(global.canonicalize().unwrap())));
+    for spelling in [&home, &home.canonicalize().unwrap()] {
+        // Only WAL bytes change; no indexed records or transcript activity.
+        fs::write(
+            spelling.join(relative).join("state.vscdb-wal"),
+            b"synthetic WAL change",
+        )
+        .unwrap();
+        seen = settle(&tailer, seen);
+        let installed = tailer.status().watch_installs;
+        tailer.inject_removed(&spelling.join(relative));
+        seen = settle(&tailer, seen);
+        assert!(tailer.status().watch_installs > installed);
+    }
+    fs::remove_file(global.join("state.vscdb-wal")).unwrap();
+    fs::remove_file(global.join("state.vscdb")).unwrap();
+    fs::remove_dir(&global).unwrap();
+    seen = settle(&tailer, seen);
+    fs::create_dir_all(&global).unwrap();
+    seen = settle(&tailer, seen);
+    fs::write(global.join("state.vscdb-wal"), b"after recreation").unwrap();
+    settle(&tailer, seen);
+    let status = tailer.status();
+    let physical: std::collections::BTreeSet<_> = status
+        .watched
+        .iter()
+        .map(|path| Path::new(path).canonicalize().unwrap())
+        .collect();
+    assert_eq!(physical.len(), status.watched.len());
+    assert!(events.reconciled().iter().all(|event| matches!(event, TailEvent::Reconciled { report, .. } if report.hosts.len() == 1 && report.hosts[0].host == Host::Cursor)));
+    assert_eq!(
+        Store::open(temp.path().join("index.sqlite"))
+            .unwrap()
+            .counts()
+            .unwrap()
+            .records,
+        0
+    );
     tailer.stop();
 }
 
@@ -1647,6 +1727,7 @@ fn claude_tail_follows_an_accepted_symlinked_home_for_the_fallback_watch() {
             },
             python: None,
             debounce: Duration::from_millis(100),
+            spawn_limits: xt_ingest::native::session_creation::spawn_limits(),
             probe: None,
         },
         sink,
@@ -1710,4 +1791,257 @@ fn claude_tail_rebuilds_its_watches_after_a_watcher_error() {
     settle(&tailer, seen);
     assert_eq!(records(&home.store(), A), 3);
     tailer.stop();
+}
+
+/// A schema-4 index resumed unchanged Claude files behind checkpoints written
+/// before the writer derived human classification. Migration 5 invalidates
+/// those checkpoints once; the watcher's normal initial scan replays each file
+/// through the writer's classifier, which only enriches unknown facts.
+#[test]
+fn claude_tail_v4_upgrade_replays_unchanged_history_once_to_enrich_human_classification() {
+    const MARKER: &str = "synthetic-replay-marker-5c1e";
+    // Tool input and output are never kept; only the person's message has a
+    // short preview.
+    const UNKEPT: &str = "synthetic-tool-marker-9d2a";
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = Home::new(temp.path());
+    let uuid = |index: usize| format!("7777a0a1-7777-4777-8777-{index:012}");
+    let row = |index: usize, role: &str, content: serde_json::Value| {
+        json!({
+            "uuid": uuid(index),
+            "type": role,
+            "sessionId": A,
+            "entrypoint": "cli",
+            "cwd": "/repo/fixture",
+            "timestamp": format!("2026-09-07T12:00:{index:02}Z"),
+            "message": {"role": role, "content": content}
+        })
+        .to_string()
+            + "\n"
+    };
+    // Every explicit user row except the first is excluded by content, so a
+    // role-based inference would disagree with the classifier.
+    let rows = [
+        row(
+            0,
+            "user",
+            json!([{"type":"text","text":format!("  {MARKER} prompt")}]),
+        ),
+        row(
+            1,
+            "assistant",
+            json!([{"type":"text","text":"answer"},{"type":"tool_use","id":"t1","name":"Read","input":{"path":UNKEPT}}]),
+        ),
+        row(
+            2,
+            "user",
+            json!([{"type":"tool_result","tool_use_id":"t1","content":UNKEPT}]),
+        ),
+        row(
+            3,
+            "user",
+            json!([{"type":"text","text":"<command-name>/synthetic"}]),
+        ),
+        row(
+            4,
+            "user",
+            json!([{"type":"text","text":"[Request interrupted by user]"}]),
+        ),
+    ];
+    fs::write(home.file(A), rows.concat()).unwrap();
+    let path = home.file(A);
+    let request = ImportRequest {
+        home: &home.root,
+        hosts: &[Host::Claude],
+        producer: &ProducerSource::Checkout {
+            pin: repo().join(".plugin-pin"),
+            plugin_root: None,
+        },
+        python: None,
+        observed_at: 1,
+        cancel: None,
+    };
+    let classified = |store: &Store| {
+        store
+            .records(A)
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.uuid, r.session_id, r.classification.is_human, r.text_len))
+            .collect::<Vec<_>>()
+    };
+    let mut store = home.store();
+    assert!(scan_native(&mut store, &request, ScanMode::Resume).complete());
+    let expected = classified(&store);
+    assert_eq!(
+        expected.iter().map(|r| r.2).collect::<Vec<_>>(),
+        [
+            Some(true),
+            Some(false),
+            Some(false),
+            Some(false),
+            Some(false)
+        ]
+    );
+    assert_eq!(expected[0].3, Some(MARKER.chars().count() as i64 + 9));
+
+    // Legacy facts: unknown classification and length, sealed receipt coverage
+    // over that poorer measurement, and a checkpoint proving the file at EOF.
+    let sql = Connection::open(&home.db).unwrap();
+    sql.execute("UPDATE records SET is_human=NULL,text_len=NULL", [])
+        .unwrap();
+    let revision = |row: &xt_store::StoredRecord| {
+        let projection = xt_store::measurement::Projection::from_stored(row).unwrap();
+        (
+            projection.field_mask(),
+            format!("{:x}", Sha256::digest(projection.canonical_bytes())),
+        )
+    };
+    let legacy = store.records(A).unwrap();
+    store
+        .insert_capture_receipt(
+            &xt_store::ingest::CaptureReceipt {
+                receipt_id: "synthetic-receipt".into(),
+                session_id: A.into(),
+                surface: Some("cli".into()),
+                received_at: 1,
+            },
+            &legacy
+                .iter()
+                .map(|row| {
+                    let (mask, revision) = revision(row);
+                    xt_store::ingest::RecordCoverage {
+                        record_uuid: row.uuid.clone(),
+                        metric_field_mask: mask,
+                        measurement_revision: revision,
+                        digest_schema_version: 1,
+                    }
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+    // Without the reset, the proven checkpoint skips the file: nothing enriches.
+    let report = scan_native(&mut store, &request, ScanMode::Resume);
+    assert_eq!(
+        report.hosts[0].sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 0,
+            records_enriched: 0
+        }
+    );
+    assert!(
+        classified(&store)
+            .iter()
+            .all(|r| r.2.is_none() && r.3.is_none())
+    );
+    let legacy_checkpoint = checkpoint(&store, &path).unwrap();
+    assert_eq!(legacy_checkpoint.1, file_len(&path));
+    drop(store);
+    sql.execute_batch(
+        "DELETE FROM schema_version WHERE version>=5;
+         ALTER TABLE pull_requests DROP COLUMN refresh_error; ALTER TABLE pull_requests DROP COLUMN last_attempted_at;
+         ALTER TABLE tool_uses DROP COLUMN group_key;
+         ALTER TABLE tool_uses DROP COLUMN group_version;
+         ALTER TABLE tool_uses DROP COLUMN group_conflict;
+         DROP TABLE confirmed_automated_inputs;
+         DROP TABLE guardian_turn_inputs;
+         DROP TABLE injected_context_inputs; DROP TABLE IF EXISTS task_notification_inputs; DROP TABLE IF EXISTS record_previews; DROP TABLE IF EXISTS human_input_adjustments; DROP TABLE IF EXISTS human_session_origins;
+         DROP TABLE session_creation_relations;
+         DROP TABLE session_creation_bootstrap; DROP TABLE cli_artifact_launch_owners; DROP TABLE claude_launch_groups; DROP TABLE claude_launch_group_members; DROP TABLE claude_launch_candidates; DROP TABLE claude_launch_staged_candidates;
+         DROP INDEX sessions_host_native; DROP INDEX source_cursors_tail;",
+    )
+        .unwrap();
+    let evidence = || {
+        sql.prepare(
+            "SELECT r.receipt_id,r.session_id,r.surface,r.received_at,r.coverage_sealed,
+                    c.record_uuid,c.metric_field_mask,c.measurement_revision,c.digest_schema_version
+             FROM capture_receipts r JOIN capture_record_coverage c USING(receipt_id)
+             ORDER BY c.record_uuid",
+        )
+        .unwrap()
+        .query_map([], |r| {
+            (0..9)
+                .map(|i| r.get::<_, rusqlite::types::Value>(i))
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+    };
+    let receipts = evidence();
+    assert_eq!(receipts.len(), 5);
+    let sources = home.hashes();
+
+    // The app path: the tailer opens (and migrates) the store, then scans.
+    let (tailer, _events) = home.start(None);
+    let ready = tailer.wait_ready(WAIT).expect("ready");
+    assert!(ready.report.complete(), "{ready:?}");
+    assert_eq!(
+        ready.report.hosts[0].sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 0,
+            records_enriched: 5
+        },
+        "the unchanged file was replayed from byte zero"
+    );
+    tailer.stop();
+    let store = home.store();
+    assert_eq!(store.schema_version().unwrap(), 17);
+    assert_eq!(classified(&store), expected);
+    assert_metadata_only(&store, A);
+    let rows = store.records(A).unwrap();
+    assert_eq!(rows[1].tool_uses.len(), 1);
+    assert!(rows[1].tool_uses[0].input_json.is_none());
+    assert_eq!(evidence(), receipts, "receipt coverage is immutable");
+    for (row, old) in rows.iter().zip(&legacy) {
+        assert_ne!(
+            revision(row),
+            revision(old),
+            "enrichment does not upgrade the receipt's measurement"
+        );
+    }
+    let replayed = checkpoint(&store, &path).unwrap();
+    assert_eq!(replayed.1, file_len(&path));
+    assert_eq!(home.hashes(), sources, "sources are never modified");
+    drop(store);
+
+    // Restart: version 5 does not reset again, so the file is proven unchanged.
+    let (tailer, _events) = home.start(None);
+    let ready = tailer.wait_ready(WAIT).expect("ready");
+    assert!(ready.report.complete(), "{ready:?}");
+    assert_eq!(
+        ready.report.hosts[0].sessions[0].outcome,
+        SessionOutcome::Imported {
+            records_new: 0,
+            records_enriched: 0
+        }
+    );
+    tailer.stop();
+    let store = home.store();
+    assert_eq!(checkpoint(&store, &path).unwrap(), replayed);
+    assert_eq!(classified(&store), expected);
+    assert_eq!(evidence(), receipts);
+    // The person's message is the one input with a preview, filled by the
+    // replay the upgrade asked for.
+    let previews: Vec<(String, String)> = sql
+        .prepare("SELECT record_uuid,text FROM record_previews")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(previews, [(uuid(0), format!("{MARKER} prompt"))]);
+    drop(store);
+    drop(sql);
+    // No other transcript content reached any index file, including WAL
+    // sidecars.
+    for entry in fs::read_dir(temp.path()).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            let bytes = fs::read(&path).unwrap();
+            assert!(
+                !bytes.windows(UNKEPT.len()).any(|w| w == UNKEPT.as_bytes()),
+                "{path:?} retained transcript content"
+            );
+        }
+    }
 }

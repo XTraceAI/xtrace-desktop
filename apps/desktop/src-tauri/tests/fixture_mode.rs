@@ -1,5 +1,5 @@
 #[cfg(all(debug_assertions, feature = "fixtures"))]
-use xtrace_desktop::dto::FixtureExport;
+use xtrace_desktop::dto::{FixtureExport, FixtureSessionStretches};
 use xtrace_desktop::state::{AppState, StartupOptions, StateError};
 
 /// Fixture startup never indexes live data: the shell export carries the
@@ -26,9 +26,10 @@ fn fixture_mode_data_dir_override_wins_and_live_store_persists() {
     )
     .unwrap();
     assert_eq!(state.app_info().data_dir, path.to_str().unwrap());
-    assert_eq!(state.app_info().schema_version, 4);
+    assert_eq!(state.app_info().schema_version, 17);
     assert_eq!(state.app_info().fixture, None);
     assert!(!state.app_info().listening);
+    assert!(!state.app_info().had_indexed_history_at_startup);
     assert_eq!(
         serde_json::to_value(state.db_counts().unwrap()).unwrap(),
         serde_json::json!({"sessions":0,"records":0,"usage":0})
@@ -71,6 +72,33 @@ fn fixture_mode_is_disabled_without_debug_feature() {
     assert!(matches!(result, Err(StateError::FixtureDisabled)));
 }
 
+/// Every listed session's links carry exactly the title the PR list holds for
+/// the same canonical identity in the same state, in every window.
+#[cfg(all(debug_assertions, feature = "fixtures"))]
+fn assert_links_follow(state: &AppState, list: &xtrace_desktop::dto::PrList) {
+    let titles: std::collections::BTreeMap<_, _> = list
+        .rows
+        .iter()
+        .map(|row| {
+            (
+                (row.pull_request.repository.clone(), row.pull_request.number),
+                row.title.clone(),
+            )
+        })
+        .collect();
+    let mut seen = 0;
+    for days in [7, 14, 30] {
+        for row in state.sessions_list("", None, None, days).unwrap().rows {
+            for link in row.pr_links {
+                let key = (link.repository.clone(), i64::try_from(link.number).unwrap());
+                assert_eq!(Some(&link.title), titles.get(&key), "{key:?} over {days}d");
+                seen += 1;
+            }
+        }
+    }
+    assert!(seen > 0);
+}
+
 #[cfg(all(debug_assertions, feature = "fixtures"))]
 #[test]
 fn fixture_mode_builds_isolated_database_and_generated_export_parity() {
@@ -94,20 +122,322 @@ fn fixture_mode_builds_isolated_database_and_generated_export_parity() {
     let mut app_info = first.app_info();
     assert_eq!(app_info.fixture.as_deref(), Some("F1"));
     app_info.data_dir = "fixture://F1".into();
-    let exported = serde_json::to_value(FixtureExport {
+    // The exported pull-request reports are what this native fixture state
+    // produces through the ordinary refresh command, with the fixture's own
+    // pinned instant: no GitHub CLI is resolved, nothing is launched.
+    // Dashboards before any refresh: a fixture database starts with links
+    // only, so M-19 has no cached facts yet and says so.
+    let dashboards: Vec<_> = [7, 14, 30]
+        .into_iter()
+        .map(|days| first.metrics_dashboard(days).unwrap())
+        .collect();
+    // Sessions before any refresh too: a link's title is refresh-owned, so a
+    // fixture database lists every link without one until a refresh is asked.
+    // The same command the frontend calls, once per window preset: the
+    // exported pages must equal what a running app answers.
+    let sessions: Vec<_> = [7, 14, 30]
+        .into_iter()
+        .map(|days| first.sessions_list("", None, None, days).unwrap())
+        .collect();
+    // The stretches command, for every session each window lists: a
+    // fixture's timeline must be what a running app would answer for the
+    // same session and the same window.
+    let session_stretches: Vec<_> = [7, 14, 30]
+        .into_iter()
+        .flat_map(|days| {
+            first
+                .sessions_list("", None, None, days)
+                .unwrap()
+                .rows
+                .into_iter()
+                .map(move |row| (days, row.id))
+        })
+        .map(|(days, session_id)| FixtureSessionStretches {
+            window_days: days,
+            stretches: first.session_stretches(&session_id, days).unwrap(),
+            session_id,
+        })
+        .collect();
+
+    // The span detail command, for every span the lanes return: the lane axis
+    // is fixed, so every preset returns the same spans.
+    let span_details: Vec<_> = dashboards[0]
+        .lanes
+        .iter()
+        .map(|lane| xtrace_desktop::dto::FixtureSpanDetail {
+            session_id: lane.session_id.clone(),
+            start_ms: lane.start_ms,
+            end_ms: lane.end_ms,
+            detail: first
+                .span_detail(
+                    &lane.session_id,
+                    lane.start_ms,
+                    lane.end_ms,
+                    &xtrace_desktop::transcript_reads::TranscriptReads::default(),
+                    "span",
+                    &xtrace_desktop::native_index::DetailReaders::disabled(),
+                )
+                .unwrap(),
+        })
+        .collect();
+    assert!(!span_details.is_empty(), "F1 draws at least one lane span");
+    // A request no lane could have sent is refused before storage is read.
+    let lane = &dashboards[0].lanes[0];
+    for (session_id, start_ms, end_ms) in [
+        ("", lane.start_ms, lane.end_ms),
+        (lane.session_id.as_str(), lane.end_ms + 1, lane.end_ms),
+        (
+            lane.session_id.as_str(),
+            lane.end_ms - xtrace_desktop::dashboard::LANE_WINDOW_MS - 1,
+            lane.end_ms,
+        ),
+    ] {
+        assert!(matches!(
+            first.span_detail(
+                session_id,
+                start_ms,
+                end_ms,
+                &xtrace_desktop::transcript_reads::TranscriptReads::default(),
+                "span",
+                &xtrace_desktop::native_index::DetailReaders::disabled(),
+            ),
+            Err(StateError::InvalidSpanRequest)
+        ));
+    }
+
+    // The PRs page report, per range and confidence mode, before any refresh:
+    // the same command the page calls.
+    let analytics = |state: &AppState| -> Vec<_> {
+        [7, 14, 30]
+            .into_iter()
+            .flat_map(|days| [false, true].map(|confirmed| (days, confirmed)))
+            .map(|(days, confirmed)| state.pr_analytics(days, confirmed).unwrap())
+            .collect()
+    };
+    let pr_analytics = analytics(&first);
+    let pull_requests = first.pr_list().unwrap();
+    // Each listed pull request's drilldown, pinned to the end of the report
+    // the page would have shown for the same range and confidence mode.
+    let pr_sessions: Vec<_> = pull_requests
+        .rows
+        .iter()
+        .flat_map(|row| {
+            [7, 14, 30]
+                .into_iter()
+                .flat_map(|days| [false, true].map(|confirmed| (days, confirmed)))
+                .map(move |(days, confirmed)| (row.pull_request.clone(), days, confirmed))
+        })
+        .map(|(reference, days, confirmed)| {
+            let anchor = pr_analytics
+                .iter()
+                .find(|page| page.window.days == days && page.report.confirmed_only == confirmed)
+                .unwrap()
+                .window
+                .end_ms;
+            let number = u64::try_from(reference.number).unwrap();
+            xtrace_desktop::dto::FixturePrSessions {
+                page: first
+                    .pr_sessions(xtrace_desktop::pr_analytics::PrSessionsRequest {
+                        repository: &reference.repository,
+                        number,
+                        confirmed_only: confirmed,
+                        window_days: days,
+                        window_end_ms: anchor,
+                        after: None,
+                    })
+                    .unwrap(),
+                repository: reference.repository,
+                number,
+                confirmed_only: confirmed,
+                window_days: days,
+                window_end_ms: anchor,
+            }
+        })
+        .collect();
+    let selection: Vec<i64> = pull_requests
+        .rows
+        .iter()
+        .map(|row| row.pull_request.id)
+        .collect();
+    let pr_refresh = xtrace_desktop::pr_refresh::PrRefreshService::fixture(
+        first
+            .fixture_now_ms()
+            .expect("fixture mode pins an instant"),
+        std::sync::Arc::new(|| {}),
+    )
+    .refresh(&first, &selection)
+    .unwrap();
+    let pull_requests_refreshed = first.pr_list().unwrap();
+    assert_links_follow(&first, &pull_requests_refreshed);
+    // Every non-empty subset of the listed pull requests, each refreshed by
+    // the ordinary command on its own freshly built fixture state: the
+    // exported M-19 states must equal what a running app answers after it.
+    let now_ms = first
+        .fixture_now_ms()
+        .expect("fixture mode pins an instant");
+    let mut sorted: Vec<_> = pull_requests
+        .rows
+        .iter()
+        .map(|row| row.pull_request.clone())
+        .collect();
+    sorted.sort_unstable_by_key(|reference| reference.id);
+    let pr_effort_states = (1_usize..(1 << sorted.len()))
+        .map(|mask| {
+            let refreshed: Vec<_> = sorted
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| mask & (1 << index) != 0)
+                .map(|(_, reference)| reference.clone())
+                .collect();
+            let subset: Vec<i64> = refreshed.iter().map(|reference| reference.id).collect();
+            let state = build();
+            xtrace_desktop::pr_refresh::PrRefreshService::fixture(
+                now_ms,
+                std::sync::Arc::new(|| {}),
+            )
+            .refresh(&state, &subset)
+            .unwrap();
+            // One selected, a failed one, any mix, all: the list's titles are
+            // the PR list's own for this state.
+            assert_links_follow(&state, &state.pr_list().unwrap());
+            xtrace_desktop::dto::FixturePrEffortState {
+                analytics: analytics(&state),
+                sections: [7, 14, 30]
+                    .into_iter()
+                    .map(|days| {
+                        let report = state.metrics_dashboard(days).unwrap();
+                        xtrace_desktop::dto::FixtureRefreshedPrEffort {
+                            days,
+                            merged_prs: report.tiles.merged_prs,
+                            pr_effort: report.pr_effort,
+                        }
+                    })
+                    .collect(),
+                refreshed,
+            }
+        })
+        .collect();
+    let export = FixtureExport {
         app_info,
         db_counts: first.db_counts().unwrap(),
         native_index: expected_native_index(),
-        sessions: first.sessions_list("", None, None).unwrap(),
-    })
-    .unwrap();
-    let expected: serde_json::Value =
-        serde_json::from_str(include_str!("../../ui/fixtures/F1.json")).unwrap();
-    assert_eq!(exported, expected);
+        sessions,
+        session_stretches,
+        span_details,
+        dashboards,
+        environments: [7, 14, 30]
+            .into_iter()
+            .map(|days| first.metrics_environment(days).unwrap())
+            .collect(),
+        pull_requests,
+        pr_refresh,
+        pull_requests_refreshed,
+        pr_effort_states,
+        pr_analytics,
+        pr_sessions,
+        today: first.today().unwrap(),
+        // Built as fixture startup builds it: from the state's native home,
+        // which fixture mode never has.
+        rule_activity: {
+            assert_eq!(first.native_home(), None);
+            xtrace_desktop::rule_activity::RuleActivityService::new(first.native_home())
+                .read("fixture")
+        },
+    };
+    // Compare the exact generated bytes: serde_json's default float parser is
+    // not round-trip exact, so parsed values can differ in the last bit.
+    assert_eq!(
+        serde_json::to_string_pretty(&export).unwrap() + "\n",
+        include_str!("../../ui/fixtures/F1.json")
+    );
+    let exported = serde_json::to_value(export).unwrap();
     assert_eq!(
         exported["db_counts"],
         serde_json::json!({"sessions":1,"records":25,"usage":15})
     );
+    // F1's one session, measured over its pinned seven-day window.
+    assert_eq!(
+        exported["sessions"][0]["rows"][0]["metrics"],
+        serde_json::json!({
+            "state": "indexed",
+            "events": 25,
+            "human_messages": 5,
+            "tool_calls": 5,
+            "agent_ms": 1_380_000,
+            "tokens": {
+                "selected_responses": 10, "measured_responses": 10,
+                "sessions": 1, "measured_sessions": 1,
+                "counters": {"input_tokens": 750, "output_tokens": 150, "cache_read_tokens": 150,
+                             "cache_creation_tokens": 50, "total_tokens": 1100}
+            }
+        })
+    );
+    // The design columns beside them: the native start the host recorded, no
+    // invented title, every stored link with its own confidence, and the
+    // median of the same stretches the detail export carries.
+    let row = &exported["sessions"][0]["rows"][0];
+    assert_eq!(row["title"], serde_json::Value::Null);
+    assert!(row["started_at_ms"].is_i64());
+    assert_eq!(row["pr_links"].as_array().unwrap().len(), 3);
+    assert!(
+        row["pr_links"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|link| link["confidence"].is_string() && link["url"].is_string())
+    );
+    let stretches = exported["session_stretches"][0]["stretches"]["stretches"]
+        .as_array()
+        .unwrap();
+    assert_eq!(row["hands_off"]["n"], stretches.len());
+    let mut durations: Vec<u64> = stretches
+        .iter()
+        .map(|s| s["duration_ms"].as_u64().unwrap())
+        .collect();
+    durations.sort_unstable();
+    assert_eq!(
+        row["hands_off"]["median_min"].as_f64().unwrap(),
+        durations[durations.len() / 2] as f64 / 60000.0
+    );
+    // The listed row's numbers are the Dashboard's, restricted to that session.
+    let dashboard = &exported["dashboards"][0]["tiles"];
+    assert_eq!(dashboard["human_messages"]["value"], 5.0);
+    assert_eq!(dashboard["tokens"]["value"], 1100.0);
+    // The exported daily hours are the hero's own totals, split across the days
+    // the export reports, so a UI reading the fixture reads the same numbers a
+    // running app does. F1 records all of its work on one local date.
+    for report in exported["dashboards"].as_array().unwrap() {
+        let days = report["days"].as_array().unwrap();
+        let agent: f64 = days
+            .iter()
+            .map(|day| day["agent_hours"].as_f64().unwrap())
+            .sum();
+        let human: f64 = days
+            .iter()
+            .map(|day| day["human_hours_est"].as_f64().unwrap())
+            .sum();
+        assert!((agent - report["tiles"]["agent_hours"]["value"].as_f64().unwrap()).abs() < 1e-9);
+        assert!(
+            (human
+                - report["tiles"]["human_hours_est"]["value"]
+                    .as_f64()
+                    .unwrap())
+            .abs()
+                < 1e-9
+        );
+        let worked: Vec<_> = days
+            .iter()
+            .filter(|day| day["agent_hours"] != 0.0)
+            .collect();
+        assert_eq!(worked.len(), 1);
+        assert_eq!(worked[0]["date"], "2026-09-07");
+        assert_eq!(worked[0]["agent_hours"], 1_380_000.0 / 3_600_000.0);
+    }
+    assert_eq!(
+        exported["sessions"][0]["window"],
+        exported["dashboards"][0]["window"]
+    );
+    assert!(first.sessions_list("", None, None, 15).is_err());
     first.shutdown();
     assert!(!path.exists());
     assert!(matches!(first.db_counts(), Err(StateError::Closed)));

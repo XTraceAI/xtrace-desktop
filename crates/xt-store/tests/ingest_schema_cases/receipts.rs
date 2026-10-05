@@ -287,7 +287,15 @@ fn metadata_mode_keeps_structural_facts_without_new_content() {
         db.store().tool_events(&metadata.session_id).unwrap(),
         std::slice::from_ref(&event)
     );
-    assert!(db.store_mut().insert_tool_event(&event).is_err());
+    // The same native event delivered again is the same event, not a new one.
+    assert_eq!(db.store_mut().insert_tool_event(&event).unwrap(), id);
+    let mut conflicting = event.clone();
+    conflicting.tool = Some("Write".into());
+    assert!(db.store_mut().insert_tool_event(&conflicting).is_err());
+    assert_eq!(
+        db.store().tool_events(&metadata.session_id).unwrap(),
+        std::slice::from_ref(&event)
+    );
     db.store_mut()
         .insert_capture_receipt(&case.receipt, &case.coverage)
         .unwrap();

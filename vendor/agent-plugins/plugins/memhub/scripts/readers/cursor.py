@@ -53,6 +53,7 @@ capture fills the gaps with per-record first-seen clocks instead
 from __future__ import annotations
 
 import datetime
+import io
 import json
 import hashlib
 import re
@@ -196,8 +197,13 @@ def session_cwd(path) -> str | None:
     return cwd if isinstance(cwd, str) and cwd else None
 
 
-def list_sessions(limit: int | None = 20, *, on_error=None, include_representations=False) -> list[dict]:
-    """Most recent Cursor sessions, preferring the richer store per UUID."""
+def list_sessions(limit: int | None = 20, *, on_error=None, include_representations=False,
+                  observe=None) -> list[dict]:
+    """Most recent Cursor sessions, preferring the richer store per UUID.
+
+    ``observe`` is a bounded caller's per-entry hook; it covers both walks and
+    each row built from their results, so enumeration cannot outgrow a budget
+    before the budget is consulted."""
     rows: list[dict] = []
     store_ids: set[str] = set()
     if on_error is None:
@@ -217,9 +223,11 @@ def list_sessions(limit: int | None = 20, *, on_error=None, include_representati
                 roots.append(root)
         if not roots:
             on_error(FileNotFoundError("Cursor session stores are unavailable"))
-        stores = [path.parent for path in paths(_CHATS, ("*", "*", "store.db"), on_error)] if _CHATS in roots else []
-        transcripts = paths(_PROJECTS, ("*", "agent-transcripts", "*", "*.jsonl"), on_error) if _PROJECTS in roots else []
+        stores = [path.parent for path in paths(_CHATS, ("*", "*", "store.db"), on_error, observe)] if _CHATS in roots else []
+        transcripts = paths(_PROJECTS, ("*", "agent-transcripts", "*", "*.jsonl"), on_error, observe) if _PROJECTS in roots else []
     for d in stores:
+        if observe is not None:
+            observe()
         if on_error is not None:
             # Discovery uses filesystem observations. Bad session metadata is
             # diagnosed per session by the CLI, without hiding healthy peers.
@@ -238,6 +246,8 @@ def list_sessions(limit: int | None = 20, *, on_error=None, include_representati
                      "mtime": (m.get("updatedAtMs") or 0) / 1000.0,
                      "host": HOST, "cwd": m.get("cwd")})
     for p in transcripts:
+        if observe is not None:
+            observe()
         if p.stem in store_ids and not include_representations:
             continue
         try:
@@ -582,14 +592,27 @@ def _model_of(obj) -> str | None:
 
 def _canonicalize(dated_messages: list[tuple[dict, str | None]], *,
                   session_id: str, cwd: str | None, model_hint: str | None,
-                  created_ts: str | None, strict: bool = False) -> tuple[list[dict], dict]:
+                  created_ts: str | None, strict: bool = False,
+                  record_guard=None) -> tuple[list[dict], dict]:
     """Transform either native source after it has yielded ordered messages.
 
     Each message's ``ts`` is a clock the artifact carries FOR IT (or None —
     see the module docstring); no session-level value fills the gaps here.
+
+    ``record_guard`` is an optional bound on what this conversion may hold.
+    It is called with the running record count as each record is kept, so a
+    caller's ceiling is reached while the list is growing rather than after it
+    has already been built.
     """
     ts_holder: dict = {"ts": None}
     out: list[dict] = []
+
+    def keep(record: dict) -> None:
+        """Hold one more record, or refuse before this one is held."""
+        if record_guard is not None:
+            record_guard(len(out) + 1)
+        out.append(record)
+
     usage_only_count = 0
 
     def legacy_index() -> int:
@@ -633,7 +656,7 @@ def _canonicalize(dated_messages: list[tuple[dict, str | None]], *,
         banner += f" · cwd {cwd}"
     banner += "]"
     ts_holder["ts"] = created_ts
-    out.append(user(banner))
+    keep(user(banner))
 
     title = None
     for message_index, (msg, message_ts) in enumerate(dated_messages):
@@ -647,7 +670,7 @@ def _canonicalize(dated_messages: list[tuple[dict, str | None]], *,
         if role == "user":
             ask = _clean_user_text(_text_of(content))
             if ask:
-                out.append(user(ask))
+                keep(user(ask))
                 if title is None:
                     # Cursor exposes no host-generated name anywhere in its
                     # artifacts, so the first ask is all there is — but it gets
@@ -671,13 +694,13 @@ def _canonicalize(dated_messages: list[tuple[dict, str | None]], *,
                         record = assistant(
                             {"type": "thinking", "thinking": text}, block_model
                         )
-                        out.append(record)
+                        keep(record)
                         emitted.append(record)
                 elif bt == "text":
                     text = (b.get("text") or "").strip()
                     if text:
                         record = assistant({"type": "text", "text": text}, block_model)
-                        out.append(record)
+                        keep(record)
                         emitted.append(record)
                 elif bt in ("tool-call", "tool_use"):
                     args = b.get("args") if bt == "tool-call" else b.get("input")
@@ -688,7 +711,7 @@ def _canonicalize(dated_messages: list[tuple[dict, str | None]], *,
                         "name": b.get("toolName") or b.get("name") or "tool",
                         "input": args if isinstance(args, dict) else {"input": args},
                     }, block_model)
-                    out.append(record)
+                    keep(record)
                     emitted.append(record)
             usage = _usage_of(msg)
             if strict and usage and not emitted:
@@ -696,7 +719,7 @@ def _canonicalize(dated_messages: list[tuple[dict, str | None]], *,
                 record["uuid"] = str(_uuid.uuid5(
                     _uuid.NAMESPACE_URL,
                     f"memhub:cursor:{session_id}:usage-only:{message_index}"))
-                out.append(record)
+                keep(record)
                 emitted.append(record)
                 usage_only_count += 1
             if emitted and usage:
@@ -712,7 +735,7 @@ def _canonicalize(dated_messages: list[tuple[dict, str | None]], *,
                 if not isinstance(result, str):
                     result = _text_of(b.get("experimental_content")) or (
                         json.dumps(result) if result is not None else "")
-                out.append(user([{
+                keep(user([{
                     "type": "tool_result",
                     "tool_use_id": b.get("toolCallId") or f"cursor-out-{legacy_index()}",
                     "content": result,
@@ -726,8 +749,13 @@ def _canonicalize(dated_messages: list[tuple[dict, str | None]], *,
 _MAX_TRANSCRIPT_LINE_BYTES = 8 * 1024 * 1024
 
 
-def _load_transcript(path: Path, *, strict: bool = False) -> list[tuple[dict, str | None]]:
+def _load_transcript(path: Path, *, strict: bool = False,
+                     data: bytes | None = None) -> list[tuple[dict, str | None]]:
     """Read Cursor hook JSONL, ignoring only an unfinished final line.
+
+    ``data`` supplies the transcript bytes a caller already read through a
+    descriptor it validated; ``path`` then names the source in errors and is
+    never reopened. Without it the path is read here, as it always was.
 
     A message's clock is its OWN embedded ``<timestamp>`` tag (user turns
     carry one inside Cursor's context injection) or None. It is deliberately
@@ -738,7 +766,7 @@ def _load_transcript(path: Path, *, strict: bool = False) -> list[tuple[dict, st
     first-seen hook clock instead; backfills leave them unmeasured.
     """
     messages: list[tuple[dict, str | None]] = []
-    with open_lines(path) as handle:
+    with open_lines(path if data is None else io.BytesIO(data)) as handle:
         line_no = 0
         while True:
             raw = readline_bytes(handle, _MAX_TRANSCRIPT_LINE_BYTES)
@@ -785,20 +813,28 @@ def _load_transcript(path: Path, *, strict: bool = False) -> list[tuple[dict, st
 
 def to_canonical(path, *, session_id: str | None = None,
                  cwd: str | None = None, model: str | None = None,
-                 strict: bool = False
-                 ) -> tuple[list[dict], dict]:
-    """Load either a legacy ``store.db`` or current hook transcript."""
+                 strict: bool = False, source_bytes: bytes | None = None,
+                 record_guard=None) -> tuple[list[dict], dict]:
+    """Load either a legacy ``store.db`` or current hook transcript.
+
+    ``source_bytes`` are transcript bytes the caller already read through a
+    validated descriptor. A store is a database, not JSONL, so it is never
+    normalized from bytes; asking for that is a caller error, not a fallback
+    to some other representation of the same session.
+    """
     source = Path(path)
+    if source_bytes is not None and source.name == "store.db":
+        raise ValueError("a Cursor store cannot be normalized from transcript bytes")
     if source.name != "store.db":
         sid = session_id or source.stem
-        messages = _load_transcript(source, strict=strict)
+        messages = _load_transcript(source, strict=strict, data=source_bytes)
         # The banner's clock: the first embedded user-turn tag — the earliest
         # source-carried instant the transcript offers (None when it offers
         # none; the flush's first-seen stamp covers live sessions).
         created_ts = next((ts for _, ts in messages if ts), None)
         return _canonicalize(
             messages, session_id=sid, cwd=cwd, model_hint=model,
-            created_ts=created_ts, strict=strict)
+            created_ts=created_ts, strict=strict, record_guard=record_guard)
 
     session_dir = source.parent
     mj = _read_meta_json(session_dir, strict=strict) or {}
@@ -817,7 +853,8 @@ def to_canonical(path, *, session_id: str | None = None,
                 for message, node_ts in _load_messages(source, strict=strict)]
     return _canonicalize(
         messages, session_id=session_dir.name, cwd=store_cwd,
-        model_hint=None, created_ts=_created_at(mj, strict=strict), strict=strict)
+        model_hint=None, created_ts=_created_at(mj, strict=strict), strict=strict,
+        record_guard=record_guard)
 
 
 def session_metadata(path, *, meta_text: str | None = None,

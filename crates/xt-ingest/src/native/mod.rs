@@ -13,15 +13,24 @@
 
 pub mod checkpoint;
 pub mod claude_fs;
+pub mod claude_launch;
+pub mod hook_names;
+mod human_input;
+pub mod origin;
 pub mod readers_cli;
+pub mod session_compactions;
+pub mod session_creation;
+pub mod session_source;
+pub mod session_titles;
 pub mod stream;
 pub mod watch;
 
-use crate::writer::{MAX_BATCH_RECORDS, WriteBatch, write_batch};
+use crate::writer::{MAX_BATCH_RECORDS, WriteBatch, write_batch_proven};
 pub use readers_cli::{CancelToken, ProducerSource};
 use readers_cli::{ReaderDiagnostic, ReaderError};
 use serde::Serialize;
 use std::{
+    collections::{BTreeMap, HashMap, HashSet},
     ffi::OsStr,
     path::{Component, Path, PathBuf},
 };
@@ -118,6 +127,10 @@ pub struct HostReport {
     pub detail: Option<String>,
     pub diagnostics: Vec<ReaderDiagnostic>,
     pub sessions: Vec<SessionResult>,
+    /// The Codex origin evidence this scan read, when it read the stream in
+    /// origin-evidence mode; absent (and not serialized) otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<OriginReport>,
 }
 
 impl HostReport {
@@ -128,9 +141,88 @@ impl HostReport {
             detail: Some(detail.into()),
             diagnostics: Vec::new(),
             sessions: Vec::new(),
+            origin: None,
         }
     }
 }
+
+/// What one origin-evidence scan made of the evidence: counts under fixed
+/// names only, never a path, text, digest or title. Within one scan, every
+/// validated claim ends in exactly one of `recorded`, `abstained`,
+/// `disputed`, `store_refused`, `over_cap`, `unholdable` and
+/// `unwritten`; a watcher's merged report adds its earlier passes'
+/// `recorded` to the latest pass's counts.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct OriginReport {
+    pub human_inputs: xt_store::human_input::CorrectionReport,
+    pub sessions: OriginSessions,
+    pub claims: OriginClaims,
+    /// The producer's advisory notices that a session's evidence was withheld,
+    /// checked against the headers the stream carried.
+    pub withheld_notices: WithheldNotices,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct OriginSessions {
+    /// Headers carrying the version 1 marker: every record was examined.
+    pub marked: usize,
+    /// Headers without a marker: the session's evidence was withheld.
+    pub withheld: usize,
+    /// Headers whose marker is not the version 1 marker.
+    pub invalid_marker: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct OriginClaims {
+    /// Claims validated beside their record.
+    pub claimed: usize,
+    /// Proofs the Store kept, in the transaction that inserted their record.
+    pub recorded: usize,
+    pub abstained: OriginAbstained,
+    /// Claims a later line of their session disputed: written without proof.
+    pub disputed: usize,
+    /// Proofs whose batch the Store refused; their records were written again
+    /// without any proof.
+    pub store_refused: usize,
+    /// Claims beyond the per-session hold: written in order without proof.
+    pub over_cap: usize,
+    /// Claims whose record could change its batch or its session if moved (a
+    /// label the header lacks or disagrees with, surface evidence, a cwd or
+    /// branch the header leaves open, a value that cannot project): left in
+    /// their ordinary batch without proof, where they write or fail exactly
+    /// as without evidence.
+    pub unholdable: usize,
+    /// Claims whose session ended before its proofs could be written.
+    pub unwritten: usize,
+    /// Record lines whose evidence was refused, by fixed refusal code. They
+    /// are not claims; each record still imported.
+    pub refused: BTreeMap<&'static str, usize>,
+}
+
+/// Why the Store kept no proof although it wrote the claimed record.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct OriginAbstained {
+    /// The record was already indexed (a replay) or not written by this input.
+    pub not_inserted: usize,
+    pub conflicted_record: usize,
+    pub ineligible: usize,
+    pub conflicting_proof: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct WithheldNotices {
+    pub total: usize,
+    /// Notices naming no header the stream carried.
+    pub unmatched: usize,
+    /// Notices naming a header that carried a marker.
+    pub marked_conflict: usize,
+    /// Unmarked headers no notice named.
+    pub unreported: usize,
+}
+
+/// The producer's advisory code: a session's records are complete and
+/// ordinary, only their origin evidence was withheld.
+pub const ORIGIN_EVIDENCE_WITHHELD: &str = "origin_evidence_withheld";
 
 pub(crate) fn all_imported(sessions: &[SessionResult]) -> bool {
     sessions
@@ -172,6 +264,28 @@ pub fn scan_native_observed(
     mode: ScanMode,
     observer: &mut dyn FnMut(&Path),
 ) -> ImportReport {
+    scan_native_continued(
+        store,
+        request,
+        mode,
+        observer,
+        &mut session_creation::SpawnBacklog::default(),
+        session_creation::spawn_limits(),
+    )
+}
+
+/// `scan_native_observed` for a caller that keeps creation work between
+/// scans: the Codex threads this scan indexed join `spawns`, one bounded pass
+/// within `limits` runs over it, and what the pass could not reach stays
+/// there for the caller to continue ([`session_creation::continue_codex_spawns`]).
+pub fn scan_native_continued(
+    store: &mut Store,
+    request: &ImportRequest<'_>,
+    mode: ScanMode,
+    observer: &mut dyn FnMut(&Path),
+    spawns: &mut session_creation::SpawnBacklog,
+    limits: session_titles::TitleLimits,
+) -> ImportReport {
     let home = match anchor(request.home) {
         Ok(home) => home,
         Err(error) => {
@@ -202,8 +316,18 @@ pub fn scan_native_observed(
                 HostStatus::Cancelled,
                 "scan cancelled before this host was read",
             ),
-            Host::Claude => import_claude(store, request, mode, observer),
-            Host::Codex | Host::Cursor => import_reader_host(store, request, *host),
+            Host::Claude => {
+                let report = import_claude(store, request, mode, observer);
+                // A Claude session a Codex agent launched may be linked now.
+                spawns.launches.add_children(imported(&report));
+                report
+            }
+            Host::Codex => {
+                let report = import_reader_host(store, request, Host::Codex);
+                relate_codex_spawns(store, request, &report, spawns, limits);
+                report
+            }
+            Host::Cursor => import_reader_host(store, request, Host::Cursor),
             Host::Other => HostReport::unavailable(
                 Host::Other,
                 HostStatus::MissingSource,
@@ -212,6 +336,56 @@ pub fn scan_native_observed(
         })
         .collect();
     ImportReport { hosts }
+}
+
+/// After a Codex scan, record which threads were spawned by another: every
+/// thread this scan indexed, whether or not it added records (an unchanged
+/// transcript can still open with a new or different header, and a different
+/// parent must conflict the relation), then the next part of the pass over
+/// threads indexed before relations existed. That pass runs whatever the
+/// reader's outcome, since it reads only what the index already holds.
+///
+/// Relations are display-only, so this never changes the scan's report. Work
+/// the bounded pass does not reach, or that fails, stays in `spawns` and in
+/// the pass's saved progress for a later pass. A sweep `spawns` holds is left
+/// to those later passes; what this pass changes is published with the scan's
+/// own event.
+fn relate_codex_spawns(
+    store: &mut Store,
+    request: &ImportRequest<'_>,
+    report: &HostReport,
+    spawns: &mut session_creation::SpawnBacklog,
+    limits: session_titles::TitleLimits,
+) {
+    if cancelled(request) || report.status == HostStatus::Cancelled {
+        return;
+    }
+    spawns.add(imported(report));
+    // Their histories may hold new Claude launches.
+    spawns.launches.add_threads(imported(report));
+    let _ = session_creation::continue_scanned_spawns(
+        store,
+        request.home,
+        spawns,
+        limits,
+        request.cancel,
+        request.observed_at,
+    );
+}
+
+/// The native identities of the sessions a host scan imported, in whole or
+/// in part.
+fn imported(report: &HostReport) -> impl Iterator<Item = &str> {
+    report
+        .sessions
+        .iter()
+        .filter(|session| {
+            matches!(
+                session.outcome,
+                SessionOutcome::Imported { .. } | SessionOutcome::Partial { .. }
+            )
+        })
+        .filter_map(|session| session.native_session_id.as_deref())
 }
 
 fn cancelled(request: &ImportRequest<'_>) -> bool {
@@ -295,8 +469,14 @@ pub fn validate_index_destination(db: &Path, home: &Path) -> Result<(), &'static
     // such a root, and a source-access problem is the scan's to report, not
     // a reason to refuse the destination.
     let home_spelled = resolved(home).unwrap_or_else(|_| home.to_path_buf());
-    let roots = [".claude", ".codex", ".cursor", ".config/memhub-plugin"]
-        .map(|name| resolved(&home.join(name)).unwrap_or_else(|_| home_spelled.join(name)));
+    let roots = [
+        ".claude",
+        ".codex",
+        ".cursor",
+        ".config/memhub-plugin",
+        "Library/Application Support/Cursor/User/globalStorage",
+    ]
+    .map(|name| resolved(&home.join(name)).unwrap_or_else(|_| home_spelled.join(name)));
     for suffix in ["", "-wal", "-shm", "-journal"] {
         let mut name = db.as_os_str().to_os_string();
         name.push(suffix);
@@ -320,6 +500,7 @@ pub fn validate_index_destination(db: &Path, home: &Path) -> Result<(), &'static
         ".cursor/chats",
         ".cursor/projects",
         ".config/memhub-plugin/cursorflush",
+        "Library/Application Support/Cursor/User/globalStorage",
     ] {
         reject_reverse_aliases(&home.join(source), &destinations)?;
     }
@@ -360,6 +541,7 @@ fn import_claude(
                         path: Some(root.to_string_lossy().into_owned()),
                     }],
                     sessions: vec![],
+                    origin: None,
                 };
             }
             Ok(meta) if meta.is_dir() => {}
@@ -439,6 +621,7 @@ fn import_claude(
         detail,
         diagnostics,
         sessions,
+        origin: None,
     }
 }
 
@@ -503,20 +686,31 @@ fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host
             return HostReport::unavailable(host, HostStatus::PinMismatch, error.to_string());
         }
     };
-    let (mut stdout, handle) =
-        match readers_cli::spawn_reader(&python, &producer, host, request.home, request.cancel) {
-            Ok(spawned) => spawned,
-            Err(ReaderError::Cancelled) => {
-                return HostReport::unavailable(
-                    host,
-                    HostStatus::Cancelled,
-                    "scan cancelled before the reader started",
-                );
-            }
-            Err(error) => {
-                return HostReport::unavailable(host, HostStatus::ReaderFailed, error.to_string());
-            }
-        };
+    // Codex, and only Codex, is read with its origin evidence.
+    let origin = host == Host::Codex;
+    let spawned = if origin {
+        readers_cli::spawn_codex_reader_with_origin_evidence(
+            &python,
+            &producer,
+            request.home,
+            request.cancel,
+        )
+    } else {
+        readers_cli::spawn_reader(&python, &producer, host, request.home, request.cancel)
+    };
+    let (mut stdout, handle) = match spawned {
+        Ok(spawned) => spawned,
+        Err(ReaderError::Cancelled) => {
+            return HostReport::unavailable(
+                host,
+                HostStatus::Cancelled,
+                "scan cancelled before the reader started",
+            );
+        }
+        Err(error) => {
+            return HostReport::unavailable(host, HostStatus::ReaderFailed, error.to_string());
+        }
+    };
     let detail = format!(
         "pinned producer {} (memhub {})",
         producer.commit, producer.plugin_version
@@ -529,9 +723,15 @@ fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host
             Err(error) => Some(Err(error)),
         }
     });
-    import_reader_lines(store, host, detail, lines, request.observed_at, move || {
-        handle.finish()
-    })
+    import_stream(
+        store,
+        host,
+        detail,
+        lines,
+        request.observed_at,
+        move || handle.finish(),
+        origin,
+    )
 }
 
 /// Import one host's stream as it arrives. Records are written in bounded
@@ -552,12 +752,321 @@ where
     I: IntoIterator<Item = std::io::Result<String>>,
     F: FnOnce() -> Result<readers_cli::ReaderOutcome, ReaderError>,
 {
+    import_stream(store, host, detail, lines, observed_at, finish, false)
+}
+
+/// [`import_reader_lines`] for a Codex stream read with its origin evidence
+/// ([`readers_cli::spawn_codex_reader_with_origin_evidence`]). Every record
+/// is written exactly as the ordinary import writes it, in the same bounded
+/// batches; the records the evidence validly claims are held aside, at most
+/// [`MAX_BATCH_RECORDS`] per session, and written with their proofs after
+/// the session's last ordinary batch, in one Store transaction that keeps a
+/// proof only with the record its own input inserts.
+///
+/// A claim a later line of its session disputes (the same record, item or
+/// row, however malformed that line's claim) is written without its proof. A
+/// session that ends early writes, without proofs, exactly the held records
+/// its committed batches would have held, and drops the rest with its
+/// discarded tail, so the committed records are those of the ordinary import.
+/// A proof-bearing batch the Store refuses is written once more without any
+/// proof. The producer's `origin_evidence_withheld` notices are advisory: they
+/// are counted in [`HostReport::origin`], not listed as diagnostics, and do not
+/// by themselves make the host incomplete.
+pub fn import_reader_lines_origin<I, F>(
+    store: &mut Store,
+    detail: String,
+    lines: I,
+    observed_at: i64,
+    finish: F,
+) -> HostReport
+where
+    I: IntoIterator<Item = std::io::Result<String>>,
+    F: FnOnce() -> Result<readers_cli::ReaderOutcome, ReaderError>,
+{
+    import_stream(store, Host::Codex, detail, lines, observed_at, finish, true)
+}
+
+/// A validly claimed record held until its session ends.
+struct Held {
+    record: crate::canonical::ParsedRecord,
+    proof: xt_store::injected::InjectedContextProof,
+}
+
+/// One session's held claims, and where its committed batches stand. A
+/// window is the run of records one ordinary batch covers, held ones
+/// included, so batches end exactly where the ordinary import's do, and each
+/// holds the ordinary import's records in their order, less the held ones.
+#[derive(Default)]
+struct Holding {
+    /// Held claims by their position among the session's records.
+    held: BTreeMap<usize, Held>,
+    by_uuid: HashMap<String, usize>,
+    /// Disputed claims whose window has committed: the ordinary import had
+    /// written them, so they are written, without proof, before anything
+    /// read after them.
+    overdue: Vec<crate::canonical::ParsedRecord>,
+    /// The session position of each record in the ordinary batch.
+    batch_positions: Vec<usize>,
+    /// Records of the session so far.
+    position: usize,
+    /// Records of the current window.
+    window: usize,
+    /// Records behind the last committed batch.
+    watermark: usize,
+}
+
+impl Holding {
+    /// Take one record in: a claim is held, while there is room and moving
+    /// its record changes nothing else; anything else joins the ordinary
+    /// batch.
+    fn take(
+        &mut self,
+        batch: &mut Vec<crate::canonical::ParsedRecord>,
+        writer: &SessionWriter,
+        record: crate::canonical::ParsedRecord,
+        claim: Option<Box<xt_store::injected::InjectedContextProof>>,
+        claims: &mut OriginClaims,
+    ) {
+        let position = self.position;
+        self.position += 1;
+        self.window += 1;
+        // A record whose place in a batch can matter stays in its ordinary
+        // batch, without proof: it fills, disagrees or fails there exactly
+        // as without evidence.
+        let claim = match claim {
+            Some(_) if !writer.holdable(&record) => {
+                claims.unholdable += 1;
+                None
+            }
+            claim => claim,
+        };
+        match claim {
+            Some(proof) if self.held.len() + self.overdue.len() < MAX_BATCH_RECORDS => {
+                if let Some(uuid) = record.canonical.uuid.clone() {
+                    self.by_uuid.insert(uuid, position);
+                }
+                self.held.insert(
+                    position,
+                    Held {
+                        record,
+                        proof: *proof,
+                    },
+                );
+            }
+            claim => {
+                if claim.is_some() {
+                    claims.over_cap += 1;
+                }
+                batch.push(record);
+                self.batch_positions.push(position);
+            }
+        }
+    }
+
+    /// Release each disputed held claim, without its proof, to where the
+    /// ordinary import has it: back into the open window at its position, or,
+    /// if its window has committed, ahead of the next batch.
+    fn dispute(
+        &mut self,
+        batch: &mut Vec<crate::canonical::ParsedRecord>,
+        uuids: Vec<String>,
+        claims: &mut OriginClaims,
+    ) {
+        for uuid in uuids {
+            let Some(position) = self.by_uuid.remove(&uuid) else {
+                continue;
+            };
+            let Some(held) = self.held.remove(&position) else {
+                continue;
+            };
+            claims.disputed += 1;
+            if position < self.watermark {
+                self.overdue.push(held.record);
+            } else {
+                let at = self.batch_positions.partition_point(|&p| p < position);
+                batch.insert(at, held.record);
+                self.batch_positions.insert(at, position);
+            }
+        }
+    }
+
+    fn window_full(&self) -> bool {
+        self.window == MAX_BATCH_RECORDS
+    }
+
+    /// Write the overdue disputed records; they stay owed if that fails.
+    fn write_overdue(
+        &mut self,
+        store: &mut Store,
+        writer: &mut SessionWriter,
+        observed_at: i64,
+    ) -> Result<(), Box<SessionResult>> {
+        writer.write(store, &self.overdue, observed_at)?;
+        self.overdue.clear();
+        Ok(())
+    }
+
+    /// The window's ordinary batch committed.
+    fn committed(&mut self) {
+        self.watermark = self.position;
+        self.window = 0;
+        self.batch_positions.clear();
+    }
+
+    /// The session ended early. The held records behind its committed
+    /// batches are written without proof, as those batches wrote them in the
+    /// ordinary import; the rest go with the discarded tail. The session is
+    /// already reported as ended, so a failure here changes nothing further.
+    fn settle_early(
+        self,
+        store: &mut Store,
+        writer: &mut SessionWriter,
+        observed_at: i64,
+        claims: &mut OriginClaims,
+    ) {
+        let mut owed = self.overdue;
+        for (position, held) in self.held {
+            claims.unwritten += 1;
+            if position < self.watermark {
+                owed.push(held.record);
+            }
+        }
+        let _ = writer.write(store, &owed, observed_at);
+    }
+
+    /// The session's last ordinary batch committed: write every held record
+    /// with its proof, in one batch.
+    fn settle(
+        self,
+        store: &mut Store,
+        writer: &mut SessionWriter,
+        observed_at: i64,
+        claims: &mut OriginClaims,
+    ) -> Result<(), Box<SessionResult>> {
+        let (records, proofs): (Vec<_>, Vec<_>) = self
+            .held
+            .into_values()
+            .map(|held| (held.record, Some(held.proof)))
+            .unzip();
+        match writer.write_proven(store, &records, &proofs, observed_at) {
+            Ok(ProvenWrite::Kept(outcomes)) => {
+                use xt_store::injected::{
+                    InjectedContextAbstention as Why, InjectedContextDisposition as Kept,
+                };
+                let abstained = &mut claims.abstained;
+                for outcome in &outcomes {
+                    match outcome.disposition {
+                        Kept::Recorded => claims.recorded += 1,
+                        Kept::Abstained(Why::NotInserted) => abstained.not_inserted += 1,
+                        Kept::Abstained(Why::ConflictedRecord) => abstained.conflicted_record += 1,
+                        Kept::Abstained(Why::Ineligible(_)) => abstained.ineligible += 1,
+                        Kept::Abstained(Why::ConflictingProof) => abstained.conflicting_proof += 1,
+                    }
+                }
+                claims.unwritten += proofs.len().saturating_sub(outcomes.len());
+                Ok(())
+            }
+            Ok(ProvenWrite::Refused) => {
+                claims.store_refused += proofs.len();
+                Ok(())
+            }
+            Err(skipped) => {
+                claims.store_refused += proofs.len();
+                Err(skipped)
+            }
+        }
+    }
+}
+
+/// The origin-evidence scan's running account: its report, and the header
+/// paths the advisory notices are checked against, which leave it only as
+/// counts.
+#[derive(Default)]
+struct OriginTally {
+    report: OriginReport,
+    marked_paths: HashSet<String>,
+    unmarked_paths: HashSet<String>,
+}
+
+impl OriginTally {
+    fn session(&mut self, state: origin::SessionOrigin, path: &str) {
+        let sessions = &mut self.report.sessions;
+        match state {
+            origin::SessionOrigin::Marked => {
+                sessions.marked += 1;
+                self.marked_paths.insert(path.to_owned());
+            }
+            origin::SessionOrigin::Withheld => {
+                sessions.withheld += 1;
+                self.unmarked_paths.insert(path.to_owned());
+            }
+            origin::SessionOrigin::Invalid => {
+                sessions.invalid_marker += 1;
+                self.marked_paths.insert(path.to_owned());
+            }
+        }
+    }
+
+    /// Take the producer's advisory notices out of its diagnostics, checking
+    /// each against the headers; every other diagnostic stays.
+    fn split(&mut self, diagnostics: Vec<ReaderDiagnostic>) -> Vec<ReaderDiagnostic> {
+        let notices = &mut self.report.withheld_notices;
+        let mut named = HashSet::new();
+        let mut kept = Vec::new();
+        for diagnostic in diagnostics {
+            if diagnostic.code != ORIGIN_EVIDENCE_WITHHELD {
+                kept.push(diagnostic);
+                continue;
+            }
+            notices.total += 1;
+            match diagnostic.path {
+                Some(path) if self.unmarked_paths.contains(&path) => {
+                    named.insert(path);
+                }
+                Some(path) if self.marked_paths.contains(&path) => notices.marked_conflict += 1,
+                _ => notices.unmatched += 1,
+            }
+        }
+        notices.unreported = self.unmarked_paths.len() - named.len();
+        kept
+    }
+}
+
+/// How a proof-bearing batch was written.
+pub enum ProvenWrite {
+    /// Written with its proofs; one outcome per proof, in input order.
+    Kept(Vec<xt_store::injected::InjectedContextOutcome>),
+    /// The Store refused the batch with its proofs, and it was written
+    /// again without any.
+    Refused,
+}
+
+fn import_stream<I, F>(
+    store: &mut Store,
+    host: Host,
+    detail: String,
+    lines: I,
+    observed_at: i64,
+    finish: F,
+    origin: bool,
+) -> HostReport
+where
+    I: IntoIterator<Item = std::io::Result<String>>,
+    F: FnOnce() -> Result<readers_cli::ReaderOutcome, ReaderError>,
+{
     struct Active {
         writer: SessionWriter,
         batch: Vec<crate::canonical::ParsedRecord>,
         cursor: SourceCursor,
+        /// `Some` in origin-evidence mode.
+        holding: Option<Holding>,
     }
-    let mut events = stream::StreamEvents::new(host, SessionSource::ReadersCli);
+    let mut events = if origin {
+        stream::StreamEvents::with_codex_origin_evidence()
+    } else {
+        stream::StreamEvents::new(host, SessionSource::ReadersCli)
+    };
+    let mut tally = origin.then(OriginTally::default);
     let mut sessions: Vec<SessionResult> = Vec::new();
     let mut active: Option<Active> = None;
     let mut stream_failure: Option<String> = None;
@@ -567,21 +1076,70 @@ where
         active: Active,
         observed_at: i64,
         sessions: &mut Vec<SessionResult>,
+        tally: &mut Option<OriginTally>,
     ) {
         let Active {
             mut writer,
             batch,
             cursor,
+            mut holding,
         } = active;
+        let claims = tally.as_mut().map(|tally| &mut tally.report.claims);
         // A session that produced no storable record (a header-only or
         // dropped-only stream) exists only as a discovered identity: an empty
         // batch commits no row, and no cursor is recorded without a committed
         // batch.
-        if let Err(skipped) = writer.write(store, &batch, observed_at) {
+        let written = match holding.as_mut() {
+            Some(holding) => holding.write_overdue(store, &mut writer, observed_at),
+            None => Ok(()),
+        }
+        .and_then(|()| writer.write(store, &batch, observed_at));
+        if let Err(skipped) = written {
             sessions.push(*skipped);
+            if let (Some(holding), Some(claims)) = (holding, claims) {
+                holding.settle_early(store, &mut writer, observed_at, claims);
+            }
+            if let Some(tally) = tally {
+                tally.report.human_inputs.merge(&writer.human_report);
+            }
             return;
         }
+        if let (Some(mut holding), Some(claims)) = (holding, claims) {
+            holding.committed();
+            if let Err(skipped) = holding.settle(store, &mut writer, observed_at, claims) {
+                sessions.push(*skipped);
+                if let Some(tally) = tally {
+                    tally.report.human_inputs.merge(&writer.human_report);
+                }
+                return;
+            }
+        }
+        if let Some(tally) = tally {
+            tally.report.human_inputs.merge(&writer.human_report);
+        }
         sessions.push(writer.complete(store, Some(&cursor)));
+    }
+    // End a session early: report it, then settle what it held.
+    fn end_early(
+        store: &mut Store,
+        active: Active,
+        reason: impl FnOnce(&SessionWriter) -> SessionResult,
+        observed_at: i64,
+        sessions: &mut Vec<SessionResult>,
+        tally: &mut Option<OriginTally>,
+    ) {
+        let Active {
+            mut writer,
+            holding,
+            ..
+        } = active;
+        sessions.push(reason(&writer));
+        if let (Some(holding), Some(tally)) = (holding, tally.as_mut()) {
+            holding.settle_early(store, &mut writer, observed_at, &mut tally.report.claims);
+        }
+        if let Some(tally) = tally {
+            tally.report.human_inputs.merge(&writer.human_report);
+        }
     }
     let mut lines = lines.into_iter();
     for line in lines.by_ref() {
@@ -593,7 +1151,7 @@ where
             }
         };
         let text = line.trim_end_matches(['\n', '\r']);
-        let event = match events.push(text) {
+        let (event, evidence) = match events.push_with_origin(text) {
             Ok(Some(event)) => event,
             Ok(None) => continue,
             Err(error) => {
@@ -604,7 +1162,12 @@ where
         match event {
             stream::StreamEvent::Session(header) => {
                 if let Some(previous) = active.take() {
-                    complete(store, previous, observed_at, &mut sessions);
+                    complete(store, previous, observed_at, &mut sessions, &mut tally);
+                }
+                if let (Some(tally), Some(origin::Origin::Session(state))) =
+                    (tally.as_mut(), &evidence)
+                {
+                    tally.session(*state, &header.path);
                 }
                 let cursor = SourceCursor {
                     source: SessionSource::ReadersCli,
@@ -625,26 +1188,88 @@ where
                             writer,
                             batch: Vec::new(),
                             cursor,
+                            holding: origin.then(Holding::default),
                         })
                     }
                     Err(skipped) => sessions.push(*skipped),
                 }
             }
             stream::StreamEvent::Record(record) => {
-                if let Some(session) = active.as_mut() {
-                    session.batch.push(*record);
-                    if session.batch.len() == MAX_BATCH_RECORDS {
-                        let batch = std::mem::take(&mut session.batch);
-                        if let Err(skipped) = session.writer.write(store, &batch, observed_at) {
-                            sessions.push(*skipped);
-                            active = None;
+                let mut claim = None;
+                if let (Some(tally), Some(origin::Origin::Record(judged))) =
+                    (tally.as_mut(), evidence)
+                {
+                    let claims = &mut tally.report.claims;
+                    match judged {
+                        origin::RecordOrigin::Claimed(proof) => {
+                            claims.claimed += 1;
+                            claim = Some(proof);
+                        }
+                        origin::RecordOrigin::Invalid(refused) => {
+                            *claims.refused.entry(refused.code()).or_default() += 1;
+                        }
+                        origin::RecordOrigin::Declined | origin::RecordOrigin::Withheld => {}
+                    }
+                }
+                let disputes = events.take_origin_disputes();
+                let Some(session) = active.as_mut() else {
+                    // No writer holds this session: its records are not
+                    // written in either mode.
+                    if let (Some(tally), Some(_)) = (tally.as_mut(), &claim) {
+                        tally.report.claims.unwritten += 1;
+                    }
+                    continue;
+                };
+                let full = match session.holding.as_mut() {
+                    Some(holding) => {
+                        let claims = &mut tally.as_mut().expect("origin mode").report.claims;
+                        holding.take(&mut session.batch, &session.writer, *record, claim, claims);
+                        holding.dispute(&mut session.batch, disputes, claims);
+                        holding.window_full()
+                    }
+                    None => {
+                        session.batch.push(*record);
+                        session.batch.len() == MAX_BATCH_RECORDS
+                    }
+                };
+                if full {
+                    let batch = std::mem::take(&mut session.batch);
+                    let written = match session.holding.as_mut() {
+                        Some(holding) => {
+                            holding.write_overdue(store, &mut session.writer, observed_at)
+                        }
+                        None => Ok(()),
+                    }
+                    .and_then(|()| session.writer.write(store, &batch, observed_at));
+                    match written {
+                        Ok(()) => {
+                            if let Some(holding) = session.holding.as_mut() {
+                                holding.committed();
+                            }
+                        }
+                        Err(skipped) => {
+                            if let Some(session) = active.take() {
+                                end_early(
+                                    store,
+                                    session,
+                                    |_| *skipped,
+                                    observed_at,
+                                    &mut sessions,
+                                    &mut tally,
+                                );
+                            }
                         }
                     }
                 }
             }
             stream::StreamEvent::Dropped => {
+                let disputes = events.take_origin_disputes();
                 if let Some(session) = active.as_mut() {
                     session.writer.note_dropped(1);
+                    if let (Some(holding), Some(tally)) = (session.holding.as_mut(), tally.as_mut())
+                    {
+                        holding.dispute(&mut session.batch, disputes, &mut tally.report.claims);
+                    }
                 }
             }
             stream::StreamEvent::MalformedHeader {
@@ -654,7 +1279,7 @@ where
             } => {
                 // A boundary: the predecessor is complete; the successor is skipped.
                 if let Some(previous) = active.take() {
-                    complete(store, previous, observed_at, &mut sessions);
+                    complete(store, previous, observed_at, &mut sessions, &mut tally);
                 }
                 sessions.push(SessionResult {
                     conversation_id: native_session_id
@@ -673,10 +1298,19 @@ where
                 line,
                 reason,
             } => match active.take() {
-                Some(session) => sessions.push(session.writer.abandon(format!(
-                    "{reason} (stream line {line}); {} earlier batches stay committed",
-                    session.writer.batches
-                ))),
+                Some(session) => end_early(
+                    store,
+                    session,
+                    |writer| {
+                        writer.abandon(format!(
+                            "{reason} (stream line {line}); {} earlier batches stay committed",
+                            writer.batches
+                        ))
+                    },
+                    observed_at,
+                    &mut sessions,
+                    &mut tally,
+                ),
                 None => sessions.push(SessionResult {
                     conversation_id: Some(stream::expected_conversation_id(
                         host,
@@ -705,15 +1339,24 @@ where
     match (&stream_failure, &outcome) {
         (None, Ok(_)) => {
             if let Some(session) = active.take() {
-                complete(store, session, observed_at, &mut sessions);
+                complete(store, session, observed_at, &mut sessions, &mut tally);
             }
         }
         _ => {
             if let Some(session) = active.take() {
-                sessions.push(session.writer.abandon(format!(
-                    "reader ended before completing this session; {} earlier batches stay committed",
-                    session.writer.batches
-                )));
+                end_early(
+                    store,
+                    session,
+                    |writer| {
+                        writer.abandon(format!(
+                            "reader ended before completing this session; {} earlier batches stay committed",
+                            writer.batches
+                        ))
+                    },
+                    observed_at,
+                    &mut sessions,
+                    &mut tally,
+                );
             }
         }
     }
@@ -728,12 +1371,25 @@ where
         (Some(failure), _) => (HostStatus::ReaderFailed, failure, Vec::new()),
         (None, Err(error)) => (HostStatus::ReaderFailed, error.to_string(), Vec::new()),
         (None, Ok(run)) => {
-            let status = if run.complete && run.diagnostics.is_empty() && all_imported(&sessions) {
+            // In origin-evidence mode the advisory notices leave the
+            // diagnostics; every other diagnostic keeps its meaning.
+            let diagnostics = match tally.as_mut() {
+                Some(tally) => tally.split(run.diagnostics),
+                None => run.diagnostics,
+            };
+            let human_complete = tally
+                .as_ref()
+                .is_none_or(|t| t.report.human_inputs.failed == 0);
+            let status = if run.complete
+                && diagnostics.is_empty()
+                && all_imported(&sessions)
+                && human_complete
+            {
                 HostStatus::Complete
             } else {
                 HostStatus::Incomplete
             };
-            (status, detail, run.diagnostics)
+            (status, detail, diagnostics)
         }
     };
     HostReport {
@@ -742,6 +1398,7 @@ where
         detail: Some(detail),
         diagnostics,
         sessions,
+        origin: tally.map(|tally| tally.report),
     }
 }
 
@@ -753,6 +1410,8 @@ where
 /// or dropped record. It never supplies an incremental resume position. Titles are never
 /// persisted: they derive from prompts.
 pub struct SessionWriter {
+    human_rules: human_input::InputRules,
+    human_report: xt_store::human_input::CorrectionReport,
     host: Host,
     native_session_id: String,
     context: crate::canonical::SourceContext,
@@ -777,6 +1436,8 @@ impl SessionWriter {
         observed_at: i64,
     ) -> Result<Self, Box<SessionResult>> {
         let writer = Self {
+            human_rules: human_input::InputRules::default(),
+            human_report: Default::default(),
             host,
             native_session_id: header.native_session_id.clone(),
             context: header.context(host, source),
@@ -886,26 +1547,128 @@ impl SessionWriter {
         records: &[crate::canonical::ParsedRecord],
         observed_at: i64,
     ) -> Result<(), Box<SessionResult>> {
-        self.write_with_checkpoint(store, records, observed_at, None)
+        self.write_with_checkpoint(store, records, &[], &[], observed_at, None)
     }
 
-    /// `write`, with resume progress that commits only if this batch commits
-    /// and every record of it is stored.
+    /// `write`, with the structural hook summaries and exact PR witnesses read
+    /// alongside those records and resume progress; all of them commit
+    /// together or not at all.
     pub fn write_with_checkpoint(
         &mut self,
         store: &mut Store,
         records: &[crate::canonical::ParsedRecord],
+        summaries: &[crate::canonical::StopHookSummary],
+        witnesses: &[crate::writer::PrWitness],
         observed_at: i64,
         checkpoint: Option<&NativeCheckpoint>,
     ) -> Result<(), Box<SessionResult>> {
-        if records.is_empty() {
-            return Ok(());
+        self.commit(
+            store,
+            records,
+            summaries,
+            witnesses,
+            &[],
+            observed_at,
+            checkpoint,
+        )
+        .map(|_| ())
+        .map_err(|error| self.failed(error))
+    }
+
+    /// `write` with one optional injected context proof per record, aligned
+    /// by input index. If the Store refuses the batch while it carries any
+    /// proof, the same records are written once more without any, whatever
+    /// the refusal; only if that fails too is the session abandoned.
+    pub fn write_proven(
+        &mut self,
+        store: &mut Store,
+        records: &[crate::canonical::ParsedRecord],
+        proofs: &[Option<xt_store::injected::InjectedContextProof>],
+        observed_at: i64,
+    ) -> Result<ProvenWrite, Box<SessionResult>> {
+        match self.commit(store, records, &[], &[], proofs, observed_at, None) {
+            Ok(outcomes) => Ok(ProvenWrite::Kept(outcomes)),
+            Err(_) if proofs.iter().any(Option::is_some) => {
+                match self.commit(store, records, &[], &[], &[], observed_at, None) {
+                    Ok(_) => Ok(ProvenWrite::Refused),
+                    Err(error) => Err(self.failed(error)),
+                }
+            }
+            Err(error) => Err(self.failed(error)),
+        }
+    }
+
+    /// Whether moving this record out of its ordinary batch can change
+    /// nothing else the session writes: its measurements project, it agrees
+    /// with every identity label the header gives and fills none the header
+    /// leaves open, it carries no surface evidence (which the header never
+    /// supplies), and it names a cwd or branch only where the header already
+    /// fills one first, so its own can only raise the conflict flag, wherever
+    /// it is written. Checked without the Store, before a claimed record
+    /// leaves its ordinary batch.
+    fn holdable(&self, record: &crate::canonical::ParsedRecord) -> bool {
+        let batch = |records| WriteBatch {
+            context: &self.context,
+            declared_host: Some(self.host),
+            records,
+            hook_summaries: &[],
+            pr_witnesses: &[],
+            title: None,
+            cwd: self.cwd.as_deref(),
+            git_branch: self.git_branch.as_deref(),
+            namespace: None,
+            keep_content: true,
+            observed_at: 0,
+            receipt: None,
+            cursor: None,
+            discovery: None,
+            checkpoint: None,
+        };
+        let canonical = &record.canonical;
+        canonical.surface_evidence.is_none()
+            && (canonical.cwd.is_none() || self.cwd.is_some())
+            && (canonical.git_branch.is_none() || self.git_branch.is_some())
+            && match (
+                crate::writer::resolve_session(&batch(std::slice::from_ref(record))),
+                crate::writer::resolve_session(&batch(&[])),
+            ) {
+                (Ok(alone), Ok(header)) => {
+                    alone == header && crate::writer::coverage(&alone.session_id, record).is_ok()
+                }
+                _ => false,
+            }
+    }
+
+    fn failed(&self, error: xt_store::Error) -> Box<SessionResult> {
+        Box::new(self.abandon(format!(
+            "session could not be written after {} committed batches: {error}",
+            self.batches
+        )))
+    }
+
+    /// Commit one batch; on failure nothing is written and nothing here
+    /// changes.
+    #[allow(clippy::too_many_arguments)]
+    fn commit(
+        &mut self,
+        store: &mut Store,
+        records: &[crate::canonical::ParsedRecord],
+        summaries: &[crate::canonical::StopHookSummary],
+        witnesses: &[crate::writer::PrWitness],
+        proofs: &[Option<xt_store::injected::InjectedContextProof>],
+        observed_at: i64,
+        checkpoint: Option<&NativeCheckpoint>,
+    ) -> xt_store::Result<Vec<xt_store::injected::InjectedContextOutcome>> {
+        if records.is_empty() && summaries.is_empty() && witnesses.is_empty() {
+            return Ok(Vec::new());
         }
         let discovery = self.discovery(observed_at);
         let batch = WriteBatch {
             context: &self.context,
             declared_host: Some(self.host),
             records,
+            hook_summaries: summaries,
+            pr_witnesses: witnesses,
             title: None,
             cwd: self.cwd.as_deref(),
             git_branch: self.git_branch.as_deref(),
@@ -918,8 +1681,41 @@ impl SessionWriter {
             discovery: Some(&discovery),
             checkpoint,
         };
-        match write_batch(store, &batch) {
-            Ok(saved) => {
+        // Worked out before the write, in input order as before, so the batch
+        // keeps no person preview of an input whose adjustment will say only
+        // part of it is a person's words; applied only once the rows commit.
+        // The rules observe on a copy that replaces them only on success, so
+        // a refused batch leaves the questions they remember unchanged.
+        let mut rules = (self.host == Host::Codex).then(|| self.human_rules.clone());
+        let adjustments = if let Some(rules) = rules.as_mut() {
+            let session = self.context.conversation_id.as_deref().unwrap_or("");
+            records
+                .iter()
+                .enumerate()
+                .map(|(index, record)| {
+                    rules
+                        .observe(
+                            session,
+                            &record.canonical,
+                            proofs.get(index).and_then(Option::as_ref),
+                        )
+                        .or_else(|| record.human_adjustment.clone())
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let adjusted = adjustments.iter().map(Option::is_some).collect::<Vec<_>>();
+        match write_batch_proven(store, &batch, proofs, &adjusted) {
+            Ok((saved, proven)) => {
+                if let Some(rules) = rules {
+                    self.human_rules = rules;
+                    let adjustments = adjustments.into_iter().flatten().collect::<Vec<_>>();
+                    match store.apply_human_input_adjustments(&adjustments) {
+                        Ok(report) => self.human_report.merge(&report),
+                        Err(_) => self.human_report.failed += adjustments.len(),
+                    }
+                }
                 self.new += saved.records_new;
                 self.enriched += saved.records_enriched;
                 // A rejection is a record this import could not store; it must
@@ -936,12 +1732,9 @@ impl SessionWriter {
                 // The surface is reported once it is persisted.
                 self.result.source_surface = self.context.source_surface.clone();
                 self.batches += 1;
-                Ok(())
+                Ok(proven)
             }
-            Err(error) => Err(Box::new(self.abandon(format!(
-                "session could not be written after {} committed batches: {error}",
-                self.batches
-            )))),
+            Err(error) => Err(error),
         }
     }
 

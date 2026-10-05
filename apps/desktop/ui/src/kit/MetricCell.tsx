@@ -16,6 +16,8 @@ export interface MetricCellProps {
   reason?: string;
   size?: 10.5 | 11 | 18 | 24 | 30;
   align?: 'left' | 'right';
+  /** A plain-words note on a measured value, shown on hover. */
+  title?: string;
 }
 
 export function MetricCell({
@@ -24,10 +26,12 @@ export function MetricCell({
   reason,
   size = 11,
   align = 'left',
+  title,
 }: MetricCellProps) {
   return (
     <span
       className="xt-metric-cell"
+      title={isMeasured(value) ? title : undefined}
       style={{ fontSize: size, textAlign: align, width: align === 'right' ? '100%' : undefined }}
     >
       {isMeasured(value) ? (

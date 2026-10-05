@@ -10,7 +10,20 @@ from bisect import bisect_left, bisect_right
 from . import codex, _parseable_timestamp
 
 
-def apply(rows, records, sources, usage_targets, *, session_id, namespace, seen):
+def apply(rows, records, sources, usage_targets, *, session_id, namespace, seen,
+          record_guard=None, usage_sources=None):
+    """Overlay ledger usage, creating a record only where none can carry it.
+
+    ``record_guard`` bounds what this may add. A ledger with no record to
+    attach to allocates one, so a session of nothing but ledger entries grows
+    the list here rather than in the converter; the guard is called with the
+    running count -- including what the caller already holds -- before each
+    such record exists.
+
+    ``usage_sources``, when a dict, maps ``id(record)`` to every ledger row
+    that overlaid an existing record, which ``sources`` alone cannot say: it
+    still names the row the record's identity came from.
+    """
     ledgers = [(i, row) for i, row in enumerate(rows) if row.get('type') == 'token_usage_record']
     if not ledgers:
         return records
@@ -76,7 +89,11 @@ def apply(rows, records, sources, usage_targets, *, session_id, namespace, seen)
             if stamp is not None:
                 target['timestamp'] = stamp
             sources[id(target)] = position
+            if record_guard is not None:
+                record_guard(len(records) + 1)
             records.append(target)
+        elif usage_sources is not None:
+            usage_sources.setdefault(id(target), []).append(position)
         target['api_message_id'] = response
         if model is None:
             target['message'].pop('model', None)

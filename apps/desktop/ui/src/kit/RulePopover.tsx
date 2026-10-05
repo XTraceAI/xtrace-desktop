@@ -1,7 +1,7 @@
 import { Tooltip } from '@base-ui/react/tooltip';
 import { useId, type ReactElement } from 'react';
 import { useSurfaceTheme } from '../theme/ThemeProvider';
-import { ruleText, type RuleId } from './rules';
+import { displayRuleText, type RuleId } from './rules';
 import '../styles/metrics.css';
 
 /** Passive definition text. Base UI owns hover, focus, Escape, and positioning. */
@@ -35,9 +35,7 @@ export function RulePopover({
           collisionPadding={8}
         >
           <Tooltip.Popup id={id} role="tooltip" className="xt-rule-popover">
-            <span>
-              {ruleId} · {ruleText(ruleId)}
-            </span>
+            <span>{displayRuleText(ruleId)}</span>
             {context && <span className="xt-rule-context">{context}</span>}
           </Tooltip.Popup>
         </Tooltip.Positioner>

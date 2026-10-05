@@ -10,7 +10,9 @@ mod load;
 mod registry;
 
 pub use db::TempDb;
-pub use load::{Fixture, FixtureExport, FixtureStatus, LoadedSession, Manifest, SessionInput};
+pub use load::{
+    Fixture, FixtureExport, FixtureStatus, LoadedSession, Manifest, PrLinkInput, SessionInput,
+};
 pub use registry::{FixtureId, RULE_IDS, RuleId};
 
 #[derive(Debug, thiserror::Error)]

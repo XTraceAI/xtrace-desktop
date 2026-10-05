@@ -6,6 +6,7 @@ import '../styles/tables.css';
 export interface HostOption {
   id: string;
   label: string;
+  /** `null` is an unknown count and reads `—`; omit it to state no count. */
   count?: number | null;
 }
 export function FilterMenu({
@@ -81,11 +82,15 @@ export function FilterMenu({
                 <HostGlyph host={option.id} size={16} />
               </span>
               <span>{option.label}</span>{' '}
-              <small>
-                {option.count == null || !Number.isFinite(option.count)
-                  ? '—'
-                  : option.count.toLocaleString('en-US')}
-              </small>
+              {/* A count that was never supplied is not an unknown count: the
+                  caller simply does not state one, so nothing is shown. */}
+              {option.count !== undefined && (
+                <small>
+                  {option.count === null || !Number.isFinite(option.count)
+                    ? '—'
+                    : option.count.toLocaleString('en-US')}
+                </small>
+              )}
             </label>
           ))}
         </fieldset>

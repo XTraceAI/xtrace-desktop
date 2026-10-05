@@ -93,7 +93,7 @@ fn complete_catalog_distinguishes_populated_from_unimplemented() {
             assert!(fixture.expected().is_empty());
         }
     }
-    assert_eq!(populated, 2);
+    assert_eq!(populated, 3);
 }
 
 #[test]

@@ -1,5 +1,6 @@
 import { useId, useState, type ReactNode } from 'react';
-import { HostGlyph } from './HostGlyph';
+import type { AccountUsage } from '../data/generated/AccountUsage';
+import { AccountUsageWidget } from './AccountUsageWidget';
 import { BrandMark } from './BrandMark';
 import { HubPopover } from './HubPopover';
 import { createPopoverHandle, Popover, PopoverTrigger } from './Popover';
@@ -9,19 +10,38 @@ import '../styles/sidebar.css';
 
 export type SidebarKey = 'dashboard' | 'sessions' | 'prs' | 'rulebook' | 'leaderboard' | 'team';
 export type SidebarIcon = SidebarKey | 'hub' | 'theme' | 'settings';
-export interface HostTokens {
-  host: 'claude' | 'codex' | 'cursor';
-  tokens: number | null;
-  /** Display-only fill supplied by the caller; no metric is calculated here. */
-  fillPercent: number;
-  glyph?: ReactNode;
-}
 export interface SurfaceStatus {
   host: string;
   /** Raw discovered surface identifier; null means the source did not report it. */
   surface: string | null;
   status: 'capturing' | 'not-capturing' | 'unknown';
   reason?: string;
+}
+/** One host's last scan, worded by the caller. It is never plugin capture coverage. */
+export interface LocalIndexHost {
+  /** Host identifier as reported, such as `claude`. */
+  host: string;
+  state: string;
+  /** A last scan the caller wants noticed; nothing is inferred from `state`. */
+  attention?: boolean;
+  reason?: string;
+}
+/**
+ * The local index as the caller describes it. Every word and tone is supplied:
+ * nothing here decides what is healthy, and no status is derived from the
+ * listener or the capture surfaces.
+ */
+export interface LocalIndexStatus {
+  /** Short state word for the compact trigger, shown after “index ·”. */
+  label: string;
+  /** Full state name for the panel and the trigger's accessible name. */
+  title: string;
+  /** `live` draws the green dot, `attention` the warning dot, `idle` the plain one. */
+  tone: 'live' | 'attention' | 'idle';
+  summary: string;
+  /** Qualifications the short label cannot carry; every one is shown in full. */
+  notes?: string[];
+  hosts: LocalIndexHost[];
 }
 export interface SidebarProps {
   activeKey?: SidebarKey;
@@ -32,12 +52,24 @@ export interface SidebarProps {
   hubConnected?: boolean;
   teamLabel?: string;
   onConnectHub?: () => void;
-  hosts: HostTokens[];
-  tokensCaption?: string;
+  accountUsage?: AccountUsage;
+  accountUsageFailed?: boolean;
+  accountUsageRefreshing?: boolean;
+  accountUsageRefreshEnabled?: boolean;
+  onRefreshAccountUsage?: () => void;
   surfaces?: SurfaceStatus[];
-  listener: { status: 'listening'; port: number } | { status: 'off' | 'unknown' };
+  /** The optional plugin receiver. A port is shown only when the caller knows one. */
+  listener: { status: 'listening'; port?: number } | { status: 'off' | 'unknown' };
+  /**
+   * When supplied, the status row describes the local index and its panel keeps
+   * the plugin receiver and capture coverage as separate lines. Omitted, the row
+   * stays the plugin listener and its panel the capture surfaces.
+   */
+  localIndex?: LocalIndexStatus;
   version: string;
   updateLabel?: string;
+  /** Caller-owned status/actions beside the version; the kit does not run updates. */
+  versionExtra?: ReactNode;
   theme: Theme;
   onToggleTheme: () => void;
   onSettings?: () => void;
@@ -47,19 +79,12 @@ export interface SidebarProps {
   icons?: Partial<Record<SidebarIcon, ReactNode>>;
 }
 
-const hostLabels = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
-const compactTokens = new Intl.NumberFormat('en-US', {
-  notation: 'compact',
-  maximumFractionDigits: 1,
-});
-const millionTokens = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
-const formatTokens = (tokens: number) =>
-  tokens >= 100000 ? `${millionTokens.format(tokens / 1000000)}M` : compactTokens.format(tokens);
 const surfaceLabels = {
   capturing: 'Capturing',
   'not-capturing': 'Not capturing',
   unknown: 'Unknown',
 };
+const receiverLabels = { listening: 'Listening', off: 'Off', unknown: 'Unknown' };
 
 export function Sidebar({
   activeKey,
@@ -70,12 +95,17 @@ export function Sidebar({
   hubConnected = false,
   teamLabel,
   onConnectHub,
-  hosts,
-  tokensCaption,
+  accountUsage,
+  accountUsageFailed = false,
+  accountUsageRefreshing = false,
+  accountUsageRefreshEnabled = true,
+  onRefreshAccountUsage = () => {},
   surfaces = [],
   listener,
+  localIndex,
   version,
   updateLabel,
+  versionExtra,
   theme,
   onToggleTheme,
   onSettings,
@@ -91,6 +121,32 @@ export function Sidebar({
   const [captureHandle] = useState(createPopoverHandle);
   const [captureOpen, setCaptureOpen] = useState(false);
   const listening = listener.status === 'listening';
+  // A port is printed only when the caller supplied one; none is ever assumed.
+  const port = listener.status === 'listening' ? listener.port : undefined;
+  // The one status row: the local index when the caller describes it, and
+  // otherwise the plugin listener exactly as before.
+  const statusRow = localIndex
+    ? {
+        name: `Local index: ${localIndex.title}`,
+        hint: 'View local index and plugin receiver status',
+        dot: `xt-status-${localIndex.tone}`,
+        text: `index · ${localIndex.label}`,
+      }
+    : {
+        name: 'Capture status',
+        hint: 'View capture status by surface',
+        dot: listening ? 'xt-status-live' : '',
+        text: port !== undefined ? `plugin · :${port}` : `plugin · ${listener.status}`,
+      };
+  const surfaceRows = surfaces.map((surface) => (
+    <div className="xt-surface-row" key={JSON.stringify([surface.host, surface.surface])}>
+      <span>
+        {surface.host} · {surface.surface ?? 'Unknown surface'}
+      </span>
+      <span className={`xt-capture-${surface.status}`}>{surfaceLabels[surface.status]}</span>
+      {surface.reason && <small>{surface.reason}</small>}
+    </div>
+  ));
   const icon = (key: SidebarIcon) => (
     <span className="xt-sidebar-icon" aria-hidden="true">
       {icons[key] ?? sidebarIcons[key]}
@@ -146,39 +202,13 @@ export function Sidebar({
         </div>
       </nav>
       <div className="xt-sidebar-footer">
-        <section className="xt-host-tokens" aria-label="Tokens by host">
-          <div className="xt-token-heading">
-            <h2>Usages</h2>
-            {tokensCaption && <span>{tokensCaption}</span>}
-          </div>
-          {hosts.length === 0 && <p className="xt-sidebar-empty">No host measurements</p>}
-          {hosts.map((row) => {
-            const measured = row.tokens !== null && Number.isFinite(row.tokens) && row.tokens >= 0;
-            const fill =
-              measured && row.tokens !== 0 && Number.isFinite(row.fillPercent)
-                ? Math.min(100, Math.max(0, row.fillPercent))
-                : 0;
-            return (
-              <div className={`xt-host-row xt-host-${row.host}`} key={row.host}>
-                <span className="xt-host-glyph" aria-hidden="true">
-                  {row.glyph ?? <HostGlyph host={row.host} />}
-                </span>
-                <span className="xt-host-name">
-                  {hostLabels[row.host]}
-                  <span className="xt-host-track" aria-hidden="true">
-                    <span style={{ width: `${fill}%` }} />
-                  </span>
-                </span>
-                <span
-                  className="xt-host-value"
-                  aria-label={`${hostLabels[row.host]} tokens: ${measured ? row.tokens : 'unmeasured'}`}
-                >
-                  {measured ? formatTokens(row.tokens!) : '—'}
-                </span>
-              </div>
-            );
-          })}
-        </section>
+        <AccountUsageWidget
+          usage={accountUsage}
+          failed={accountUsageFailed}
+          refreshing={accountUsageRefreshing}
+          refreshEnabled={accountUsageRefreshEnabled}
+          onRefresh={onRefreshAccountUsage}
+        />
         <PopoverTrigger
           handle={hubHandle}
           type="button"
@@ -195,21 +225,25 @@ export function Sidebar({
               handle={captureHandle}
               type="button"
               className="xt-capture-trigger"
-              aria-label="Capture status"
-              title="View capture status by surface"
+              aria-label={statusRow.name}
+              title={statusRow.hint}
             >
-              <i className={listening ? 'xt-status-live' : ''} aria-hidden="true" />
-              <span>
-                {listening ? `plugin · :${listener.port}` : `plugin · ${listener.status}`}
-              </span>
+              <i className={statusRow.dot} aria-hidden="true" />
+              <span>{statusRow.text}</span>
             </PopoverTrigger>
-            <span title={`v${version}${updateLabel ? ` · ${updateLabel}` : ''}`}>
-              <i aria-hidden="true" />
-              <span>
-                v{version}
-                {updateLabel ? ` · ${updateLabel}` : ''}
+            <div className="xt-sidebar-version">
+              <span
+                className="xt-version-label"
+                title={`v${version}${updateLabel ? ` · ${updateLabel}` : ''}`}
+              >
+                <i aria-hidden="true" />
+                <span>
+                  v{version}
+                  {updateLabel ? ` · ${updateLabel}` : ''}
+                </span>
               </span>
-            </span>
+              <div className="xt-sidebar-version-extra">{versionExtra}</div>
+            </div>
           </div>
           <div className="xt-sidebar-actions">
             <button
@@ -246,23 +280,84 @@ export function Sidebar({
         offset={14}
         className="xt-capture-popover"
         role="dialog"
-        aria-label="Capture by surface"
+        aria-label={localIndex ? 'Local index and plugin status' : 'Capture by surface'}
       >
-        <section className="xt-surface-status">
-          <h2>Capture by surface</h2>
-          {surfaces.length === 0 && <p className="xt-sidebar-empty">Capture status unknown</p>}
-          {surfaces.map((surface) => (
-            <div className="xt-surface-row" key={JSON.stringify([surface.host, surface.surface])}>
-              <span>
-                {surface.host} · {surface.surface ?? 'Unknown surface'}
-              </span>
-              <span className={`xt-capture-${surface.status}`}>
-                {surfaceLabels[surface.status]}
-              </span>
-              {surface.reason && <small>{surface.reason}</small>}
-            </div>
-          ))}
-        </section>
+        {localIndex ? (
+          <div className="xt-index-content">
+            <section className="xt-surface-status xt-index-status">
+              <h2>Local index</h2>
+              <p className={`xt-index-state xt-index-${localIndex.tone}`}>{localIndex.title}</p>
+              <p>{localIndex.summary}</p>
+              {localIndex.notes?.map((note, index) => (
+                <p className="xt-index-note" key={index}>
+                  {note}
+                </p>
+              ))}
+            </section>
+            <section className="xt-surface-status">
+              <h2>Last scan by host</h2>
+              {localIndex.hosts.length === 0 && (
+                <p className="xt-sidebar-empty">No host scan reported</p>
+              )}
+              {localIndex.hosts.map((row, index) => (
+                <div className="xt-surface-row" key={`${row.host}:${index}`}>
+                  <span>{row.host}</span>
+                  <span className={row.attention ? 'xt-index-attention' : undefined}>
+                    {row.state}
+                  </span>
+                  {row.reason && <small>{row.reason}</small>}
+                </div>
+              ))}
+              {localIndex.hosts.length > 0 && (
+                <small className="xt-index-footnote">
+                  A complete scan read the history it found. It is not plugin capture coverage.
+                </small>
+              )}
+            </section>
+            {/* The receiver and what plugins delivered are separate facts from
+                the index above, and neither is inferred from the other. */}
+            <section className="xt-surface-status">
+              <h2>Plugin · optional</h2>
+              <div className="xt-surface-row">
+                <span>Plugin receiver</span>
+                <span className={listening ? 'xt-index-live' : 'xt-capture-unknown'}>
+                  {port !== undefined ? `Listening · :${port}` : receiverLabels[listener.status]}
+                </span>
+              </div>
+              {surfaces.length === 0 ? (
+                <div className="xt-surface-row">
+                  <span>Plugin delivery</span>
+                  <span className="xt-capture-unknown">Unknown</span>
+                </div>
+              ) : (
+                surfaceRows
+              )}
+              <small className="xt-index-footnote">
+                Local history is indexed without the plugin.
+                {listening && ' A listening receiver is not proof that a plugin delivers to it.'}
+              </small>
+            </section>
+            {onSettings && (
+              <button
+                type="button"
+                tabIndex={0}
+                className="xt-index-settings"
+                onClick={() => {
+                  setCaptureOpen(false);
+                  onSettings();
+                }}
+              >
+                Index details in Settings
+              </button>
+            )}
+          </div>
+        ) : (
+          <section className="xt-surface-status">
+            <h2>Capture by surface</h2>
+            {surfaces.length === 0 && <p className="xt-sidebar-empty">Capture status unknown</p>}
+            {surfaceRows}
+          </section>
+        )}
       </Popover>
       <HubPopover
         id={hubId}

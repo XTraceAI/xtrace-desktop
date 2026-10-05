@@ -11,8 +11,8 @@ use super::checkpoint::{self, FileIdentity, ResumeBasis, TailWindow};
 use super::readers_cli::ReaderDiagnostic;
 use super::stream::{SessionHeader, expected_conversation_id};
 use super::{ScanMode, SessionOutcome, SessionResult, SessionWriter};
-use crate::canonical::{Parsed, ParsedRecord, SourceContext, parse_with_context};
-use crate::writer::MAX_BATCH_RECORDS;
+use crate::canonical::{Parsed, ParsedRecord, SourceContext, StopHookSummary, parse_with_context};
+use crate::writer::{MAX_BATCH_RECORDS, PrWitness};
 use sha2::Digest;
 use std::{
     fs,
@@ -32,11 +32,33 @@ pub struct ClaudeFile {
     metadata: fs::Metadata,
 }
 
+impl ClaudeFile {
+    /// The metadata the enumeration observed, which every later open of this
+    /// file must still match.
+    pub(super) fn observed(&self) -> &fs::Metadata {
+        &self.metadata
+    }
+}
+
 fn unreadable(path: &Path) -> ReaderDiagnostic {
     ReaderDiagnostic {
         code: "discovery_incomplete".into(),
         path: Some(path.to_string_lossy().into_owned()),
     }
+}
+
+/// XTrace Desktop reads Claude usage by running Claude Code in a dedicated
+/// folder named `xtrace-claude-usage-probe`. Claude Code names a project
+/// folder after its working directory with every non-alphanumeric character
+/// replaced by `-`, so that folder's project ends with this suffix. Those
+/// probe runs are not the user's sessions and are never indexed.
+pub const USAGE_PROBE_PROJECT_SUFFIX: &str = "-xtrace-claude-usage-probe";
+
+fn is_usage_probe_project(project: &Path) -> bool {
+    project
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(USAGE_PROBE_PROJECT_SUFFIX))
 }
 
 /// Every main transcript and sidechain file under the projects root, newest
@@ -62,6 +84,9 @@ pub fn enumerate(projects: &Path) -> std::io::Result<(Vec<ClaudeFile>, Vec<Reade
                 diagnostics.push(unreadable(&project));
                 continue;
             }
+        }
+        if is_usage_probe_project(&project) {
+            continue;
         }
         let Ok(entries) = fs::read_dir(&project) else {
             diagnostics.push(unreadable(&project));
@@ -132,7 +157,7 @@ pub fn enumerate(projects: &Path) -> std::io::Result<(Vec<ClaudeFile>, Vec<Reade
     Ok((files, diagnostics))
 }
 
-fn collect_jsonl(
+pub(super) fn collect_jsonl(
     directory: &Path,
     session_id: &str,
     files: &mut Vec<ClaudeFile>,
@@ -176,6 +201,23 @@ fn collect_jsonl(
     }
 }
 
+/// One file named directly, observed exactly as `enumerate` observes what it
+/// finds: a regular file, reached without following an alias.
+pub(super) fn observe(
+    path: PathBuf,
+    session_id: String,
+    sidechain: bool,
+) -> std::io::Result<ClaudeFile> {
+    let (mtime_ns, metadata) = mtime_ns(&path)?;
+    Ok(ClaudeFile {
+        path,
+        session_id,
+        sidechain,
+        mtime_ns,
+        metadata,
+    })
+}
+
 fn mtime_ns(path: &Path) -> std::io::Result<(u128, fs::Metadata)> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.is_file() {
@@ -189,7 +231,7 @@ fn mtime_ns(path: &Path) -> std::io::Result<(u128, fs::Metadata)> {
     Ok((mtime, metadata))
 }
 
-fn context(session: &str) -> SourceContext {
+pub(super) fn context(session: &str) -> SourceContext {
     SourceContext {
         conversation_id: Some(session.to_owned()),
         native_session_id: Some(session.to_owned()),
@@ -323,6 +365,7 @@ fn header(file: &ClaudeFile, first: &[ParsedRecord]) -> SessionHeader {
         title: None,
         path: file.path.to_string_lossy().into_owned(),
         mtime: file.mtime_ns as f64 / 1_000_000_000.0,
+        origin_evidence: Default::default(),
     }
 }
 
@@ -531,6 +574,13 @@ pub fn import_file(
     snapshot.rewind()?;
     let mut reader = BufReader::new(snapshot);
     let mut batch: Vec<ParsedRecord> = Vec::new();
+    // Structural hook summaries read from the same lines as `batch`. They are
+    // not records, so they are counted and committed separately, never as
+    // assistant tool calls.
+    let mut summaries: Vec<StopHookSummary> = Vec::new();
+    // Explicit `pr-link` witnesses read from the same lines: exact PR evidence
+    // that commits with the batch covering it, or not at all.
+    let mut witnesses: Vec<PrWitness> = Vec::new();
     let mut dropped = 0;
     let mut lines = resume.lines;
     let mut consumed: u64 = 0;
@@ -596,7 +646,129 @@ pub fn import_file(
                     batch.push(*record);
                 }
                 Ok(Parsed::Dropped(_)) => dropped += 1,
-                Ok(Parsed::Inert | Parsed::StructuralEvent(_) | Parsed::PrLink(_)) => {}
+                Ok(Parsed::StructuralEvent(summary)) => {
+                    // The summary's own UUID is its stable identity; without one
+                    // the event is unsupported and is never given an arrival ID.
+                    let mut summary = summary;
+                    if summary
+                        .uuid
+                        .as_deref()
+                        .is_none_or(|uuid| uuid.trim().is_empty())
+                    {
+                        return Ok(stop(
+                            &writer,
+                            lines,
+                            "structural summary has no stable identity",
+                        ));
+                    }
+                    // A summary names the same native identity a record does and
+                    // is reconciled by the same rules: blank labels are no
+                    // labels, the line's own two spellings must agree, and this
+                    // file is the session context whatever a fork's inherited
+                    // prefix still calls itself.
+                    if [
+                        summary.native.session_id.as_deref(),
+                        summary.source.native_session_id.as_deref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .any(|id| id.trim().is_empty())
+                        || summary
+                            .source
+                            .native_session_id
+                            .as_ref()
+                            .zip(summary.native.session_id.as_ref())
+                            .is_some_and(|(source, native)| source != native)
+                    {
+                        return Ok(stop(
+                            &writer,
+                            lines,
+                            "structural summary identity labels disagree",
+                        ));
+                    }
+                    summary.native.session_id = Some(file.session_id.clone());
+                    summary.source.native_session_id = Some(file.session_id.clone());
+                    let named = label(summary.source.source_surface.as_ref())
+                        .or_else(|| label(summary.native.entrypoint.as_ref()));
+                    if let Some(named) = named {
+                        match &surface {
+                            Some(known) if *known != named => {
+                                return Ok(stop(
+                                    &writer,
+                                    lines,
+                                    "structural summary surface disagrees with the file's surface",
+                                ));
+                            }
+                            Some(_) => {}
+                            None => surface = Some(named),
+                        }
+                    }
+                    summaries.push(*summary);
+                }
+                Ok(Parsed::PrLink(link)) => {
+                    // A witness names its session like a record does and is
+                    // reconciled by the same rules, except that the session is
+                    // required: without it nothing says whose evidence this is.
+                    let mut link = link;
+                    let Some(named) = link
+                        .native
+                        .session_id
+                        .clone()
+                        .filter(|id| !id.trim().is_empty())
+                    else {
+                        return Ok(stop(&writer, lines, "PR witness names no native session"));
+                    };
+                    if link
+                        .source
+                        .native_session_id
+                        .as_ref()
+                        .is_some_and(|source| *source != named)
+                    {
+                        return Ok(stop(&writer, lines, "PR witness identity labels disagree"));
+                    }
+                    // The witness's own time is its only event time.
+                    if link.timestamp.is_none() {
+                        return Ok(stop(&writer, lines, "PR witness has no timestamp"));
+                    }
+                    if xt_store::pr_link::PrIdentity::reconcile(
+                        Some(&link.raw_url),
+                        Some(&link.raw_repository),
+                        Some(link.number),
+                    )
+                    .is_err()
+                    {
+                        return Ok(stop(
+                            &writer,
+                            lines,
+                            "PR witness does not name one canonical pull request",
+                        ));
+                    }
+                    // This file is the session context, as for a record; the
+                    // session the line names is kept as whose evidence it is,
+                    // so a fork's inherited copy stays its original's.
+                    link.native.session_id = Some(file.session_id.clone());
+                    link.source.native_session_id = Some(file.session_id.clone());
+                    let named_surface = label(link.source.source_surface.as_ref())
+                        .or_else(|| label(link.native.entrypoint.as_ref()));
+                    if let Some(named_surface) = named_surface {
+                        match &surface {
+                            Some(known) if *known != named_surface => {
+                                return Ok(stop(
+                                    &writer,
+                                    lines,
+                                    "PR witness surface disagrees with the file's surface",
+                                ));
+                            }
+                            Some(_) => {}
+                            None => surface = Some(named_surface),
+                        }
+                    }
+                    witnesses.push(PrWitness {
+                        link: *link,
+                        named_session: named,
+                    });
+                }
+                Ok(Parsed::Inert) => {}
                 Err(_) => {
                     return Ok(stop(
                         &writer,
@@ -611,7 +783,7 @@ pub fn import_file(
         consumed += read as u64;
         window.push(&buffer);
         prefix.update(&buffer);
-        if batch.len() == MAX_BATCH_RECORDS {
+        if batch.len() == MAX_BATCH_RECORDS || witnesses.len() == MAX_BATCH_RECORDS {
             if !writer.labels_complete() {
                 writer.enrich(&header(file, &batch));
             }
@@ -626,12 +798,19 @@ pub fn import_file(
                     observed_at,
                 )
             });
-            if let Err(skipped) =
-                writer.write_with_checkpoint(store, &batch, observed_at, progress.as_ref())
-            {
+            if let Err(skipped) = writer.write_with_checkpoint(
+                store,
+                &batch,
+                &summaries,
+                &witnesses,
+                observed_at,
+                progress.as_ref(),
+            ) {
                 return Ok(*skipped);
             }
             batch.clear();
+            summaries.clear();
+            witnesses.clear();
         }
     }
     writer.note_dropped(dropped);
@@ -653,10 +832,15 @@ pub fn import_file(
     // A file without a storable record (empty, or inert lines only) keeps its
     // discovered identity and nothing else: an empty batch commits no row,
     // and no cursor is recorded without a committed batch.
-    let carried = !batch.is_empty();
-    if let Err(skipped) =
-        writer.write_with_checkpoint(store, &batch, observed_at, progress.as_ref())
-    {
+    let carried = !batch.is_empty() || !summaries.is_empty() || !witnesses.is_empty();
+    if let Err(skipped) = writer.write_with_checkpoint(
+        store,
+        &batch,
+        &summaries,
+        &witnesses,
+        observed_at,
+        progress.as_ref(),
+    ) {
         return Ok(*skipped);
     }
     let gapless = dropped == 0 && writer.gapless();
@@ -744,7 +928,10 @@ fn snapshot_source(path: &Path, expected: &fs::Metadata) -> std::io::Result<fs::
 /// Open the enumerated transcript without following aliases and confirm it is
 /// still the file that was enumerated; its identity fixes the length this scan
 /// may read, so later appends stay outside it.
-fn open_source(path: &Path, expected: &fs::Metadata) -> std::io::Result<(fs::File, FileIdentity)> {
+pub(super) fn open_source(
+    path: &Path,
+    expected: &fs::Metadata,
+) -> std::io::Result<(fs::File, FileIdentity)> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -826,5 +1013,28 @@ mod snapshot_tests {
                 .unwrap()
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod usage_probe_tests {
+    use super::*;
+
+    #[test]
+    fn usage_probe_project_is_never_enumerated() {
+        let root = tempfile::tempdir().unwrap();
+        let projects = root.path();
+        let probe = projects.join(
+            "-Users-someone-Library-Application-Support-ai-xtrace-desktop-xtrace-claude-usage-probe",
+        );
+        let user = projects.join("-Users-someone-repo");
+        for dir in [&probe, &user] {
+            fs::create_dir_all(dir).unwrap();
+            fs::write(dir.join("s.jsonl"), "{}\n").unwrap();
+        }
+        let (files, diagnostics) = enumerate(projects).unwrap();
+        assert!(diagnostics.is_empty());
+        assert_eq!(files.len(), 1);
+        assert!(files[0].path.starts_with(&user));
     }
 }

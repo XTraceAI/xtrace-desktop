@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       candidate_sha:
-        description: Full commit SHA of the merged release candidate
+        description: Full commit SHA of the merged or reviewed tagged release candidate
         required: true
         type: string
 
@@ -20,14 +20,27 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 60
     steps:
-      - name: Require an explicit candidate and the default-branch workflow
+      - name: Require an explicit candidate and a default-branch or reviewed tag workflow
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_REF_TYPE: ${{ github.ref_type }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          SOURCE_SHA: ${{ github.sha }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$WORKFLOW_REF" = "refs/heads/$DEFAULT_BRANCH"
+          if test "$WORKFLOW_REF" = "refs/heads/$DEFAULT_BRANCH"; then
+            test "$WORKFLOW_REF_TYPE" = branch
+          else
+            test "$WORKFLOW_REF_TYPE" = tag
+            NUMBER='(0|[1-9][0-9]*)'
+            PRERELEASE='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+            TAG_PATTERN="^refs/tags/v$NUMBER\\.$NUMBER\\.$NUMBER(-$PRERELEASE(\\.$PRERELEASE)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+            [[ "$WORKFLOW_REF" =~ $TAG_PATTERN ]] || exit 1
+            test "$WORKFLOW_SHA" = "$CANDIDATE_SHA"
+            test "$SOURCE_SHA" = "$CANDIDATE_SHA"
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.candidate_sha }}
@@ -36,10 +49,19 @@ jobs:
       - name: Verify candidate identity and macOS 14 arm64
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          SOURCE_SHA: ${{ github.sha }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          git merge-base --is-ancestor "$CANDIDATE_SHA" "refs/remotes/origin/$DEFAULT_BRANCH"
+          if test "$WORKFLOW_REF" = "refs/heads/$DEFAULT_BRANCH"; then
+            git merge-base --is-ancestor "$CANDIDATE_SHA" "refs/remotes/origin/$DEFAULT_BRANCH"
+          else
+            test "$WORKFLOW_SHA" = "$CANDIDATE_SHA"
+            test "$SOURCE_SHA" = "$CANDIDATE_SHA"
+            test "$(git rev-parse --verify "$WORKFLOW_REF^{commit}")" = "$CANDIDATE_SHA"
+          fi
           test "$(uname -m)" = arm64
           [[ "$(sw_vers -productVersion)" == 14.* ]]
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -58,7 +80,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: XTraceAI/agent-plugins
-          ref: 2538729a39c4903672c83e3f9f2a655ec6ac9a87 # must equal .plugin-pin commit
+          ref: 5e043babef2aea9c73999574dae2f17766a76432 # must equal .plugin-pin commit
           path: artifacts/private/plugin-conformance
           persist-credentials: false
       - name: Validate the native release candidate

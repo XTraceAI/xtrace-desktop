@@ -59,9 +59,17 @@ not an automatically enforced status check. No self-hosted runner is installed.
 
 Only an explicit `workflow_dispatch` starts `Release native validation`.
 Select the default branch for the workflow and supply the full SHA of a candidate
-already merged into that branch. The workflow rejects malformed identities,
-non-default workflow refs and candidates outside default-branch history. It checks
-out the exact candidate without persistent credentials and verifies macOS 14 arm64.
+already merged into that branch. That path still requires the candidate to be
+in default-branch history. Alternatively, manually select an explicitly reviewed
+`refs/tags/vSemVer` tag (for example, `refs/tags/v0.1.1`) and supply its full
+candidate commit SHA. The workflow source commit (`github.workflow_sha`), GitHub
+source commit (`github.sha`), resolved tag commit and checked-out HEAD must all
+equal that candidate. Non-default branches, other ref types, malformed versions
+and mismatched identities fail. A tagged beta can be prepared and published from
+that exact reviewed source without first merging its app source into `main`;
+the workflow must already exist on the default branch to enable manual dispatch.
+The workflow checks out the exact candidate without persistent credentials and
+verifies actual macOS 14 arm64 on both paths.
 
 The workflow resolves the candidate's first parent as its reviewed baseline and
 runs `pnpm check:native --base REVIEWED_BASE_SHA --release`. Comparing against that
@@ -76,7 +84,9 @@ Before publishing each downloadable version, require successful native release
 validation for its exact source plus the separate acceptance of the final signed
 and notarized downloadable bytes. Signing, notarization, universal builds,
 Gatekeeper behavior and update delivery are not certified by this unsigned app
-launch. Changes to source or packaging invalidate the relevant release evidence.
+launch. Tag validation is source validation only, not disclosure approval or a
+waiver of macOS 14 QA, final-byte acceptance or publication checks. Changes to
+source or packaging invalidate the relevant release evidence.
 
 `macos-14` is scheduled for retirement on November 2, 2026. Before retirement,
 replace it with a runner that preserves actual macOS 14 floor testing. Building
@@ -116,13 +126,14 @@ removed hook or an absent named test are all red before merging.
 
 The inventory currently requires:
 
-| Test                               | Real contract exercised                                                                                                                                                                                                |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `conformance_flush_turn`           | The pinned Stop hook imports through both routing mechanisms, advancing its real cursor only after committed acknowledgements, including retry after a failed commit and metadata-only storage.                        |
-| `conformance_plugin_transport`     | The pinned decoder and token client against the headless binary: initialize, SSE `tools/list`, token mint/list/delete, notification and empty-import rejection.                                                        |
-| `conformance_native_reader_stream` | The pinned `readers_cli.py` over the fixture catalog's synthetic native Codex/Cursor files ([F18 and F20](FIXTURES.md)); see [acceptance](acceptance/plugin-conformance.md).                                           |
-| `conformance_native_import`        | The complete native import through the pinned readers into a disposable index: identity and counts per session, a repeated run adds nothing, source bytes unchanged; see [native import](acceptance/native-import.md). |
-| `conformance_bundled_readers`      | The bundled reader sources are byte for byte the pinned commit's scripts tree and notices, and read F18 in place, without a checkout or Git, to the same index as the verified checkout.                               |
+| Test                               | Real contract exercised                                                                                                                                                                                                                                                                                             |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `conformance_flush_turn`           | The pinned Stop hook imports through both routing mechanisms, advancing its real cursor only after committed acknowledgements, including retry after a failed commit and metadata-only storage.                                                                                                                     |
+| `conformance_plugin_transport`     | The pinned decoder and token client against the headless binary: initialize, SSE `tools/list`, token mint/list/delete, notification and empty-import rejection.                                                                                                                                                     |
+| `conformance_native_reader_stream` | The pinned `readers_cli.py` over the fixture catalog's synthetic native Codex/Cursor files ([F18 and F20](FIXTURES.md)); see [acceptance](acceptance/plugin-conformance.md).                                                                                                                                        |
+| `conformance_native_import`        | The complete native import through the pinned readers into a disposable index: identity and counts per session, a repeated run adds nothing, source bytes unchanged; see [native import](acceptance/native-import.md).                                                                                              |
+| `conformance_bundled_readers`      | The bundled reader sources are byte for byte the pinned commit's scripts tree and notices, and read F18 in place, without a checkout or Git, to the same index as the verified checkout.                                                                                                                            |
+| `conformance_exact_detail`         | The pinned producer's exact-detail mode, from the bundle and from the checkout, reads F18's Codex and Cursor JSONL sessions whole and record for record as the ordinary export does, refuses its Cursor store beside a committed write-ahead log, and changes no file under the home or in the temporary directory. |
 
 Record in the PR the pin commit printed by the hook and the `executed N of N`
 line with its test names. Every producer release train that Desktop adopts

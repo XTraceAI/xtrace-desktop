@@ -6,8 +6,10 @@ Each immutable rollout has its own record identities.
 """
 from __future__ import annotations
 
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import datetime
+import io
+from pathlib import Path
 import re
 
 from . import codex, codex_usage
@@ -101,15 +103,30 @@ def project_context(rows, records, sources, convert):
     return projected, own, meta, context
 
 
-def prefix_usage(path, cutoff, ordinal, inherited):
+@contextmanager
+def _acquired(source):
+    """One acquired segment as a binary reader.
+
+    An acquirer hands back either a private snapshot path or the segment bytes
+    the caller already holds; both are read here the same way, and neither
+    reopens the native name the caller validated.
+    """
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        yield io.BytesIO(bytes(source))
+        return
+    with Path(source).open('rb') as handle:
+        yield handle
+
+
+def prefix_usage(source, cutoff, ordinal, inherited):
     """Read the referenced prefix's cumulative counters, proving its boundary."""
     previous = inherited
     offset = 0
     next_ordinal = None
     owned_from = 0
-    with path.open('rb') as source:
+    with _acquired(source) as prefix:
         while offset < cutoff:
-            raw = source.readline()
+            raw = prefix.readline()
             if not raw or offset + len(raw) > cutoff or not raw.endswith(b'\n'):
                 raise ValueError('history cutoff is not a complete line boundary')
             offset += len(raw)
@@ -132,11 +149,35 @@ def prefix_usage(path, cutoff, ordinal, inherited):
 
 
 
-def read(group, snapshot, *, title_index=None):
-    """Normalize every physical segment once, including abandoned tails."""
+def read(group, acquire, *, title_index=None, record_guard=None, origin=None, human=None):
+    """Normalize every physical segment once, including abandoned tails.
+
+    ``acquire`` is the caller's bounded source acquisition, called as
+    ``acquire(path, 'codex', revision)``. It may yield a private snapshot path
+    or the segment's bytes; a referenced prefix is re-read from the segment
+    already acquired for it, so a history reference costs no second read.
+
+    ``record_guard`` bounds what the whole group may hold. Each segment's
+    conversion is guarded against the total already kept, so the ceiling is a
+    session's rather than a rollout's, and it is reached while the records are
+    accumulating.
+
+    ``origin``, when a dict, receives the origin evidence of each record
+    converted from an injected skill item of a segment's own rows (see
+    ``codex_origin``). Inherited context is never claimed. Each segment's
+    facts are taken as soon as it is converted, so its rows are let go before
+    the next segment is parsed, as they are without evidence. Without it the
+    conversion is exactly the one it always was. ``human`` similarly receives
+    image-wrapper length evidence, only for surviving own records.
+    """
     session_id = group[0][3]["native_session_id"]
+    from . import codex_human, codex_origin
+    human_segments = [] if human is not None else None
+    segments = None
+    if origin is not None:
+        segments = []
     with ExitStack() as stack:
-        copies = {rid: stack.enter_context(snapshot(path, 'codex', revision))
+        copies = {rid: stack.enter_context(acquire(path, 'codex', revision))
                   for rid, path, revision, _, _ in group}
         seeds = {}
         records = []
@@ -163,21 +204,52 @@ def read(group, snapshot, *, title_index=None):
                    (boundary is None or row['ordinal'] >= boundary) for row in rows[1:]):
                 raise ValueError('session metadata outside inherited context')
             record_sources, usage_targets = {}, {}
+            # Held only for origin evidence, until this segment's facts are
+            # taken. It keeps every record either conversion made alive until
+            # then, so no ``id`` in ``record_sources`` is reused.
+            record_origins = {} if segments is not None or human_segments is not None else None
             namespace = rid if base is None else f"{session_id}:rollout:{rid}"
+            # What earlier segments already hold; this segment's guard counts
+            # from there, so the bound is the session's and not each file's.
+            held = len(records)
+            segment_guard = (None if record_guard is None
+                             else lambda count: record_guard(held + count))
+
             def convert(items):
                 usage_targets.clear()
                 return codex.rollout_to_claude_records(
                     items, strict=True, title_index={}, identity_namespace=namespace,
                     initial_usage_total=seed,
                     usage_baseline_unknown=base is not None and seed is None,
-                    record_sources=record_sources, usage_targets=usage_targets)
+                    record_sources=record_sources, usage_targets=usage_targets,
+                    record_guard=segment_guard, record_origins=record_origins)
             converted, meta = convert(rows)
+            parsed = rows
             rows, converted, own_meta, context = project_context(rows, converted, record_sources, convert)
             meta = own_meta or meta
+            # ``apply`` grows ``converted``; what the group already holds is
+            # the earlier segments plus the context about to be kept beside
+            # it, so the ceiling it is measured against is the session's.
+            ledger_base = len(records) + len(context)
             converted = codex_usage.apply(rows, converted, record_sources, usage_targets,
-                session_id=session_id, namespace=namespace, seen=seen_responses)
+                session_id=session_id, namespace=namespace, seen=seen_responses,
+                record_guard=(None if record_guard is None
+                              else lambda count: record_guard(ledger_base + count)))
             records.extend(context)
             records.extend(converted)
+            if human_segments is not None:
+                human_segments.append(codex_human.segment(
+                    rid, parsed, converted, record_sources, record_origins))
+            if segments is not None:
+                # ``converted`` is this rollout's own work; ``context`` is what
+                # it inherited, and is never offered for a claim. Only small
+                # facts are kept: neither the parsed rows nor the records the
+                # first conversion made outlive this segment.
+                segments.append(codex_origin.segment(
+                    rid, parsed, converted, record_sources, record_origins))
+            parsed = record_origins = None
+            if record_guard is not None:
+                record_guard(len(records))
             native_title = codex._rollout_thread_name(rows, strict=True) or native_title
             if first_meta is None:
                 first_meta = meta
@@ -185,4 +257,11 @@ def read(group, snapshot, *, title_index=None):
         # root fallback must not hide a continuation's title or require its index.
         first_meta['title'] = (native_title or codex._title(
             [], session_id, strict=True, title_index=title_index) or first_meta['title'])
+        if segments is not None:
+            codex_origin.collect(origin, lambda: codex_origin.describe(
+                segments, records, native_session_id=session_id,
+                history="paginated", out=origin))
+        if human_segments is not None:
+            codex_origin.collect(human, lambda: codex_human.describe(
+                human_segments, records, native_session_id=session_id, out=human))
         return records, first_meta

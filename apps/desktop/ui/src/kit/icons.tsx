@@ -57,6 +57,18 @@ const drawings = {
       <path d="M3 10h18M8 3v4M16 3v4" />
     </>
   ),
+  refresh: (
+    <>
+      <path d="M20 12a8 8 0 1 1-2.34-5.66L20 9" />
+      <path d="M20 4v5h-5" />
+    </>
+  ),
+  info: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5M12 8h.01" />
+    </>
+  ),
 };
 
 export type IconName = keyof typeof navigation | keyof typeof drawings;

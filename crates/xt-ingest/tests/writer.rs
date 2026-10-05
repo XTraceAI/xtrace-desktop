@@ -48,6 +48,8 @@ fn request<'a>(
         context,
         declared_host: None,
         records,
+        hook_summaries: &[],
+        pr_witnesses: &[],
         title: Some("synthetic title"),
         cwd: None,
         git_branch: None,
@@ -345,10 +347,15 @@ fn writer_projection_is_versioned_content_free_nullable_and_precise() {
     let unknown = poor("row");
     let golden = coverage("cursor-native", &unknown).unwrap();
     assert_eq!(golden.metric_field_mask, 199);
-    // Independently specified [version,28 fixed-order scalar/null values].
+    assert_eq!(golden.digest_schema_version, 2);
+    // Independently specified [2,29 fixed-order scalar/null values]: version
+    // 1's 28 values plus the unconfirmed (null) automated-input field. Version
+    // 1's own golden for the same record, [1,28 values], stays
+    // 0c299a8f1b8c32e9d61ebc26bedf0da9ac99dad88e889cce513f15698afcc795 and is
+    // checked against stored rows in confirmed_automation.rs.
     assert_eq!(
         golden.measurement_revision,
-        "0c299a8f1b8c32e9d61ebc26bedf0da9ac99dad88e889cce513f15698afcc795"
+        "1d759cc91adf2a3670ee123d7bacdd81da3edded41abf028142400c1b1e0c9e4"
     );
     let mut zero = unknown.clone();
     zero.canonical.message.usage = Some(serde_json::from_value(json!({"input_tokens":0})).unwrap());
@@ -630,12 +637,14 @@ fn writer_shared_f1_and_bounded_native_chunks_replay_without_new_records() {
         .unwrap();
     assert_eq!(saved.meta.host, session.metadata.host);
     assert_eq!(saved.meta.source_platform, None);
-    assert!(
+    assert_eq!(
         db.store()
             .records(&session.metadata.session_id)
             .unwrap()
             .iter()
-            .all(|row| row.classification.is_human.is_none())
+            .filter(|row| row.classification.is_human == Some(true))
+            .count(),
+        5
     );
     let context = context(SessionSource::ReadersCli);
     let rows = (0..2501)
@@ -690,7 +699,7 @@ fn writer_hygiene_is_derived_before_discard_with_unknowns_preserved() {
         .collect::<Vec<_>>();
     write_batch(db.store_mut(), &request(&context, &rows, None)).unwrap();
     for row in db.store().records("cursor-native").unwrap() {
-        assert_eq!(row.classification.is_human, None);
+        assert_eq!(row.classification.is_human, Some(row.uuid == "human"));
         assert_eq!(row.classification.is_command, Some(row.uuid == "command"));
         assert_eq!(
             row.classification.is_interrupted,
@@ -716,7 +725,10 @@ fn writer_hygiene_is_derived_before_discard_with_unknowns_preserved() {
         .into_iter()
         .filter(|row| row.uuid.starts_with("role-"))
     {
-        assert_eq!(row.classification.is_human, None);
+        assert_eq!(
+            row.classification.is_human,
+            (row.uuid == "role-mismatch").then_some(false)
+        );
         assert_eq!(
             row.role.as_deref(),
             if row.uuid == "role-mismatch" {
@@ -1334,4 +1346,243 @@ fn native_codex_repairs_compare_retained_content_before_privacy_stripping() {
             }
         }
     }
+}
+
+#[test]
+fn hygiene_f8_exact_prefix_contract_and_unicode_metadata_invariance() {
+    use std::path::PathBuf;
+    use xt_fixtures::Fixture;
+    use xt_store::retention::RetentionMode;
+    let fixture =
+        Fixture::load(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/F8")).unwrap();
+    fixture.assert_reference().unwrap();
+    let mut measurements = Vec::new();
+    for keep_content in [false, true] {
+        let mut db = TempDb::empty().unwrap();
+        if keep_content {
+            db.store_mut()
+                .set_retention_mode(RetentionMode::FullContent)
+                .unwrap();
+        }
+        let input = &fixture.sessions()[0];
+        let rows = input
+            .records
+            .iter()
+            .map(|row| parsed(serde_json::to_value(row).unwrap()))
+            .collect::<Vec<_>>();
+        let ctx = SourceContext {
+            conversation_id: Some(input.metadata.session_id.clone()),
+            source: Some(SessionSource::Fixture),
+            ..Default::default()
+        };
+        let mut batch = request(&ctx, &rows, None);
+        batch.keep_content = keep_content;
+        write_batch(db.store_mut(), &batch).unwrap();
+        let saved = db.store().records(&input.metadata.session_id).unwrap();
+        fixture.assert_expectation("M-02", &json!({"human_messages":saved.iter().filter(|row| row.classification.is_human==Some(true)).count()})).unwrap();
+        let human = saved
+            .iter()
+            .find(|row| row.classification.is_human == Some(true))
+            .unwrap();
+        assert_eq!(human.text_len, Some(6)); // H, i, space, emoji, e, combining acute.
+        assert!(
+            saved
+                .iter()
+                .all(|row| row.content_json.is_some() == keep_content)
+        );
+        assert!(
+            saved
+                .iter()
+                .flat_map(|row| &row.tool_uses)
+                .all(|tool| tool.input_json.is_some() == keep_content)
+        );
+        assert_eq!(
+            db.store()
+                .session(&input.metadata.session_id)
+                .unwrap()
+                .unwrap()
+                .meta
+                .title
+                .is_some(),
+            keep_content
+        );
+        let projection = saved
+            .iter()
+            .map(|row| {
+                (
+                    row.uuid.clone(),
+                    row.classification.clone(),
+                    row.text_len,
+                    row.tool_use_count,
+                )
+            })
+            .collect::<Vec<_>>();
+        measurements.push(projection);
+    }
+    assert_eq!(measurements[0], measurements[1]);
+    // No invented contains rule: an interior prefix remains ordinary human text.
+    let middle = parsed(
+        json!({"uuid":"middle","type":"user","message":{"role":"user","content":"Explain <command-name> in the middle"}}),
+    );
+    let mut db = TempDb::empty().unwrap();
+    write_batch(
+        db.store_mut(),
+        &request(&context(SessionSource::ReadersCli), &[middle], None),
+    )
+    .unwrap();
+    assert_eq!(
+        db.store().records("cursor-native").unwrap()[0]
+            .classification
+            .is_human,
+        Some(true)
+    );
+}
+
+#[test]
+fn hygiene_receipt_classification_enrichment_never_rewrites_old_coverage() {
+    let plugin = context(SessionSource::Plugin);
+    let native = context(SessionSource::ReadersCli);
+    let incomplete = parsed(json!({"uuid":"human","type":"user","message":{"role":"user"}}));
+    let complete = parsed(
+        json!({"uuid":"human","type":"user","message":{"role":"user","content":[{"type":"text","text":"Hi "},{"type":"text","text":"🙂e\u{0301}"},{"type":"tool_use","name":"Read","input":{"text":"must not count"}}]}}),
+    );
+    let human_bit = 1_i64
+        << xt_store::measurement::FIELDS
+            .iter()
+            .position(|name| *name == "is_human")
+            .unwrap();
+    for native_first in [false, true] {
+        let mut db = TempDb::empty().unwrap();
+        if native_first {
+            write_batch(
+                db.store_mut(),
+                &request(&native, std::slice::from_ref(&complete), None),
+            )
+            .unwrap();
+        }
+        write_batch(
+            db.store_mut(),
+            &request(
+                &plugin,
+                std::slice::from_ref(&incomplete),
+                Some(&receipt("incomplete")),
+            ),
+        )
+        .unwrap();
+        let old = db.store().capture_coverage("incomplete").unwrap();
+        assert_eq!(old[0].metric_field_mask & human_bit, 0);
+        write_batch(
+            db.store_mut(),
+            &request(&native, std::slice::from_ref(&complete), None),
+        )
+        .unwrap();
+        let saved = db.store().records("cursor-native").unwrap().remove(0);
+        assert_eq!(saved.classification.is_human, Some(true));
+        assert_eq!(saved.text_len, Some(6));
+        assert!(saved.content_json.is_none());
+        assert!(saved.tool_uses[0].input_json.is_none());
+        assert_eq!(db.store().capture_coverage("incomplete").unwrap(), old);
+        assert!(!matches_current(&old[0], &saved).unwrap());
+        write_batch(
+            db.store_mut(),
+            &request(
+                &plugin,
+                std::slice::from_ref(&complete),
+                Some(&receipt("complete")),
+            ),
+        )
+        .unwrap();
+        let new = db.store().capture_coverage("complete").unwrap();
+        assert_ne!(new[0].metric_field_mask & human_bit, 0);
+        assert!(matches_current(&new[0], &saved).unwrap());
+    }
+}
+
+#[test]
+fn a_marked_task_notification_is_written_with_its_proof_and_reports_its_session() {
+    let context = SourceContext {
+        conversation_id: Some("claude-native".into()),
+        native_session_id: Some("claude-native".into()),
+        source_platform: Some("claude".into()),
+        source_surface: Some("cli".into()),
+        source: Some(SessionSource::Transcript),
+        ..Default::default()
+    };
+    let line = |uuid: &str, origin: bool| {
+        let mut line = json!({"uuid":uuid,"type":"user","timestamp":"2026-09-07T01:00:00Z",
+            "message":{"role":"user","content":"<task-notification><summary>Agent \"x\" finished</summary></task-notification>"}});
+        if origin {
+            line["origin"] = json!({"kind":"task-notification"});
+        }
+        parsed(line)
+    };
+    let rows = [line("marked", true), line("unmarked", false)];
+    let mut db = TempDb::empty().unwrap();
+    let saved = write_batch(db.store_mut(), &request(&context, &rows, None)).unwrap();
+    assert_eq!(saved.records_new, 2);
+    let connection = rusqlite::Connection::open(db.path()).unwrap();
+    let human: Vec<(String, i64)> = connection
+        .prepare("SELECT uuid,human_is_eligible FROM v_records ORDER BY uuid")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(human, [("marked".into(), 0), ("unmarked".into(), 1)]);
+    // Reading the same lines again keeps exactly one proof and changes no row.
+    let again = write_batch(db.store_mut(), &request(&context, &rows, None)).unwrap();
+    assert_eq!((again.records_new, again.records_enriched), (0, 0));
+    let proofs: i64 = connection
+        .query_row("SELECT count(*) FROM task_notification_inputs", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(proofs, 1);
+}
+
+/// A reader-host input the caller marks as adjusted keeps no person preview,
+/// in the same write as its rows; an unmarked person's input keeps one, and a
+/// marker list that does not align fails the whole write.
+#[test]
+fn adjusted_inputs_keep_no_preview_in_the_same_write() {
+    use xt_ingest::writer::write_batch_proven;
+    use xt_store::record_preview::{Preview, PreviewKind};
+    let mut db = TempDb::empty().unwrap();
+    let native = context(SessionSource::ReadersCli);
+    let input = |uuid: &str, text: &str| {
+        parsed(
+            json!({"uuid":uuid,"type":"user","timestamp":"2026-09-07T01:00:00Z",
+            "message":{"role":"user","content":[{"type":"text","text":text}]}}),
+        )
+    };
+    let rows = [
+        input("wrapped", "<image>synthetic</image> look at this"),
+        input("typed", "typed by a person"),
+    ];
+    assert!(
+        write_batch_proven(db.store_mut(), &request(&native, &rows, None), &[], &[true]).is_err()
+    );
+    assert_eq!(db.store().counts().unwrap().records, 0);
+    write_batch_proven(
+        db.store_mut(),
+        &request(&native, &rows, None),
+        &[],
+        &[true, false],
+    )
+    .unwrap();
+    assert_eq!(
+        db.store()
+            .record_preview("wrapped", PreviewKind::Person)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        db.store()
+            .record_preview("typed", PreviewKind::Person)
+            .unwrap(),
+        Some(Preview {
+            text: "typed by a person".into(),
+            truncated: false
+        })
+    );
 }

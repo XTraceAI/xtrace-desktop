@@ -34,6 +34,17 @@ pub struct NativeMetadata {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedRecord {
+    #[serde(skip)]
+    pub human_adjustment: Option<xt_store::human_input::InputAdjustment>,
+    /// The native line's own structural marker that Claude Code wrote it as a
+    /// task notification (`origin.kind` is `"task-notification"`): the message
+    /// it adds when a background agent, command or monitor finishes. Read from
+    /// the marker alone, never from the text; any other or malformed `origin`
+    /// is no marker. Not part of the canonical record: the writer hands it to
+    /// the Store beside the record, which keeps it as a proof that the input
+    /// is automatic.
+    #[serde(skip)]
+    pub task_notification: bool,
     pub canonical: CanonicalRecord,
     pub native: NativeMetadata,
     pub source: SourceContext,
@@ -175,6 +186,7 @@ pub fn parse_with_context(line: &str, context: &SourceContext) -> Result<Parsed,
             tool_use_id: optional_string(object, "toolUseID")?,
         })));
     }
+    let task_notification = kind.as_deref() == Some("user") && task_notification_origin(object);
     // Native user content can be a string; the shared protocol represents it as
     // one text block. No missing content or usage is turned into a measured zero.
     if object.get("message").is_none_or(Value::is_null) {
@@ -231,6 +243,8 @@ pub fn parse_with_context(line: &str, context: &SourceContext) -> Result<Parsed,
         }
     }
     Ok(Parsed::Record(Box::new(ParsedRecord {
+        human_adjustment: None,
+        task_notification,
         canonical,
         native,
         source,
@@ -238,6 +252,18 @@ pub fn parse_with_context(line: &str, context: &SourceContext) -> Result<Parsed,
         tool_use_count,
         is_tool_result_carrier,
     })))
+}
+
+/// Claude Code's structural marker on a line it wrote itself when a task it
+/// started finished. Only an object `origin` whose `kind` is exactly
+/// `"task-notification"` is one; nothing else on the line, its text included,
+/// is consulted, and a malformed `origin` is simply no marker.
+fn task_notification_origin(object: &Map<String, Value>) -> bool {
+    object
+        .get("origin")
+        .and_then(|origin| origin.get("kind"))
+        .and_then(Value::as_str)
+        == Some("task-notification")
 }
 
 fn line_source(object: &Map<String, Value>) -> Result<SourceContext, ParseError> {

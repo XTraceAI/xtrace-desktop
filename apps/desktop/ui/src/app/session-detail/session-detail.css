@@ -1,0 +1,265 @@
+/* One session's page: what was measured about it, above what it said.
+   Tokens only, so it reads correctly in both themes. */
+
+.xt-session-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 24px;
+  min-width: 0;
+}
+.xt-session-detail-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.xt-session-back {
+  color: var(--meta);
+  font-size: 12px;
+  text-decoration: none;
+  width: fit-content;
+}
+.xt-session-back:hover,
+.xt-session-back:focus-visible {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.xt-session-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.xt-session-detail h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--ink);
+  /* A long repository name gives way; the identity below keeps its own line. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-session-detail-meta {
+  margin: 2px 0 0;
+  color: var(--meta);
+  font:
+    400 10.5px/1.4 'Geist Mono',
+    Menlo,
+    monospace;
+  overflow-wrap: anywhere;
+}
+/* Every recorded link, wrapping under the title rather than clipped to it;
+   the badge itself is the list's, a little larger here. */
+.xt-session-detail-prs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.xt-session-detail-prs-label {
+  flex: none;
+  color: var(--meta);
+  font-size: 11px;
+}
+.xt-session-detail-prs ul {
+  display: flex;
+  flex: 1 1 0;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.xt-session-detail-prs li {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+}
+.xt-session-detail-prs .xt-session-pr {
+  min-width: 0;
+  max-width: 100%;
+  font-size: 10.5px;
+}
+/* Only a single repository name too long for the page gives way. */
+.xt-session-detail-pr-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.xt-session-detail-notice {
+  margin: 0;
+  color: var(--body);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* The measured columns of the list, as a definition list: the same numbers
+   under the same rules, with room for the rule's own trigger above each. */
+.xt-session-measures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+.xt-session-measure {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.xt-session-measure dt {
+  color: var(--meta);
+  font-size: 11px;
+  text-transform: lowercase;
+}
+.xt-session-measure dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* M-09 stretches, in order. Each is a button; the bar under it is its share of the longest
+   stretch, from the supplied durations only — there is no time axis. */
+.xt-timeline {
+  min-width: 0;
+}
+.xt-timeline-segments {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.xt-timeline-segment {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 2px 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--body);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.xt-timeline-segment:hover {
+  border-color: var(--meta);
+}
+.xt-timeline-segment:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.xt-timeline-segment[aria-pressed='true'] {
+  border-color: var(--accent);
+}
+/* A stretch whose first call cannot be shown is still a measured stretch, so it is drawn the
+   same; only its bar is quieter, and its label says why. */
+.xt-timeline-segment:not([data-jump='available']) .xt-timeline-bar {
+  opacity: 0.5;
+}
+.xt-timeline-start {
+  color: var(--meta);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-timeline-duration {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.xt-timeline-bar {
+  grid-column: 1 / -1;
+  display: block;
+  block-size: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+/* What M-20 measured about the stretch: its active time, its repeats and the tool that repeated
+   most, under the length it is distinct from. It wraps rather than ellipsizes: the tool and its
+   count are the end of the line, and cut off they are exactly what a narrow segment would lose. A
+   long tool name may break anywhere rather than widen the segment. */
+.xt-timeline-repeats {
+  grid-column: 1 / -1;
+  min-width: 0;
+  color: var(--meta);
+  font-size: 11px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+/* Only a stretch M-20 judged circling is set apart — a border and a named tag, never colour
+   alone. A stretch whose repeats were not counted is drawn like any other. */
+.xt-timeline-segment[data-circling='true'] {
+  border-color: var(--warning);
+  background: var(--warning-tint);
+}
+.xt-timeline-segment[data-circling='true'][aria-pressed='true'] {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  border-color: var(--accent);
+}
+.xt-timeline-circling {
+  grid-column: 1 / -1;
+  justify-self: start;
+  padding: 0 6px;
+  border: 1px solid var(--warning);
+  border-radius: 4px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+/* The selected stretch's most repeated call, and the way to it. */
+.xt-timeline-repeat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 8px 0 0;
+}
+.xt-timeline-repeat p {
+  flex: 1 1 240px;
+  min-width: 0;
+  margin: 0;
+  color: var(--body);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* The circling rule, stated from the thresholds the answer carried. */
+.xt-timeline-rule {
+  margin: 8px 0 0;
+  color: var(--meta);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* What the last press did, and above all why nothing happened. On the screen,
+   not only in the accessible name of the segment that was pressed. */
+.xt-timeline-note {
+  margin: 8px 0 0;
+  color: var(--body);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.xt-timeline-note[data-reason] {
+  color: var(--meta);
+}
+/* Nothing to say yet. The region stays in the document so it is already being
+   watched when it gets its first words. */
+.xt-timeline-note:empty {
+  display: none;
+}

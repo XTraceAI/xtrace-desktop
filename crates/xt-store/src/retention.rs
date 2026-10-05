@@ -137,6 +137,8 @@ impl Default for ContentRegistry {
                 ("sessions", BTreeSet::from(["title"])),
                 ("records", BTreeSet::from(["content_json"])),
                 ("tool_uses", BTreeSet::from(["input_json"])),
+                // Kept whatever the retention mode; deleted with the rest.
+                ("record_previews", BTreeSet::from(["text"])),
             ]
             .into_iter()
             .collect(),

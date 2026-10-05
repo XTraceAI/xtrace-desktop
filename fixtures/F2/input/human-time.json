@@ -1,0 +1,54 @@
+{
+  "scope": "human-character-estimate-on-shared-spans",
+  "expected": {
+    "human_minutes_est": 0.92,
+    "summed_session_minutes_est": 0.92,
+    "agent_minutes": 90.0,
+    "agent_to_human_ratio": 97.82608695652173,
+    "by_day": [
+      {
+        "date": "2026-09-01",
+        "start_ms": 1788220800000,
+        "end_ms": 1788307200000,
+        "minutes_est": 0.0
+      },
+      {
+        "date": "2026-09-02",
+        "start_ms": 1788307200000,
+        "end_ms": 1788393600000,
+        "minutes_est": 0.0
+      },
+      {
+        "date": "2026-09-03",
+        "start_ms": 1788393600000,
+        "end_ms": 1788480000000,
+        "minutes_est": 0.0
+      },
+      {
+        "date": "2026-09-04",
+        "start_ms": 1788480000000,
+        "end_ms": 1788566400000,
+        "minutes_est": 0.0
+      },
+      {
+        "date": "2026-09-05",
+        "start_ms": 1788566400000,
+        "end_ms": 1788652800000,
+        "minutes_est": 0.0
+      },
+      {
+        "date": "2026-09-06",
+        "start_ms": 1788652800000,
+        "end_ms": 1788739200000,
+        "minutes_est": 0.0
+      },
+      {
+        "date": "2026-09-07",
+        "start_ms": 1788739200000,
+        "end_ms": 1788825600000,
+        "minutes_est": 0.92
+      }
+    ]
+  },
+  "counted_characters": 184
+}

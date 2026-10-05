@@ -1,0 +1,506 @@
+/* The Sessions page's frame: heading and limits keep their height, and the
+   list's rows take whatever is left and scroll inside their own panel, so one
+   scrollbar moves the rows and the page stays put. When the window is too
+   short to leave the list a usable height, the list keeps that minimum and
+   the outlet scrolls instead of rows being lost. */
+.xt-prs {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 16px 12px;
+}
+.xt-prs > * {
+  flex-shrink: 0;
+}
+.xt-prs > .xt-section-card {
+  flex: 1 1 0;
+  min-height: 260px;
+}
+.xt-prs > .xt-section-card > .xt-section-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.xt-prs > .xt-section-card .xt-table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.xt-shell-outlet:has(> .xt-prs) {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+.xt-prs-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+.xt-prs h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 800;
+}
+.xt-prs-heading p {
+  margin: 2px 0 0;
+  color: var(--meta);
+  font:
+    400 10.5px/1.4 'Geist Mono',
+    Menlo,
+    monospace;
+}
+/* What this page is not, in one line that stays in view; the explanation is a
+   disclosure that takes a line of its own once opened. */
+.xt-prs-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 2px 10px;
+  min-width: 0;
+  font:
+    400 10.5px/1.4 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-prs-note {
+  min-width: 0;
+  margin: 0;
+  color: var(--secondary);
+  overflow-wrap: anywhere;
+}
+.xt-prs-counted {
+  min-width: 0;
+}
+.xt-prs-counted[open] {
+  flex-basis: 100%;
+}
+.xt-prs-counted > summary {
+  padding: 0;
+  color: var(--meta);
+  list-style: none;
+  cursor: pointer;
+}
+.xt-prs-counted > summary::-webkit-details-marker {
+  display: none;
+}
+.xt-prs-counted > summary::before {
+  content: '▸ ';
+}
+.xt-prs-counted[open] > summary::before {
+  content: '▾ ';
+}
+.xt-prs-counted > summary:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.xt-prs-counted > p {
+  max-width: 96ch;
+  margin: 4px 0 0;
+  color: var(--body);
+  overflow-wrap: anywhere;
+}
+.xt-prs-counted a {
+  color: var(--accent-ink);
+}
+.xt-prs-status {
+  margin: 0;
+  color: var(--body);
+  font-size: 12px;
+}
+
+/* A row: the cached title over the identity, then cached facts in the mono
+   scale the Sessions list uses. */
+.xt-pr-name,
+.xt-pr-state,
+.xt-pr-cache {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.xt-pr-name > *,
+.xt-pr-state > *,
+.xt-pr-cache > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-pr-title {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 500;
+}
+/* A title that is not cached is said so, and never drawn like a title. */
+.xt-pr-title[data-missing] {
+  color: var(--meta);
+  font-weight: 400;
+}
+.xt-pr-meta {
+  color: var(--meta);
+  font:
+    400 10px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-pr-branch {
+  color: var(--secondary);
+}
+.xt-pr-state-word,
+.xt-pr-cache-word {
+  color: var(--control-tone);
+  font:
+    400 10.5px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-pr-state-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Additions over deletions, each on a line of its own and right-aligned, so
+   an exact lockfile-sized count reads whole in the column's width rather than
+   losing its tail to an ellipsis. Two lines fit the 40px row as the title and
+   state stacks do. */
+.xt-pr-size {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--secondary);
+  font:
+    400 10.5px/13px 'Geist Mono',
+    Menlo,
+    monospace;
+  font-variant-numeric: tabular-nums;
+}
+.xt-pr-size > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-pr-size > [data-kind='additions'] {
+  color: var(--success);
+}
+.xt-pr-size > [data-kind='deletions'] {
+  color: var(--danger);
+}
+
+/* A view's own controls: its one-line scope and disclosure, then its toggle
+   and filter, wrapping under the scope when the window is narrow. */
+.xt-prs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px 12px;
+  min-width: 0;
+}
+.xt-prs-toolbar > .xt-prs-context {
+  flex: 1 1 320px;
+  order: -1;
+}
+.xt-prs-toolbar > .xt-toggle {
+  height: 28px;
+}
+
+/* The report view: four median tiles, then the table beside the per-type
+   panel. Only that row flexes; below its minimum the outlet scrolls rather
+   than the rows being squeezed away. */
+.xt-prs-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+/* Label over value, and the value's sample beside it, wrapping under it
+   rather than being clipped: the sample says which PRs the median covers. */
+.xt-prs-tiles .xt-stat-tile {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  height: auto;
+  min-height: 52px;
+  padding: 7px 12px;
+}
+.xt-prs-tiles .xt-stat-row {
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  max-width: 100%;
+}
+.xt-prs-tiles .xt-stat-aside {
+  max-width: none;
+  margin-left: 0;
+  white-space: normal;
+  font-size: 10.5px;
+}
+.xt-prs-tile[data-median='measured'] .xt-stat-aside {
+  color: var(--warning);
+}
+.xt-prs-main {
+  display: grid;
+  flex: 1 1 0;
+  grid-template-columns: minmax(0, 1fr) 184px;
+  gap: 10px;
+  min-height: 240px;
+}
+.xt-prs-main > .xt-section-card > .xt-section-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.xt-prs-main > .xt-section-card .xt-table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.xt-prs-main .xt-grid-row {
+  column-gap: 8px;
+}
+.xt-prs-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  margin: 0;
+  color: var(--meta);
+  font:
+    400 10.5px/1.4 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-pr-link-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-ink);
+  font: inherit;
+  cursor: pointer;
+}
+.xt-pr-link-button:hover {
+  text-decoration: underline;
+}
+.xt-pr-link-button:focus-visible,
+.xt-pr-open:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A count or token total that opens the pull request's linked sessions. */
+.xt-pr-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  width: fit-content;
+  max-width: 100%;
+  margin-left: auto;
+  line-height: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-ink);
+  font:
+    500 11px 'Geist Mono',
+    Menlo,
+    monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  cursor: pointer;
+}
+.xt-pr-open:hover > :first-child,
+.xt-pr-open:hover:not(:has(> span)) {
+  text-decoration: underline;
+}
+.xt-pr-open .xt-pr-meta {
+  color: var(--meta);
+  line-height: 12px;
+}
+.xt-pr-right {
+  align-items: flex-end;
+}
+.xt-pr-mono,
+.xt-pr-type,
+.xt-pr-evidence {
+  color: var(--body);
+  font:
+    400 10.5px 'Geist Mono',
+    Menlo,
+    monospace;
+  white-space: nowrap;
+}
+.xt-pr-type {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Unresolved is said, and never drawn like a type. */
+.xt-pr-type[data-missing] {
+  color: var(--meta);
+  font-style: italic;
+}
+.xt-pr-evidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.xt-pr-stale {
+  color: var(--warning);
+  font:
+    400 10px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-pr-excluded {
+  color: var(--warning);
+}
+
+/* Per-type medians: one block per type, its name and PR count over its three
+   medians, so a long type name never squeezes a value out. */
+.xt-prs-types {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px 4px;
+  list-style: none;
+}
+.xt-prs-type {
+  display: grid;
+  gap: 1px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--divider);
+}
+.xt-prs-type-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.xt-prs-type-head .xt-pr-type {
+  font-size: 11px;
+}
+.xt-prs-type-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+  color: var(--body);
+  font:
+    400 10.5px 'Geist Mono',
+    Menlo,
+    monospace;
+  font-variant-numeric: tabular-nums;
+}
+.xt-prs-type-value {
+  white-space: nowrap;
+}
+.xt-prs-type-note {
+  margin: 0;
+  padding: 4px 10px 8px;
+  color: var(--meta);
+  font:
+    400 10px/1.4 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-prs-main > .xt-section-card:last-child > .xt-section-panel {
+  overflow: auto;
+}
+
+/* The drilldown is a tall panel at the window's right edge; its rows scroll
+   inside it and the page behind keeps its place. */
+.xt-modal.xt-pr-drawer {
+  top: 8px;
+  right: 8px;
+  bottom: 8px;
+  left: auto;
+  transform: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(780px, calc(100vw - 16px));
+  overflow: hidden;
+}
+.xt-pr-drawer-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+.xt-pr-drawer-header > .xt-button {
+  order: 1;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.xt-pr-drawer-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.xt-pr-drawer-title h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+.xt-pr-drawer-title .xt-pr-meta {
+  overflow-wrap: anywhere;
+}
+.xt-pr-drawer-banner {
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--secondary);
+  font:
+    400 10.5px/1.4 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-pr-drawer-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px 12px;
+  margin: 0;
+  font:
+    400 10.5px/1.4 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-pr-drawer-facts > div {
+  display: contents;
+}
+.xt-pr-drawer-facts dt {
+  color: var(--meta);
+}
+.xt-pr-drawer-facts dd {
+  margin: 0;
+  color: var(--body);
+  overflow-wrap: anywhere;
+}
+.xt-pr-drawer > .xt-table-scroll {
+  flex: 1 1 auto;
+  min-height: 120px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.xt-pr-drawer > .xt-table-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.xt-pr-drawer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 28px;
+}

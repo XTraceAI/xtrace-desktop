@@ -1,6 +1,6 @@
 {
   "name": "xtrace-desktop-workspace",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.33.0",
@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "pnpm --dir apps/desktop/ui dev",
     "build": "pnpm --dir apps/desktop/ui build",
+    "build:updater": "node scripts/build-updater.mjs",
     "test": "node --test apps/desktop/ui/scripts/*.test.mjs && pnpm --dir apps/desktop/ui test",
     "typecheck": "pnpm --dir apps/desktop/ui typecheck",
     "lint": "eslint . --max-warnings 0 && pnpm --dir apps/desktop/ui lint:hex",

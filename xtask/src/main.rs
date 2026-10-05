@@ -1,5 +1,69 @@
-use std::{env, error::Error, fs::OpenOptions, io::Write, path::PathBuf, process::ExitCode};
+use std::{
+    cell::RefCell, env, error::Error, fs::OpenOptions, io::Write, path::PathBuf, process::ExitCode,
+    sync::Arc,
+};
 use xt_fixtures::{Fixture, FixtureId, FixtureStatus};
+use xtrace_desktop::{
+    dto::{FixturePrEffortState, PrRef},
+    pr_refresh::{PrRefreshService, RefreshStorage},
+    state::{StateError, pr_refresh_targets},
+};
+
+/// Every non-empty subset of this many listed pull requests is exported as an
+/// M-19 state; a fixture that links more fails the export rather than leaving
+/// the browser preview a selection it has no report for.
+const MAX_STATE_PULL_REQUESTS: usize = 4;
+
+/// The M-19 sections after the application's own fixture batch refreshes each
+/// non-empty subset of `ids`, each from a freshly built, unrefreshed database.
+/// Every attempt is stamped with the fixture's pinned instant and each pull
+/// request's synthetic answer is fixed, so a sequence of partial refreshes ends
+/// in the state of the union it refreshed.
+fn pr_effort_states(
+    fixture: &Fixture,
+    listed: &[PrRef],
+) -> Result<Vec<FixturePrEffortState>, Box<dyn Error>> {
+    if listed.len() > MAX_STATE_PULL_REQUESTS {
+        return Err(format!(
+            "a shell fixture exports M-19 states for at most {MAX_STATE_PULL_REQUESTS} linked pull requests"
+        )
+        .into());
+    }
+    let now = fixture.now().timestamp_millis();
+    let mut sorted = listed.to_vec();
+    sorted.sort_unstable_by_key(|reference| reference.id);
+    let mut states = Vec::new();
+    for mask in 1_usize..(1 << sorted.len()) {
+        let refreshed: Vec<PrRef> = sorted
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| mask & (1 << index) != 0)
+            .map(|(_, reference)| reference.clone())
+            .collect();
+        let selection: Vec<i64> = refreshed.iter().map(|reference| reference.id).collect();
+        let mut database = fixture.build_db(true)?;
+        let snapshot = database.store().linked_pull_requests()?;
+        {
+            let store = RefCell::new(database.store_mut());
+            PrRefreshService::fixture(now, Arc::new(|| {})).refresh_into(RefreshStorage {
+                targets: &|| {
+                    pr_refresh_targets(&snapshot, &selection).map_err(StateError::PrEncoding)
+                },
+                record: &|outcome| Ok(store.borrow_mut().record_pr_refresh(outcome)?),
+            })?;
+        }
+        states.push(FixturePrEffortState {
+            sections: xtrace_desktop::dashboard::fixture_pr_effort(
+                database.path(),
+                now,
+                fixture.snapshots().get("prices"),
+            )?,
+            analytics: xtrace_desktop::pr_analytics::fixture_pages(database.path(), now)?,
+            refreshed,
+        });
+    }
+    Ok(states)
+}
 
 const HELP: &str = "XTrace development tasks:
   cargo xtask fixture-validate [--catalog PATH]
@@ -115,7 +179,69 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         );
     } else {
         let json = if shell {
-            let database = fixture.build_db(true)?;
+            let mut database = fixture.build_db(true)?;
+            // Dashboards are read before the refresh, as a fixture database
+            // starts: a refresh is only ever an explicit request, so nothing
+            // shows its facts until one is made.
+            let dashboards = xtrace_desktop::dashboard::fixture_reports(
+                database.path(),
+                fixture.now().timestamp_millis(),
+                fixture.snapshots().get("prices"),
+            )?;
+            // Sessions, like the Dashboards, are read before the refresh: a
+            // listed session's pull-request titles are refresh-owned, so a
+            // fixture database shows none until a refresh is requested.
+            let sessions = xtrace_desktop::dto::fixture_session_pages(
+                database.path(),
+                fixture.now().timestamp_millis(),
+            )?;
+            // The PRs page report before the refresh, like the Dashboards.
+            let pr_analytics = xtrace_desktop::pr_analytics::fixture_pages(
+                database.path(),
+                fixture.now().timestamp_millis(),
+            )?;
+            let session_stretches = xtrace_desktop::dto::fixture_session_stretches(
+                database.path(),
+                fixture.now().timestamp_millis(),
+            )?;
+            // Span details are metadata of the stored records, which a
+            // pull-request refresh never changes.
+            let span_details = xtrace_desktop::dashboard::fixture_span_details(
+                database.path(),
+                fixture.now().timestamp_millis(),
+            )?;
+            // Drilldowns are read before the refresh too, like the Sessions
+            // pages: membership is the links, which a refresh never changes,
+            // and the preview takes each link's refresh-owned title from its
+            // current pull-request state, as the Sessions list does.
+            let listed = xtrace_desktop::state::pr_list(database.store().linked_pull_requests()?)?;
+            let pr_sessions = xtrace_desktop::pr_analytics::fixture_sessions(
+                database.path(),
+                fixture.now().timestamp_millis(),
+                &listed
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        u64::try_from(row.pull_request.number)
+                            .map(|number| (row.pull_request.repository.clone(), number))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            )?;
+            // The listed rows are what the fixture stores before the refresh,
+            // and the refreshed rows are what it leaves.
+            let pull_requests = xtrace_desktop::pr_refresh::fixture_reports(
+                database.store_mut(),
+                fixture.now().timestamp_millis(),
+            )?;
+            let pr_effort_states = pr_effort_states(
+                &fixture,
+                &pull_requests
+                    .listed
+                    .rows
+                    .iter()
+                    .map(|row| row.pull_request.clone())
+                    .collect::<Vec<_>>(),
+            )?;
             let export = xtrace_desktop::dto::FixtureExport {
                 app_info: xtrace_desktop::dto::AppInfo {
                     name: "XTrace Desktop".into(),
@@ -124,9 +250,23 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                     fixture: Some(id.to_string()),
                     schema_version: database.store().schema_version()?,
                     listening: false,
+                    had_indexed_history_at_startup: database.store().counts()?.sessions > 0,
                 },
+                dashboards,
+                environments: xtrace_desktop::environment::fixture_reports(
+                    database.path(),
+                    fixture.now().timestamp_millis(),
+                    &catalog,
+                )?,
+                today: xtrace_desktop::today::fixture_today(
+                    database.path(),
+                    fixture.now().timestamp_millis(),
+                    fixture.snapshots().get("prices"),
+                )?,
                 db_counts: database.store().counts()?.try_into()?,
-                sessions: xtrace_desktop::dto::session_page(database.store(), "", None, None)?,
+                sessions,
+                session_stretches,
+                span_details,
                 native_index: xtrace_desktop::dto::NativeIndexStatus {
                     phase: xtrace_desktop::dto::NativeIndexPhase::Disabled {
                         reason: "fixture mode uses a disposable database".into(),
@@ -142,6 +282,16 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                     reconciles: 0,
                     files_scanned: 0,
                 },
+                pull_requests: pull_requests.listed,
+                pr_refresh: pull_requests.refresh,
+                pull_requests_refreshed: pull_requests.refreshed,
+                pr_effort_states,
+                pr_analytics,
+                pr_sessions,
+                // Fixture startup selects no native home, so its rule activity
+                // service has no source to read.
+                rule_activity: xtrace_desktop::rule_activity::RuleActivityService::new(None)
+                    .read("fixture"),
             };
             serde_json::to_string_pretty(&export)?
         } else {

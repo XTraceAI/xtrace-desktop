@@ -13,27 +13,28 @@ supplies the canvas color. Long content scrolls vertically.
 
 ## Sidebar props
 
-| Prop                 | Contract / default                                                                                                                                                                                      |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `activeKey`          | Required: `dashboard`, `sessions`, `prs`, `rulebook`, `leaderboard`, or `team`. Sets `aria-current="page"`; clicks do not change it internally.                                                         |
-| `onNavigate(key)`    | Required action for enabled navigation. The caller owns routing and the next active key.                                                                                                                |
-| `rulebookCount`      | Defaults to 0. Only finite positive values show a badge.                                                                                                                                                |
-| `leaderboardEnabled` | Defaults to false; the row is disabled and shows “soon”.                                                                                                                                                |
-| `showTeam`           | Defaults to false. When true, the Team navigation row appears.                                                                                                                                          |
-| `hubConnected`       | Defaults to false. Controls the Hub panel and enables a visible Team row independently of Leaderboard.                                                                                                  |
-| `teamLabel`          | Optional Team navigation/connection label. Defaults to “Team” in navigation and “XTrace Hub” in the connected panel.                                                                                    |
-| `onConnectHub()`     | Optional callback passed to the Hub CTA. Without it, the disconnected CTA is disabled.                                                                                                                  |
-| `hosts`              | Required array of `{ host, tokens, fillPercent, glyph? }`. One row per host; supported token hosts are `claude`, `codex`, and `cursor`. Order comes from the caller.                                    |
-| `tokensCaption`      | Optional label beside “Usages”; no reporting period is inferred.                                                                                                                                        |
-| `surfaces`           | Defaults to `[]`. Rows are `{ host: string, surface: string \| null, status, reason? }`, keyed by the unique host/surface pair. `status` is `capturing`, `not-capturing`, or `unknown`.                 |
-| `listener`           | Required discriminated state: `{ status: 'listening', port: number }`, `{ status: 'off' }`, or `{ status: 'unknown' }`.                                                                                 |
-| `version`            | Required version without the `v` prefix.                                                                                                                                                                |
-| `updateLabel`        | Optional exact updater copy. Omission displays only the version.                                                                                                                                        |
-| `theme`              | Required resolved `dark` or `light`; supplies the toggle's accessible next-action label.                                                                                                                |
-| `onToggleTheme()`    | Required action; the caller changes appearance through the theme provider.                                                                                                                              |
-| `onSettings()`       | Optional action. Settings stays disabled until supplied.                                                                                                                                                |
-| `topInset`           | Total top padding in CSS pixels, default 16; finite values clamp to at least 16. The native shell can pass 74 to reserve its existing window controls.                                                  |
-| `icons`              | Optional decorative React nodes keyed by navigation key, `hub`, `theme`, or `settings`; 14px navigation slots, a 15px cloud icon, and a 13px theme icon. Accessible names come from button text/labels. |
+| Prop                 | Contract / default                                                                                                                                                                                                                                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `activeKey`          | Required: `dashboard`, `sessions`, `prs`, `rulebook`, `leaderboard`, or `team`. Sets `aria-current="page"`; clicks do not change it internally.                                                                                                                                                                                      |
+| `onNavigate(key)`    | Required action for enabled navigation. The caller owns routing and the next active key.                                                                                                                                                                                                                                             |
+| `rulebookCount`      | Defaults to 0. Only finite positive values show a badge.                                                                                                                                                                                                                                                                             |
+| `leaderboardEnabled` | Defaults to false; the row is disabled and shows “soon”.                                                                                                                                                                                                                                                                             |
+| `showTeam`           | Defaults to false. When true, the Team navigation row appears.                                                                                                                                                                                                                                                                       |
+| `hubConnected`       | Defaults to false. Controls the Hub panel and enables a visible Team row independently of Leaderboard.                                                                                                                                                                                                                               |
+| `teamLabel`          | Optional Team navigation/connection label. Defaults to “Team” in navigation and “XTrace Hub” in the connected panel.                                                                                                                                                                                                                 |
+| `onConnectHub()`     | Optional callback passed to the Hub CTA. Without it, the disconnected CTA is disabled.                                                                                                                                                                                                                                               |
+| `hosts`              | Required array of `{ host, tokens, fillPercent, glyph? }`. One row per host; supported token hosts are `claude`, `codex`, and `cursor`. Order comes from the caller.                                                                                                                                                                 |
+| `tokensCaption`      | Optional label beside “Usages”; no reporting period is inferred.                                                                                                                                                                                                                                                                     |
+| `surfaces`           | Defaults to `[]`. Rows are `{ host: string, surface: string \| null, status, reason? }`, keyed by the unique host/surface pair. `status` is `capturing`, `not-capturing`, or `unknown`.                                                                                                                                              |
+| `listener`           | Required discriminated state of the optional plugin receiver: `{ status: 'listening', port?: number }`, `{ status: 'off' }`, or `{ status: 'unknown' }`. A port is shown only when the caller supplies one; none is assumed.                                                                                                         |
+| `localIndex`         | Optional `{ label, title, tone, summary, notes?, hosts }` describing the local index in the caller's own words. When supplied, the status row reads `index · <label>` and its panel keeps the plugin receiver and capture coverage as separate lines. Omitted, the row stays the plugin listener and the panel the capture surfaces. |
+| `version`            | Required version without the `v` prefix.                                                                                                                                                                                                                                                                                             |
+| `updateLabel`        | Optional exact updater copy. Omission displays only the version.                                                                                                                                                                                                                                                                     |
+| `theme`              | Required resolved `dark` or `light`; supplies the toggle's accessible next-action label.                                                                                                                                                                                                                                             |
+| `onToggleTheme()`    | Required action; the caller changes appearance through the theme provider.                                                                                                                                                                                                                                                           |
+| `onSettings()`       | Optional action. Settings stays disabled until supplied.                                                                                                                                                                                                                                                                             |
+| `topInset`           | Total top padding in CSS pixels, default 16; finite values clamp to at least 16. The native shell can pass 74 to reserve its existing window controls.                                                                                                                                                                               |
+| `icons`              | Optional decorative React nodes keyed by navigation key, `hub`, `theme`, or `settings`; 14px navigation slots, a 15px cloud icon, and a 13px theme icon. Accessible names come from button text/labels.                                                                                                                              |
 
 Host token values are display inputs, not computed totals. `null`, non-finite,
 or negative values display “—” with an accessible “unmeasured” label and no bar
@@ -47,6 +48,22 @@ overwrites the other. An unfamiliar surface name is shown as supplied; `null`
 displays “Unknown surface”. An empty array displays “Capture status unknown”.
 Optional reasons remain visible under their own row. Listener status reports
 the listener only and does not certify capture on any surface.
+
+With `localIndex`, the same row describes the local index instead: a dot in the
+supplied `tone` (`live` green, `attention` warning, `idle` plain) and the text
+`index · <label>`, named “Local index: <title>” for assistive technology. Its
+panel, “Local index and plugin status”, shows the title, the summary and every
+note in full; one “Last scan by host” row per supplied host with its state, an
+optional reason, and the warning colour only where the caller sets `attention`;
+and a separate “Plugin · optional” group with the receiver (`Off`, `Listening`
+or `Unknown`, plus `:port` only when supplied) and either the supplied capture
+surfaces or “Plugin delivery · Unknown”. The component derives nothing: it does
+not turn host scans into capture surfaces, an off receiver into “not capturing”
+or “not installed”, or an empty surface list into zero coverage. When
+`onSettings` exists the panel ends with “Index details in Settings”, which
+closes the panel and calls it; full counts, runtime paths and reader pins stay
+in Settings. The app's wording of these props lives in
+`src/app/sidebar-index-status.ts`.
 
 Token-host glyph slots are 16px and decorative; host names remain explicit.
 The default navigation SVGs and bundled host logos match the design reference. Cursor’s dark logo has a fixed light backing in both themes to preserve its contrast. Callers can override individual slots without changing status or navigation behavior. Host logo licenses and pinned upstream sources ship in `public/hosts/LICENSES.txt`. The sidebar reserves native
@@ -92,8 +109,10 @@ Run the focused tests and synthetic Chromium/WebKit preview from the repository 
 
 ```sh
 pnpm --dir apps/desktop/ui exec vitest run src/kit/Sidebar.test.tsx src/kit/HubPopover.test.tsx src/kit/BrandMark.test.tsx
+pnpm --dir apps/desktop/ui exec vitest run src/app/sidebar-index-status.test.ts src/app/ShellIndexStatus.test.tsx
 pnpm lint
 pnpm e2e --grep sidebar
+pnpm e2e sidebar-index-status
 ```
 
 The browser fixture uses the shared runner and emulated appearance. It exercises the

@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "html.to.design": { "command": "npx", "args": ["-y", "@synthetic/html-to-design"] }
+  }
+}

@@ -13,6 +13,49 @@ const MIGRATIONS: &[(i64, &str)] = &[
         4,
         include_str!("../migrations/0004_native_record_copies.sql"),
     ),
+    (
+        5,
+        include_str!("../migrations/0005_human_classification_replay.sql"),
+    ),
+    (
+        6,
+        include_str!("../migrations/0006_structural_tool_kinds.sql"),
+    ),
+    (
+        7,
+        include_str!("../migrations/0007_native_pr_witnesses.sql"),
+    ),
+    (8, include_str!("../migrations/0008_pr_refresh_status.sql")),
+    (9, include_str!("../migrations/0009_repeat_group_keys.sql")),
+    (
+        10,
+        include_str!("../migrations/0010_confirmed_automated_inputs.sql"),
+    ),
+    (
+        11,
+        include_str!("../migrations/0011_session_creation_relations.sql"),
+    ),
+    (
+        12,
+        include_str!("../migrations/0012_guardian_turn_inputs.sql"),
+    ),
+    (
+        13,
+        include_str!("../migrations/0013_injected_context_inputs.sql"),
+    ),
+    (
+        14,
+        include_str!("../migrations/0014_human_input_estimate.sql"),
+    ),
+    (
+        15,
+        include_str!("../migrations/0015_claude_launch_creations.sql"),
+    ),
+    (
+        16,
+        include_str!("../migrations/0016_task_notification_inputs.sql"),
+    ),
+    (17, include_str!("../migrations/0017_record_previews.sql")),
 ];
 
 impl Store {
@@ -61,7 +104,16 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let views = [
+            ("v_human_inputs", include_str!("../views/human_inputs.sql")),
             ("v_records", include_str!("../views/records.sql")),
+            (
+                "v_usage_records",
+                include_str!("../views/usage_records.sql"),
+            ),
+            (
+                "v_response_usage",
+                include_str!("../views/response_usage.sql"),
+            ),
             (
                 "v_session_events",
                 include_str!("../views/session_events.sql"),
@@ -80,7 +132,8 @@ impl Store {
         }
         if changed {
             transaction.execute_batch(
-                "DROP VIEW IF EXISTS v_session_events; DROP VIEW IF EXISTS v_records;",
+                "DROP VIEW IF EXISTS v_response_usage; DROP VIEW IF EXISTS v_usage_records; DROP VIEW IF EXISTS v_session_events; DROP VIEW IF EXISTS v_records;
+                 DROP VIEW IF EXISTS v_human_inputs;",
             )?;
             for (_, sql) in views {
                 transaction.execute_batch(sql)?;

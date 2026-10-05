@@ -28,11 +28,41 @@ pub struct IngestBatch<'a> {
     pub native_codex: bool,
     /// Per-input native adapter proof; never accepted without native_history.
     pub confirmed_iteration_usage: &'a [bool],
+    /// Per-input source proof that Codex injected that input, from the same
+    /// exact read as the record; empty means none, otherwise exactly one entry
+    /// per input. Only native Codex reader history may carry one, and a proof
+    /// is kept only when its own input inserts the record in this batch. See
+    /// [`crate::injected`].
+    pub injected_context: &'a [Option<crate::injected::InjectedContextProof>],
+    /// Per-input marker that the native line itself says Claude Code wrote it
+    /// as a task notification (`origin.kind`); empty means none, otherwise
+    /// exactly one entry per input. A marked input that is accepted binds a
+    /// proof to its stored record, new or already held. See
+    /// `task_notification.rs`.
+    pub task_notifications: &'a [bool],
+    /// Per-input marker that the caller knows a human-input adjustment says
+    /// only part, or none, of this input is a person's words, so no person
+    /// preview may be kept for it; empty means none, otherwise exactly one
+    /// entry per input. See `record_preview.rs`.
+    pub withheld_previews: &'a [bool],
     pub namespace: Option<&'a str>,
     /// Empty means unknown; otherwise exactly one native identity per input.
     pub identities: &'a [crate::model::RecordIdentity],
     pub session_sources: &'a [SessionSourceObservation],
     pub record_sources: &'a [RecordSourceObservation],
+    /// Structural tool events this batch covers: slash commands and hook
+    /// summaries, which are not assistant tool calls and belong to no record.
+    /// They commit with the rows and the checkpoint, never beside them, and a
+    /// conflicting replay of one fails the whole batch.
+    pub tool_events: &'a [crate::ingest::ToolEvent],
+    /// Exact pull-request witnesses read from the same native input, only for
+    /// discovered Claude history. A link naming this batch's session commits
+    /// with the rows and checkpoint or fails the whole batch. A link naming
+    /// another session is a fork's inherited copy of that session's evidence:
+    /// it attaches to that session only when the index already holds it as a
+    /// Claude session, and otherwise attaches nowhere, never to this batch's
+    /// session in its place.
+    pub pr_links: &'a [crate::pr_link::PrLinkObservation],
     pub receipt: Option<SubmittedReceipt<'a>>,
     /// Exact retry matching happens under this batch's write transaction.
     pub receipt_replay: ReceiptReplay,
@@ -62,10 +92,15 @@ impl<'a> IngestBatch<'a> {
             native_history: false,
             native_codex: false,
             confirmed_iteration_usage: &[],
+            injected_context: &[],
+            task_notifications: &[],
+            withheld_previews: &[],
             namespace: None,
             identities: &[],
             session_sources: &[],
             record_sources: &[],
+            tool_events: &[],
+            pr_links: &[],
             receipt: None,
             receipt_replay: ReceiptReplay::Reject,
             evidence_policy: EvidencePolicy::RequireAll,
@@ -172,6 +207,8 @@ pub struct IngestBatchOutcome {
     /// Legacy per-input counters: `ignored` also includes ownership/type rejects.
     pub stats: WriteStats,
     pub records: Vec<RecordOutcome>,
+    /// One result per supplied injected context proof, in input order.
+    pub injected_context: Vec<crate::injected::InjectedContextOutcome>,
 }
 
 impl Store {
@@ -200,6 +237,17 @@ impl Store {
                 "native Codex evidence requires discovered reader history",
             ));
         }
+        if !batch.pr_links.is_empty()
+            && (!batch.native_history
+                || batch
+                    .pr_links
+                    .iter()
+                    .any(|link| link.confidence != crate::pr_link::PrConfidence::Exact))
+        {
+            return Err(Error::InvalidInput(
+                "native PR witnesses require discovered Claude history and exact evidence",
+            ));
+        }
         if !batch.confirmed_iteration_usage.is_empty()
             && (!batch.native_history
                 || batch.confirmed_iteration_usage.len() != batch.records.len())
@@ -208,6 +256,7 @@ impl Store {
                 "iteration proofs require aligned native inputs",
             ));
         }
+        crate::injected::validate(batch)?;
         if !batch.identities.is_empty() && batch.identities.len() != batch.records.len() {
             return Err(Error::InvalidInput(
                 "native identities must align with batch inputs",
@@ -218,6 +267,10 @@ impl Store {
             .iter()
             .any(|observation| observation.session_id != batch.session.session_id)
             || batch
+                .tool_events
+                .iter()
+                .any(|event| event.session_id != batch.session.session_id)
+            || batch
                 .receipt
                 .as_ref()
                 .is_some_and(|submitted| submitted.receipt.session_id != batch.session.session_id)
@@ -226,9 +279,16 @@ impl Store {
                 "batch facts must belong to its canonical session",
             ));
         }
-        if batch.checkpoint.is_some() && batch.records.is_empty() {
+        // Structural events and PR witnesses are rows this batch covers too: a
+        // stretch of input whose only storable lines were hook summaries or
+        // witnesses still carries progress.
+        if batch.checkpoint.is_some()
+            && batch.records.is_empty()
+            && batch.tool_events.is_empty()
+            && batch.pr_links.is_empty()
+        {
             return Err(Error::InvalidInput(
-                "a checkpoint commits only with the records it covers",
+                "a checkpoint commits only with the rows it covers",
             ));
         }
         if batch.discovery.is_some_and(|discovery| {
@@ -318,6 +378,20 @@ impl Store {
                 "record facts require a submitted UUID with no rejected occurrences",
             ));
         }
+        // Judged from this transaction's own outcomes and stored rows, never
+        // from a record this input did not insert. Native Codex batches carry
+        // no receipt, so none of this is inside the provisional savepoint.
+        outcome.injected_context = crate::injected::apply(&transaction, batch, &outcome.records)?;
+        crate::task_notification::apply(
+            &transaction,
+            batch,
+            &outcome.records,
+            &mut outcome.affected_owners,
+        )?;
+        // After every proof that can change a record's eligibility in this
+        // batch, inside the destination savepoint, so a rolled-back or
+        // rejected input keeps no preview.
+        crate::record_preview::apply(&transaction, batch, &outcome.records)?;
         for observation in batch.session_sources {
             ingest::observe_session_source(&transaction, observation)?;
         }
@@ -354,6 +428,45 @@ impl Store {
                 batch.receipt_replay == ReceiptReplay::MatchExact,
                 batch.evidence_policy == EvidencePolicy::AcceptedOnly,
             )?;
+        }
+        // Inside the destination savepoint: a batch whose rows are all rolled
+        // back leaves no structural event behind either. A retry of an event
+        // already stored is recognised, and a conflicting one fails the batch.
+        // The event is stored under the session that owns its identity, so a
+        // copied native context adds no second row.
+        for event in batch
+            .tool_events
+            .iter()
+            .filter(|event| !rejected.contains(event.source_event_id.as_str()))
+        {
+            // A slash command's identity is its user record's, so a record this
+            // batch could not store states nothing here, whoever else owns the
+            // UUID. Reading the owner instead would let a rejected occurrence
+            // write a command onto a session that never stored that record: the
+            // rejection is exactly the evidence that this input is not a
+            // trustworthy account of it. An accepted native copy is not
+            // rejected, so it still resolves to the canonical record's owner.
+            ingest::insert_tool_event(&transaction, event)?;
+        }
+        // Witnesses commit beside the rows and the checkpoint covering them; a
+        // conflicting pull-request row fails the whole batch. An inherited copy
+        // is the named session's evidence: it never becomes this session's
+        // link, and a session the index does not hold as Claude history gets
+        // none, so replaying the copy before or after the original converges.
+        for link in batch.pr_links {
+            if link.session_id != batch.session.session_id
+                && transaction
+                    .query_row(
+                        "SELECT 1 FROM sessions WHERE session_id=?1 AND host='claude'",
+                        [&link.session_id],
+                        |_| Ok(()),
+                    )
+                    .optional()?
+                    .is_none()
+            {
+                continue;
+            }
+            crate::pr_link::record_pr_link(&transaction, link)?;
         }
         if provisional {
             if !outcome
@@ -536,4 +649,112 @@ fn advance_cursor(connection: &Connection, cursor: &SourceCursor) -> Result<()> 
         return Err(Error::InvalidInput("source cursor cannot regress"));
     }
     Ok(())
+}
+
+/// Escape a literal value for use inside a `LIKE` pattern whose `ESCAPE` is
+/// `\`. A locator key holds a local path, whose characters are the caller's,
+/// not a pattern: an identifier containing `%` or `_` must match itself.
+pub fn escape_like(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if matches!(character, '\\' | '%' | '_') {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
+/// How many `LIKE` patterns one locator lookup may carry. A host names a
+/// session's sources with a handful of layouts; an unbounded list would make
+/// the statement, not the caller, decide how much the query costs.
+pub const MAX_LOCATOR_PATTERNS: usize = 8;
+
+/// The most rows one bounded locator lookup returns. A leading-wildcard
+/// pattern can match far more keys than the caller will keep; this bounds what
+/// is materialized for one lookup, not every step SQLite takes to find them.
+pub const MAX_LOCATOR_ROWS: usize = 256;
+
+/// What a bounded locator lookup found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LocatorRows {
+    /// Every matching row, at most [`MAX_LOCATOR_ROWS`] of them.
+    Complete(Vec<SourceCursor>),
+    /// More rows match than one lookup returns. None is returned: a prefix of
+    /// the matches is not the set, and a row past it could be the one wanted.
+    Saturated,
+}
+
+impl Store {
+    /// The native source locators of one `source` whose key matches any of
+    /// `patterns` (`LIKE` with `\` as its escape; see [`escape_like`]).
+    ///
+    /// This reads `source_cursors` only: a locator names a local path the
+    /// index read, never content. Callers own the host layout the patterns
+    /// describe, so no session-to-path rule is duplicated here.
+    pub fn source_cursors_like(
+        &self,
+        source: SessionSource,
+        patterns: &[&str],
+    ) -> Result<Vec<SourceCursor>> {
+        self.cursors_like(source, patterns, None)
+    }
+
+    /// [`Self::source_cursors_like`], materializing at most one row past
+    /// [`MAX_LOCATOR_ROWS`] so that a lookup matching more says so rather than
+    /// returning them all or an arbitrary prefix.
+    pub fn source_cursors_like_bounded(
+        &self,
+        source: SessionSource,
+        patterns: &[&str],
+    ) -> Result<LocatorRows> {
+        let rows = self.cursors_like(source, patterns, Some(MAX_LOCATOR_ROWS + 1))?;
+        Ok(if rows.len() > MAX_LOCATOR_ROWS {
+            LocatorRows::Saturated
+        } else {
+            LocatorRows::Complete(rows)
+        })
+    }
+
+    fn cursors_like(
+        &self,
+        source: SessionSource,
+        patterns: &[&str],
+        limit: Option<usize>,
+    ) -> Result<Vec<SourceCursor>> {
+        if patterns.is_empty() || patterns.len() > MAX_LOCATOR_PATTERNS {
+            return Err(Error::InvalidInput(
+                "a locator lookup needs one to MAX_LOCATOR_PATTERNS patterns",
+            ));
+        }
+        let mut sql = String::from(
+            "SELECT source,cursor_key,position,updated_at FROM source_cursors WHERE source=?1 AND (",
+        );
+        for index in 0..patterns.len() {
+            if index > 0 {
+                sql.push_str(" OR ");
+            }
+            sql.push_str("cursor_key LIKE ?");
+            sql.push_str(&(index + 2).to_string());
+            sql.push_str(" ESCAPE '\\'");
+        }
+        sql.push_str(") ORDER BY cursor_key");
+        let mut parameters: Vec<rusqlite::types::Value> = vec![source.as_str().to_owned().into()];
+        parameters.extend(patterns.iter().map(|pattern| (*pattern).to_owned().into()));
+        if let Some(limit) = limit {
+            sql.push_str(" LIMIT ?");
+            sql.push_str(&(parameters.len() + 1).to_string());
+            parameters.push(i64::try_from(limit).unwrap_or(i64::MAX).into());
+        }
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(parameters), |row| {
+            Ok(SourceCursor {
+                source: row.get(0)?,
+                cursor_key: row.get(1)?,
+                position: row.get(2)?,
+                updated_at: row.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
 }

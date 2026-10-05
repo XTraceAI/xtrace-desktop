@@ -12,5 +12,10 @@
       "session_id": "00000000-0000-4000-8000-000000000002",
       "host": "claude"
     }
-  ]
+  ],
+  "snapshots": {
+    "spans": "input/spans.json",
+    "concurrency": "input/concurrency.json",
+    "human_time": "input/human-time.json"
+  }
 }

@@ -546,6 +546,7 @@ fn rejected_and_uuid_less_records_make_coverage_partial_not_complete() {
             detail: None,
             diagnostics: Vec::new(),
             sessions: results,
+            origin: None,
         }],
     };
     assert!(

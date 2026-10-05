@@ -1,5 +1,15 @@
 import { useState } from 'react';
-import { BrandMark, Sidebar, TopBar, HostGlyph, Icon } from '../../kit';
+import {
+  AccountUsageWidget,
+  BrandMark,
+  LoadingMark,
+  Sidebar,
+  StartupSplash,
+  TopBar,
+  HostGlyph,
+  Icon,
+} from '../../kit';
+import type { AccountUsage } from '../../data/generated/AccountUsage';
 import type { SidebarKey, SidebarProps } from '../../kit/Sidebar';
 import type { SelectedRange } from '../../kit/TopBar';
 import type { IconName } from '../../kit/icons';
@@ -19,6 +29,8 @@ const iconNames: IconName[] = [
   'scan',
   'copy',
   'calendar',
+  'refresh',
+  'info',
   'merge',
   'lanes',
   'clock',
@@ -43,13 +55,58 @@ function SidebarExample({
   mode = '',
 }: StoryProps & { initial?: SidebarKey; mode?: string }) {
   const [active, setActive] = useState(initial);
-  const [notice, setNotice] = useState('Illustrative workspace');
   const listener: SidebarProps['listener'] =
     mode === 'plugin-off'
       ? { status: 'off' }
       : mode === 'unknown'
         ? { status: 'unknown' }
         : { status: 'listening', port: 43100 };
+  const accountUsage: AccountUsage = {
+    claude: {
+      state: 'available',
+      issue: null,
+      checked_at: 1790618400,
+      windows: [
+        {
+          bucket_key: 'claude',
+          window_key: 'seven_day',
+          scope: 'all_models',
+          name: 'Claude',
+          window: 'Weekly',
+          used_percent: 100,
+          duration_minutes: 10080,
+          resets_at: Math.floor(Date.now() / 1000) + 3600,
+        },
+        {
+          bucket_key: 'claude',
+          window_key: 'five_hour',
+          scope: 'all_models',
+          name: 'Claude',
+          window: 'Session',
+          used_percent: 0,
+          duration_minutes: 300,
+          resets_at: null,
+        },
+      ],
+    },
+    codex: {
+      state: 'available',
+      issue: null,
+      checked_at: 1790618400,
+      windows: [
+        {
+          bucket_key: 'codex',
+          window_key: 'primary',
+          scope: 'all_models',
+          name: 'Codex',
+          window: 'Weekly',
+          used_percent: 26,
+          duration_minutes: 10080,
+          resets_at: Math.floor(Date.now() / 1000) + 7 * 86400,
+        },
+      ],
+    },
+  };
   const sidebar = (
     <Sidebar
       activeKey={active}
@@ -59,21 +116,8 @@ function SidebarExample({
       showTeam={mode === 'team'}
       hubConnected={mode === 'team'}
       teamLabel="Example team"
-      onConnectHub={() => setNotice('Connection requested')}
-      hosts={
-        mode === 'unknown'
-          ? []
-          : [
-              { host: 'claude', tokens: 6400, fillPercent: 64, glyph: <HostGlyph host="claude" /> },
-              { host: 'codex', tokens: 0, fillPercent: 0, glyph: <HostGlyph host="codex" /> },
-              {
-                host: 'cursor',
-                tokens: mode === 'cursor-unmeasured' ? null : 3600,
-                fillPercent: 36,
-                glyph: <HostGlyph host="cursor" />,
-              },
-            ]
-      }
+      onConnectHub={() => {}}
+      accountUsage={mode === 'unknown' ? undefined : accountUsage}
       surfaces={
         mode === 'unknown'
           ? []
@@ -86,9 +130,8 @@ function SidebarExample({
       listener={listener}
       version="sample"
       theme={theme}
-      onToggleTheme={() => setNotice('Theme toggle requested')}
-      onSettings={() => setNotice('Settings requested')}
-      tokensCaption={notice}
+      onToggleTheme={() => {}}
+      onSettings={() => {}}
       topInset={mode === 'native-inset' ? 74 : 16}
       icons={icons}
     />
@@ -120,6 +163,51 @@ function TopBarExample({ mode }: { mode: string }) {
   );
 }
 export const shellStories = [
+  story('account-usage/available-missing', ['AccountUsageWidget'], [240, 300], () => (
+    <div style={{ width: 228 }}>
+      <AccountUsageWidget
+        usage={{
+          claude: {
+            state: 'available',
+            issue: null,
+            checked_at: 1790618400,
+            windows: [
+              {
+                bucket_key: 'claude',
+                window_key: 'seven_day',
+                scope: 'all_models',
+                name: 'Claude',
+                window: 'Weekly',
+                used_percent: 100,
+                duration_minutes: 10080,
+                resets_at: Math.floor(Date.now() / 1000) + 3600,
+              },
+            ],
+          },
+          codex: {
+            state: 'unavailable',
+            issue: 'source_unavailable',
+            checked_at: null,
+            windows: [],
+          },
+        }}
+        failed={false}
+        refreshing={false}
+        onRefresh={() => {}}
+      />
+    </div>
+  )),
+  story('loading/mark-sizes', ['LoadingMark'], [240, 120], () => (
+    <div className="gallery-row gallery-stack">
+      <LoadingMark size={32} />
+      <LoadingMark />
+    </div>
+  )),
+  story('startup/opening', ['StartupSplash'], [480, 300], () => (
+    <div className="gallery-startup">
+      <StartupSplash>Opening XTrace…</StartupSplash>
+    </div>
+  )),
   story('brand/sizes-and-labels', ['BrandMark'], [500, 90], () => (
     <div className="gallery-row gallery-stack">
       {([20, 26, 34] as const).map((size) => (

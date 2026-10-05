@@ -3,7 +3,9 @@
 XTrace Desktop is a macOS app for understanding work with coding agents. The
 current build includes the native shell, shared UI components and gallery,
 SQLite storage, and automatic indexing of local Claude, Codex and Cursor history.
-Indexing defaults to metadata-only storage and leaves source files unchanged.
+Indexing defaults to metadata-only storage (plus a short, at most 280-character
+preview of each message you typed and of each Claude Code background-task
+summary) and leaves source files unchanged.
 Sessions shows indexed metadata with search, host filters and pagination; Settings
 reports indexing status and incomplete coverage. See [Sessions acceptance](docs/acceptance/indexed-sessions.md)
 for the current behavior. Dashboard metrics and session detail remain in development.

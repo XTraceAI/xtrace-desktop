@@ -12,6 +12,10 @@ name = "xtrace_desktop"
 
 [build-dependencies]
 tauri-build = { version = "=2.6.3", features = [] }
+serde_json = "=1.0.151"
+base64 = "=0.22.1"
+minisign-verify = "=0.2.5"
+url = "=2.5.8"
 
 [features]
 fixtures = ["dep:xt-fixtures"]
@@ -20,16 +24,32 @@ fixtures = ["dep:xt-fixtures"]
 serde.workspace = true
 serde_json = "=1.0.151"
 ts-rs = "=12.0.1"
+jiff = "=0.2.35"
+xt-metrics = { path = "../../../crates/xt-metrics" }
 xt-store = { path = "../../../crates/xt-store" }
 xt-ingest = { path = "../../../crates/xt-ingest" }
+xt-probes = { path = "../../../crates/xt-probes" }
+xt-rulebook = { path = "../../../crates/xt-rulebook" }
 xt-fixtures = { path = "../../../crates/xt-fixtures", optional = true }
 tempfile = "=3.27.0"
 thiserror = "=2.0.20"
-tauri = { version = "=2.11.5", features = ["macos-private-api"] }
+tauri = { version = "=2.11.5", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-single-instance = "=2.4.4"
+tauri-plugin-updater = "=2.12.0"
+base64 = "=0.22.1"
+minisign-verify = "=0.2.5"
+url = "=2.5.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSView", "NSWindow"] }
+
+[dev-dependencies]
+# Tests only: creating a stored pull request that no session links any more,
+# which no public writer can do.
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
+# Tests only: the same pinned Tauri with its mock runtime, which delivers a
+# window's close request and ends its run loop without a window server.
+tauri = { version = "=2.11.5", features = ["test"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 libc = "=0.2.189"

@@ -391,3 +391,49 @@ fn blank_cwd_and_branch_labels_are_absent_not_empty() {
     assert_eq!(record.canonical.cwd.as_deref(), Some("/repo/real"));
     assert_eq!(record.canonical.git_branch.as_deref(), Some("main"));
 }
+
+#[test]
+fn only_claude_codes_origin_marker_makes_a_task_notification() {
+    let line = |origin: Option<Value>, text: &str| {
+        let mut line = json!({
+            "uuid": "77777777-7777-4777-8777-000000000002", "type": "user",
+            "sessionId": "00000000-0000-4000-8000-00000000b1ab", "timestamp": "2026-09-07T12:00:00Z",
+            "promptSource": "system",
+            "message": {"role": "user", "content": text}
+        });
+        if let Some(origin) = origin {
+            line["origin"] = origin;
+        }
+        match parse_line(&line.to_string()).unwrap() {
+            Parsed::Record(record) => record,
+            other => panic!("{other:?}"),
+        }
+    };
+    let note = "<task-notification><task-id>t1</task-id><summary>Agent \"x\" finished</summary></task-notification>";
+    let marked = line(Some(json!({"kind": "task-notification"})), note);
+    assert!(marked.task_notification);
+    // The canonical record is exactly what it was without the marker.
+    assert_eq!(marked.canonical, line(None, note).canonical);
+    assert!(
+        line(
+            Some(json!({"kind": "task-notification", "producer": "session-task"})),
+            note
+        )
+        .task_notification
+    );
+    // The text alone is never the evidence: no fallback on the tag.
+    assert!(!line(None, note).task_notification);
+    for other in [
+        json!({"kind": "human"}),
+        json!({"kind": "peer"}),
+        json!("task-notification"),
+        json!({"kind": 7}),
+        json!(null),
+    ] {
+        let parsed = line(Some(other), note);
+        assert!(
+            !parsed.task_notification,
+            "a malformed or other origin is no marker"
+        );
+    }
+}

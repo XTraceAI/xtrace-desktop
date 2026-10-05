@@ -1752,7 +1752,7 @@ fn v3_upgrade_replays_unchanged_forks_and_repairs_only_confirmed_zeroed_usage() 
                 .unwrap()
                 > 0
         );
-        sql.execute_batch("UPDATE usage SET input_tokens=0,output_tokens=0,cache_read_tokens=0,cache_creation_tokens=0; UPDATE records SET has_conflict=1; DROP VIEW session_work_records; DROP TABLE native_record_copies; DELETE FROM schema_version WHERE version=4;").unwrap();
+        sql.execute_batch("UPDATE usage SET input_tokens=0,output_tokens=0,cache_read_tokens=0,cache_creation_tokens=0; UPDATE records SET has_conflict=1; DROP VIEW session_work_records; DROP TABLE native_record_copies; DELETE FROM schema_version WHERE version>=4; ALTER TABLE pull_requests DROP COLUMN refresh_error; ALTER TABLE pull_requests DROP COLUMN last_attempted_at; ALTER TABLE tool_uses DROP COLUMN group_key; ALTER TABLE tool_uses DROP COLUMN group_version; ALTER TABLE tool_uses DROP COLUMN group_conflict; DROP TABLE confirmed_automated_inputs; DROP TABLE guardian_turn_inputs; DROP TABLE injected_context_inputs; DROP TABLE IF EXISTS task_notification_inputs; DROP TABLE IF EXISTS record_previews; DROP TABLE IF EXISTS human_input_adjustments; DROP TABLE IF EXISTS human_session_origins; DROP TABLE session_creation_relations; DROP TABLE session_creation_bootstrap; DROP TABLE cli_artifact_launch_owners; DROP TABLE claude_launch_groups; DROP TABLE claude_launch_group_members; DROP TABLE claude_launch_candidates; DROP TABLE claude_launch_staged_candidates; DROP INDEX sessions_host_native; DROP INDEX source_cursors_tail;").unwrap();
         if let Some(first) = original_first {
             record["message"]["usage"]["input_tokens"] = json!(11);
             record["message"]["usage"]["output_tokens"] = json!(7);
@@ -2130,6 +2130,8 @@ fn all_shared_contexts_receive_measurement_and_cost_invalidations() {
                     context: &context,
                     declared_host: Some(Host::Claude),
                     records: &records,
+                    hook_summaries: &[],
+                    pr_witnesses: &[],
                     title: None,
                     cwd: None,
                     git_branch: None,
@@ -2256,4 +2258,311 @@ fn native_copies_do_not_enrich_records_owned_by_other_import_kinds() {
             assert_eq!(store.counts().unwrap().records, 1);
         }
     }
+}
+
+/// Claude native used to drop stop-hook summaries on the floor. They are now
+/// consumed as structural events, alongside the slash commands user records
+/// state, and neither is counted as an assistant tool call. A second scan of an
+/// unchanged file adds no duplicate.
+#[test]
+fn claude_fs_consumes_hook_summaries_and_slash_commands_exactly_once() {
+    const COMMAND: &str = "00000000-0000-4000-8000-0000000000c1";
+    const CALLS: &str = "00000000-0000-4000-8000-0000000000b1";
+    const SUMMARY: &str = "00000000-0000-4000-8000-0000000000h1";
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/-Users-fixture-repo");
+    fs::create_dir_all(&project).unwrap();
+    let transcript = [
+        native_line(
+            json!({"uuid":COMMAND,"type":"user","timestamp":"2026-09-07T12:00:00Z",
+                "message":{"role":"user","content":[{"type":"text",
+                    "text":"<command-name>/memhub:login</command-name>\n<command-args>--status secret</command-args>"}]}}),
+            SID,
+        ),
+        native_line(
+            json!({"uuid":CALLS,"type":"assistant","timestamp":"2026-09-07T12:00:01Z",
+                "message":{"role":"assistant","model":"fixture-model-v1","content":[
+                    {"type":"tool_use","name":"Bash","input":{"command":"gh pr create"}},
+                    {"type":"tool_use","name":"mcp__Claude_Browser__computer","input":{"action":"screenshot"}},
+                    {"type":"tool_use","name":"Skill","input":{"skill":"memhub:login","args":"--status"}}
+                ]}}),
+            SID,
+        ),
+        native_line(
+            json!({"type":"system","subtype":"stop_hook_summary","uuid":SUMMARY,
+                "timestamp":"2026-09-07T12:00:02Z","hookCount":3,
+                "hookInfos":[{"command":"synthetic-private-command","durationMs":5}],
+                "hookErrors":["synthetic-private-error"],"stopReason":"synthetic-private-reason"}),
+            SID,
+        ),
+    ]
+    .join("\n")
+        + "\n";
+    fs::write(project.join(format!("{SID}.jsonl")), transcript).unwrap();
+    let before = hashes(&home);
+    let path = temp.path().join("index.sqlite");
+    let mut store = Store::open(&path).unwrap();
+
+    for pass in 0..2 {
+        let report = run(&mut store, &home);
+        assert!(report.complete(), "pass {pass}: {report:?}");
+        assert_eq!(
+            report.hosts[0].sessions[0].outcome,
+            SessionOutcome::Imported {
+                records_new: if pass == 0 { 2 } else { 0 },
+                records_enriched: 0,
+            },
+            "pass {pass}"
+        );
+        let events = store.tool_events(SID).unwrap();
+        assert_eq!(events.len(), 2, "pass {pass}: {events:?}");
+        assert_eq!(events[0].name, "/memhub:login");
+        assert_eq!(events[0].kind, xt_store::ingest::ToolKind::Command);
+        assert_eq!(events[0].source_event_id, COMMAND);
+        assert_eq!(events[1].name, "stop_hook_summary");
+        assert_eq!(events[1].kind, xt_store::ingest::ToolKind::Hook);
+        assert_eq!(events[1].source_event_id, SUMMARY);
+        assert!(
+            events
+                .iter()
+                .all(|event| event.source == SessionSource::Transcript)
+        );
+
+        // The three assistant calls are classified; the command record and the
+        // summary contribute no tool call at all.
+        let rows = store.records(SID).unwrap();
+        assert_eq!(rows.len(), 2, "the summary is no record");
+        assert_eq!(rows[0].tool_use_count, Some(0));
+        assert_eq!(rows[1].tool_use_count, Some(3));
+        assert_eq!(
+            rows[1]
+                .tool_uses
+                .iter()
+                .map(|tool| (tool.name.as_str(), tool.kind))
+                .collect::<Vec<_>>(),
+            [
+                ("Bash", Some(xt_store::ingest::ToolKind::Builtin)),
+                (
+                    "mcp__Claude_Browser__computer",
+                    Some(xt_store::ingest::ToolKind::Mcp)
+                ),
+                ("Skill", Some(xt_store::ingest::ToolKind::Skill)),
+            ]
+        );
+        assert_eq!(
+            rows[1].tool_uses[1].server.as_deref(),
+            Some("Claude_Browser")
+        );
+        assert_eq!(rows[1].tool_uses[1].tool.as_deref(), Some("computer"));
+        assert_eq!(rows[1].tool_uses[2].skill.as_deref(), Some("memhub:login"));
+        // Metadata-only remains the default: no input, no command text.
+        assert!(rows[1].tool_uses.iter().all(|t| t.input_json.is_none()));
+        assert!(rows.iter().all(|row| row.content_json.is_none()));
+    }
+    assert_eq!(hashes(&home), before, "native sources are only ever read");
+}
+
+/// A summary in a Claude transcript is reconciled by the same identity rules its
+/// records are: a disagreeing native session or surface stops the file, and the
+/// stretch of input covering it commits neither its event nor a checkpoint.
+#[test]
+fn claude_fs_reconciles_hook_summary_identity_like_a_record() {
+    const OTHER: &str = "00000000-0000-4000-8000-00000000ffff";
+    let disagreements = [
+        // The line's two spellings of the native session contradict each other.
+        json!({"type":"system","subtype":"stop_hook_summary",
+            "uuid":"00000000-0000-4000-8000-0000000000h1",
+            "timestamp":"2026-09-07T12:00:02Z","sessionId":SID,"native_session_id":OTHER}),
+        // A blank label is no label and must not pass as one.
+        json!({"type":"system","subtype":"stop_hook_summary",
+            "uuid":"00000000-0000-4000-8000-0000000000h1",
+            "timestamp":"2026-09-07T12:00:02Z","sessionId":"   "}),
+        // A surface the rest of the file does not agree with.
+        json!({"type":"system","subtype":"stop_hook_summary",
+            "uuid":"00000000-0000-4000-8000-0000000000h1",
+            "timestamp":"2026-09-07T12:00:02Z","sessionId":SID,"source_surface":"desktop"}),
+    ];
+    for (index, summary) in disagreements.into_iter().enumerate() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = home.join(".claude/projects/-Users-fixture-repo");
+        fs::create_dir_all(&project).unwrap();
+        let transcript = [
+            native_line(
+                json!({"uuid":"00000000-0000-4000-8000-0000000000b1","type":"assistant",
+                    "timestamp":"2026-09-07T12:00:01Z","message":{"role":"assistant",
+                    "content":[{"type":"tool_use","name":"Bash","input":{}}]}}),
+                SID,
+            ),
+            summary.to_string(),
+        ]
+        .join("\n")
+            + "\n";
+        fs::write(project.join(format!("{SID}.jsonl")), transcript).unwrap();
+        let path = temp.path().join("index.sqlite");
+        let mut store = Store::open(&path).unwrap();
+        let report = run(&mut store, &home);
+        assert!(
+            matches!(
+                report.hosts[0].sessions[0].outcome,
+                SessionOutcome::Skipped { .. }
+            ),
+            "disagreement {index}: {:?}",
+            report.hosts[0].sessions[0].outcome
+        );
+        assert!(
+            store.tool_events(SID).unwrap().is_empty(),
+            "disagreement {index} stored an event"
+        );
+        let checkpoints: i64 = rusqlite::Connection::open(&path)
+            .unwrap()
+            .query_row("SELECT count(*) FROM native_checkpoints", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(checkpoints, 0, "disagreement {index} recorded a checkpoint");
+    }
+}
+
+/// A fork's inherited prefix names its original container. The summary belongs
+/// to the file that carries it, exactly as a copied record does, and the two
+/// files hold one event between them rather than one each.
+#[test]
+fn claude_fs_counts_one_event_for_a_summary_repeated_in_a_forked_file() {
+    const FORK: &str = "00000000-0000-4000-8000-00000000f0f0";
+    const SUMMARY: &str = "00000000-0000-4000-8000-0000000000h1";
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let project = home.join(".claude/projects/-Users-fixture-repo");
+    fs::create_dir_all(&project).unwrap();
+    let shared = [
+        native_line(
+            json!({"uuid":"00000000-0000-4000-8000-0000000000c1","type":"user",
+                "timestamp":"2026-09-07T12:00:00Z","message":{"role":"user","content":[
+                    {"type":"text","text":"<command-name>/memhub:login</command-name>"}]}}),
+            SID,
+        ),
+        // The summary carries the original session ID in both files.
+        json!({"type":"system","subtype":"stop_hook_summary","uuid":SUMMARY,
+            "timestamp":"2026-09-07T12:00:02Z","sessionId":SID,"entrypoint":"cli",
+            "hookCount":3})
+        .to_string(),
+    ]
+    .join("\n")
+        + "\n";
+    fs::write(project.join(format!("{SID}.jsonl")), &shared).unwrap();
+    fs::write(project.join(format!("{FORK}.jsonl")), &shared).unwrap();
+    let path = temp.path().join("index.sqlite");
+    let mut store = Store::open(&path).unwrap();
+    let report = run(&mut store, &home);
+    assert!(report.complete(), "{report:?}");
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    let count = |query: &str| sql.query_row(query, [], |r| r.get::<_, i64>(0)).unwrap();
+    // One command event and one hook event across both files, and one record.
+    assert_eq!(
+        count("SELECT count(*) FROM tool_uses WHERE uuid IS NULL"),
+        2
+    );
+    assert_eq!(count("SELECT count(*) FROM records"), 1);
+    let owner: String = sql
+        .query_row(
+            "SELECT session_id FROM tool_uses WHERE source_event_id=?1",
+            [SUMMARY],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        store.tool_events(&owner).unwrap().len(),
+        2,
+        "both events live with the session that owns them"
+    );
+}
+
+/// An index written before previews were kept fills them on the first scan
+/// after the upgrade: migration 17 forgets the Claude checkpoints once, the
+/// unchanged transcripts are read again, and each person's message gets its
+/// preview. Nothing else changes, and a later scan resumes as before.
+#[test]
+fn the_preview_upgrade_reads_unchanged_claude_history_once_to_fill_previews() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    fake_home(&home);
+    let database = temp.path().join("index.sqlite");
+    let mut store = Store::open(&database).unwrap();
+    assert!(run(&mut store, &home).complete());
+    drop(store);
+    let sql = rusqlite::Connection::open(&database).unwrap();
+    let previews = |sql: &rusqlite::Connection| -> Vec<(String, String)> {
+        sql.prepare("SELECT record_uuid,kind FROM record_previews ORDER BY record_uuid")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    };
+    let filled = previews(&sql);
+    let people: i64 = sql
+        .query_row(
+            "SELECT count(*) FROM v_records WHERE type='user' AND human_is_eligible=1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(people > 0);
+    assert_eq!(filled.len() as i64, people);
+    assert!(filled.iter().all(|row| row.1 == "person"));
+    let records = |sql: &rusqlite::Connection| -> String {
+        sql.query_row(
+            "SELECT json_group_array(json_array(uuid,session_id,is_human,text_len,has_conflict,content_json))
+             FROM (SELECT * FROM records ORDER BY uuid)",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    let stored = records(&sql);
+    // What a schema-16 build left: the same rows and checkpoints, no previews.
+    sql.execute_batch("DROP TABLE record_previews; DELETE FROM schema_version WHERE version>=17;")
+        .unwrap();
+    assert!(
+        sql.query_row(
+            "SELECT count(*) FROM native_checkpoints WHERE source='transcript'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap()
+            > 0
+    );
+    let before = hashes(&home);
+    let mut store = Store::open(&database).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 17);
+    assert_eq!(
+        sql.query_row(
+            "SELECT count(*) FROM native_checkpoints WHERE source='transcript'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert!(previews(&sql).is_empty());
+    let report = run(&mut store, &home);
+    assert!(report.complete(), "{report:?}");
+    assert_eq!(previews(&sql), filled);
+    assert_eq!(records(&sql), stored);
+    assert_eq!(before, hashes(&home));
+    // Reopening never resets the checkpoints again.
+    drop(store);
+    let store = Store::open(&database).unwrap();
+    assert!(
+        sql.query_row(
+            "SELECT count(*) FROM native_checkpoints WHERE source='transcript'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap()
+            > 0
+    );
+    drop(store);
 }

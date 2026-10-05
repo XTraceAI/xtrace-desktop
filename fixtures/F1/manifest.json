@@ -15,5 +15,10 @@
       "native_session_id": "00000000-0000-4000-8000-000000000001",
       "started_at": "2026-09-07T12:00:00Z"
     }
-  ]
+  ],
+  "pull_requests": "input/pull-requests.json",
+  "snapshots": {
+    "hands_off": "input/hands-off.json",
+    "prices": "input/prices.test.json"
+  }
 }

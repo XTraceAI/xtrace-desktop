@@ -34,8 +34,9 @@ its `hookCount`; this parser does not calculate daily hook metrics.
 
 Native `pr-link` observations have no UUID. Their positive PR number, raw URL,
 repository, session and optional time are parsed independently from canonical
-records. URL normalization, link validation and persistence remain the owning
-PR-link consumer's responsibilities.
+records. Parsing creates no link: the native Claude scan requires the session
+and time, reconciles the identity and commits an exact link through the writer;
+see [native PR witnesses](../../docs/acceptance/native-pr-witnesses.md).
 
 Run `cargo test -p xt-ingest canonical` and the explicit release performance gate
 `cargo test -p xt-ingest --release canonical_parse_50k -- --nocapture`.

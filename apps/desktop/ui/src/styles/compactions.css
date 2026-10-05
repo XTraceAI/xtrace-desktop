@@ -1,0 +1,73 @@
+.xt-compaction {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  margin-inline-start: 5px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--danger) var(--compaction-step), var(--meta));
+  background: color-mix(in srgb, var(--danger-tint) var(--compaction-step), var(--subtle));
+  cursor: help;
+}
+.xt-compaction:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.xt-session-title-line {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.xt-session-title-line .xt-session-open {
+  min-width: 0;
+}
+
+/* A recorded compaction on an activity lane: a thin upright mark in the
+   warning colour, set apart from the accent span bars and ringed with the
+   surface colour so it reads where it crosses one. The element is a wider,
+   transparent hit area for hover and focus; the mark is its ::before. */
+.xt-compaction-tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  z-index: 1;
+  width: 9px;
+  transform: translateX(-50%);
+  cursor: help;
+}
+.xt-compaction-tick::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: var(--warning);
+  box-shadow: 0 0 0 1px var(--surface);
+}
+/* A manual compaction carries a small cap, so the two can be told apart at a glance. */
+.xt-compaction-tick[data-trigger='manual']::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  transform: translateX(-50%) rotate(45deg);
+  background: var(--warning);
+  box-shadow: 0 0 0 1px var(--surface);
+}
+.xt-compaction-tick:hover::before,
+.xt-compaction-tick:focus-visible::before {
+  width: 3px;
+}
+.xt-compaction-tick:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 2px;
+}

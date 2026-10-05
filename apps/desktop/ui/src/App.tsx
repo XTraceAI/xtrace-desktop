@@ -4,6 +4,7 @@ import { DataProvider } from './data/DataProvider';
 import type { DataSource } from './data/DataSource';
 import { createDataSource } from './data/createDataSource';
 import { AppRoutes } from './app/AppRoutes';
+import { StartupSplash } from './kit/StartupSplash';
 
 export function App() {
   const [source, setSource] = useState<DataSource>();
@@ -28,12 +29,7 @@ export function App() {
         The requested fixture preview could not be loaded. Only F1 is supported.
       </p>
     );
-  if (!source)
-    return (
-      <p role="status" className="xt-startup-status">
-        Opening XTrace…
-      </p>
-    );
+  if (!source) return <StartupSplash>Opening XTrace…</StartupSplash>;
   const Router = source.kind === 'native' ? HashRouter : BrowserRouter;
   return (
     <DataProvider source={source}>

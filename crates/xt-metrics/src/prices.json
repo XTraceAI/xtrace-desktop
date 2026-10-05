@@ -1,0 +1,810 @@
+{
+  "version": "public-token-usd-2026-10-01",
+  "as_of": "2026-10-01",
+  "basis": "Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes unrecorded regional/speed modifiers, tool fees, and subscriptions.",
+  "sources": [
+    "https://developers.openai.com/api/docs/pricing",
+    "https://developers.openai.com/api/docs/models/gpt-6-astra",
+    "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+    "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+    "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+    "https://developers.openai.com/api/reference/cli/resources/responses/methods/create",
+    "https://platform.claude.com/docs/en/about-claude/pricing",
+    "https://platform.claude.com/docs/en/models/overview",
+    "https://platform.claude.com/docs/en/api/cli/messages/batches/results",
+    "https://platform.claude.com/docs/en/build-with-claude/batch-processing",
+    "https://claude.com/pricing",
+    "https://developers.openai.com/api/docs/models/gpt-6-sol",
+    "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+    "https://developers.openai.com/api/docs/models/gpt-5.5",
+    "https://developers.openai.com/api/docs/guides/prompt-caching"
+  ],
+  "models": [
+    {
+      "id": "gpt-6-astra",
+      "aliases": [],
+      "cache_write_mode": "flat",
+      "bands": [
+        {
+          "max_prompt_tokens": 272000,
+          "tiers": [
+            {
+              "names": ["default"],
+              "rates": {
+                "input": 10000,
+                "output": 50000,
+                "cache_read": 1000,
+                "cache_write": 12500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["flex"],
+              "rates": {
+                "input": 5000,
+                "output": 25000,
+                "cache_read": 500,
+                "cache_write": 6250,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["priority", "fast"],
+              "rates": {
+                "input": 20000,
+                "output": 100000,
+                "cache_read": 2000,
+                "cache_write": 25000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        },
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["default"],
+              "rates": {
+                "input": 20000,
+                "output": 75000,
+                "cache_read": 2000,
+                "cache_write": 25000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["flex"],
+              "rates": {
+                "input": 10000,
+                "output": 37500,
+                "cache_read": 1000,
+                "cache_write": 12500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["priority", "fast"],
+              "rates": {
+                "input": 40000,
+                "output": 150000,
+                "cache_read": 4000,
+                "cache_write": 50000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "aliases": ["gpt-5.6"],
+      "cache_write_mode": "flat",
+      "bands": [
+        {
+          "max_prompt_tokens": 272000,
+          "tiers": [
+            {
+              "names": ["default"],
+              "rates": {
+                "input": 4000,
+                "output": 20000,
+                "cache_read": 400,
+                "cache_write": 5000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["flex"],
+              "rates": {
+                "input": 2000,
+                "output": 10000,
+                "cache_read": 200,
+                "cache_write": 2500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["priority", "fast"],
+              "rates": {
+                "input": 8000,
+                "output": 40000,
+                "cache_read": 800,
+                "cache_write": 10000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        },
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["default"],
+              "rates": {
+                "input": 8000,
+                "output": 30000,
+                "cache_read": 800,
+                "cache_write": 10000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["flex"],
+              "rates": {
+                "input": 4000,
+                "output": 15000,
+                "cache_read": 400,
+                "cache_write": 5000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["priority", "fast"],
+              "rates": {
+                "input": 16000,
+                "output": 60000,
+                "cache_read": 1600,
+                "cache_write": 20000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "aliases": [],
+      "cache_write_mode": "flat",
+      "bands": [
+        {
+          "max_prompt_tokens": 272000,
+          "tiers": [
+            {
+              "names": ["default"],
+              "rates": {
+                "input": 2000,
+                "output": 12000,
+                "cache_read": 200,
+                "cache_write": 2500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["flex"],
+              "rates": {
+                "input": 1000,
+                "output": 6000,
+                "cache_read": 100,
+                "cache_write": 1250,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["priority", "fast"],
+              "rates": {
+                "input": 4000,
+                "output": 24000,
+                "cache_read": 400,
+                "cache_write": 5000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        },
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["default"],
+              "rates": {
+                "input": 4000,
+                "output": 18000,
+                "cache_read": 400,
+                "cache_write": 5000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["flex"],
+              "rates": {
+                "input": 2000,
+                "output": 9000,
+                "cache_read": 200,
+                "cache_write": 2500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["priority", "fast"],
+              "rates": {
+                "input": 8000,
+                "output": 36000,
+                "cache_read": 800,
+                "cache_write": 10000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "aliases": [],
+      "cache_write_mode": "flat",
+      "bands": [
+        {
+          "max_prompt_tokens": 272000,
+          "tiers": [
+            {
+              "names": ["default"],
+              "rates": {
+                "input": 200,
+                "output": 1200,
+                "cache_read": 20,
+                "cache_write": 250,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["flex"],
+              "rates": {
+                "input": 100,
+                "output": 600,
+                "cache_read": 10,
+                "cache_write": 125,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["priority", "fast"],
+              "rates": {
+                "input": 400,
+                "output": 2400,
+                "cache_read": 40,
+                "cache_write": 500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        },
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["default"],
+              "rates": {
+                "input": 400,
+                "output": 1800,
+                "cache_read": 40,
+                "cache_write": 500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["flex"],
+              "rates": {
+                "input": 200,
+                "output": 900,
+                "cache_read": 20,
+                "cache_write": 250,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["priority", "fast"],
+              "rates": {
+                "input": 800,
+                "output": 3600,
+                "cache_read": 80,
+                "cache_write": 1000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-6-sol",
+      "aliases": [],
+      "cache_write_mode": "flat",
+      "bands": [
+        {
+          "max_prompt_tokens": 272000,
+          "tiers": [
+            {
+              "names": ["default"],
+              "rates": {
+                "input": 2000,
+                "output": 10000,
+                "cache_read": 200,
+                "cache_write": 2500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["flex"],
+              "rates": {
+                "input": 1000,
+                "output": 5000,
+                "cache_read": 100,
+                "cache_write": 1250,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["priority", "fast"],
+              "rates": {
+                "input": 4000,
+                "output": 20000,
+                "cache_read": 400,
+                "cache_write": 5000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        },
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["default"],
+              "rates": {
+                "input": 4000,
+                "output": 15000,
+                "cache_read": 400,
+                "cache_write": 5000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["flex"],
+              "rates": {
+                "input": 2000,
+                "output": 7500,
+                "cache_read": 200,
+                "cache_write": 2500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["priority", "fast"],
+              "rates": {
+                "input": 8000,
+                "output": 30000,
+                "cache_read": 800,
+                "cache_write": 10000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "aliases": [],
+      "cache_write_mode": "flat",
+      "bands": [
+        {
+          "max_prompt_tokens": 272000,
+          "tiers": [
+            {
+              "names": ["default"],
+              "rates": {
+                "input": 2000,
+                "output": 10000,
+                "cache_read": 100,
+                "cache_write": 2500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["flex"],
+              "rates": {
+                "input": 1000,
+                "output": 5000,
+                "cache_read": 50,
+                "cache_write": 1250,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["priority", "fast"],
+              "rates": {
+                "input": 4000,
+                "output": 20000,
+                "cache_read": 200,
+                "cache_write": 5000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        },
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["default"],
+              "rates": {
+                "input": 4000,
+                "output": 15000,
+                "cache_read": 200,
+                "cache_write": 5000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["flex"],
+              "rates": {
+                "input": 2000,
+                "output": 7500,
+                "cache_read": 100,
+                "cache_write": 2500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["priority", "fast"],
+              "rates": {
+                "input": 8000,
+                "output": 30000,
+                "cache_read": 400,
+                "cache_write": 10000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.5",
+      "aliases": [],
+      "cache_write_mode": "flat",
+      "bands": [
+        {
+          "max_prompt_tokens": 272000,
+          "tiers": [
+            {
+              "names": ["default"],
+              "rates": {
+                "input": 5000,
+                "output": 30000,
+                "cache_read": 500,
+                "cache_write": 5000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["flex"],
+              "rates": {
+                "input": 2500,
+                "output": 15000,
+                "cache_read": 250,
+                "cache_write": 2500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["priority", "fast"],
+              "rates": {
+                "input": 12500,
+                "output": 75000,
+                "cache_read": 1250,
+                "cache_write": 12500,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        },
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["default"],
+              "rates": {
+                "input": 10000,
+                "output": 45000,
+                "cache_read": 1000,
+                "cache_write": 10000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["flex"],
+              "rates": {
+                "input": 5000,
+                "output": 22500,
+                "cache_read": 500,
+                "cache_write": 5000,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            },
+            {
+              "names": ["priority", "fast"],
+              "rates": {
+                "input": null,
+                "output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "cache_write_5m": null,
+                "cache_write_1h": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-opus-5-5",
+      "aliases": [],
+      "cache_write_mode": "ttl_split",
+      "bands": [
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["standard"],
+              "rates": {
+                "input": 4000,
+                "output": 20000,
+                "cache_read": 200,
+                "cache_write_5m": 5000,
+                "cache_write_1h": 8000,
+                "cache_write": null
+              }
+            },
+            {
+              "names": ["batch"],
+              "rates": {
+                "input": 2000,
+                "output": 10000,
+                "cache_read": 100,
+                "cache_write_5m": 2500,
+                "cache_write_1h": 4000,
+                "cache_write": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-fable-5-1",
+      "aliases": [],
+      "cache_write_mode": "ttl_split",
+      "bands": [
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["standard"],
+              "rates": {
+                "input": 10000,
+                "output": 50000,
+                "cache_read": 250,
+                "cache_write_5m": 12500,
+                "cache_write_1h": 20000,
+                "cache_write": null
+              }
+            },
+            {
+              "names": ["batch"],
+              "rates": {
+                "input": 5000,
+                "output": 25000,
+                "cache_read": 125,
+                "cache_write_5m": 6250,
+                "cache_write_1h": 10000,
+                "cache_write": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-fable-5",
+      "aliases": [],
+      "cache_write_mode": "ttl_split",
+      "bands": [
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["standard"],
+              "rates": {
+                "input": 10000,
+                "output": 50000,
+                "cache_read": 1000,
+                "cache_write_5m": 12500,
+                "cache_write_1h": 20000,
+                "cache_write": null
+              }
+            },
+            {
+              "names": ["batch"],
+              "rates": {
+                "input": 5000,
+                "output": 25000,
+                "cache_read": 500,
+                "cache_write_5m": 6250,
+                "cache_write_1h": 10000,
+                "cache_write": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-opus-5",
+      "aliases": [],
+      "cache_write_mode": "ttl_split",
+      "bands": [
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["standard"],
+              "rates": {
+                "input": 5000,
+                "output": 25000,
+                "cache_read": 500,
+                "cache_write_5m": 6250,
+                "cache_write_1h": 10000,
+                "cache_write": null
+              }
+            },
+            {
+              "names": ["batch"],
+              "rates": {
+                "input": 2500,
+                "output": 12500,
+                "cache_read": 250,
+                "cache_write_5m": 3125,
+                "cache_write_1h": 5000,
+                "cache_write": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-sonnet-5",
+      "aliases": [],
+      "cache_write_mode": "ttl_split",
+      "bands": [
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["standard"],
+              "rates": {
+                "input": 2000,
+                "output": 10000,
+                "cache_read": 200,
+                "cache_write_5m": 2500,
+                "cache_write_1h": 4000,
+                "cache_write": null
+              }
+            },
+            {
+              "names": ["batch"],
+              "rates": {
+                "input": 1000,
+                "output": 5000,
+                "cache_read": 100,
+                "cache_write_5m": 1250,
+                "cache_write_1h": 2000,
+                "cache_write": null
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-haiku-4-5-20251001",
+      "aliases": [],
+      "cache_write_mode": "ttl_split",
+      "bands": [
+        {
+          "max_prompt_tokens": null,
+          "tiers": [
+            {
+              "names": ["standard"],
+              "rates": {
+                "input": 1000,
+                "output": 5000,
+                "cache_read": 100,
+                "cache_write_5m": 1250,
+                "cache_write_1h": 2000,
+                "cache_write": null
+              }
+            },
+            {
+              "names": ["batch"],
+              "rates": {
+                "input": 500,
+                "output": 2500,
+                "cache_read": 50,
+                "cache_write_5m": 625,
+                "cache_write_1h": 1000,
+                "cache_write": null
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "rate_unit": "nano_usd_per_token"
+}

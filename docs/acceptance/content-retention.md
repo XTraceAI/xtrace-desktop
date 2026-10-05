@@ -21,9 +21,13 @@ storage/parser/writer/fixture suites.
 | Commit failure        | A registered owner's update injects a deferred foreign-key violation.                                                                                                | Final commit fails and every content/structural value remains unchanged. Retry succeeds after removing the injected trigger.                                                                                                                              |
 | Invalid configuration | Store wrong JSON types or an unknown mode; register invalid, duplicate, missing, primary-key or non-nullable columns.                                                | Writes or purge fail before returning success, with bounded errors and existing content unchanged. A valid mode update can repair the setting.                                                                                                            |
 
-The schema currently contains three transcript-content columns: `sessions.title`,
-`records.content_json` and `tool_uses.input_json`. Tool result blocks live inside
-`content_json`. Structural source labels, repository identities, public PR metadata
+The schema currently contains four transcript-content columns: `sessions.title`,
+`records.content_json`, `tool_uses.input_json` and `record_previews.text`. Tool
+result blocks live inside `content_json`. `record_previews.text` is the one kept
+in either mode: a one-line preview of at most 280 characters of a person's whole
+message or of a proven Claude Code task notification's summary (migration 17,
+`cargo test -p xt-store --test record_previews`). Purge clears it with the
+others, and a replay does not refill it for the same record. Structural source labels, repository identities, public PR metadata
 and measurement digests remain. New fire, judge or evidence owners must register
 their content fields and enforce the shared mode when their writers are added.
 The synthetic owner tables here do not claim that those future features exist.
@@ -39,6 +43,11 @@ the composed batch, preserving the same requested-row prefetch and SQLite 999-bi
 limit. No migration or dependency is added.
 
 This API clears logical content fields. It does not promise forensic erasure of
-SQLite free pages, WAL files, external backups or original transcripts. The
-Settings confirmation flow and actual content-view event delivery remain adapter
-responsibilities. Changing retention mode by itself never deletes saved content.
+SQLite free pages, WAL files, external backups or original transcripts. Changing
+retention mode by itself never deletes saved content.
+
+Desktop Settings exposes this API without changing it: a mode switch, and a
+separate "Delete stored content" button behind a confirmation dialog. The app
+publishes `store://content-purged` only after a committed purge that cleared
+content. `cargo test -p xtrace-desktop --test privacy` and
+`apps/desktop/ui/src/app/SettingsPage.test.tsx` cover this with synthetic data.

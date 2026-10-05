@@ -113,6 +113,28 @@ fn reader_pid(home: &Path) -> i32 {
     }
 }
 
+/// Wait until the index holds the records the reader has already streamed.
+///
+/// The fake reader records its process ID before it prints anything, so a
+/// cancel sent on that signal alone can land before the first session was
+/// consumed at all. Cancelling on the committed state instead keeps this test
+/// about what a cancel preserves, rather than about who won a race.
+fn committed(db: &Path, records: u64) {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        if Store::open(db)
+            .is_ok_and(|store| store.counts().is_ok_and(|counts| counts.records >= records))
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the reader's first session was never committed"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 fn alive(pid: i32) -> bool {
     // A reaped process has no ID to signal; a killed but unreaped one still
     // has, so this is false only once the child was waited for.
@@ -124,7 +146,8 @@ fn a_cancelled_reader_is_killed_and_reaped_and_its_completed_sessions_stay() {
     let temp = tempfile::TempDir::new().unwrap();
     let python = hung_python(temp.path());
     let home = codex_home(temp.path());
-    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let db = temp.path().join("index.sqlite");
+    let mut store = Store::open(&db).unwrap();
     let producer = bundle();
     let cancel = CancelToken::new();
     let (report, pid) = std::thread::scope(|scope| {
@@ -143,6 +166,7 @@ fn a_cancelled_reader_is_killed_and_reaped_and_its_completed_sessions_stay() {
         });
         let pid = reader_pid(&home);
         assert!(alive(pid));
+        committed(&db, 2);
         let started = Instant::now();
         cancel.cancel();
         let report = scan.join().unwrap();
@@ -200,6 +224,7 @@ fn a_tailer_shut_down_during_a_hung_initial_scan_stops_within_its_bound() {
             producer: bundle(),
             python: Some(python.into_os_string()),
             debounce: Duration::from_millis(100),
+            spawn_limits: xt_ingest::native::session_creation::spawn_limits(),
             probe: None,
         },
         sink,
@@ -238,6 +263,7 @@ fn cancel_then_a_graceful_stop_does_not_wait_for_the_hung_reader() {
             producer: bundle(),
             python: Some(python.into_os_string()),
             debounce: Duration::from_millis(100),
+            spawn_limits: xt_ingest::native::session_creation::spawn_limits(),
             probe: None,
         },
         Box::new(|_| {}),

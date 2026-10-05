@@ -76,7 +76,9 @@ pub(crate) fn apply(store: &mut Store, args: ImportArgs) -> Result<ImportOutcome
             Parsed::Record(record) => records.push(*record),
             Parsed::Dropped(_) => dropped += 1,
             // The endpoint accepts canonical message records. Native structural
-            // summaries and PR-link observations retain their dedicated consumers.
+            // summaries and PR-link witnesses retain their dedicated consumer, the
+            // native Claude scan; this path pairs no command with a PR and makes
+            // no PR claim.
             Parsed::Inert | Parsed::StructuralEvent(_) | Parsed::PrLink(_) => {}
         }
     }
@@ -94,6 +96,11 @@ pub(crate) fn apply(store: &mut Store, args: ImportArgs) -> Result<ImportOutcome
         context: &context,
         declared_host: None,
         records: &records,
+        // The endpoint accepts canonical records; native hook summaries keep
+        // their dedicated consumer and are not delivered through this path.
+        hook_summaries: &[],
+        // Nor PR witnesses: only the native Claude scan links a pull request.
+        pr_witnesses: &[],
         title: args.title.as_deref(),
         cwd: None,
         git_branch: None,

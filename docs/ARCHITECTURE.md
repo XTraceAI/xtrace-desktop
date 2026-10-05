@@ -25,27 +25,45 @@ user's home against its own database, running the Codex/Cursor readers from the
 bundled copy of the pinned sources (`vendor/agent-plugins`, verified by object
 identity without Git) with a discovered Python 3.10+ interpreter, and exposes the
 result as the typed `native_index_status` command and `native-index://status`
-event; see [native import](acceptance/native-import.md#app-integration). The app
+event; see [native import](acceptance/native-import.md#app-integration).
+`xt_ingest::native::session_source` reads **one Claude** session's original
+local source on demand, for a detail view: it resolves that session alone
+through the same paths, reads only bytes it has verified against the open
+descriptor and the name both before and after the read, and returns its records
+in memory or the one reason they may not be shown. It writes nothing and caches
+nothing, reads under cumulative byte and record ceilings, and returns no
+content at all when cancelled. Codex and Cursor are refused before any
+interpreter or producer is looked for, because their sources are reachable only
+through the pinned reader's staged disk copies and whole-payload buffers, which
+a transient bounded read does not permit; indexing them is unaffected. See
+[session source](acceptance/session-source.md). The session page shows the M-09
+hands-off stretches that session contributed in the selected window, read from
+`xt-metrics` as metadata only, and reveals a stretch's first tool call only when
+exactly one tool call in the loaded transcript sits at the position M-09 named.
+Each stretch also carries M-20's repeat measurement of the same stretch, read in
+the same snapshot, with no comparison key or argument on the wire;
+see [session stretches](acceptance/session-stretches.md) and
+[session timeline](acceptance/session-timeline.md). The app
 exposes `app_info` and `db_counts` as well, but does not start the capture server
-automatically. Production metric calculation, product data queries and the
+automatically. `xt-probes` reads a documented, bounded list of host configuration files under explicitly supplied roots and backs the `metrics_environment` command; see [Environment](ENVIRONMENT.md). Production metric calculation, product data queries and the
 remaining subsystem behavior are separate work.
 
 The following table names each subsystem's responsibility. A reserved directory
 or compiling placeholder does not establish implemented behavior.
 
-| Path                      | Subsystem responsibility                                                                             |
-| ------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `crates/xt-store/`        | Storage, canonical schema, migrations, and transactional writes.                                     |
-| `crates/xt-ingest/`       | Normalization, parsers, native source import through the pinned readers, and the canonical writer.   |
-| `crates/xt-server/`       | Guarded loopback HTTP/MCP endpoints and the headless core interface.                                 |
-| `crates/xt-metrics/`      | Metric definitions, SQL views, aggregation, and shared result DTOs.                                  |
-| `crates/xt-probes/`       | Host/plugin discovery, executable environment resolution, and `gh`/Git probes.                       |
-| `crates/xt-rulebook/`     | Rule lifecycle, local proposals, verification, and fire history.                                     |
-| `crates/xt-judge/`        | Isolated configured judge CLI routes and separate judge-usage accounting.                            |
-| `crates/xt-fixtures/`     | Development-only fixture loading, database construction, and expected-result assertions.             |
-| `xtask/`                  | Developer commands for shared fixture validation, database creation, and export.                     |
-| `apps/desktop/src-tauri/` | Native lifecycle, Tauri commands, window chrome, and later tray, updater, and telemetry integration. |
-| `apps/desktop/ui/src/`    | React shell, UI components, screens, and the typed data-access boundary.                             |
+| Path                      | Subsystem responsibility                                                                                  |
+| ------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `crates/xt-store/`        | Storage, canonical schema, migrations, and transactional writes.                                          |
+| `crates/xt-ingest/`       | Normalization, parsers, native source import through the pinned readers, and the canonical writer.        |
+| `crates/xt-server/`       | Guarded loopback HTTP/MCP endpoints and the headless core interface.                                      |
+| `crates/xt-metrics/`      | Metric definitions, SQL views, aggregation, and shared result DTOs.                                       |
+| `crates/xt-probes/`       | Host/plugin discovery (configured-environment probe implemented), executable resolution, `gh`/Git probes. |
+| `crates/xt-rulebook/`     | Rule lifecycle, local proposals, verification, and fire history.                                          |
+| `crates/xt-judge/`        | Isolated configured judge CLI routes and separate judge-usage accounting.                                 |
+| `crates/xt-fixtures/`     | Development-only fixture loading, database construction, and expected-result assertions.                  |
+| `xtask/`                  | Developer commands for shared fixture validation, database creation, and export.                          |
+| `apps/desktop/src-tauri/` | Native lifecycle, Tauri commands, window chrome, and later tray, updater, and telemetry integration.      |
+| `apps/desktop/ui/src/`    | React shell, UI components, screens, and the typed data-access boundary.                                  |
 
 All renderer code lives under the UI path above. Native lifecycle and window
 behavior belong to the Tauri application.

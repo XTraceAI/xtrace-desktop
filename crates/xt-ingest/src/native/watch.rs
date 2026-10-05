@@ -19,10 +19,24 @@
 //! bound, so a producer that never returns cannot hold the process that
 //! is exiting. What a cancelled scan had committed stays; the next scan
 //! reads the rest.
+//!
+//! Sub-session work a scan's bounded pass could not finish (Codex threads
+//! whose opening header is still to be read, and the pass over threads
+//! indexed before relations existed) is continued by the worker itself, one
+//! bounded pass after each quiet period, until none is left: it does not wait
+//! for another source event. A pass that moves nothing forward is retried
+//! after twice the wait, up to [`SPAWN_RETRY_MAX`], so a failure never spins.
+//! Every worker starts with a sweep over the Codex roots the index holds, so
+//! work a previous run queued and never finished is recovered from the index
+//! alone. A pass that changed a stored relation says so, once, after its
+//! commit ([`TailEvent::SessionCreationsChanged`]); one that changed nothing
+//! is silent.
 
 use super::{
     CancelToken, HostReport, HostStatus, ImportReport, ImportRequest, ProducerSource, ScanMode,
-    SessionOutcome, all_imported, scan_native_observed,
+    SessionOutcome, all_imported, scan_native_continued,
+    session_creation::{SpawnBacklog, SpawnProgress, continue_codex_spawns_into},
+    session_titles::TitleLimits,
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
@@ -43,14 +57,25 @@ use xt_store::{Host, Store};
 /// leaving the thread behind.
 pub const SHUTDOWN_BOUND: Duration = Duration::from_secs(5);
 
+/// The longest the worker waits before retrying sub-session work that made
+/// no progress.
+pub const SPAWN_RETRY_MAX: Duration = Duration::from_secs(300);
+
+/// The shortest wait between passes, whatever the quiet period.
+const SPAWN_RETRY_MIN: Duration = Duration::from_millis(10);
+
 pub struct WatchConfig {
     pub home: PathBuf,
     pub hosts: Vec<Host>,
     /// Where the pinned producer's sources are, for the reader hosts.
     pub producer: ProducerSource,
     pub python: Option<OsString>,
-    /// Quiet period after the last event before a burst is reconciled.
+    /// Quiet period after the last event before a burst is reconciled, and
+    /// before sub-session work left over is continued.
     pub debounce: Duration,
+    /// The bounds of one pass of sub-session work
+    /// ([`super::session_creation::spawn_limits`] outside tests).
+    pub spawn_limits: TitleLimits,
     /// Instrumentation: called at the named points on the worker (tests, and
     /// progress reporting during the initial scan).
     pub probe: Option<Probe>,
@@ -71,6 +96,9 @@ pub enum ProbePoint<'a> {
     InitialScanDone,
     /// A reconciliation of these hosts is about to run.
     Reconciling(&'a [Host]),
+    /// A pass of left-over sub-session work between reconciliations ended,
+    /// after any event it sent; `pending` says whether work is left.
+    SpawnsContinued { pending: bool },
 }
 
 /// Whether live changes reach the index.
@@ -124,6 +152,16 @@ pub enum TailEvent {
     Stopped {
         #[serde(flatten)]
         freshness: Freshness,
+    },
+    /// A sub-session pass the worker ran between reconciliations committed
+    /// this many changes to stored creation relations: a relation newly
+    /// recorded, or an accepted one first withheld as conflicted. It is sent
+    /// once per such pass, after the commit, and never for a pass that only
+    /// replayed, abstained or read nothing. It says nothing about freshness
+    /// and is not a reconciliation. A scan's own changes are carried by the
+    /// `Ready` or `Reconciled` event that follows it.
+    SessionCreationsChanged {
+        changed: usize,
     },
 }
 
@@ -573,6 +611,21 @@ fn carry_counts(earlier: &HostReport, mut later: HostReport) -> HostReport {
     ) || (earlier.status == HostStatus::Incomplete
         && earlier.sessions.is_empty()
         && earlier.diagnostics.is_empty());
+    // Origin evidence reads as the later pass read it, except the proofs the
+    // earlier pass recorded: a proof is kept only with its record's first
+    // insertion, so a later pass cannot record it again (it abstains, and
+    // those abstentions are the later pass's own), and the two counts add
+    // without counting any proof twice.
+    if let Some(earlier) = &earlier.origin {
+        later
+            .origin
+            .get_or_insert_with(Default::default)
+            .claims
+            .recorded += earlier.claims.recorded;
+        later.origin.as_mut().unwrap().human_inputs.applied += earlier.human_inputs.applied;
+        later.origin.as_mut().unwrap().human_inputs.conflicted += earlier.human_inputs.conflicted;
+        later.origin.as_mut().unwrap().human_inputs.failed += earlier.human_inputs.failed;
+    }
     if later.status == HostStatus::Complete
         && (failed_earlier || !all_imported(&later.sessions) || !later.diagnostics.is_empty())
     {
@@ -631,6 +684,10 @@ struct Worker {
     /// caught up with the events delivered.
     consumed: u64,
     cancel: CancelToken,
+    /// Sub-session work left over by the last pass.
+    spawns: SpawnBacklog,
+    /// How long to wait before the next pass of that work.
+    spawn_retry: Duration,
 }
 
 impl Worker {
@@ -650,15 +707,17 @@ impl Worker {
         }
         Self {
             store,
-            config,
             homes,
             sink,
             shared,
             events,
             watcher: None,
             lost: Vec::new(),
+            spawn_retry: spawn_retry_base(&config),
+            config,
             consumed: 0,
             cancel,
+            spawns: SpawnBacklog::starting(),
         }
     }
 
@@ -819,6 +878,16 @@ impl Worker {
             loop {
                 let message = match pending.take() {
                     Some(message) => message,
+                    // Left-over sub-session work continues after a quiet
+                    // period, event or not.
+                    None if self.spawns_pending() => match rx.recv_timeout(self.spawn_retry) {
+                        Ok(message) => message,
+                        Err(RecvTimeoutError::Timeout) => {
+                            self.continue_spawns();
+                            continue;
+                        }
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    },
                     None => match rx.recv() {
                         Ok(message) => message,
                         Err(_) => break,
@@ -950,7 +1019,60 @@ impl Worker {
             observed_at: now_ms(),
             cancel: Some(&self.cancel),
         };
-        scan_native_observed(&mut self.store, &request, ScanMode::Resume, observer)
+        let report = scan_native_continued(
+            &mut self.store,
+            &request,
+            ScanMode::Resume,
+            observer,
+            &mut self.spawns,
+            self.config.spawn_limits,
+        );
+        self.spawn_retry = spawn_retry_base(&self.config);
+        report
+    }
+
+    /// Whether sub-session work is left for a later pass. Only a worker that
+    /// scans Codex has any.
+    fn spawns_pending(&self) -> bool {
+        self.config.hosts.contains(&Host::Codex) && self.spawns.pending()
+    }
+
+    /// One bounded pass of left-over sub-session work. The next waits the
+    /// quiet period again if this one moved work forward, twice as long as
+    /// the last wait if it did not. What it committed to stored relations,
+    /// even before a failure, is published once afterwards.
+    fn continue_spawns(&mut self) {
+        self.shared.update(|state| state.idle = false);
+        let mut progress = SpawnProgress::default();
+        let passed = continue_codex_spawns_into(
+            &mut self.store,
+            &self.config.home,
+            &mut self.spawns,
+            self.config.spawn_limits,
+            Some(&self.cancel),
+            now_ms(),
+            &mut progress,
+        )
+        .is_ok();
+        if progress.changed > 0 {
+            (self.sink)(TailEvent::SessionCreationsChanged {
+                changed: progress.changed,
+            });
+        }
+        self.probe(ProbePoint::SpawnsContinued {
+            pending: self.spawns.pending(),
+        });
+        let advanced = passed && progress.advanced();
+        let base = spawn_retry_base(&self.config);
+        self.spawn_retry = if advanced {
+            base
+        } else {
+            self.spawn_retry
+                .saturating_mul(2)
+                .max(base)
+                .min(SPAWN_RETRY_MAX)
+        };
+        self.publish_idle();
     }
 
     /// Create the watcher and watch every host root that exists; a root that
@@ -1254,11 +1376,57 @@ fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
                         });
                     }
                 }
+                // Append IDE watches after the existing Cursor registrations.
+                let global = home.join("Library/Application Support/Cursor/User/globalStorage");
+                if global.is_dir() {
+                    add(&mut roots, &fallback, *host, &[global]);
+                } else {
+                    let ancestor = global
+                        .ancestors()
+                        .find(|path| path.is_dir())
+                        .unwrap_or(home);
+                    let physical = ancestor
+                        .canonicalize()
+                        .unwrap_or_else(|_| ancestor.to_path_buf());
+                    if !roots.iter().any(|root| {
+                        root.path
+                            .canonicalize()
+                            .unwrap_or_else(|_| root.path.clone())
+                            == physical
+                    }) {
+                        roots.push(WatchRoot {
+                            path: ancestor.to_path_buf(),
+                            recursive: false,
+                            host: None,
+                        });
+                    }
+                }
             }
             Host::Other => {}
         }
     }
-    roots
+    let mut unique: Vec<WatchRoot> = Vec::new();
+    for root in roots {
+        let physical = root
+            .path
+            .canonicalize()
+            .unwrap_or_else(|_| root.path.clone());
+        if let Some(existing) = unique.iter_mut().find(|other| {
+            other
+                .path
+                .canonicalize()
+                .unwrap_or_else(|_| other.path.clone())
+                == physical
+        }) {
+            existing.recursive |= root.recursive;
+            if root.host.is_some() {
+                existing.host = root.host;
+            }
+        } else {
+            unique.push(root);
+        }
+    }
+    unique
 }
 
 /// The host a changed path belongs to, by its position under the home (in
@@ -1267,6 +1435,12 @@ fn watch_roots(home: &Path, hosts: &[Host]) -> Vec<WatchRoot> {
 /// directory's ancestors appearing.
 fn host_of(homes: &[PathBuf], path: &Path) -> Option<Host> {
     let relative = homes.iter().find_map(|home| path.strip_prefix(home).ok())?;
+    let global = Path::new("Library/Application Support/Cursor/User/globalStorage");
+    if relative.starts_with(global)
+        || global.starts_with(relative) && relative.starts_with("Library")
+    {
+        return Some(Host::Cursor);
+    }
     let mut components = relative
         .components()
         .map(|component| component.as_os_str().to_str());
@@ -1317,7 +1491,15 @@ fn classify(
                 }
                 if may_drop_watch {
                     for root in watched {
-                        if root.starts_with(path) && !dirty.lost_watches.contains(root) {
+                        let same_tree = root.starts_with(path)
+                            || homes.iter().any(|home| {
+                                path.strip_prefix(home).is_ok_and(|relative| {
+                                    homes
+                                        .iter()
+                                        .any(|other| root.starts_with(other.join(relative)))
+                                })
+                            });
+                        if same_tree && !dirty.lost_watches.contains(root) {
                             dirty.lost_watches.push(root.clone());
                         }
                     }
@@ -1362,6 +1544,11 @@ fn drain(
     }
 }
 
+/// The wait before a pass of sub-session work that follows progress.
+fn spawn_retry_base(config: &WatchConfig) -> Duration {
+    config.debounce.clamp(SPAWN_RETRY_MIN, SPAWN_RETRY_MAX)
+}
+
 fn now_ms() -> i64 {
     i64::try_from(
         std::time::SystemTime::now()
@@ -1399,6 +1586,7 @@ mod tests {
             detail: detail.map(str::to_owned),
             diagnostics,
             sessions,
+            origin: None,
         };
         let imported = || SessionOutcome::Imported {
             records_new: 2,
@@ -1542,6 +1730,41 @@ mod tests {
     }
 
     #[test]
+    fn carried_origin_counts_add_recorded_proofs_once_and_keep_the_later_pass_otherwise() {
+        use super::super::{OriginClaims, OriginReport};
+        let pass = |origin: Option<OriginReport>| HostReport {
+            host: Host::Codex,
+            status: HostStatus::Complete,
+            detail: None,
+            diagnostics: Vec::new(),
+            sessions: Vec::new(),
+            origin,
+        };
+        let report = |claimed, recorded, not_inserted| {
+            let mut report = OriginReport {
+                claims: OriginClaims {
+                    claimed,
+                    recorded,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            report.claims.abstained.not_inserted = not_inserted;
+            report.sessions.marked = 1;
+            report
+        };
+        // The later pass reads the same claim again: the proof it cannot
+        // record twice abstains there, and is counted recorded once.
+        let merged = carry_counts(&pass(Some(report(1, 1, 0))), pass(Some(report(1, 0, 1))));
+        assert_eq!(merged.origin, Some(report(1, 1, 1)));
+        // A pass that read no origin evidence leaves only the earlier proofs.
+        let merged = carry_counts(&pass(Some(report(1, 1, 0))), pass(None));
+        assert_eq!(merged.origin.map(|origin| origin.claims.recorded), Some(1));
+        // Ordinary reports stay without origin.
+        assert_eq!(carry_counts(&pass(None), pass(None)).origin, None);
+    }
+
+    #[test]
     fn a_removal_at_or_above_a_watched_root_marks_its_watch_lost() {
         use notify::{Event, EventKind, event::*};
         let home = PathBuf::from("/h");
@@ -1554,6 +1777,7 @@ mod tests {
             },
             python: None,
             debounce: Duration::from_millis(1),
+            spawn_limits: crate::native::session_creation::spawn_limits(),
             probe: None,
         };
         let homes = vec![home.clone()];
@@ -1655,18 +1879,24 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(
-            described(watch_roots(home, &[Host::Cursor])).last(),
-            Some(&(home.join(".config"), false, None))
+            described(watch_roots(home, &[Host::Cursor]))
+                .into_iter()
+                .find(|root| root.0 == home.join(".config")),
+            Some((home.join(".config"), false, None))
         );
         std::fs::create_dir_all(home.join(".config/memhub-plugin")).unwrap();
         assert_eq!(
-            described(watch_roots(home, &[Host::Cursor])).last(),
-            Some(&(home.join(".config/memhub-plugin"), false, None))
+            described(watch_roots(home, &[Host::Cursor]))
+                .into_iter()
+                .find(|root| root.0 == home.join(".config/memhub-plugin")),
+            Some((home.join(".config/memhub-plugin"), false, None))
         );
         std::fs::create_dir_all(home.join(".config/memhub-plugin/cursorflush")).unwrap();
         assert_eq!(
-            described(watch_roots(home, &[Host::Cursor])).last(),
-            Some(&(
+            described(watch_roots(home, &[Host::Cursor]))
+                .into_iter()
+                .find(|root| root.0 == home.join(".config/memhub-plugin/cursorflush")),
+            Some((
                 home.join(".config/memhub-plugin/cursorflush"),
                 true,
                 Some(Host::Cursor)
@@ -1688,5 +1918,80 @@ mod tests {
         );
         assert_eq!(host_of(&homes, &home.join(".config")), Some(Host::Cursor));
         assert_eq!(host_of(&homes, &home.join(".config/gh/hosts.yml")), None);
+    }
+
+    #[test]
+    fn cursor_ide_watches_physical_paths_once_and_classifies_both_spellings() {
+        use notify::EventKind;
+        use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path();
+        let physical_home = home.canonicalize().unwrap();
+        let homes = vec![home.to_path_buf(), physical_home.clone()];
+        let relative = "Library/Application Support/Cursor/User/globalStorage";
+        let global = home.join(relative);
+        let config = WatchConfig {
+            home: home.to_path_buf(),
+            hosts: vec![Host::Cursor],
+            producer: ProducerSource::Checkout {
+                pin: PathBuf::from("/pin"),
+                plugin_root: None,
+            },
+            python: None,
+            debounce: Duration::from_millis(1),
+            spawn_limits: crate::native::session_creation::spawn_limits(),
+            probe: None,
+        };
+        let roots = watch_roots(home, &config.hosts);
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].path, physical_home);
+        assert!(!roots[0].recursive);
+        std::fs::create_dir_all(&global).unwrap();
+        let roots = watch_roots(home, &config.hosts);
+        assert!(
+            roots
+                .last()
+                .is_some_and(|root| root.path == global && root.recursive)
+        );
+        let unique: std::collections::BTreeSet<_> = roots
+            .iter()
+            .map(|root| root.path.canonicalize().unwrap())
+            .collect();
+        assert_eq!(unique.len(), roots.len());
+        let watched = vec![global.clone()];
+        std::fs::remove_dir(&global).unwrap();
+        for spelling in &homes {
+            for kind in [
+                EventKind::Remove(RemoveKind::Folder),
+                EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+                EventKind::Create(CreateKind::Folder),
+            ] {
+                let mut dirty = Dirty::default();
+                classify(
+                    Ok(notify::Event::new(kind).add_path(spelling.join(relative))),
+                    &mut dirty,
+                    &config,
+                    &homes,
+                    &watched,
+                );
+                assert_eq!(dirty.hosts, vec![Host::Cursor]);
+                assert_eq!(dirty.lost_watches, watched);
+            }
+        }
+        std::fs::create_dir_all(&global).unwrap();
+        assert!(watch_roots(home, &config.hosts).last().unwrap().recursive);
+        let mut dirty = Dirty::default();
+        for spelling in &homes {
+            classify(
+                Ok(notify::Event::new(EventKind::Modify(ModifyKind::Any))
+                    .add_path(spelling.join(relative).join("state.vscdb-wal"))),
+                &mut dirty,
+                &config,
+                &homes,
+                &watched,
+            );
+        }
+        assert_eq!(dirty.hosts, vec![Host::Cursor]);
+        assert!(dirty.lost_watches.is_empty());
     }
 }

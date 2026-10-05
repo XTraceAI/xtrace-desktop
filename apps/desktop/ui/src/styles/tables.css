@@ -49,6 +49,13 @@
   padding: 0;
   cursor: pointer;
 }
+/* A measured column's header is its definition trigger: it carries no extra
+   glyph, so the column keeps the width of an unmeasured one. */
+.xt-table-head button.xt-table-metric-header {
+  cursor: help;
+  text-decoration: underline dotted currentColor;
+  text-underline-offset: 3px;
+}
 .xt-data-row {
   padding: 0 14px;
   color: var(--ink);

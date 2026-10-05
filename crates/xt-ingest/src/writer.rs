@@ -1,7 +1,10 @@
 //! Synchronous ingestion composition. Returned acknowledgements and events exist
 //! only after the single store transaction commits; adapters publish them later.
 
-use crate::canonical::{ParsedRecord, SourceContext};
+use crate::{
+    canonical::{ParsedRecord, PrLink, SourceContext, StopHookSummary},
+    tool_use,
+};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use xt_store::{
@@ -11,8 +14,10 @@ use xt_store::{
         SubmittedReceipt,
     },
     ingest::{CaptureReceipt, RecordCoverage, RecordSourceObservation, SessionSourceObservation},
+    injected::{InjectedContextOutcome, InjectedContextProof},
     measurement::{Projection, SCHEMA_VERSION},
     model::RecordIdentity,
+    pr_link::{PrConfidence, PrIdentity, PrLinkObservation},
 };
 
 pub const MAX_BATCH_RECORDS: usize = 2_000;
@@ -22,6 +27,13 @@ pub struct WriteBatch<'a> {
     /// A known adapter host need not manufacture an absent raw platform label.
     pub declared_host: Option<Host>,
     pub records: &'a [ParsedRecord],
+    /// Native stop-hook summaries read from the same input as `records`. They
+    /// are structural events, not records: they carry no content, never enter a
+    /// record's tool-call count, and commit with this batch or not at all.
+    pub hook_summaries: &'a [StopHookSummary],
+    /// Native Claude `pr-link` witnesses read from the same input: exact
+    /// evidence, never inferred, reconciled by the same identity rules.
+    pub pr_witnesses: &'a [PrWitness],
     pub title: Option<&'a str>,
     /// Session facts a source header states outside its records (a reader's
     /// `cwd`/`git_branch`); merged with fill semantics, conflicts are flagged.
@@ -37,6 +49,18 @@ pub struct WriteBatch<'a> {
     pub discovery: Option<&'a xt_store::ingest::DiscoveredSession>,
     /// Resume progress that commits only with this batch's rows.
     pub checkpoint: Option<&'a xt_store::batch::NativeCheckpoint>,
+}
+
+/// One explicit native `pr-link` line. The adapter has reconciled the line's
+/// own identity labels and bound them to its file's session context, exactly as
+/// it does a record's, so the writer checks them against the batch like any
+/// other observation. `named_session` is the native session the line itself
+/// names: the batch's own for a witness written there, another for a fork's
+/// inherited copy, whose evidence belongs to the session it names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrWitness {
+    pub link: PrLink,
+    pub named_session: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,18 +97,44 @@ pub fn coverage(session: &str, record: &ParsedRecord) -> Result<RecordCoverage> 
 
 /// A field/revision comparison, not a complete session-capture verdict. The
 /// caller must separately evaluate source identity, conflicts and representatives.
+///
+/// Coverage is compared under the digest schema version it was sealed with, so
+/// an older receipt is neither rewritten nor reinterpreted. A version that
+/// cannot describe the current record — an unknown one, or version 1 for an
+/// input a confirmation has since reclassified — never matches.
 pub fn matches_current(coverage: &RecordCoverage, record: &StoredRecord) -> Result<bool> {
     let projection = Projection::from_stored(record)?;
-    Ok(!record.has_conflict && coverage == &covered(&record.uuid, &projection))
+    Ok(!record.has_conflict
+        && covered_as(&record.uuid, &projection, coverage.digest_schema_version)
+            .is_some_and(|current| coverage == &current))
 }
 
 fn covered(uuid: &str, projection: &Projection) -> RecordCoverage {
-    RecordCoverage {
+    covered_as(uuid, projection, SCHEMA_VERSION).expect("the current version encodes every record")
+}
+
+fn covered_as(uuid: &str, projection: &Projection, version: u32) -> Option<RecordCoverage> {
+    let (metric_field_mask, bytes) = projection.encoded(version)?;
+    Some(RecordCoverage {
         record_uuid: uuid.to_owned(),
-        metric_field_mask: projection.field_mask(),
-        measurement_revision: format!("{:x}", Sha256::digest(projection.canonical_bytes())),
-        digest_schema_version: SCHEMA_VERSION,
-    }
+        metric_field_mask,
+        measurement_revision: format!("{:x}", Sha256::digest(bytes)),
+        digest_schema_version: version,
+    })
+}
+
+/// The single digest version an existing sealed receipt was recorded with, or
+/// the current version for a new receipt. Sealed coverage is immutable, so
+/// reading it before the batch transaction cannot race a change. For a version
+/// this build cannot encode, or a mixed set, the retry is encoded with the
+/// current version, which the store's exact comparison then rejects.
+fn sealed_version(store: &Store, receipt_id: &str) -> Result<u32> {
+    let sealed = store.capture_coverage(receipt_id)?;
+    let mut versions = sealed.iter().map(|item| item.digest_schema_version);
+    Ok(match versions.next() {
+        Some(first) if versions.all(|version| version == first) => first,
+        _ => SCHEMA_VERSION,
+    })
 }
 
 fn identity(record: &ParsedRecord, observed_at: i64) -> RecordIdentity {
@@ -97,7 +147,37 @@ fn identity(record: &ParsedRecord, observed_at: i64) -> RecordIdentity {
 }
 
 pub fn write_batch(store: &mut Store, request: &WriteBatch<'_>) -> Result<BatchOutcome> {
-    if request.records.len() > MAX_BATCH_RECORDS {
+    write_batch_proven(store, request, &[], &[]).map(|(outcome, _)| outcome)
+}
+
+/// `write_batch` with one optional injected context proof per record of the
+/// request, aligned by input index (empty for none). The proofs travel in the
+/// same Store transaction as their records; the Store keeps one only where its
+/// own input inserted an eligible record, and reports each proof's outcome in
+/// input order. A proof the Store refuses fails the whole batch, as any other
+/// invalid input does. A request with no proof is exactly `write_batch`.
+///
+/// `adjusted` marks, aligned the same way (empty for none), each input a
+/// human-input adjustment the caller will apply says is only partly, or not
+/// at all, a person's words; the Store keeps no person preview of it. An
+/// input carrying its own adjustment is marked whatever the caller says.
+pub fn write_batch_proven(
+    store: &mut Store,
+    request: &WriteBatch<'_>,
+    proofs: &[Option<InjectedContextProof>],
+    adjusted: &[bool],
+) -> Result<(BatchOutcome, Vec<InjectedContextOutcome>)> {
+    if !adjusted.is_empty() && adjusted.len() != request.records.len() {
+        return Err(Error::InvalidInput(
+            "adjusted inputs must align with the batch's records",
+        ));
+    }
+    let proofs = if proofs.iter().any(Option::is_some) {
+        proofs
+    } else {
+        &[]
+    };
+    if request.records.len() > MAX_BATCH_RECORDS || request.pr_witnesses.len() > MAX_BATCH_RECORDS {
         return Err(Error::InvalidInput(
             "ingestion batch exceeds its record bound",
         ));
@@ -151,9 +231,18 @@ pub fn write_batch(store: &mut Store, request: &WriteBatch<'_>) -> Result<BatchO
             }
         }
     }
+    // A retry is encoded under the digest version its receipt was sealed with,
+    // so an unchanged resubmission of a receipt an older build sealed still
+    // matches exactly; a new receipt uses the current version.
+    let version = match request.receipt {
+        Some(receipt) => sealed_version(store, &receipt.receipt_id)?,
+        None => SCHEMA_VERSION,
+    };
     let coverage = projections
         .iter()
-        .map(|(uuid, projection)| covered(uuid, projection))
+        .map(|(uuid, projection)| {
+            covered_as(uuid, projection, version).unwrap_or_else(|| covered(uuid, projection))
+        })
         .collect::<Vec<_>>();
     let record_sources = source_masks
         .into_iter()
@@ -175,7 +264,48 @@ pub fn write_batch(store: &mut Store, request: &WriteBatch<'_>) -> Result<BatchO
         .iter()
         .map(|r| r.native.iteration_usage_confirmed)
         .collect::<Vec<_>>();
+    // Derive structural events here, against the session identity this batch
+    // resolved, so an event can never be attributed to a session the records
+    // were not written to. Their IDs are the native records' own UUIDs.
+    let mut tool_events = Vec::new();
+    for record in request.records {
+        if let Some(event) = tool_use::command_event(record, &session.session_id, source) {
+            tool_events.push(event);
+        }
+    }
+    for summary in request.hook_summaries {
+        let event = tool_use::hook_event(summary, &session.session_id, source).ok_or(
+            Error::InvalidInput("structural tool event requires a stable source event ID"),
+        )?;
+        tool_events.push(event);
+    }
+    let pr_links = request
+        .pr_witnesses
+        .iter()
+        .map(|witness| pr_observation(&session, witness))
+        .collect::<Result<Vec<_>>>()?;
+    let task_notifications = request
+        .records
+        .iter()
+        .map(|record| record.task_notification)
+        .collect::<Vec<_>>();
+    let withheld_previews = request
+        .records
+        .iter()
+        .enumerate()
+        .map(|(index, record)| {
+            record.human_adjustment.is_some() || adjusted.get(index).copied().unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
     let mut batch = IngestBatch::new(&session, &records, request.keep_content);
+    if task_notifications.contains(&true) {
+        batch.task_notifications = &task_notifications;
+    }
+    if withheld_previews.contains(&true) {
+        batch.withheld_previews = &withheld_previews;
+    }
+    batch.tool_events = &tool_events;
+    batch.pr_links = &pr_links;
     batch.identities = &identities;
     batch.native_history = source == SessionSource::Transcript
         && session.host == Host::Claude
@@ -198,6 +328,7 @@ pub fn write_batch(store: &mut Store, request: &WriteBatch<'_>) -> Result<BatchO
     batch.cursor = request.cursor;
     batch.discovery = request.discovery;
     batch.checkpoint = request.checkpoint;
+    batch.injected_context = proofs;
     let saved = store.apply_ingest_batch(&batch)?;
     // No code above this point constructs an acknowledgement or emitted event.
     let mut accepted = BTreeMap::<&str, (bool, bool)>::new();
@@ -278,14 +409,51 @@ pub fn write_batch(store: &mut Store, request: &WriteBatch<'_>) -> Result<BatchO
         invalidate_cost: true,
         backfill_position: None,
     }));
-    Ok(BatchOutcome {
-        conversation_id: session.session_id,
-        records_new,
-        records_enriched,
-        records_dropped,
-        ack_through,
-        dropped_reasons,
-        events,
+    Ok((
+        BatchOutcome {
+            conversation_id: session.session_id,
+            records_new,
+            records_enriched,
+            records_dropped,
+            ack_through,
+            dropped_reasons,
+            events,
+        },
+        saved.injected_context,
+    ))
+}
+
+/// An exact link from one witness. Its pull request must reconcile to one
+/// canonical identity from the line's URL, repository and number; its own
+/// timestamp is the only event time, never the scan's `observed_at`.
+fn pr_observation(session: &SessionMeta, witness: &PrWitness) -> Result<PrLinkObservation> {
+    if session.host != Host::Claude || session.source != SessionSource::Transcript {
+        return Err(Error::InvalidInput(
+            "native PR witnesses require Claude transcript history",
+        ));
+    }
+    let named = witness.named_session.trim();
+    if named.is_empty() || named != witness.named_session {
+        return Err(Error::InvalidInput("PR witness names no native session"));
+    }
+    let link = &witness.link;
+    let pull_request = PrIdentity::reconcile(
+        Some(&link.raw_url),
+        Some(&link.raw_repository),
+        Some(link.number),
+    )?;
+    let (_, seen_at) = xt_store::timestamp::parse(
+        link.timestamp
+            .as_deref()
+            .ok_or(Error::InvalidInput("PR witness requires its own timestamp"))?,
+    )?;
+    Ok(PrLinkObservation {
+        // A Claude session's canonical ID is its native ID.
+        session_id: witness.named_session.clone(),
+        pull_request,
+        confidence: PrConfidence::Exact,
+        first_seen_at: seen_at,
+        last_seen_at: seen_at,
     })
 }
 
@@ -382,6 +550,92 @@ pub fn resolve_session(request: &WriteBatch<'_>) -> Result<SessionMeta> {
             &mut context.source_surface,
             record.canonical.source_surface.as_ref(),
         )?;
+    }
+    // A hook summary is not a record, but it names the same native identity and
+    // is reconciled by the same rules before anything it implies is persisted.
+    // A summary disagreeing with its file or its records fails the batch, so
+    // neither the event nor the checkpoint covering it commits.
+    for summary in request.hook_summaries {
+        for observed in [&summary.context, &summary.source] {
+            agree(
+                &mut context.conversation_id,
+                observed.conversation_id.as_ref(),
+            )?;
+            agree(
+                &mut context.native_session_id,
+                observed.native_session_id.as_ref(),
+            )?;
+            agree(
+                &mut context.source_platform,
+                observed.source_platform.as_ref(),
+            )?;
+            agree(
+                &mut context.source_surface,
+                observed.source_surface.as_ref(),
+            )?;
+            if let Some(value) = &observed.started_at {
+                let incoming = xt_store::timestamp::parse(value)?;
+                if started.as_ref().is_some_and(|old| old != &incoming) {
+                    return Err(Error::InvalidInput("native start instants disagree"));
+                }
+                started.get_or_insert(incoming);
+            }
+            if observed.source.is_some_and(|value| value != source) {
+                return Err(Error::InvalidInput(
+                    "record source disagrees with its import",
+                ));
+            }
+        }
+        agree(
+            &mut context.native_session_id,
+            summary.native.session_id.as_ref(),
+        )?;
+        // The summary's own entrypoint is a surface label like a record's.
+        agree(
+            &mut context.source_surface,
+            summary.native.entrypoint.as_ref(),
+        )?;
+    }
+    // A PR witness is reconciled by the same rules: its line's labels, bound to
+    // the file context by the adapter, must agree with the batch, or neither
+    // the link nor the checkpoint covering it commits.
+    for witness in request.pr_witnesses {
+        let link = &witness.link;
+        for observed in [&link.context, &link.source] {
+            agree(
+                &mut context.conversation_id,
+                observed.conversation_id.as_ref(),
+            )?;
+            agree(
+                &mut context.native_session_id,
+                observed.native_session_id.as_ref(),
+            )?;
+            agree(
+                &mut context.source_platform,
+                observed.source_platform.as_ref(),
+            )?;
+            agree(
+                &mut context.source_surface,
+                observed.source_surface.as_ref(),
+            )?;
+            if let Some(value) = &observed.started_at {
+                let incoming = xt_store::timestamp::parse(value)?;
+                if started.as_ref().is_some_and(|old| old != &incoming) {
+                    return Err(Error::InvalidInput("native start instants disagree"));
+                }
+                started.get_or_insert(incoming);
+            }
+            if observed.source.is_some_and(|value| value != source) {
+                return Err(Error::InvalidInput(
+                    "record source disagrees with its import",
+                ));
+            }
+        }
+        agree(
+            &mut context.native_session_id,
+            link.native.session_id.as_ref(),
+        )?;
+        agree(&mut context.source_surface, link.native.entrypoint.as_ref())?;
     }
     let host = context
         .source_platform

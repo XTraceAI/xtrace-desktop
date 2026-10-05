@@ -30,3 +30,14 @@ legacy and composed writes, enrichment, retries, explicit opt-in and reopening.
 The existing purge, concurrency and rollback tests remain required. Fixture
 builders requesting full content must opt in explicitly; empty fixtures use the
 production default.
+
+## Amendment, 2026-10-01: short previews
+
+The Dashboard's activity bubble showed the last message a person typed by
+reading the whole session file on every hover. The index now keeps, whatever
+the mode, a one-line preview of at most 280 characters of each input the
+classification calls a person's whole message, and of each proven Claude Code
+task notification's own summary (`record_previews`, migration 17). Nothing
+else of those records is kept, readers still choose a message by its current
+classification, and "Delete stored content" clears the previews. The file read
+remains the fallback where no preview exists.

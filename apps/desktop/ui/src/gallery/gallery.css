@@ -132,3 +132,11 @@ body:has(#gallery-frame) .xt-popover.gallery-popover p,
 body:has(#gallery-frame) .xt-modal p {
   margin: 0 0 16px;
 }
+/* The splash fills the window in the app; here it fills its frame. */
+.gallery-startup {
+  height: 100%;
+}
+.gallery-startup .xt-startup {
+  min-height: 100%;
+  height: 100%;
+}

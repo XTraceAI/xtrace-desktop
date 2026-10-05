@@ -27,6 +27,8 @@ fn batch<'a>(context: &'a SourceContext, records: &'a [ParsedRecord]) -> WriteBa
         context,
         declared_host: None,
         records,
+        hook_summaries: &[],
+        pr_witnesses: &[],
         title: Some("Synthetic title"),
         cwd: None,
         git_branch: None,
@@ -73,7 +75,7 @@ fn structural_snapshot(
                 .join(",");
             let rows = sql
                 .prepare(&format!(
-                    "SELECT {selected} FROM \"{table}\" ORDER BY rowid"
+                    "SELECT {selected} FROM \"{table}\" ORDER BY {selected}"
                 ))
                 .unwrap()
                 .query_map([], |row| {
@@ -421,7 +423,8 @@ fn purge_content_hook_and_final_commit_failure_roll_back_all_owners() {
                     |row| row.get::<_, i64>(0)
                 )
                 .unwrap(),
-                1
+                // The saved row is an assistant reply: no input, no preview.
+                i64::from(table != "record_previews")
             );
         }
         let mut reopened = Store::open(db.path()).unwrap();
@@ -483,5 +486,5 @@ fn retention_invalid_setting_and_purge_inventory_fail_closed() {
     );
     assert!(registry.register("records", &["content_json"]).is_err());
     assert!(registry.register("empty", &[]).is_err());
-    assert_eq!(registry.columns().count(), 3);
+    assert_eq!(registry.columns().count(), 4);
 }

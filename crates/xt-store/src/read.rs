@@ -15,12 +15,29 @@ pub struct StoredSession {
     pub has_conflict: bool,
 }
 
+/// One assistant tool call, bound to its record by UUID plus block index.
+/// The structural classification is derived before content retention decides
+/// about `input_json`, so it survives metadata-only storage; a row written by an
+/// older build simply has no classification yet and may acquire one on replay.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredToolUse {
     pub id: i64,
     pub block_index: i64,
     pub name: String,
     pub input_json: Option<Value>,
+    pub kind: Option<crate::ingest::ToolKind>,
+    pub server: Option<String>,
+    pub tool: Option<String>,
+    pub skill: Option<String>,
+    /// M-20's grouping identity for this call, derived from the block's own
+    /// input at the same point and under the same rule as the classification
+    /// above. `None` is unknown: an older build's row, or an observation that
+    /// could not say which call this was.
+    pub group: Option<crate::repeat_key::GroupKey>,
+    /// Two observations of this same call stated different grouping
+    /// identities. The first one stays stored and the metric reads the call as
+    /// unknown; a later agreeing observation does not clear the mark.
+    pub group_conflict: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,6 +63,15 @@ pub struct StoredRecord {
     pub usage: Option<Usage>,
     pub tool_uses: Vec<StoredToolUse>,
     pub has_conflict: bool,
+    /// A structural confirmation that another agent submitted this input, from
+    /// either confirmation table, or a source proof that Codex injected it. It
+    /// lives beside the record, never in its raw classification. Only the
+    /// confirmation APIs, or a source proof committed with the record's own
+    /// first insertion, set it; the record writer never does.
+    pub confirmed_automated_input: bool,
+    pub human_is_eligible: Option<bool>,
+    pub human_text_len: Option<i64>,
+    pub human_excluded: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -199,11 +225,19 @@ pub(crate) fn session(connection: &Connection, id: &str) -> Result<Option<Stored
 }
 
 const RECORD_FIELDS: &str = "r.uuid,r.session_id,r.type,r.ts,r.ts_ms,r.api_message_id,r.request_id,
-    r.is_meta,r.is_sidechain,r.role,r.model,r.is_tool_result_carrier,r.text_len,r.tool_use_count,r.content_json,r.has_conflict,r.parent_uuid,r.agent_id,r.subtype,r.first_seen_at,r.is_human,r.is_command,r.is_interrupted,r.is_system_reminder";
+    r.is_meta,r.is_sidechain,r.role,r.model,r.is_tool_result_carrier,r.text_len,r.tool_use_count,r.content_json,r.has_conflict,r.parent_uuid,r.agent_id,r.subtype,r.first_seen_at,r.is_human,r.is_command,r.is_interrupted,r.is_system_reminder,
+    EXISTS(SELECT 1 FROM confirmed_automated_inputs a WHERE a.record_uuid=r.uuid AND a.session_id=r.session_id)
+    OR EXISTS(SELECT 1 FROM guardian_turn_inputs g WHERE g.record_uuid=r.uuid AND g.session_id=r.session_id)
+    OR EXISTS(SELECT 1 FROM injected_context_inputs i WHERE i.record_uuid=r.uuid AND i.session_id=r.session_id)
+    OR EXISTS(SELECT 1 FROM task_notification_inputs n WHERE n.record_uuid=r.uuid AND n.session_id=r.session_id),
+    (SELECT human_is_eligible FROM v_human_inputs WHERE uuid=r.uuid),
+    (SELECT human_text_len FROM v_human_inputs WHERE uuid=r.uuid),
+    (SELECT human_excluded FROM v_human_inputs WHERE uuid=r.uuid)";
 const USAGE_FIELDS: &str =
     "u.input_tokens,u.output_tokens,u.cache_read_tokens,u.cache_creation_tokens,
     u.cache_creation_5m,u.cache_creation_1h,u.service_tier";
-const TOOL_FIELDS: &str = "t.id,t.block_index,t.name,t.input_json";
+const TOOL_FIELDS: &str = "t.id,t.block_index,t.name,t.input_json,t.kind,t.server,t.tool,t.skill,
+    t.group_version,t.group_key,t.group_conflict";
 
 /// Read only the incoming UUID set, in groups below SQLite's minimum default
 /// variable limit (999). The caller owns the transaction/snapshot for all groups.
@@ -299,6 +333,10 @@ fn record_from_row(row: &Row<'_>) -> rusqlite::Result<StoredRecord> {
         tool_use_count: row.get(13)?,
         content_json: json_column(row, 14)?,
         has_conflict: row.get(15)?,
+        confirmed_automated_input: row.get(24)?,
+        human_is_eligible: row.get(25)?,
+        human_text_len: row.get(26)?,
+        human_excluded: row.get(27)?,
         usage: None,
         tool_uses: Vec::new(),
     })
@@ -330,6 +368,12 @@ fn tool_from_row(row: &Row<'_>, start: usize) -> rusqlite::Result<StoredToolUse>
         block_index: row.get(start + 1)?,
         name: row.get(start + 2)?,
         input_json: json_column(row, start + 3)?,
+        kind: row.get(start + 4)?,
+        server: row.get(start + 5)?,
+        tool: row.get(start + 6)?,
+        skill: row.get(start + 7)?,
+        group: crate::repeat_key::GroupKey::stored(row.get(start + 8)?, row.get(start + 9)?),
+        group_conflict: row.get(start + 10)?,
     })
 }
 

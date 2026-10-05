@@ -1,0 +1,95 @@
+.xt-live-session-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  width: max-content;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--meta);
+  background: var(--subtle);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 14px;
+  white-space: nowrap;
+}
+.xt-live-session-badge[data-live-status='running'] {
+  color: var(--success);
+  background: var(--success-tint);
+}
+.xt-lane-live-host {
+  --xt-live-arc: var(--success);
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+[data-theme='dark'] .xt-lane-live-host {
+  --xt-live-arc: var(--secondary);
+}
+.xt-lane-live-host > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.xt-lane-live-host .xt-host-glyph-mark[data-size='18'] {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+}
+.xt-lane-live-host .xt-host-glyph-mark img {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.xt-lane-live-host::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border: 1px solid transparent;
+  border-top-color: var(--xt-live-arc);
+  border-right-color: color-mix(in srgb, var(--xt-live-arc) 35%, transparent);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: xt-live-logo-spin 1.4s linear infinite;
+}
+@keyframes xt-live-logo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .xt-lane-live-host::before {
+    animation: none;
+  }
+}
+.xt-live-session-badge[data-live-status='waiting_approval'],
+.xt-live-session-badge[data-live-status='waiting_input'] {
+  color: var(--warning);
+  background: var(--warning-tint);
+}
+.xt-session-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.xt-session-heading .xt-session-open {
+  min-width: 0;
+}
+.xt-sessions-recent-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+.xt-sessions-recent-state .xt-live-session-badge {
+  width: auto;
+  max-width: 100%;
+  white-space: normal;
+  line-height: 12px;
+}

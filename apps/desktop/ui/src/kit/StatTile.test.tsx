@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import { StatTile } from './StatTile';
 import type { MetricIconName } from './metric-icons';
-import { rules } from './rules';
 afterEach(cleanup);
 
 it('renders measured values, units, caller-supplied delta tone, aside and current definition', async () => {
@@ -25,7 +24,9 @@ it('renders measured values, units, caller-supplied delta tone, aside and curren
   const trigger = screen.getByRole('button');
   expect(trigger.querySelector('button')).toBeNull();
   fireEvent.focus(trigger);
-  expect((await screen.findByRole('tooltip')).textContent).toBe(`M-05 · ${rules['M-05']}`);
+  const tooltip = await screen.findByRole('tooltip');
+  expect(tooltip.textContent).toContain('parallel sessions add');
+  expect(tooltip.textContent).not.toContain('M-05');
   view.rerender(
     <StatTile
       label="Tokens"

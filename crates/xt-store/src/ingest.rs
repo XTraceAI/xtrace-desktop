@@ -167,41 +167,212 @@ impl Store {
 
     /// Store only the classified event identity and names, with no record FK
     /// when the native event is not a canonical user/assistant record.
+    /// Idempotent for the event's own stable identity, and bound to the session
+    /// that owns that identity rather than the supplied one: see
+    /// `insert_tool_event` and `structural_owner`.
     pub fn insert_tool_event(&mut self, event: &ToolEvent) -> Result<i64> {
-        if event.name.trim().is_empty() {
-            return Err(Error::InvalidInput("tool event name must be nonempty"));
-        }
-        if let Some(value) = &event.timestamp {
-            timestamp::parse(value)?;
-        }
-        self.connection.execute(
-            "INSERT INTO tool_uses(session_id,source,source_event_id,name,kind,server,tool,skill,event_ts)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-            params![
-                event.session_id,
-                event.source,
-                event.source_event_id,
-                event.name,
-                event.kind,
-                event.server,
-                event.tool,
-                event.skill,
-                event.timestamp
-            ],
-        )?;
-        Ok(self.connection.last_insert_rowid())
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let id = insert_tool_event(&transaction, event)?;
+        transaction.commit()?;
+        Ok(id)
     }
 
     pub fn tool_events(&self, session_id: &str) -> Result<Vec<ToolEvent>> {
         Ok(self.connection.prepare(
             "SELECT session_id,source,source_event_id,name,kind,server,tool,skill,event_ts FROM tool_uses
              WHERE session_id=?1 AND uuid IS NULL ORDER BY source,source_event_id"
-        )?.query_map([session_id], |row| Ok(ToolEvent {
-            session_id:row.get(0)?,source:row.get(1)?,source_event_id:row.get(2)?,name:row.get(3)?,
-            kind:row.get(4)?,server:row.get(5)?,tool:row.get(6)?,skill:row.get(7)?,
-            timestamp:row.get(8)?,
-        }))?.collect::<rusqlite::Result<_>>()?)
+        )?
+        .query_map([session_id], |row| tool_event_from_row(row, 0))?
+        .collect::<rusqlite::Result<_>>()?)
     }
+
+    /// Several reads through this store that must agree with each other: the
+    /// native index writes on its own connection. `read` must only read.
+    pub fn in_read_snapshot<T>(&self, read: impl FnOnce(&Self) -> Result<T>) -> Result<T> {
+        let snapshot = self.connection.unchecked_transaction()?;
+        let value = read(self)?;
+        snapshot.commit()?;
+        Ok(value)
+    }
+
+    /// The number of indexed Claude stop summaries in `[start, end)`, and at
+    /// most `limit` of them in session order. The caller applies the precise
+    /// selected window to these timestamps before touching any original
+    /// source, and reads both through one snapshot.
+    pub fn claude_hook_summaries(
+        &self,
+        start: &str,
+        end: &str,
+        limit: usize,
+    ) -> Result<(usize, Vec<HookSummaryRow>)> {
+        const SELECTED: &str = "FROM tool_uses t JOIN sessions s ON s.session_id=t.session_id
+             WHERE t.uuid IS NULL AND t.source='transcript' AND t.kind='hook'
+               AND t.name='stop_hook_summary' AND s.host='claude' AND s.kind='user'
+               AND t.event_ts IS NOT NULL
+               AND xt_timestamp_cmp(t.event_ts,?1)>=0
+               AND xt_timestamp_cmp(t.event_ts,?2)<0";
+        let total: i64 = self.connection.query_row(
+            &format!("SELECT COUNT(*) {SELECTED}"),
+            params![start, end],
+            |row| row.get(0),
+        )?;
+        let total = usize::try_from(total)
+            .map_err(|_| Error::InvalidInput("hook summary count is out of range"))?;
+        let limit = i64::try_from(limit)
+            .map_err(|_| Error::InvalidInput("hook summary limit is out of range"))?;
+        let rows = self.connection.prepare(&format!(
+            "SELECT t.session_id,t.source,t.source_event_id,t.name,t.kind,t.server,t.tool,t.skill,t.event_ts,s.native_session_id
+             {SELECTED}
+             ORDER BY t.session_id,t.source_event_id LIMIT ?3"
+        ))?
+        .query_map(params![start, end, limit], |row| Ok((tool_event_from_row(row, 0)?, row.get(9)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+        Ok((total, rows))
+    }
+}
+
+/// A saved stop summary and its session's native identifier, if recorded.
+pub type HookSummaryRow = (ToolEvent, Option<String>);
+
+/// The session a structural identity is stored under, so that a native fork
+/// repeating the same line in several files yields one event rather than one
+/// per file. Resolved in this order:
+///
+/// 1. The canonical record carrying this UUID owns it. That is the existing
+///    ownership rule `upsert_records` enforces, so a copied context resolves to
+///    the record's owner however many files repeat the line. This step is real
+///    provenance: the owner is where the work record is actually stored.
+/// 2. Otherwise, a structural event already stored under this identity keeps
+///    its session. This step is a stable storage convention, not provenance. A
+///    hook summary is no record, so nothing here establishes which session
+///    originally produced it; whichever context was scanned first is the one
+///    that holds it, and a later context does not move it. The value is that
+///    the identity has exactly one home and that home does not change, not that
+///    the home is the summary's origin.
+/// 3. Otherwise the identity is new and the caller's session holds it.
+pub(crate) fn structural_owner(
+    connection: &Connection,
+    source_event_id: &str,
+) -> Result<Option<String>> {
+    if let Some(owner) = connection
+        .query_row(
+            "SELECT session_id FROM records WHERE uuid=?1",
+            [source_event_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+    {
+        return Ok(Some(owner));
+    }
+    Ok(connection
+        .query_row(
+            "SELECT session_id FROM tool_uses WHERE source_event_id=?1 AND uuid IS NULL",
+            [source_event_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?)
+}
+
+/// Insert one structural event, or recognise the one already stored under the
+/// same stable identity. The event is bound to the session `structural_owner`
+/// resolves, not to the one the caller supplied, so a copied native context
+/// adds no second row. Within that session the search is by `source_event_id`
+/// **regardless of source**, so the same native event delivered by the plugin
+/// and by the native scan, in either order, is one row and a plain retry adds
+/// nothing. An identity that arrives again with different facts is a conflict:
+/// it fails, leaving the stored event untouched.
+///
+/// Callers inside a batch pass that batch's transaction; the public wrapper
+/// opens an immediate one, so the read and the insert cannot race a writer.
+pub(crate) fn insert_tool_event(connection: &Connection, event: &ToolEvent) -> Result<i64> {
+    if event.name.trim().is_empty() {
+        return Err(Error::InvalidInput("tool event name must be nonempty"));
+    }
+    // An arrival-ordered identity would make retries look like new events.
+    if event.source_event_id.trim().is_empty() {
+        return Err(Error::InvalidInput(
+            "structural tool event requires a stable source event ID",
+        ));
+    }
+    if let Some(value) = &event.timestamp {
+        timestamp::parse(value)?;
+    }
+    let owner = structural_owner(connection, &event.source_event_id)?
+        .unwrap_or_else(|| event.session_id.clone());
+    let stored = connection
+        .query_row(
+            "SELECT id,session_id,source,source_event_id,name,kind,server,tool,skill,event_ts
+             FROM tool_uses WHERE session_id=?1 AND source_event_id=?2 AND uuid IS NULL",
+            params![owner, event.source_event_id],
+            |row| Ok((row.get::<_, i64>(0)?, tool_event_from_row(row, 1)?)),
+        )
+        .optional()?;
+    // Compare against the identity as owned, so a copied context is recognised
+    // as the same event instead of being read as a conflicting session.
+    let event = &ToolEvent {
+        session_id: owner,
+        ..event.clone()
+    };
+    if let Some((id, saved)) = stored {
+        // Source is deliberately excluded: which adapter delivered the event
+        // first is not part of what the event says happened.
+        if (
+            &saved.session_id,
+            &saved.source_event_id,
+            &saved.name,
+            saved.kind,
+            &saved.server,
+            &saved.tool,
+            &saved.skill,
+            &saved.timestamp,
+        ) != (
+            &event.session_id,
+            &event.source_event_id,
+            &event.name,
+            event.kind,
+            &event.server,
+            &event.tool,
+            &event.skill,
+            &event.timestamp,
+        ) {
+            return Err(Error::InvalidInput(
+                "structural tool event identity replays with conflicting facts",
+            ));
+        }
+        return Ok(id);
+    }
+    connection.execute(
+        "INSERT INTO tool_uses(session_id,source,source_event_id,name,kind,server,tool,skill,event_ts)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        params![
+            event.session_id,
+            event.source,
+            event.source_event_id,
+            event.name,
+            event.kind,
+            event.server,
+            event.tool,
+            event.skill,
+            event.timestamp
+        ],
+    )?;
+    Ok(connection.last_insert_rowid())
+}
+
+fn tool_event_from_row(row: &rusqlite::Row<'_>, start: usize) -> rusqlite::Result<ToolEvent> {
+    Ok(ToolEvent {
+        session_id: row.get(start)?,
+        source: row.get(start + 1)?,
+        source_event_id: row.get(start + 2)?,
+        name: row.get(start + 3)?,
+        kind: row.get(start + 4)?,
+        server: row.get(start + 5)?,
+        tool: row.get(start + 6)?,
+        skill: row.get(start + 7)?,
+        timestamp: row.get(start + 8)?,
+    })
 }
 
 pub(crate) fn observe_session_source(

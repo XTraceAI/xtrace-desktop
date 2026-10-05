@@ -1,11 +1,26 @@
-//! Version 1 content-free measurement projection shared by ingestion and readers.
+//! Content-free measurement projection shared by ingestion and readers.
 //! Field positions and encoding are fixed per version. Never include
 //! transcript content, titles, tool input/output, or observation wall-clock time.
+//!
+//! Version 2 appends one field to version 1's 28: whether a structural
+//! confirmation says another agent submitted this input. The field is present
+//! only for a confirmed input, so an unconfirmed record has version 1's mask.
+//! Incoming payloads can never state it — a canonical record has no such field —
+//! so a confirmed record's current measurement differs from anything a capture
+//! witnessed, and a receipt cannot verify the corrected classification.
+//!
+//! Version 1 digests remain readable, never reinterpreted: a version 1 revision
+//! is recomputed with version 1's bytes, and exists only for a record that no
+//! confirmation has changed.
 
 use crate::{CanonicalRecord, Result, StoredRecord, model::RecordIdentity, timestamp, write};
 use serde_json::{Value, json};
 
-pub const SCHEMA_VERSION: u32 = 1;
+/// The version every newly computed revision uses.
+pub const SCHEMA_VERSION: u32 = 2;
+/// The legacy encoding: [`FIELDS`] without its final entry.
+pub const LEGACY_SCHEMA_VERSION: u32 = 1;
+const LEGACY_FIELD_COUNT: usize = 28;
 /// Stable bit ordering. Unknown optional values have no bit; measured zero does.
 pub const FIELDS: &[&str] = &[
     "uuid",
@@ -36,7 +51,9 @@ pub const FIELDS: &[&str] = &[
     "is_command",
     "is_interrupted",
     "is_system_reminder",
+    "confirmed_automated_input",
 ];
+const _: () = assert!(FIELDS.len() == LEGACY_FIELD_COUNT + 1);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Projection {
@@ -103,6 +120,7 @@ impl Projection {
             json!(row.classification.is_command),
             json!(row.classification.is_interrupted),
             json!(row.classification.is_system_reminder),
+            json!(row.confirmed_automated_input.then_some(true)),
         ]
         .into_iter()
         .map(|value| (!value.is_null()).then_some(value))
@@ -138,6 +156,27 @@ impl Projection {
     /// Version and fixed-order values are hashed together; null stays unknown.
     pub fn canonical_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(&(SCHEMA_VERSION, &self.fields)).expect("JSON values are serializable")
+    }
+
+    /// The mask and hashed bytes this measurement has under one digest schema
+    /// version, or `None` when that version cannot describe it: an unknown
+    /// version, or version 1 for a record a confirmation has changed, whose
+    /// current classification version 1 has no position for.
+    pub fn encoded(&self, version: u32) -> Option<(i64, Vec<u8>)> {
+        match version {
+            SCHEMA_VERSION => Some((self.field_mask(), self.canonical_bytes())),
+            LEGACY_SCHEMA_VERSION => {
+                let (legacy, added) = self.fields.split_at(LEGACY_FIELD_COUNT);
+                if added.iter().any(Option::is_some) {
+                    return None;
+                }
+                let mask = self.field_mask();
+                let bytes = serde_json::to_vec(&(LEGACY_SCHEMA_VERSION, legacy))
+                    .expect("JSON values are serializable");
+                Some((mask, bytes))
+            }
+            _ => None,
+        }
     }
 
     pub fn conflicting_fields(&self, incoming: &Self) -> i64 {

@@ -159,6 +159,19 @@ pub fn resume_point(
     source: &mut fs::File,
     identity: &FileIdentity,
 ) -> io::Result<Resume> {
+    resume_point_checked(checkpoint, source, identity, &mut || Ok(()))
+}
+
+/// [`resume_point`], asking `check` before and after every read the proof
+/// makes — the trailing bytes, or each chunk of the prefix — and ending with
+/// the first error it returns. A caller that must stop cooperatively (a cancel,
+/// a deadline) is heard between reads, never inside one.
+pub fn resume_point_checked<E: From<io::Error>>(
+    checkpoint: Option<&NativeCheckpoint>,
+    source: &mut fs::File,
+    identity: &FileIdentity,
+    check: &mut dyn FnMut() -> Result<(), E>,
+) -> Result<Resume, E> {
     let fresh = |basis| Resume {
         start: 0,
         lines: 0,
@@ -202,9 +215,11 @@ pub fn resume_point(
         // time had settled well before the checkpoint was recorded, so even a
         // coarse clock would show a later write) and nothing would be read:
         // the trailing bytes alone decide, cheaply.
+        check()?;
         source.seek(SeekFrom::Start(position - tail_len))?;
         let mut tail = vec![0u8; usize::try_from(tail_len).unwrap_or(0)];
         source.read_exact(&mut tail)?;
+        check()?;
         if hex_sha256(&tail) != tail_sha256 {
             return Ok(fresh(ResumeBasis::Rewritten));
         }
@@ -227,7 +242,9 @@ pub fn resume_point(
     let mut chunk = vec![0u8; PREFIX_CHUNK];
     while remaining > 0 {
         let wanted = usize::try_from(remaining.min(PREFIX_CHUNK as u64)).unwrap_or(PREFIX_CHUNK);
+        check()?;
         source.read_exact(&mut chunk[..wanted])?;
+        check()?;
         prefix.update(&chunk[..wanted]);
         window.push(&chunk[..wanted]);
         remaining -= wanted as u64;
@@ -555,6 +572,94 @@ mod tests {
         assert_eq!(resumed.basis, ResumeBasis::Appended);
         assert_eq!(resumed.start, content.len() as u64);
         assert_eq!(resumed.tail.len() as u64, TAIL_DIGEST_LEN);
+    }
+
+    /// The checked proof asks before and after every read — each prefix chunk,
+    /// or the trailing bytes — decides exactly as the plain one when never
+    /// stopped, and reads nothing more once its check fails.
+    #[cfg(unix)]
+    #[test]
+    fn a_checked_proof_is_heard_around_every_read_and_stops_when_told() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("s.jsonl");
+        // Three whole prefix chunks and part of a fourth.
+        let content = vec![b'x'; 3 * PREFIX_CHUNK + 100];
+        fs::write(&path, &content).unwrap();
+        let source = fs::File::open(&path).unwrap();
+        let id = identity(&source);
+        let checkpoint = file_checkpoint(
+            &file_key(&path),
+            &id,
+            content.len() as u64,
+            &Sha256::new_with_prefix(&content),
+            &TailWindow::seeded(content.clone()),
+            1,
+            id.ctime_ns / 1_000_000 + CTIME_SETTLE_MS,
+        );
+        let mut grown = content.clone();
+        grown.extend_from_slice(b"appended\n");
+        fs::write(&path, &grown).unwrap();
+        let mut source = fs::File::open(&path).unwrap();
+        let grown = identity(&source);
+
+        let mut asked = 0;
+        let checked = resume_point_checked(Some(&checkpoint), &mut source, &grown, &mut || {
+            asked += 1;
+            Ok::<(), io::Error>(())
+        })
+        .unwrap();
+        assert_eq!(asked, 2 * 4, "before and after each of four prefix reads");
+        let plain = resume_point(Some(&checkpoint), &mut source, &grown).unwrap();
+        assert_eq!(
+            (checked.start, checked.basis, checked.tail, checked.refresh),
+            (plain.start, plain.basis, plain.tail, plain.refresh)
+        );
+        assert_eq!(checked.basis, ResumeBasis::Appended);
+
+        // Told to stop after the second chunk: two chunks read, no more.
+        let mut asked = 0;
+        let stopped = resume_point_checked(Some(&checkpoint), &mut source, &grown, &mut || {
+            asked += 1;
+            if asked == 4 {
+                Err(io::Error::other("stop"))
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(
+            stopped.err().map(|error| error.to_string()).as_deref(),
+            Some("stop")
+        );
+        assert_eq!(source.stream_position().unwrap(), 2 * PREFIX_CHUNK as u64);
+
+        // Unchanged and settled: the trailing bytes alone, heard around their
+        // one read; told to stop first, nothing is read at all.
+        let mut settled = file_checkpoint(
+            &file_key(&path),
+            &grown,
+            grown.len,
+            &Sha256::new(),
+            &TailWindow::seeded(fs::read(&path).unwrap()),
+            1,
+            0,
+        );
+        settled.updated_at = grown.ctime_ns / 1_000_000 + CTIME_SETTLE_MS;
+        let mut asked = 0;
+        let cheap = resume_point_checked(Some(&settled), &mut source, &grown, &mut || {
+            asked += 1;
+            Ok::<(), io::Error>(())
+        })
+        .unwrap();
+        assert_eq!(
+            (cheap.basis, cheap.refresh, asked),
+            (ResumeBasis::Unchanged, false, 2)
+        );
+        let mut source = fs::File::open(&path).unwrap();
+        let refused = resume_point_checked(Some(&settled), &mut source, &grown, &mut || {
+            Err(io::Error::other("stop"))
+        });
+        assert!(refused.is_err());
+        assert_eq!(source.stream_position().unwrap(), 0);
     }
 
     #[test]

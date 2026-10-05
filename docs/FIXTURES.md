@@ -5,7 +5,7 @@ records, explicit clocks and file-backed SQLite. `xt-fixtures` is a development
 dependency; product crates must not depend on it by default. The desktop does not
 load these files.
 
-The catalog contains 21 structurally valid entries: **F1 and F3 are populated and have
+The catalog contains 21 structurally valid entries: **F1, F3 and F8 are populated and have
 executable reference assertions; the other entries remain skeletons with
 unimplemented rule acceptance.** A successful structural report does not establish product metric,
 privacy, ingestion, probe or rulebook acceptance.
@@ -84,7 +84,9 @@ input. No input glob is used. For example, a session may point to
   The harness passes session metadata and records through `Store` with an
   explicit `keep_content` flag. Store validation and UUID merging still apply.
 - Optional `gh` names a JSON stub. Optional `snapshots` maps names to JSON paths;
-  F16 reserves `fresh`, `typical`, `connected`, `no-python3` and `env`.
+  F16 reserves `fresh`, `typical`, `connected`, `no-python3` and `env`. The `env`
+  snapshot indexes a small synthetic probe matrix under `input/probes/env/`, read by
+  the environment probe and the fixture shell export; F16 remains a skeleton.
 - All paths are relative to the fixture directory. Missing files, traversal,
   absolute paths and symlinks escaping the fixture fail. Diagnostics identify
   the file and JSON/JSONL location, such as
@@ -129,11 +131,18 @@ Tests alter both an input counter and a golden total to prove each mismatch fail
 
 These checks exercise F1's baseline shapes for M-02/M-03/M-04/M-05/M-10. They do
 not implement the production metric engine or establish whole-rule coverage.
-Prices, unknown counters, tie-breaking by native sequence, other host adapters,
+Prices, unknown counters, deterministic UUID tie-breaking, other host adapters,
 window boundaries and other edge cases require their owning fixtures and product
 tests. The bounded reference checker rejects unsupported F1 shapes. It checks the
 persisted session host and conflict flag as well as record flags: contradictory
 platform, surface or native session identity cannot pass reference acceptance.
+
+F8 supplies one genuine multiblock Unicode human message and twelve excluded or
+assistant records. Its persisted classification has exactly one human; leading
+whitespace before the four excluded prefixes does not change that decision.
+Ingest tests compare full-content and metadata-only retention, including six
+Unicode scalar values in the genuine message. These fixtures do not imply
+automatic classification backfill of existing metadata-only records.
 
 ## Ownership and test loop
 
@@ -208,7 +217,7 @@ assertions. Follow [CI.md](CI.md) for combined-source validation.
 | F5  | Skeleton                      | Codex cumulative usage reader                                                              |
 | F6  | Skeleton                      | Cursor IDE hook usage attachment                                                           |
 | F7  | Skeleton                      | Cursor Agent CLI unmeasured usage                                                          |
-| F8  | Skeleton                      | Human-message exclusions                                                                   |
+| F8  | Populated                     | Human-message exclusions                                                                   |
 | F9  | Skeleton                      | Batched timestamp latency                                                                  |
 | F10 | Skeleton                      | Aborted turn without counters                                                              |
 | F11 | Skeleton                      | Weekly model comparisons                                                                   |
@@ -227,3 +236,12 @@ Purge variants must eventually cover previously stored transcript/tool/fire/judg
 content, confirmed removal, unchanged metadata/counts and source files, and a
 metadata-only retry that cannot refill removed content. F18's skeleton does not
 claim those storage/ingestion/rulebook operations are implemented.
+
+## Token aggregation snapshots
+
+F5, F6, F17 and F18 expose a named `tokens` snapshot for the implemented response
+aggregation tests. These use the shared manifest loader and canonical writer.
+Their broader product fixtures remain skeletons; token-only evidence does not
+claim reader normalization, retention/purge or complete capture coverage.
+See [token aggregation acceptance](acceptance/token-aggregation.md) for arithmetic,
+selected UUIDs and replay expectations. F1's populated token golden is tested too.

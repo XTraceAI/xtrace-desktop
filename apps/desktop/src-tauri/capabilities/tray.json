@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "tray-popover",
+  "description": "The menu-bar popover only receives app events; it has no window, path or shell access.",
+  "windows": ["tray"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

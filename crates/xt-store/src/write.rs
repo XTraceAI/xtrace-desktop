@@ -538,6 +538,7 @@ pub(crate) fn upsert_records(
         session_changed: session != previous_session,
         stats,
         records: outcomes,
+        injected_context: Vec::new(),
     })
 }
 
@@ -653,15 +654,26 @@ pub(crate) fn prepare(
                         .and_then(Value::as_str)
                         .filter(|name| !name.trim().is_empty())
                         .ok_or(Error::InvalidInput("tool use requires a name"))?;
+                    // Classify before retention decides about the block: the
+                    // structural columns are derived here so a metadata-only row
+                    // still carries them once the input is discarded.
+                    let input = block.get("input");
+                    let structure = crate::tool_use::classify(name, input);
+                    // M-20's grouping identity is derived from the same
+                    // in-memory input, under the same rule: what the call said
+                    // is compared here and discarded with everything else.
+                    let group = crate::repeat_key::derive(name, input);
                     tools.push(StoredToolUse {
                         id: 0,
                         block_index: index as i64,
                         name: name.to_owned(),
-                        input_json: if keep_content {
-                            block.get("input").cloned()
-                        } else {
-                            None
-                        },
+                        input_json: if keep_content { input.cloned() } else { None },
+                        kind: Some(structure.kind),
+                        server: structure.server,
+                        tool: structure.tool,
+                        skill: structure.skill,
+                        group,
+                        group_conflict: false,
                     });
                 }
                 Some(_) => {}
@@ -706,10 +718,37 @@ pub(crate) fn prepare(
             .as_ref()
             .zip(input.message.id.as_ref())
             .is_some_and(|(a, b)| a != b),
+        confirmed_automated_input: false,
+        human_is_eligible: None,
+        human_text_len: None,
+        human_excluded: false,
     })
 }
 
 fn merge_record(old: &mut StoredRecord, incoming: &StoredRecord) -> bool {
+    fn agrees<T: PartialEq>(old: &Option<T>, incoming: &Option<T>) -> bool {
+        old.as_ref()
+            .zip(incoming.as_ref())
+            .is_none_or(|(a, b)| a == b)
+    }
+    // Capture compatibility before any fields are filled. Human classification
+    // may only enrich from an observation compatible with its retained inputs;
+    // unrelated timestamp/model/usage conflicts do not invalidate that evidence.
+    let human_compatible = old.is_meta == incoming.is_meta
+        && old.is_sidechain == incoming.is_sidechain
+        && agrees(&old.role, &incoming.role)
+        && agrees(
+            &old.classification.is_command,
+            &incoming.classification.is_command,
+        )
+        && agrees(
+            &old.classification.is_interrupted,
+            &incoming.classification.is_interrupted,
+        )
+        && agrees(
+            &old.classification.is_system_reminder,
+            &incoming.classification.is_system_reminder,
+        );
     let mut change = Change {
         conflict: old.is_meta != incoming.is_meta || old.is_sidechain != incoming.is_sidechain,
         ..Change::default()
@@ -748,10 +787,12 @@ fn merge_record(old: &mut StoredRecord, incoming: &StoredRecord) -> bool {
     change.fill(&mut old.model, &incoming.model);
     let content_change = merge_content(old, incoming);
     if !content_change.conflict {
-        change.fill(
-            &mut old.classification.is_human,
-            &incoming.classification.is_human,
-        );
+        if human_compatible {
+            change.fill(
+                &mut old.classification.is_human,
+                &incoming.classification.is_human,
+            );
+        }
         change.fill(
             &mut old.classification.is_command,
             &incoming.classification.is_command,
@@ -783,13 +824,51 @@ fn merge_content(old: &mut StoredRecord, incoming: &StoredRecord) -> Change {
         a.as_ref().zip(b.as_ref()).is_some_and(|(a, b)| a != b)
     }
     let both_measured = old.text_len.is_some() && incoming.text_len.is_some();
+    // Tool identity is the record UUID plus the block index; a differing name or
+    // position is a different call, and known structural metadata that disagrees
+    // is a conflict rather than something to overwrite.
     let tool_conflict = both_measured
         && (old.tool_uses.len() != incoming.tool_uses.len()
             || old.tool_uses.iter().zip(&incoming.tool_uses).any(|(a, b)| {
                 a.name != b.name
                     || a.block_index != b.block_index
                     || differs(&a.input_json, &b.input_json)
+                    || differs(&a.kind, &b.kind)
+                    || differs(&a.server, &b.server)
+                    || differs(&a.tool, &b.tool)
+                    || differs(&a.skill, &b.skill)
             }));
+    // Grouping evidence is compared by each call's stable position — its block
+    // index — and never by where a row sits in either array: two observations
+    // of one record can enumerate different blocks, and a pairing by array
+    // order compares a stored call with a different one and skips the pair
+    // that really changed. It is the one part of a metadata-only row that can
+    // disagree while every stored column still matches, so it is judged here,
+    // before the checks below return, and whatever is found the stored key
+    // stands; what changes is only whether it is still trusted.
+    //
+    // A stored key is disputed when this observation puts a different call at
+    // its position: another key, another tool name (the name is part of what
+    // the key compares, so it contests the key even when this observation
+    // could derive none), or no call at all from an observation that saw the
+    // record's content. That is judged from this one position alone, never
+    // from an unrelated conflict elsewhere in the record, and the mark stays
+    // on the call: the key is outside the record's measurement projection, so
+    // it may not blank the facts a compatible observation still enriches.
+    let incoming_blocks: std::collections::BTreeMap<i64, &StoredToolUse> = incoming
+        .tool_uses
+        .iter()
+        .map(|tool| (tool.block_index, tool))
+        .collect();
+    for old_tool in old.tool_uses.iter_mut().filter(|tool| tool.group.is_some()) {
+        old_tool.group_conflict |= match incoming_blocks.get(&old_tool.block_index) {
+            Some(new_tool) => {
+                old_tool.name != new_tool.name || differs(&old_tool.group, &new_tool.group)
+            }
+            // An observation that saw no content enumerates no block.
+            None => incoming.text_len.is_some(),
+        };
+    }
     // Retained content and its tool-input projection are one observation. Check
     // every known part before acquiring any missing part from a conflicting array.
     if differs(&old.content_json, &incoming.content_json)
@@ -818,8 +897,31 @@ fn merge_content(old: &mut StoredRecord, incoming: &StoredRecord) -> Change {
         if content_was_unknown {
             old.tool_uses = incoming.tool_uses.clone();
         }
-        for (old_tool, new_tool) in old.tool_uses.iter_mut().zip(&incoming.tool_uses) {
+        for old_tool in old.tool_uses.iter_mut() {
+            // A row an older build stored has no classification yet. Fill it only
+            // from an observation of the same call at the same position, never
+            // across a renamed or moved block.
+            let Some(new_tool) = incoming_blocks
+                .get(&old_tool.block_index)
+                .filter(|new_tool| new_tool.name == old_tool.name)
+            else {
+                continue;
+            };
             change.fill(&mut old_tool.input_json, &new_tool.input_json);
+            change.fill(&mut old_tool.kind, &new_tool.kind);
+            change.fill(&mut old_tool.server, &new_tool.server);
+            change.fill(&mut old_tool.tool, &new_tool.tool);
+            change.fill(&mut old_tool.skill, &new_tool.skill);
+            // A less complete observation never erases a known key, and a
+            // conflicting one never replaces it — the disagreement was marked
+            // above and the stored key stands. Only a still-unknown key is
+            // acquired, so this fill is guarded rather than left to `fill`,
+            // whose conflict flag would blank the unrelated facts this same
+            // observation is otherwise entitled to enrich.
+            if old_tool.group.is_none() {
+                change.fill(&mut old_tool.group, &new_tool.group);
+            }
+            old_tool.group_conflict |= new_tool.group_conflict;
         }
         change.fill(&mut old.content_json, &incoming.content_json);
     }
@@ -922,9 +1024,18 @@ fn save_record(connection: &Connection, record: &StoredRecord) -> Result<()> {
             .map(serde_json::to_string)
             .transpose()?;
         connection.execute(
-            "INSERT INTO tool_uses(uuid,session_id,block_index,name,input_json) VALUES (?1,?2,?3,?4,?5)
-             ON CONFLICT(uuid,block_index) DO UPDATE SET input_json=excluded.input_json",
-            params![r.uuid, r.session_id, tool.block_index, tool.name, input],
+            "INSERT INTO tool_uses(uuid,session_id,block_index,name,input_json,kind,server,tool,skill,
+                 group_version,group_key,group_conflict)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
+             ON CONFLICT(uuid,block_index) DO UPDATE SET input_json=excluded.input_json,
+                 kind=excluded.kind,server=excluded.server,tool=excluded.tool,skill=excluded.skill,
+                 group_version=excluded.group_version,group_key=excluded.group_key,
+                 group_conflict=excluded.group_conflict",
+            params![r.uuid, r.session_id, tool.block_index, tool.name, input,
+                tool.kind, tool.server, tool.tool, tool.skill,
+                tool.group.as_ref().map(|group| group.version()),
+                tool.group.as_ref().map(crate::repeat_key::GroupKey::digest),
+                tool.group_conflict],
         )?;
     }
     Ok(())
@@ -935,22 +1046,43 @@ fn save_record(connection: &Connection, record: &StoredRecord) -> Result<()> {
 mod tests;
 
 fn classify(input: &CanonicalRecord) -> crate::model::RecordClassification {
+    // A known exclusion is sufficient even when role/content is absent. Missing
+    // content otherwise stays unknown: it is not an observed empty message.
+    let excluded = input.is_meta
+        || input.is_sidechain
+        || input
+            .message
+            .role
+            .as_deref()
+            .is_some_and(|role| role != "user");
     let Some(blocks) = &input.message.content else {
-        return Default::default();
+        return crate::model::RecordClassification {
+            is_human: excluded.then_some(false),
+            ..Default::default()
+        };
     };
-    let text = blocks
-        .iter()
-        .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
-        .filter_map(|block| block.get("text").and_then(Value::as_str))
-        .collect::<String>();
+    let text = crate::record_text::joined(blocks);
     let command = text.starts_with("<command-name>") || text.starts_with("<local-command-stdout>");
     let interrupted = text.starts_with("[Request interrupted");
     let reminder = text.starts_with("<system-reminder>");
+    // Keep the existing raw-prefix fields stable for old measurement revisions.
+    // Human classification uses the rule's trimmed, joined text independently.
+    let trimmed = text.trim();
+    let excluded = excluded
+        || blocks
+            .iter()
+            .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
+        || trimmed.is_empty()
+        || trimmed.starts_with("<command-name>")
+        || trimmed.starts_with("<local-command-stdout>")
+        || trimmed.starts_with("[Request interrupted")
+        || trimmed.starts_with("<system-reminder>");
     crate::model::RecordClassification {
-        // The role-sensitive human rule belongs to its classification consumer.
-        // Keep only facts that would
-        // be lost by content discard; record type does not establish role.
-        is_human: None,
+        is_human: if excluded {
+            Some(false)
+        } else {
+            input.message.role.as_deref().map(|role| role == "user")
+        },
         is_command: Some(command),
         is_interrupted: Some(interrupted),
         is_system_reminder: Some(reminder),

@@ -7,7 +7,10 @@ use std::{
     fs,
     path::{Component, Path, PathBuf},
 };
-use xt_store::{CanonicalRecord, Host, SessionMeta, SessionSource};
+use xt_store::{
+    CanonicalRecord, Host, SessionMeta, SessionSource,
+    pr_link::{PrConfidence, PrIdentity, PrLinkObservation},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,6 +35,22 @@ pub struct SessionInput {
     pub started_at: Option<String>,
 }
 
+/// One declared observation that a fixture session referenced a pull request.
+/// Fixtures carry links only: refresh-owned metadata is never declared here,
+/// because a link never sets it. A fixture that wants refreshed metadata
+/// produces it by refreshing, exactly as the application does.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrLinkInput {
+    /// A canonical `https://github.com/<owner>/<repo>/pull/<number>` URL.
+    pub url: String,
+    /// A session declared by this manifest.
+    pub session_id: String,
+    pub confidence: PrConfidence,
+    pub first_seen_at: String,
+    pub last_seen_at: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -46,6 +65,9 @@ pub struct Manifest {
     pub sessions: Vec<SessionInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gh: Option<PathBuf>,
+    /// Declared pull-request links, seeded into this fixture's database.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull_requests: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub snapshots: BTreeMap<String, PathBuf>,
 }
@@ -62,6 +84,7 @@ pub struct LoadedSession {
 pub struct FixtureExport<'a> {
     pub manifest: &'a Manifest,
     pub sessions: &'a [LoadedSession],
+    pub pull_requests: &'a [PrLinkInput],
     pub gh: &'a Option<Value>,
     pub snapshots: &'a BTreeMap<String, Value>,
     pub expected: &'a BTreeMap<RuleId, Value>,
@@ -70,6 +93,7 @@ pub struct FixtureExport<'a> {
 pub struct Fixture {
     manifest: Manifest,
     sessions: Vec<LoadedSession>,
+    pull_requests: Vec<PrLinkInput>,
     gh: Option<Value>,
     snapshots: BTreeMap<String, Value>,
     expected: BTreeMap<RuleId, Value>,
@@ -206,6 +230,30 @@ impl Fixture {
                 "populated fixture has no canonical records",
             ));
         }
+        let pull_requests: Vec<PrLinkInput> = match &manifest.pull_requests {
+            Some(path) => read_json(&declared_path(&root, path)?)?,
+            None => Vec::new(),
+        };
+        let mut declared = BTreeSet::new();
+        for (index, link) in pull_requests.iter().enumerate() {
+            let loc = format!("{location}:pull_requests[{index}]");
+            let identity = PrIdentity::from_url(&link.url)
+                .map_err(|error| invalid(&loc, format!("invalid pull request URL: {error}")))?;
+            if !declared.insert((identity.url(), link.session_id.clone())) {
+                return Err(invalid(&loc, "duplicate pull request link"));
+            }
+            if !session_ids.contains(&&link.session_id) {
+                return Err(invalid(
+                    &loc,
+                    "session_id must name a session declared by this manifest",
+                ));
+            }
+            let first = parse_time(&link.first_seen_at, &format!("{loc}:first_seen_at"))?;
+            let last = parse_time(&link.last_seen_at, &format!("{loc}:last_seen_at"))?;
+            if first > last {
+                return Err(invalid(&loc, "first_seen_at must not follow last_seen_at"));
+            }
+        }
         let gh = manifest
             .gh
             .as_ref()
@@ -224,6 +272,7 @@ impl Fixture {
         Ok(Self {
             manifest,
             sessions,
+            pull_requests,
             gh,
             snapshots,
             expected,
@@ -265,6 +314,9 @@ impl Fixture {
     pub fn sessions(&self) -> &[LoadedSession] {
         &self.sessions
     }
+    pub fn pull_requests(&self) -> &[PrLinkInput] {
+        &self.pull_requests
+    }
     pub fn gh(&self) -> Option<&Value> {
         self.gh.as_ref()
     }
@@ -285,6 +337,7 @@ impl Fixture {
         FixtureExport {
             manifest: &self.manifest,
             sessions: &self.sessions,
+            pull_requests: &self.pull_requests,
             gh: &self.gh,
             snapshots: &self.snapshots,
             expected: &self.expected,
@@ -311,10 +364,27 @@ impl Fixture {
         Ok(())
     }
 
-    /// Execute the currently implemented F1/F3 reference assertions against stored
+    /// Execute the currently implemented F1/F3/F8 reference assertions against stored
     /// rows. This is fixture arithmetic, not the application's metric engine.
     pub fn assert_reference(&self) -> Result<()> {
         self.require_populated()?;
+        if self.manifest.id.to_string() == "F8" {
+            let db = self.build_db(false)?;
+            let mut human_messages = 0;
+            for session in &self.sessions {
+                for row in db.store().records(&session.metadata.session_id)? {
+                    let human = row
+                        .classification
+                        .is_human
+                        .ok_or_else(|| invalid("F8", "human classification must be measured"))?;
+                    human_messages += usize::from(human);
+                }
+            }
+            return self.assert_expectation(
+                "M-02",
+                &serde_json::json!({"human_messages": human_messages}),
+            );
+        }
         if self.manifest.id.to_string() == "F3" {
             let db = self.build_db(false)?;
             let mut records = 0;
@@ -358,7 +428,7 @@ impl Fixture {
 
     pub fn build_db(&self, keep_content: bool) -> Result<TempDb> {
         self.require_populated()?;
-        TempDb::build(&self.sessions, keep_content)
+        TempDb::build(&self.sessions, &self.pull_requests, keep_content)
     }
 
     /// Materialize a closed file database without overwriting an existing path.
@@ -413,4 +483,20 @@ fn declared_path(root: &Path, relative: &Path) -> Result<PathBuf> {
         ));
     }
     Ok(resolved)
+}
+
+impl PrLinkInput {
+    /// The storage observation this declared link records. Times are the
+    /// manifest's own RFC3339 instants, so a fixture database is the same on
+    /// every host.
+    pub(crate) fn observation(&self) -> Result<PrLinkObservation> {
+        Ok(PrLinkObservation {
+            session_id: self.session_id.clone(),
+            pull_request: PrIdentity::from_url(&self.url)
+                .map_err(|error| invalid(&self.url, error.to_string()))?,
+            confidence: self.confidence,
+            first_seen_at: parse_time(&self.first_seen_at, &self.url)?.timestamp_millis(),
+            last_seen_at: parse_time(&self.last_seen_at, &self.url)?.timestamp_millis(),
+        })
+    }
 }

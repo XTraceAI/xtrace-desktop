@@ -1,0 +1,285 @@
+/*
+ * The Rulebook in the reference's composition: heading, the read's state,
+ * four tiles, a note where Proposals stood, then Observed groups beside the
+ * Recorded timeline. The last row takes the rest of the window so the panels
+ * meet the page's bottom edge; their lists scroll inside the panel, down to a
+ * minimum height below which the outlet scrolls instead of clipping.
+ */
+.xt-shell-outlet:has(> .xt-rulebook) {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+.xt-rulebook {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 16px;
+}
+.xt-rulebook > * {
+  flex: 0 0 auto;
+}
+.xt-rulebook > .xt-rulebook-row,
+.xt-rulebook[data-view='fires'] > .xt-section-card,
+.xt-rulebook[data-view='rule'] > .xt-section-card {
+  flex: 1 1 auto;
+}
+.xt-rulebook-heading h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.xt-rulebook-heading p {
+  margin: 2px 0 0;
+  color: var(--meta);
+  font:
+    400 10.5px/1.4 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-rulebook-note {
+  max-width: 96ch;
+  margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.xt-rulebook-back {
+  width: fit-content;
+  color: var(--meta);
+  font-size: 12px;
+  text-decoration: none;
+}
+.xt-rulebook-back:hover,
+.xt-rulebook-back:focus-visible {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.xt-rulebook-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.xt-rulebook-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+/* The Dashboard's stacked tile: the label keeps its own line, so the value and
+   its "unavailable" aside never squeeze it to an ellipsis. */
+.xt-rulebook-tiles .xt-stat-tile {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 28px 20px;
+  row-gap: 3px;
+  align-content: center;
+  height: auto;
+  padding: 5px 12px;
+}
+.xt-rulebook-tiles .xt-stat-row {
+  justify-self: end;
+  height: 20px;
+  max-width: 100%;
+}
+.xt-rulebook-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  gap: 10px;
+}
+.xt-rulebook[data-view='overview'] > .xt-rulebook-row,
+.xt-rulebook[data-view='fires'] > .xt-section-card {
+  min-height: 180px;
+}
+.xt-rulebook .xt-section-card > .xt-section-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+.xt-rulebook .xt-section-panel > .xt-table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  border-radius: inherit;
+}
+/* A long list presses on its card; the header keeps its height. */
+.xt-rulebook .xt-section-card > .xt-section-header {
+  flex-shrink: 0;
+}
+.xt-rulebook .xt-section-panel > .xt-section-footer {
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 6px 14px;
+  border-top: 1px solid var(--divider);
+}
+.xt-rulebook-truncated,
+.xt-rulebook-numbering {
+  margin: 0;
+}
+.xt-rulebook-not-listed {
+  padding: 12px 14px;
+}
+.xt-rulebook abbr {
+  text-decoration: none;
+}
+
+/* The read: its state and controls, then its source and exact window. */
+.xt-rulebook-read {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.xt-rulebook-read-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* Unavailable controls stay focusable, so focus is never dropped mid-read. */
+.xt-rulebook-read-state > .xt-button[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
+.xt-rulebook-read-state > .xt-button[aria-disabled='true']:hover {
+  background: transparent;
+}
+.xt-rulebook-read-state > .xt-button[data-variant='outline'][aria-disabled='true']:hover {
+  background: var(--surface);
+}
+.xt-rulebook-read-state > .xt-rulebook-lead {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+.xt-rulebook-source {
+  margin: 0;
+  color: var(--meta);
+  font:
+    400 10.5px/1.4 'Geist Mono',
+    Menlo,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.xt-rulebook-source time {
+  color: var(--secondary);
+}
+
+/* One section's state: what is missing, then why, in the panel's top corner
+   where its rows would start. */
+.xt-rulebook-unavailable {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 72ch;
+}
+.xt-rulebook-lead {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+.xt-rulebook-detail {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.xt-rulebook-address {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--divider);
+  color: var(--meta);
+  font:
+    400 10.5px/1.4 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-rulebook-address span {
+  min-width: 0;
+  color: var(--secondary);
+  overflow-wrap: anywhere;
+}
+
+/* A row's rule: its snapshot position, then its ID control before one detail.
+   The position's words give way to an ellipsis; its number never does. The
+   detail line stays unclipped so the control's focus ring shows whole. */
+.xt-rulebook-rule > span {
+  display: flex;
+  gap: 0.3em;
+}
+.xt-rulebook-rule > span > span,
+.xt-rulebook-rule > small > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.xt-rulebook-rule > span > .xt-rulebook-position {
+  flex: none;
+}
+.xt-rulebook-rule > small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: visible;
+}
+.xt-rulebook-identity {
+  flex: none;
+  height: 14px;
+  padding: 0 3px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--meta);
+  background: transparent;
+  font:
+    500 8.5px/12px 'Geist Mono',
+    Menlo,
+    monospace;
+  letter-spacing: 0.04em;
+  cursor: help;
+}
+.xt-rulebook-identity:hover,
+.xt-rulebook-identity[data-popup-open] {
+  color: var(--ink);
+}
+.xt-rulebook-identity:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* Once its row scrolls out of the list, the IDs close up with it. */
+.xt-rulebook-identity-positioner[data-anchor-hidden] {
+  visibility: hidden;
+}
+.xt-rulebook-identity-lead {
+  display: block;
+  color: var(--secondary);
+}
+.xt-rulebook-identity-ids {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 10px;
+  margin: 8px 0 0;
+}
+.xt-rulebook-identity-ids > div {
+  display: contents;
+}
+.xt-rulebook-identity-ids dt {
+  color: var(--meta);
+}
+.xt-rulebook-identity-ids dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}

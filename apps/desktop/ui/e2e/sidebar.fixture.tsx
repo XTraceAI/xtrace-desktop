@@ -4,6 +4,54 @@ import { Sidebar, type SidebarKey } from '../src/kit/Sidebar';
 import { BrandMark } from '../src/kit/BrandMark';
 import { ThemeProvider, useTheme } from '../src/theme/ThemeProvider';
 import '../src/index.css';
+import type { AccountUsage } from '../src/data/generated/AccountUsage';
+
+const accountUsage: AccountUsage = {
+  claude: {
+    state: 'available',
+    issue: null,
+    checked_at: 1790618400,
+    windows: [
+      {
+        bucket_key: 'claude',
+        window_key: 'seven_day',
+        scope: 'all_models',
+        name: 'Claude',
+        window: 'Weekly',
+        used_percent: 100,
+        duration_minutes: 10080,
+        resets_at: Math.floor(Date.now() / 1000) + 3600,
+      },
+      {
+        bucket_key: 'claude',
+        window_key: 'five_hour',
+        scope: 'all_models',
+        name: 'Claude',
+        window: 'Session',
+        used_percent: 0,
+        duration_minutes: 300,
+        resets_at: null,
+      },
+    ],
+  },
+  codex: {
+    state: 'available',
+    issue: null,
+    checked_at: 1790618400,
+    windows: [
+      {
+        bucket_key: 'codex',
+        window_key: 'primary',
+        scope: 'all_models',
+        name: 'Codex',
+        window: 'Weekly',
+        used_percent: 26,
+        duration_minutes: 10080,
+        resets_at: Math.floor(Date.now() / 1000) + 7 * 86400,
+      },
+    ],
+  },
+};
 
 function Fixture() {
   const { theme, toggle } = useTheme();
@@ -19,14 +67,9 @@ function Fixture() {
           activeKey={activeKey}
           onNavigate={setActiveKey}
           rulebookCount={5}
-          hosts={[
-            { host: 'claude', tokens: 5500000, fillPercent: 100 },
-            { host: 'codex', tokens: 400000, fillPercent: 7 },
-            { host: 'cursor', tokens: null, fillPercent: 60 },
-          ]}
+          accountUsage={accountUsage}
           listener={{ status: 'listening', port: 47421 }}
           version="0.1.0"
-          tokensCaption="since reset · Wed"
           updateLabel="up to date"
           onSettings={() => {}}
           theme={theme}

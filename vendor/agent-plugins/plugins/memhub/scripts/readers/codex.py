@@ -152,17 +152,29 @@ def clean_user_text(text: str) -> str | None:
     return t
 
 
-def load_rollout(path, *, strict: bool = False) -> list[dict]:
+def load_rollout(source, *, strict: bool = False, spans=None) -> list[dict]:
     """Parse a Codex rollout .jsonl tolerantly (skip malformed lines, e.g. a
     truncated final line from an interrupted write).
 
+    ``source`` is a path to read, or the rollout bytes a caller already holds.
+    The bytes form exists so a caller that has already read one file through a
+    validated descriptor can parse exactly those bytes: reopening the name
+    would read a file that may no longer be the one it validated.
+
     Explicit utf-8 for the same reason as the Claude transcript reader: rollouts
     are UTF-8, a bare read_text() decodes with the OS locale codec, and one
-    em-dash then kills the whole import on a cp950/cp1252 box."""
+    em-dash then kills the whole import on a cp950/cp1252 box.
+
+    ``spans``, when a list, receives each returned row's ``(start, end)`` byte
+    offsets in ``source``, so a caller can say exactly where a row was read."""
     records: list[dict] = []
+    offset = 0
     errors = "strict" if strict else "replace"
+    data = (source if isinstance(source, (bytes, bytearray, memoryview))
+            else Path(source).read_bytes())
     # Split bytes first: Unicode separators inside JSON strings are content.
-    for encoded in Path(path).read_bytes().splitlines(keepends=True):
+    for encoded in bytes(data).splitlines(keepends=True):
+        start, offset = offset, offset + len(encoded)
         raw = encoded.decode("utf-8", errors=errors)
         line = raw.strip(" \t\r\n") if strict else raw.strip()
         if not line:
@@ -181,6 +193,8 @@ def load_rollout(path, *, strict: bool = False) -> list[dict]:
         # Dropped here, once, rather than guarded at every walk.
         if isinstance(record, dict):
             records.append(record)
+            if spans is not None:
+                spans.append((start, offset))
         elif strict:
             raise ValueError("Codex rollout row is not an object")
     return records
@@ -494,14 +508,25 @@ def _title(rollout: list[dict], session_id: str | None = None, *, strict=False, 
 
 def rollout_to_claude_records(rollout: list[dict], *, strict=False, title_index=None,
                              identity_namespace=None, initial_usage_total=None,
-                             usage_baseline_unknown=False, record_sources=None, usage_targets=None) -> tuple[list[dict], dict]:
+                             usage_baseline_unknown=False, record_sources=None, usage_targets=None,
+                             record_guard=None, record_origins=None) -> tuple[list[dict], dict]:
     """Return ``(claude_records, meta)``.
 
     ``meta`` = ``{session_id, cwd, model, originator, cli_version, title}``.
     ``claude_records`` are Claude-Code-shaped and carry ``cwd`` so
     ``import_session._namespace_from_records`` can resolve the repo. Platform,
     model, session, and cwd provenance live in structured metadata instead of a
-    synthetic user turn, keeping titles and turn counts faithful."""
+    synthetic user turn, keeping titles and turn counts faithful.
+
+    ``record_guard`` is an optional bound on what this conversion may hold.
+    It is called with the running record count as each record is kept, so a
+    caller's ceiling is reached while the list is growing rather than after it
+    has already been built.
+
+    ``record_origins``, when a dict, maps ``id(record)`` to ``(record, kind)``
+    for every record this conversion creates: which of its branches produced
+    it, from the row ``record_sources`` names. The record itself is held so an
+    identifier cannot be reused by a later object while the map is alive."""
     if strict:
         from . import _parseable_timestamp
         for row in rollout:
@@ -540,6 +565,15 @@ def rollout_to_claude_records(rollout: list[dict], *, strict=False, title_index=
     }
 
     out: list[dict] = []
+
+    def keep(record: dict, kind: str) -> None:
+        """Hold one more record, or refuse before this one is held."""
+        if record_guard is not None:
+            record_guard(len(out) + 1)
+        if record_origins is not None:
+            record_origins[id(record)] = (record, kind)
+        out.append(record)
+
     sid_key = identity_namespace or sm.get("id") or "unknown"
     ts_holder = {"ts": None}
 
@@ -612,10 +646,10 @@ def rollout_to_claude_records(rollout: list[dict], *, strict=False, title_index=
     last_assistant: dict | None = None
     previous_usage_total: dict[str, int] | None = initial_usage_total
 
-    def append_assistant(block: dict) -> None:
+    def append_assistant(block: dict, kind: str) -> None:
         nonlocal last_assistant
         last_assistant = assistant(block)
-        out.append(last_assistant)
+        keep(last_assistant, kind)
 
     def append_usage_only(usage: dict[str, int], event_idx: int) -> None:
         # A model request can consume tokens without yielding an emit-worthy
@@ -631,7 +665,7 @@ def rollout_to_claude_records(rollout: list[dict], *, strict=False, title_index=
         _merge_usage(record, usage)
         if usage_targets is not None:
             usage_targets[event_idx] = record
-        out.append(record)
+        keep(record, "usage_only")
 
     for idx, r in enumerate(rollout):
         pl = r.get("payload")
@@ -706,26 +740,26 @@ def rollout_to_claude_records(rollout: list[dict], *, strict=False, title_index=
                     raw = text.lstrip()
                     if (raw.startswith("# AGENTS.md instructions")
                             or raw.startswith("<environment_context>")):
-                        out.append(recovered_user(ask, idx))
+                        keep(recovered_user(ask, idx), "recovered_user_message")
                     else:
                         # A recommended_plugins-led item was already emitted by
                         # 0.27.4, so its cleaned ask must consume that SAME
                         # legacy slot. Moving it to recovered_user would add a
                         # duplicate ask beside the acknowledged wrapper row.
-                        out.append(user(ask))
+                        keep(user(ask), "user_message")
                 elif text.lstrip().startswith("<recommended_plugins>"):
                     # 0.27.4 treated this app-owned preamble as a real user
                     # record. Reserve its former index so later real records
                     # keep the UUIDs already acknowledged by MemHub.
                     reserve_legacy_identity()
             elif role == "assistant":
-                append_assistant({"type": "text", "text": text})
+                append_assistant({"type": "text", "text": text}, "assistant_message")
 
         elif pt == "reasoning":
             value = pl.get("summary")
             summary = _text_of(value, strict=strict and value is not None).strip()
             if summary:
-                append_assistant({"type": "thinking", "thinking": summary})
+                append_assistant({"type": "thinking", "thinking": summary}, "reasoning_summary")
 
         elif pt in ("function_call", "custom_tool_call"):
             # Real Codex tool calls always carry call_id; synthesize a unique,
@@ -737,7 +771,7 @@ def rollout_to_claude_records(rollout: list[dict], *, strict=False, title_index=
                 "id": call_id,
                 "name": pl.get("name") or "tool",
                 "input": _tool_input(pl, strict=strict, kind=pt),
-            })
+            }, "tool_call")
 
         elif pt in ("function_call_output", "custom_tool_call_output"):
             # An id-less output is inherently unpairable (its call_id is the only
@@ -750,11 +784,11 @@ def rollout_to_claude_records(rollout: list[dict], *, strict=False, title_index=
                 raise ValueError("Codex tool output must be present")
             if not isinstance(output, str):
                 output = json.dumps(output) if output is not None else ""
-            out.append(user([{
+            keep(user([{
                 "type": "tool_result",
                 "tool_use_id": call_id,
                 "content": output,
-            }]))
+            }]), "tool_output")
 
     return out, meta
 
@@ -766,10 +800,10 @@ def rollout_uuid(path) -> str | None:
     return m.group(1) if m else None
 
 
-def _rollout_files(on_error=None) -> list[Path]:
+def _rollout_files(on_error=None, observe=None) -> list[Path]:
     if on_error is not None:
         from .discovery import paths
-        return paths(_SESSIONS, ("**", "rollout-*.jsonl"), on_error)
+        return paths(_SESSIONS, ("**", "rollout-*.jsonl"), on_error, observe)
     return [Path(f) for f in glob.glob(str(_SESSIONS / "**" / "rollout-*.jsonl"),
                                        recursive=True)]
 
@@ -854,10 +888,16 @@ def session_cwd(path) -> str | None:
         return None
 
 
-def list_sessions(limit: int | None = 20, *, on_error=None) -> list[dict]:
-    """Most recent rollouts; discovery callers can receive access failures."""
+def list_sessions(limit: int | None = 20, *, on_error=None, observe=None) -> list[dict]:
+    """Most recent rollouts; discovery callers can receive access failures.
+
+    ``observe`` is a bounded caller's per-entry hook; it covers the walk and
+    the row built from each of its results, so enumeration cannot outgrow a
+    budget before the budget is consulted."""
     rows = []
-    for path in _rollout_files(on_error):
+    for path in _rollout_files(on_error, observe):
+        if observe is not None:
+            observe()
         try:
             rows.append({"id": rollout_uuid(path) or path.stem, "path": str(path),
                          "mtime": path.stat().st_mtime, "host": HOST, "cwd": None})
@@ -894,7 +934,39 @@ def locate(ref: str) -> tuple[Path | None, str]:
     return hits[0], ""
 
 
-def to_canonical(path, *, strict: bool = False, title_index=None) -> tuple[list[dict], dict]:
-    """Normalize a rollout; an optional complete title index supports historical exports."""
-    return rollout_to_claude_records(load_rollout(path, strict=strict),
-                                    strict=strict, title_index=title_index)
+def to_canonical(source, *, strict: bool = False, title_index=None,
+                 record_guard=None, witness=None, origin=None, human=None) -> tuple[list[dict], dict]:
+    """Normalize a rollout; an optional complete title index supports historical exports.
+
+    ``source`` is whatever ``load_rollout`` accepts: a path, or rollout bytes
+    a caller read through a descriptor it validated. ``record_guard`` bounds
+    what the conversion may hold, as it is held. ``witness``, when a dict,
+    receives each record's source witness from this same conversion (see
+    ``codex_witness.describe``); only a flat rollout can be witnessed.
+    ``origin``, when a dict, receives the origin evidence of each record this
+    conversion made from an injected skill item (see ``codex_origin``).
+    ``human`` receives optional image-wrapper length evidence from these same
+    rows and record mappings (see ``codex_human``), without changing records."""
+    if witness is None and origin is None and human is None:
+        return rollout_to_claude_records(load_rollout(source, strict=strict),
+                                        strict=strict, title_index=title_index,
+                                        record_guard=record_guard)
+    from . import codex_origin, codex_witness
+    spans, sources, origins = [], {}, {}
+    rows = load_rollout(source, strict=strict, spans=spans)
+    records, meta = rollout_to_claude_records(
+        rows, strict=strict, title_index=title_index, record_guard=record_guard,
+        record_sources=sources, record_origins=origins)
+    if witness is not None:
+        codex_witness.describe(rows, spans, records, sources, origins,
+                               native_session_id=meta["session_id"], out=witness)
+    if origin is not None:
+        codex_origin.collect(origin, lambda: codex_origin.describe(
+            codex_origin.flat_segments(rows, records, sources, origins, meta["session_id"]),
+            records, native_session_id=meta["session_id"], history="flat", out=origin))
+    if human is not None:
+        from . import codex_human
+        codex_origin.collect(human, lambda: codex_human.describe(
+            codex_human.flat_segments(rows, records, sources, origins, meta["session_id"]),
+            records, native_session_id=meta["session_id"], out=human))
+    return records, meta

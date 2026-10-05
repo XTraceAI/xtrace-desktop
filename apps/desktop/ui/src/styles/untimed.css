@@ -1,0 +1,130 @@
+/* The untimed-history notice, shown on any page whose numbers are dated.
+   One line among the measurement limits, drawn like the Dashboard's other
+   measurement-detail rows: the title, the count and what it is outside of
+   always read; the explanation and the host and surface breakdown open from
+   the line's own keyboard-operable summary. */
+.xt-untimed {
+  min-width: 0;
+  padding: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.xt-untimed-details > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+  padding: 2px 0;
+  list-style: none;
+  cursor: pointer;
+}
+.xt-untimed-details > summary::-webkit-details-marker {
+  display: none;
+}
+.xt-untimed-details > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.xt-untimed-title {
+  color: var(--meta);
+  font:
+    400 10px/14px 'Geist Mono',
+    Menlo,
+    monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.xt-untimed-meta {
+  min-width: 0;
+  color: var(--secondary);
+  font:
+    400 10.5px/14px 'Geist Mono',
+    Menlo,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.xt-untimed-toggle {
+  margin-left: auto;
+  color: var(--accent-ink);
+  font:
+    400 10.5px/14px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-untimed-toggle::before {
+  content: '▸ ';
+}
+.xt-untimed-details[open] .xt-untimed-toggle::before {
+  content: '▾ ';
+}
+.xt-untimed-body {
+  display: grid;
+  gap: 2px;
+  padding: 6px 0 4px;
+}
+.xt-untimed-lead {
+  margin: 0;
+  color: var(--body);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.xt-untimed-count {
+  margin: 0;
+  color: var(--meta);
+  font:
+    400 10.5px/1.5 'Geist Mono',
+    Menlo,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.xt-untimed-details .xt-dash-list {
+  margin-top: 6px;
+}
+/* The list lives in this component, so its type is stated here rather than
+   borrowed from whichever page's stylesheet happens to be loaded. */
+.xt-untimed .xt-dash-list {
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  list-style: none;
+  color: var(--body);
+  font:
+    400 10.5px/1.45 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-untimed .xt-dash-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.xt-untimed .xt-dash-list li > span:last-child {
+  color: var(--secondary);
+}
+/* The same line as one item in a page's status row (Sessions): a chip, not a
+   panel, whose opened explanation takes the row's full width. */
+.xt-untimed[data-inline] {
+  padding: 0 8px;
+  border-radius: 8px;
+}
+.xt-untimed[data-inline] .xt-untimed-details > summary {
+  gap: 2px 8px;
+  padding: 0;
+}
+.xt-untimed[data-inline] .xt-untimed-details > summary::before {
+  color: var(--accent-ink);
+  font:
+    400 10.5px/14px 'Geist Mono',
+    Menlo,
+    monospace;
+  content: '▸';
+}
+.xt-untimed[data-inline] .xt-untimed-details[open] > summary::before {
+  content: '▾';
+}

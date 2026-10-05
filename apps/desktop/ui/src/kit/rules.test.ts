@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { expect, it } from 'vitest';
 import report from '../../../../../docs/acceptance/metrics/rule-coverage.json';
-import { rules, ruleText, type RuleId } from './rules';
+import { displayRuleText, rules, ruleText, type RuleId } from './rules';
 
 it('covers all current metric IDs, PR variants, and referenced privacy/capture definitions', () => {
   const expected = [
@@ -38,4 +38,23 @@ it('retains amended coverage and privacy rules', () => {
   expect(rules['M-19']).toContain('first unions their distinct session IDs');
   expect(rules['P-02']).toContain('Original host files are never modified');
   expect(rules['C-08']).toContain('it must never inherit backfill-only fields');
+});
+
+it('states confirmed automated inputs as neutral without proving unmatched inputs human', () => {
+  expect(rules['M-02']).toContain('never a human message, and contributes no characters');
+  expect(rules['M-02']).toContain('which does not prove that a person submitted it');
+  for (const id of ['M-03', 'M-07', 'M-09'] as const)
+    expect(rules[id]).toContain('A confirmed automated input (M-02)');
+  expect(rules['M-07']).toContain(
+    'counted input characters divided by the configured typing speed',
+  );
+  expect(rules['M-09']).toContain('It still counts as a user record for timestamp health');
+});
+
+it('explains nested rule references without exposing contract codes', () => {
+  for (const id of Object.keys(rules) as RuleId[])
+    expect(displayRuleText(id)).not.toMatch(/\b(?:[A-Z]-\d{2}[a-z]?|F\d{2})\b/);
+  expect(displayRuleText('M-08')).toContain('agent time minutes ÷ estimated human time minutes');
+  expect(displayRuleText('M-18')).toContain('it is not complete measurement verification');
+  expect(displayRuleText('M-18')).toContain('partial and complete measurement coverage');
 });

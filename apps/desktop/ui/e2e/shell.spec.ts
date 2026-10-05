@@ -22,7 +22,7 @@ test('navigates real shell routes with canonical F1 counts, shortcuts and both t
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.goto('/');
   await expect(page).toHaveURL(/\/dashboard$/);
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Dashboard');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('What your agents did');
   await expect(
     page.getByRole('status', { name: '' }).filter({ hasText: 'fixture F1' }),
   ).toBeVisible();
@@ -68,24 +68,22 @@ test('navigates real shell routes with canonical F1 counts, shortcuts and both t
   await page.getByRole('combobox', { name: 'Appearance' }).selectOption('light');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Dashboard');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('What your agents did');
   await page.mouse.move(600, 300);
   await assertFits(page);
   await page.screenshot({ path: info.outputPath('shell-light.png') });
   expect(errors).toEqual([]);
 });
 
-test('reloads every placeholder route and preserves canonical PR query context', async ({
-  page,
-}) => {
+test('reloads every route and preserves canonical PR query context', async ({ page }) => {
   for (const [path, title] of [
     ['/first-launch', 'Welcome to XTrace'],
-    ['/dashboard', 'Dashboard'],
+    ['/dashboard', 'What your agents did'],
     ['/sessions', 'Sessions'],
     ['/prs', 'Pull requests'],
     ['/rulebook', 'Rulebook'],
     ['/rulebook/sample-rule', 'Rule detail'],
-    ['/rulebook/fires', 'Rule fires'],
+    ['/rulebook/fires', 'Recorded rule activity'],
     ['/settings', 'Settings'],
     ['/leaderboard', 'Leaderboard'],
     ['/missing', 'Page not found'],
@@ -100,6 +98,85 @@ test('reloads every placeholder route and preserves canonical PR query context',
   await page.reload();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Sessions');
   await expect(page.getByText(/Pull request filtering is not available yet/)).toBeVisible();
+});
+
+// The app keeps the kit's default Leaderboard row: nothing ranks in this local
+// build, so the row is disabled, drawn in meta ink at 0.7 opacity with a "soon"
+// badge and no hover fill, and never navigates by pointer or keyboard, while a
+// typed or bookmarked /leaderboard still opens its named placeholder.
+test('keeps Leaderboard unavailable in the sidebar while its address still opens', async ({
+  page,
+}, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.name));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push('console error');
+  });
+  const leaderboard = page.getByRole('button', { name: /Leaderboard/ });
+  const rulebook = page.getByRole('button', { name: 'Rulebook', exact: true });
+  const treatment = () =>
+    page.evaluate(() => {
+      const row = document.querySelector<HTMLButtonElement>('.xt-nav-item:disabled');
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--meta)';
+      document.body.append(probe);
+      const meta = getComputedStyle(probe).color;
+      probe.remove();
+      const style = row && getComputedStyle(row);
+      return style
+        ? {
+            color: style.color,
+            opacity: style.opacity,
+            cursor: style.cursor,
+            fill: style.backgroundColor,
+            meta,
+          }
+        : null;
+    });
+  for (const scheme of ['dark', 'light'] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto('/rulebook');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Rulebook');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', scheme);
+    await expect(leaderboard).toBeDisabled();
+    await expect(leaderboard.locator('.xt-soon')).toHaveText('soon');
+    await expect(leaderboard).not.toHaveAttribute('aria-current', 'page');
+    const rest = await treatment();
+    expect(rest).toMatchObject({ opacity: '0.7', cursor: 'default' });
+    expect(rest?.color).toBe(rest?.meta);
+    await page.locator('.xt-sidebar').screenshot({
+      path: info.outputPath(`sidebar-leaderboard-soon-${scheme}.png`),
+    });
+    // Hovering draws no fill, and a pointer press changes nothing.
+    await leaderboard.hover({ force: true });
+    expect(await treatment()).toMatchObject({ fill: rest?.fill, color: rest?.meta });
+    await leaderboard.click({ force: true });
+    await expect(page).toHaveURL(/\/rulebook$/);
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Rulebook');
+    // Tab passes over the disabled row, then through Usage's forecast note,
+    // its refresh and two account details before the Hub control.
+    await rulebook.focus();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'How the forecast works' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Refresh usage' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByLabel('Claude account usage: Usage unavailable')).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByLabel('Codex account usage: Usage unavailable')).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'XTrace Hub' })).toBeFocused();
+    await expect(leaderboard).not.toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(leaderboard).not.toBeFocused();
+    await expect(page).toHaveURL(/\/rulebook$/);
+  }
+  await page.goto('/leaderboard');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Leaderboard');
+  await expect(page.getByText('This view is coming next.')).toBeVisible();
+  await expect(leaderboard).toBeDisabled();
+  await expect(leaderboard).toHaveAttribute('aria-current', 'page');
+  expect(errors).toEqual([]);
 });
 
 test('renders bundled fonts and remains navigable with external network denied', async ({

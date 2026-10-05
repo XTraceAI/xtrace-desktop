@@ -1,0 +1,22 @@
+/* A card's definition: a small info control beside its title, drawn in the
+   title's own muted ink so it reads as part of the heading, not as a tag. */
+.xt-dash-definition {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--meta);
+  background: transparent;
+  cursor: help;
+}
+.xt-dash-definition:hover {
+  color: var(--secondary);
+}
+.xt-dash-definition:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

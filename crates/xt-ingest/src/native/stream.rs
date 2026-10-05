@@ -3,8 +3,10 @@
 //! arrive this way from the pinned `readers_cli.py`; Claude files are lifted into
 //! the same shape by `claude_fs`. Parsing is strict: a malformed header or record
 //! marks its session explicitly instead of importing a partial guess, while the
-//! other sessions in the stream keep importing.
+//! other sessions in the stream keep importing. The opt-in Codex origin-evidence
+//! mode ([`super::origin`]) judges evidence beside these events, never in them.
 
+use super::origin::{Origin, OriginMarker, OriginSession};
 use crate::canonical::{Parsed, ParsedRecord, SourceContext, parse_with_context};
 use serde::Deserialize;
 use xt_store::{Host, SessionSource};
@@ -27,6 +29,10 @@ pub struct SessionHeader {
     pub title: Option<String>,
     pub path: String,
     pub mtime: f64,
+    /// Only [`StreamEvents::with_codex_origin_evidence`] admits this key; an
+    /// ordinary stream rejects its presence as the unknown key it is there.
+    #[serde(default)]
+    pub origin_evidence: OriginMarker,
 }
 
 impl SessionHeader {
@@ -93,7 +99,7 @@ fn classify(line: &str) -> LineKind {
 #[derive(Debug)]
 pub enum StreamEvent {
     /// A new session begins; any previous session is complete.
-    Session(SessionHeader),
+    Session(Box<SessionHeader>),
     Record(Box<ParsedRecord>),
     /// A canonical line without a usable identity; it counts against coverage.
     Dropped,
@@ -123,6 +129,9 @@ pub struct StreamEvents {
     /// A malformed session swallows its records until the next header.
     skipping: bool,
     line: usize,
+    /// `Some` only in origin-evidence mode; the inner value is the open
+    /// session's evidence bookkeeping.
+    origin: Option<Option<OriginSession>>,
 }
 
 impl StreamEvents {
@@ -133,11 +142,32 @@ impl StreamEvents {
             context: None,
             skipping: false,
             line: 0,
+            origin: None,
+        }
+    }
+
+    /// The opt-in Codex origin-evidence mode: headers may carry the evidence
+    /// marker, and [`Self::push_with_origin`] judges each record's claim. The
+    /// events themselves are exactly those of an ordinary stream: evidence
+    /// never ends, skips or alters a session or record.
+    pub fn with_codex_origin_evidence() -> Self {
+        Self {
+            origin: Some(None),
+            ..Self::new(Host::Codex, SessionSource::ReadersCli)
         }
     }
 
     /// Consume one line. A record before any header rejects the stream.
     pub fn push(&mut self, line: &str) -> Result<Option<StreamEvent>, StreamError> {
+        Ok(self.push_with_origin(line)?.map(|(event, _)| event))
+    }
+
+    /// Like [`Self::push`], with the evidence sidecar of a `Session` or
+    /// `Record` event in origin-evidence mode (`None` otherwise).
+    pub fn push_with_origin(
+        &mut self,
+        line: &str,
+    ) -> Result<Option<(StreamEvent, Option<Origin>)>, StreamError> {
         self.line += 1;
         let number = self.line;
         if line.trim().is_empty() {
@@ -147,28 +177,42 @@ impl StreamEvents {
             LineKind::Header => {
                 self.context = None;
                 self.skipping = false;
+                self.close_origin();
                 return Ok(Some(match self.header(line, number) {
                     Ok(header) => {
                         self.context = Some((
                             header.native_session_id.clone(),
                             header.context(self.host, self.source),
                         ));
-                        StreamEvent::Session(header)
+                        let origin = self.origin.as_mut().map(|open| {
+                            let session = OriginSession::open(
+                                header.origin_evidence,
+                                &header.native_session_id,
+                            );
+                            let state = session.state();
+                            *open = Some(session);
+                            Origin::Session(state)
+                        });
+                        (StreamEvent::Session(Box::new(header)), origin)
                     }
                     Err(malformed) => {
                         self.skipping = true;
-                        *malformed
+                        (*malformed, None)
                     }
                 }));
             }
             LineKind::MalformedHeader => {
                 self.context = None;
                 self.skipping = true;
-                return Ok(Some(StreamEvent::MalformedHeader {
-                    native_session_id: None,
-                    line: number,
-                    reason: "session header does not match the shared stream contract",
-                }));
+                self.close_origin();
+                return Ok(Some((
+                    StreamEvent::MalformedHeader {
+                        native_session_id: None,
+                        line: number,
+                        reason: "session header does not match the shared stream contract",
+                    },
+                    None,
+                )));
             }
             LineKind::Other => {}
         }
@@ -179,29 +223,74 @@ impl StreamEvents {
             return Err(StreamError::RecordBeforeHeader { line: number });
         };
         Ok(match parse_with_context(line, context) {
-            Ok(Parsed::Record(record)) => Some(StreamEvent::Record(record)),
-            Ok(Parsed::Dropped(_)) => Some(StreamEvent::Dropped),
+            Ok(Parsed::Record(mut record)) => {
+                if self.origin.is_some() {
+                    record.human_adjustment = super::human_input::image_evidence(
+                        line,
+                        native,
+                        context.conversation_id.as_deref().unwrap_or(""),
+                        &record.canonical,
+                    );
+                }
+                let origin = self
+                    .origin
+                    .as_mut()
+                    .and_then(Option::as_mut)
+                    .map(|session| Origin::Record(session.record(line, &record.canonical)));
+                Some((StreamEvent::Record(record), origin))
+            }
+            Ok(Parsed::Dropped(_)) => {
+                if let Some(session) = self.origin.as_mut().and_then(Option::as_mut) {
+                    session.unparsed(line);
+                }
+                Some((StreamEvent::Dropped, None))
+            }
             Ok(Parsed::Inert | Parsed::StructuralEvent(_) | Parsed::PrLink(_)) | Err(_) => {
                 let native = native.clone();
                 self.context = None;
                 self.skipping = true;
-                Some(StreamEvent::MalformedRecord {
-                    native_session_id: native,
-                    line: number,
-                    reason: "canonical record does not match the shared stream contract",
-                })
+                self.close_origin();
+                Some((
+                    StreamEvent::MalformedRecord {
+                        native_session_id: native,
+                        line: number,
+                        reason: "canonical record does not match the shared stream contract",
+                    },
+                    None,
+                ))
             }
         })
     }
 
+    /// In origin-evidence mode, the claimed record UUIDs of the open session
+    /// that lines pushed since the last call disputed (see
+    /// [`super::origin`]); empty otherwise. Only record and dropped lines
+    /// dispute, and the session stays open across them, so a consumer that
+    /// takes the disputes after each such line misses none.
+    pub fn take_origin_disputes(&mut self) -> Vec<String> {
+        self.origin
+            .as_mut()
+            .and_then(Option::as_mut)
+            .map(OriginSession::take_disputes)
+            .unwrap_or_default()
+    }
+
+    fn close_origin(&mut self) {
+        if let Some(open) = self.origin.as_mut() {
+            *open = None;
+        }
+    }
+
     fn header(&self, line: &str, number: usize) -> Result<SessionHeader, Box<StreamEvent>> {
-        let header = serde_json::from_str::<SessionHeader>(line).map_err(|_| {
-            StreamEvent::MalformedHeader {
-                native_session_id: None,
-                line: number,
-                reason: "session header does not match the shared stream contract",
-            }
-        })?;
+        let malformed = || StreamEvent::MalformedHeader {
+            native_session_id: None,
+            line: number,
+            reason: "session header does not match the shared stream contract",
+        };
+        let header = serde_json::from_str::<SessionHeader>(line).map_err(|_| malformed())?;
+        if self.origin.is_none() && header.origin_evidence != OriginMarker::Absent {
+            return Err(Box::new(malformed()));
+        }
         let native = header.native_session_id.clone();
         let reason = if header.host != self.host.as_str() {
             Some("session header names another host")

@@ -1,0 +1,14 @@
+model = "synthetic-model"
+
+[mcp_servers.memhub]
+command = "/synthetic/bin/memhub"
+args = ["serve"]
+
+[mcp_servers.memhub.env]
+MEMHUB_TOKEN = "SYNTHETIC-FIXTURE-VALUE"
+
+[mcp_servers.stitch]
+url = "https://synthetic.invalid/mcp"
+
+[mcp_servers.stitch.http_headers]
+Authorization = "Bearer SYNTHETIC-FIXTURE-VALUE"

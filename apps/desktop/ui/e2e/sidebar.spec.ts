@@ -20,11 +20,18 @@ test('sidebar geometry, controlled state, theme and Hub dismissal', async ({ pag
   await expect(active).toHaveCSS('color', 'rgb(207, 201, 255)');
   await expect(sidebar.locator('.xt-brand-mark img')).toHaveCSS('width', '22px');
   await expect(sidebar.locator('.xt-nav-group h2').first()).toHaveCSS('line-height', '13.775px');
-  await expect(sidebar.locator('.xt-host-glyph img')).toHaveCount(3);
-  const cursorLogo = sidebar.locator('.xt-host-cursor .xt-host-glyph img');
-  await expect(cursorLogo).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-  await expect(sidebar.getByLabel('Claude Code tokens: 5500000')).toHaveText('5.5M');
-  await expect(sidebar.getByLabel('Codex tokens: 400000')).toHaveText('0.4M');
+  await expect(sidebar.locator('.xt-host-glyph img')).toHaveCount(2);
+  const claudeUsage = sidebar.getByLabel(
+    'Claude account usage: 0% remaining · Weekly · limit reached',
+  );
+  await expect(claudeUsage).toContainText('Limit reached');
+  await expect(claudeUsage.locator('.xt-account-summary-track > span')).toHaveCSS('width', '0px');
+  const codexUsage = sidebar.getByLabel('Codex account usage: 74% remaining · Weekly');
+  await expect(codexUsage).toBeVisible();
+  await expect(codexUsage.locator('.xt-account-summary-track > span')).toHaveAttribute(
+    'style',
+    'width: 74%;',
+  );
   for (const logo of await sidebar.locator('img').all())
     await expect(logo).toHaveJSProperty('complete', true);
   expect(
@@ -49,7 +56,7 @@ test('sidebar geometry, controlled state, theme and Hub dismissal', async ({ pag
   );
   await page.getByRole('button', { name: 'Switch to light appearance' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-  await expect(cursorLogo).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(claudeUsage).toBeVisible();
   await active.click();
   await page.mouse.move(600, 500);
   await page
@@ -111,4 +118,33 @@ test('sidebar geometry, controlled state, theme and Hub dismissal', async ({ pag
   await expect(sidebar).toHaveCSS('padding-top', '74px');
   await page.screenshot({ path: info.outputPath('brand-sizes-native-inset.png') });
   expect(errors).toEqual([]);
+});
+
+test('remaining bars fit the compact sidebar at 1120×720 in both themes', async ({
+  page,
+}, info) => {
+  await page.setViewportSize({ width: 1120, height: 720 });
+  await page.goto('/e2e/sidebar.html');
+  await page.getByTestId('sidebar-preview').evaluate((element) => {
+    element.style.height = '720px';
+  });
+  const sidebar = page.getByRole('complementary', { name: 'Workspace' });
+  for (const scheme of ['dark', 'light'] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await expect(
+      sidebar.getByLabel('Claude account usage: 0% remaining · Weekly · limit reached'),
+    ).toBeVisible();
+    const codex = sidebar.getByLabel('Codex account usage: 74% remaining · Weekly');
+    await expect(codex.locator('.xt-account-summary-track > span')).toHaveAttribute(
+      'style',
+      'width: 74%;',
+    );
+    expect(await sidebar.evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(
+      true,
+    );
+    expect(await sidebar.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true,
+    );
+    await sidebar.screenshot({ path: info.outputPath(`remaining-${scheme}-1120x720.png`) });
+  }
 });

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": { "createUpdaterArtifacts": true },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNCMDYxNkM1NDQ4MzMzMUMKUldRY000TkV4UllHTzdzdEpNUFhNM1p3aWZHa1c0VktyQlJNV0xidmsvUGYvSHpIMXd6MUpVM0MK",
+      "endpoints": [
+        "https://github.com/XTraceAI/xtrace-desktop/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true
+    }
+  }
+}

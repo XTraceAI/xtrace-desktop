@@ -1,0 +1,44 @@
+/* A verified sub-session's link to the session that created it. It sits in
+   the row's own name cell at the row's context scale, so a child reads as its
+   own session with one quiet line of lineage, not as a nested group. */
+.xt-subsession {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--meta);
+  font:
+    400 10px 'Geist Mono',
+    Menlo,
+    monospace;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-subsession-mark {
+  padding-right: 4px;
+}
+.xt-subsession-parent {
+  color: var(--secondary);
+}
+.xt-subsession:hover,
+.xt-subsession:focus-visible {
+  text-decoration: underline;
+}
+.xt-subsession:hover .xt-subsession-parent {
+  color: var(--accent-ink);
+}
+/* Both cells clip their contents, so the ring is drawn just inside the link
+   and stays whole in a 22px or 40px row. */
+.xt-subsession:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-radius: 3px;
+}
+/* The cell holding the marker is its container: below the width where the
+   words and a useful share of the parent's name both fit, the words give way
+   and the mark stands for them. */
+@container subsession (max-width: 319px) {
+  .xt-subsession-words {
+    display: none;
+  }
+}

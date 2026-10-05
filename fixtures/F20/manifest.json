@@ -16,6 +16,7 @@
   "snapshots": {
     "schema": "input/schema.json",
     "parser": "input/parser.json",
-    "native": "input/native/native.json"
+    "native": "input/native/native.json",
+    "coverage": "input/coverage.json"
   }
 }

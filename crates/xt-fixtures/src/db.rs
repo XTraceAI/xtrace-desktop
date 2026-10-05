@@ -1,4 +1,4 @@
-use crate::{LoadedSession, Result, invalid};
+use crate::{LoadedSession, Result, invalid, load::PrLinkInput};
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -18,10 +18,14 @@ impl TempDb {
     /// Empty file-backed owner for schema and discovery tests that do not yet
     /// claim a populated fixture's product-rule acceptance.
     pub fn empty() -> Result<Self> {
-        Self::build(&[], false)
+        Self::build(&[], &[], false)
     }
 
-    pub(crate) fn build(sessions: &[LoadedSession], keep_content: bool) -> Result<Self> {
+    pub(crate) fn build(
+        sessions: &[LoadedSession],
+        pull_requests: &[PrLinkInput],
+        keep_content: bool,
+    ) -> Result<Self> {
         let directory = TempDir::new()?;
         let path = directory.path().join("fixture.sqlite");
         let mut store = Store::open(&path)?;
@@ -32,6 +36,11 @@ impl TempDb {
         for session in sessions {
             store.upsert_session(&session.metadata, keep_content)?;
             store.upsert_records(&session.metadata.session_id, &session.records, keep_content)?;
+        }
+        // Links only: the refresh-owned columns stay unset, as they are for a
+        // pull request nothing has refreshed yet.
+        for link in pull_requests {
+            store.record_pr_link(&link.observation()?)?;
         }
         Ok(Self {
             store,
