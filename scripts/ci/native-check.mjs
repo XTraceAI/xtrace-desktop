@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installAbout, installSyft } from '../supply-chain/install-tools.mjs';
+import { readPin } from './plugin-pin.mjs';
 
 export async function checkNative({
   base,
@@ -11,11 +12,12 @@ export async function checkNative({
   repo = process.cwd(),
   platform = process.platform,
   run = spawnSync,
+  environment = process.env,
   install = async () => [await installSyft(), await installAbout()],
 } = {}) {
   if (platform !== 'darwin' || !/^[a-f0-9]{40}$/.test(base ?? ''))
     throw new Error('Native checks require macOS and --base with a full reviewed commit SHA.');
-  const env = { ...process.env, GH_TOKEN: '', GITHUB_TOKEN: '' };
+  const env = { ...environment, GH_TOKEN: '', GITHUB_TOKEN: '' };
   const execute = (command, args, options = {}) => {
     const result = run(command, args, { cwd: repo, env, stdio: 'inherit', ...options });
     if (result.error || result.signal || result.status !== 0)
@@ -56,6 +58,36 @@ export async function checkNative({
       '-D',
       'warnings',
     ]);
+    if (env.AGENT_PLUGINS_SOURCE === 'bundle') {
+      // The first workspace test already runs the Python conformance harnesses;
+      // they need the same verifier and clean interpreter environment as the hook.
+      const pin = await readPin(repo);
+      env.AGENT_PLUGINS_DIR = resolve(
+        repo,
+        env.AGENT_PLUGINS_DIR || join('vendor/agent-plugins', pin.plugin_root),
+      );
+      env.XTRACE_CONFORMANCE_BUNDLE_VERIFIER = resolve(
+        repo,
+        env.CARGO_TARGET_DIR || 'target',
+        'debug/examples/conformance_bundle',
+      );
+      env.PYTHONDONTWRITEBYTECODE = '1';
+      for (const key of ['PYTHONOPTIMIZE', 'PYTHONPATH', 'PYTHONHOME', 'PYTHONSTARTUP'])
+        delete env[key];
+      execute('cargo', ['build', '-p', 'xt-ingest', '--example', 'conformance_bundle', '--locked']);
+      execute(env.PYTHON || 'python3', [
+        '-B',
+        '-c',
+        [
+          'import sys; from pathlib import Path',
+          'if sys.version_info < (3, 10) or sys.flags.optimize: raise RuntimeError("Conformance requires Python 3.10+ with assertions active")',
+          'sys.path.insert(0, "scripts/conformance")',
+          'from bundle_source import verify_bundle',
+          'print("pinned producer bundle " + verify_bundle(Path(sys.argv[1])))',
+        ].join('\n'),
+        env.AGENT_PLUGINS_DIR,
+      ]);
+    }
     execute('cargo', ['test', '--workspace', '--all-features', '--locked']);
     for (const hook of ['plugin-conformance', 'dto'])
       execute('node', ['scripts/ci/run-hook.mjs', hook]);
