@@ -274,30 +274,27 @@ test('actual release shell guards accept only default history or matching review
   }
 });
 
-test('release validation provisions the producer required by native conformance', async () => {
+test('release validation explicitly uses verified vendored producer conformance', async () => {
   const pin = JSON.parse(
     await readFile(new URL('../../.plugin-pin', import.meta.url), 'utf8'),
   ).commit;
   assert.match(pin, /^[a-f0-9]{40}$/);
   const steps = release.split(/\n {6}- /);
-  const producer = steps.findIndex((step) => step.includes('repository: XTraceAI/agent-plugins'));
   const validation = steps.findIndex((step) => step.includes('pnpm check:native'));
-  assert.ok(producer > 0 && validation > producer, 'producer must exist before the mandatory gate');
-  assert.equal(steps[producer].match(/\n {10}ref: ([a-f0-9]{40})(?: #[^\n]*)?\n/)[1], pin);
-  assert.match(steps[producer], /persist-credentials: false/);
-  const path = steps[producer].match(/\n {10}path: (.+)\n/)[1];
+  assert.ok(validation > 0);
+  assert.ok(!release.includes('repository: XTraceAI/agent-plugins'));
+  assert.match(steps[validation], /AGENT_PLUGINS_SOURCE: bundle/);
   assert.ok(
     steps[validation].includes(
-      'AGENT_PLUGINS_DIR: ${{ github.workspace }}/' + path + '/plugins/memhub',
+      'AGENT_PLUGINS_DIR: ${{ github.workspace }}/vendor/agent-plugins/plugins/memhub',
     ),
   );
-  const ignored = await readFile(new URL('../../.gitignore', import.meta.url), 'utf8');
-  assert.ok(
-    ignored
-      .split('\n')
-      .some((line) => line.startsWith('/') && line.endsWith('/') && path.startsWith(line.slice(1))),
-    'nested producer must not dirty the candidate checkout',
-  );
+  const gate = await readFile(new URL('./plugin-conformance.sh', import.meta.url), 'utf8');
+  assert.match(gate, /AGENT_PLUGINS_SOURCE:-checkout/);
+  assert.match(gate, /--example conformance_bundle --locked/);
+  assert.match(gate, /from bundle_source import verify_bundle/);
+  assert.match(gate, /verifyCheckout\(pin, git\)/);
+  assert.match(gate, /assert-no-skipped-conformance\.sh/);
 });
 
 test('credentialed contribution checks run only reviewed source', () => {

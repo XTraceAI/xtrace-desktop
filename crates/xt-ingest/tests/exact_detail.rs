@@ -9,8 +9,9 @@
 //! returns nothing at all and leaves no process behind.
 //!
 //! `conformance_exact_detail` runs the real pinned producer over F18's
-//! synthetic native files and a paginated Codex group built by the pinned
-//! checkout's own history fixture: the JSONL sessions load whole and match the
+//! synthetic native files and a paginated Codex group built from local synthetic
+//! data in bundle mode or the pinned checkout's own history fixture in checkout
+//! mode: the JSONL sessions load whole and match the
 //! ordinary export record for record, the SQLite store is refused — with a
 //! committed write-ahead log beside it — and nothing under the home or in the
 //! temporary directory changes.
@@ -40,6 +41,8 @@ use xt_ingest::native::{
 use xt_store::{Host, SessionSource};
 
 const CODEX: &str = "00000000-0000-4000-8000-00000000c0de";
+#[path = "support/conformance_source.rs"]
+mod conformance_source;
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -1039,15 +1042,24 @@ fn conformance_exact_detail() {
         .to_str()
         .unwrap();
     // The exact candidate: the bundle as the app ships it, verified by object
-    // identity, which the gate compares byte for byte with the checkout; and
-    // the checkout itself, verified through Git at the pinned commit.
+    // identity. Checkout mode also runs the independently verified checkout.
     let bundled = producer();
-    let checkout = ProducerSource::Checkout {
-        pin: root.join(".plugin-pin"),
-        plugin_root: Some(PathBuf::from(&plugin_root)),
-    }
-    .producer()
-    .expect("the checkout is at the pinned commit");
+    let checkout = if conformance_source::bundle_mode() {
+        conformance_source::source(&root, Path::new(&plugin_root))
+            .producer()
+            .expect("the supplied bundle verifies");
+        println!(
+            "exact-detail bundle mode; independent checkout comparison requires checkout mode"
+        );
+        None
+    } else {
+        Some(
+            conformance_source::source(&root, Path::new(&plugin_root))
+                .producer()
+                .expect("the checkout is at the pinned commit"),
+        )
+    };
+    let producers: Vec<_> = std::iter::once(&bundled).chain(checkout.as_ref()).collect();
     let exact = |producer: &PinnedProducer, home: &Path, host: Host, native: &str| {
         load_session_source_with(
             &SessionSourceRequest {
@@ -1067,7 +1079,7 @@ fn conformance_exact_detail() {
     };
     let before = tree(&home);
     let mut loaded_sessions = 0;
-    for producer in [&bundled, &checkout] {
+    for producer in &producers {
         for &(host, native, records) in &wanted {
             let outcome = exact(producer, &home, host, native);
             if host == Host::Cursor && native == store_id {
@@ -1089,7 +1101,11 @@ fn conformance_exact_detail() {
             loaded_sessions += 1;
         }
     }
-    assert_eq!(loaded_sessions, 4, "two JSONL sessions, from each producer");
+    assert_eq!(
+        loaded_sessions,
+        2 * producers.len(),
+        "two JSONL sessions, from each producer"
+    );
     // Exact reads alone, of every session and of the store with its log,
     // changed nothing anywhere: no journal recovery, no shared-memory file,
     // no copy, no source write, no staged snapshot.
@@ -1112,22 +1128,31 @@ fn conformance_exact_detail() {
         );
     }
     // A paginated Codex session is its whole history — every rollout, and the
-    // prefix a continuation inherits counted once — built by the pinned
-    // checkout's own history fixture, so the group is the one its tests pin.
+    // prefix a continuation inherits counted once. Checkout mode uses its
+    // own history fixture; bundle mode supplies equivalent synthetic data.
     let paged = tempfile::TempDir::new().unwrap();
     let paged_home = paged.path().canonicalize().unwrap();
     let checkout_root = Path::new(&plugin_root).join("../..");
+    let fixture_script = if conformance_source::bundle_mode() {
+        "import runpy,sys\nfrom pathlib import Path\n\
+         fixture=runpy.run_path(sys.argv[1])\n\
+         fixture['fixture'](Path(sys.argv[2]))\nprint(fixture['SID'])"
+    } else {
+        "import sys\nfrom pathlib import Path\n\
+         sys.path[:0]=[sys.argv[1]+'/tests', sys.argv[1]+'/plugins/memhub/scripts']\n\
+         import codex_history_test as history\n\
+         history.fixture(Path(sys.argv[2]))\nprint(history.SID)"
+    };
+    let fixture_path = if conformance_source::bundle_mode() {
+        root.join("scripts/conformance/paginated-fixture.py")
+    } else {
+        checkout_root
+    };
     let built = Command::new(&python)
         .env_remove("PYTHONOPTIMIZE")
         .env("PYTHONDONTWRITEBYTECODE", "1")
-        .args([
-            "-c",
-            "import sys\nfrom pathlib import Path\n\
-             sys.path[:0]=[sys.argv[1]+'/tests', sys.argv[1]+'/plugins/memhub/scripts']\n\
-             import codex_history_test as history\n\
-             history.fixture(Path(sys.argv[2]))\nprint(history.SID)",
-        ])
-        .arg(&checkout_root)
+        .args(["-c", fixture_script])
+        .arg(&fixture_path)
         .arg(&paged_home)
         .output()
         .unwrap();

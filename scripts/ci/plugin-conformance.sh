@@ -1,8 +1,8 @@
 #!/bin/sh
 # Required local native gate for the pinned capture producer.
 #
-# Owns the pinned checkout, environment and unskipped execution: it resolves
-# .plugin-pin, obtains (or verifies) a checkout at exactly that commit, exports
+# Owns the pinned source, environment and unskipped execution: it resolves
+# .plugin-pin, verifies a checkout or explicitly selected bundle, exports
 # AGENT_PLUGINS_DIR/PYTHON, runs every workspace conformance test with output
 # captured, and rejects skipped, ignored, zero or missing named tests through
 # assert-no-skipped-conformance.sh. A skip or absent prerequisite never passes.
@@ -22,6 +22,29 @@ unset PYTHONOPTIMIZE PYTHONPATH PYTHONHOME PYTHONSTARTUP
 "$PYTHON" -c 'import sys; sys.exit(0 if sys.flags.optimize == 0 else 1)' \
   || { echo "Conformance requires Python assertions to stay active; PYTHON must not enable -O." >&2; exit 1; }
 export PYTHON
+AGENT_PLUGINS_SOURCE="${AGENT_PLUGINS_SOURCE:-checkout}"
+case "$AGENT_PLUGINS_SOURCE" in
+  checkout) ;;
+  bundle) ;;
+  *) echo "AGENT_PLUGINS_SOURCE must be checkout or bundle." >&2; exit 1 ;;
+esac
+export AGENT_PLUGINS_SOURCE
+# Keep verified trees free of interpreter caches throughout all harnesses.
+export PYTHONDONTWRITEBYTECODE=1
+if [ "$AGENT_PLUGINS_SOURCE" = bundle ]; then
+  AGENT_PLUGINS_DIR="${AGENT_PLUGINS_DIR:-$ROOT/vendor/agent-plugins/$PLUGIN_ROOT}"
+  # This test-only example calls the app's verify_bundle; no parallel hasher
+  # or production command is introduced for the Python harnesses.
+  cargo build -p xt-ingest --example conformance_bundle --locked
+  XTRACE_CONFORMANCE_BUNDLE_VERIFIER="${CARGO_TARGET_DIR:-$ROOT/target}/debug/examples/conformance_bundle"
+  case "$XTRACE_CONFORMANCE_BUNDLE_VERIFIER" in
+    /*) ;;
+    *) XTRACE_CONFORMANCE_BUNDLE_VERIFIER="$ROOT/$XTRACE_CONFORMANCE_BUNDLE_VERIFIER" ;;
+  esac
+  export XTRACE_CONFORMANCE_BUNDLE_VERIFIER AGENT_PLUGINS_DIR
+  "$PYTHON" -c 'import sys; sys.path.insert(0, "scripts/conformance"); from bundle_source import verify_bundle; print("pinned producer bundle " + verify_bundle(__import__("pathlib").Path(sys.argv[1])))' "$AGENT_PLUGINS_DIR"
+  "$PYTHON" -B scripts/conformance/test-source-modes.py
+else
 if [ -n "${AGENT_PLUGINS_DIR:-}" ]; then
   CHECKOUT="$(git -C "$AGENT_PLUGINS_DIR" rev-parse --show-toplevel)"
 else
@@ -50,6 +73,7 @@ import("./scripts/ci/plugin-pin.mjs").then(async ({ readPin, verifyCheckout }) =
   console.log("pinned producer " + verifyCheckout(pin, git) + " (memhub " + pin.plugin_version + ")");
 }).catch((error) => { console.error(error.message); process.exit(1); });
 ' "$CHECKOUT"
+fi
 mkdir -p artifacts/private/conformance
 LOG="artifacts/private/conformance/cargo-test.log"
 : > "$LOG"
@@ -64,4 +88,4 @@ cargo_status="$(cat "$STATUS" 2>/dev/null || echo unknown)"
 [ "$cargo_status" = 0 ] || echo "cargo test exited with status $cargo_status" >&2
 sh scripts/ci/assert-no-skipped-conformance.sh "$LOG"
 [ "$cargo_status" = 0 ]
-echo "Pinned plugin conformance passed at $COMMIT."
+echo "Pinned plugin conformance passed at $COMMIT (source mode: $AGENT_PLUGINS_SOURCE)."

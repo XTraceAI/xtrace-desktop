@@ -24,6 +24,7 @@ import sys
 import tarfile
 import tempfile
 import uuid
+from bundle_source import bundle_mode, snapshot_bundle, verify_bundle
 
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 HEADER_KEYS = {"type", "host", "native_session_id", "conversation_id", "source_surface",
@@ -64,7 +65,9 @@ def verify_sources(repo, pin):
     return head
 
 
-def snapshot(root, pin, destination):
+def snapshot(root, pin, destination, pin_path=None):
+    if bundle_mode():
+        return snapshot_bundle(root, destination, pin_path=pin_path)
     repo = Path(git(root, "rev-parse", "--show-toplevel"))
     head = verify_sources(repo, pin)
     relative = Path(root).resolve().relative_to(repo.resolve()).as_posix()
@@ -286,9 +289,16 @@ def self_test(plugin, fixtures, pin, repository):
     # object for one reader source: only the specific identity mismatch may result.
     altered = dict(pin, reader_sources={**pin["reader_sources"], "plugins/memhub/scripts/readers_cli.py": "0" * 40})
     try:
-        verify_sources(repository, altered)
-    except Mismatch as error:
-        if "differs from the pin" not in str(error):
+        if bundle_mode():
+            with tempfile.TemporaryDirectory(prefix="xtrace-reader-pin-") as directory:
+                path = Path(directory) / "pin.json"
+                path.write_text(json.dumps(altered), encoding="utf-8")
+                verify_bundle(repository, path)
+        else:
+            verify_sources(repository, altered)
+    except (Mismatch, subprocess.CalledProcessError) as error:
+        reason = error.stderr if isinstance(error, subprocess.CalledProcessError) else str(error)
+        if ("differs" if bundle_mode() else "differs from the pin") not in reason:
             raise Mismatch(f"self-test failed: unexpected source verification error: {error}") from None
     else:
         raise Mismatch("self-test failed: a differing pinned reader object was not detected")
@@ -315,14 +325,15 @@ def main():
     pin = read_pin(args.pin)
     try:
         with tempfile.TemporaryDirectory(prefix="xtrace-reader-plugin-") as directory:
-            plugin = Path(directory) / "plugin"
-            plugin.mkdir()
+            plugin = Path(directory) / "plugins" / "memhub" if bundle_mode() else Path(directory) / "plugin"
+            plugin.mkdir(parents=True)
             plugin_root = args.plugin_root.resolve()
-            head = snapshot(plugin_root, pin, plugin)
+            head = snapshot(plugin_root, pin, plugin, args.pin.resolve())
             evidence = exercise(plugin, args.fixtures.resolve(), write_golden=args.write_golden,
                                 output=args.output.resolve() if args.output else None)
             if args.self_test:
-                self_test(plugin, args.fixtures.resolve(), pin, Path(git(plugin_root, "rev-parse", "--show-toplevel")))
+                repository = plugin_root if bundle_mode() else Path(git(plugin_root, "rev-parse", "--show-toplevel"))
+                self_test(plugin, args.fixtures.resolve(), pin, repository)
     except Mismatch as error:
         print(f"Pinned reader stream conformance failed: {error}", file=sys.stderr)
         return 1

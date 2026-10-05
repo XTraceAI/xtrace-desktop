@@ -16,9 +16,15 @@ import sys
 import tarfile
 import tempfile
 import threading
+from bundle_source import bundle_mode, snapshot_bundle
 
 
-def plugin_snapshot(root, expected, destination):
+def plugin_snapshot(root, expected, destination, pin_path=None):
+    if bundle_mode():
+        # Preserve the repository layout expected by the existing verifier.
+        plugin = destination / "plugins" / "memhub"
+        head = snapshot_bundle(root, plugin, pin_path=pin_path, expected=expected)
+        return head
     repo = Path(subprocess.check_output(["git", "-C", str(root), "rev-parse", "--show-toplevel"], text=True).strip())
     actual = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     if actual != expected or len(actual) != 40:
@@ -96,11 +102,13 @@ runpy.run_path(sys.argv[1], run_name='__main__')
 """
 
 
-def exercise(binary, root, pin, directory, route):
+def exercise(binary, root, pin, directory, route, pin_path=None):
     home = directory / "home"
     home.mkdir(parents=True)
     plugin = directory / "plugin"
-    plugin_snapshot(root, pin, plugin)
+    plugin_snapshot(root, pin, plugin, pin_path)
+    if bundle_mode():
+        plugin = plugin / "plugins" / "memhub"
     source_before = {p.relative_to(plugin): p.read_bytes() for p in plugin.rglob("*.py")}
     transcript = directory / "synthetic.jsonl"
     database = directory / "synthetic.db"
@@ -184,11 +192,12 @@ def main():
     parser.add_argument("--plugin-root", type=Path, required=True)
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--pin", type=Path)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="xtrace-import-") as directory:
         root = Path(directory)
-        env_rows = exercise(args.binary.resolve(), args.plugin_root.resolve(), args.expected_commit, root / "env", "env")
-        config_rows = exercise(args.binary.resolve(), args.plugin_root.resolve(), args.expected_commit, root / "config", "config")
+        env_rows = exercise(args.binary.resolve(), args.plugin_root.resolve(), args.expected_commit, root / "env", "env", args.pin)
+        config_rows = exercise(args.binary.resolve(), args.plugin_root.resolve(), args.expected_commit, root / "config", "config", args.pin)
         assert env_rows == config_rows, "Both routing mechanisms must persist the same canonical rows"
     print("Pinned real Stop-hook import conformance passed through environment and plugin config routes.")
 

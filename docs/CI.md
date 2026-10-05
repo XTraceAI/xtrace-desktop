@@ -104,13 +104,28 @@ bundles as `vendor/agent-plugins` and verifies by the same object identities
 without Git). `node scripts/ci/plugin-pin.mjs commit` prints a field;
 `scripts/ci/plugin-pin.test.mjs` rejects malformed pins in hosted CI.
 
-`scripts/ci/plugin-conformance.sh` owns the pinned checkout, the environment
-and unskipped execution. Without `AGENT_PLUGINS_DIR` it fetches exactly the
+`scripts/ci/plugin-conformance.sh` owns the producer source, the environment
+and unskipped execution. `AGENT_PLUGINS_SOURCE` defaults to `checkout`.
+In checkout mode, without `AGENT_PLUGINS_DIR` it fetches exactly the
 pinned commit from the public repository, without credentials, into the ignored
 `artifacts/private/plugin-conformance/` directory; a supplied checkout is
 accepted only at that commit. Either way the checkout must be clean and every
 listed reader source must be the pinned object, so an edited file at the right
-commit fails before any test runs. It requires Python 3.10+ (`PYTHON` selects
+commit fails before any test runs.
+
+Explicit `AGENT_PLUGINS_SOURCE=bundle` uses `vendor/agent-plugins` by default;
+`AGENT_PLUGINS_DIR` can name a bundle's `plugins/memhub` directory instead.
+Before any producer import or launch, a test-only Rust example calls the app's
+existing `verify_bundle` against `.plugin-pin`: all four listed objects,
+including the complete scripts tree with executable modes, must match. Extra
+or missing files, altered bytes or modes, symlinks and bytecode caches fail.
+The Python harnesses call that same verifier on their source and copied tree.
+The gate runs six mutation regressions against all three Python harnesses.
+It sets `PYTHONDONTWRITEBYTECODE=1` so imports cannot add caches to verified trees.
+The explicit native release workflow selects this mode and uses the producer
+bytes already in the candidate repository, with no external producer fetch.
+
+Both modes require Python 3.10+ (`PYTHON` selects
 the interpreter), clears `PYTHONOPTIMIZE`, `PYTHONPATH`, `PYTHONHOME` and
 `PYTHONSTARTUP` so the harnesses' assertions and standard library stay intact
 (an interpreter running with `-O` is rejected), runs
@@ -121,22 +136,26 @@ validator requires every name in `scripts/ci/conformance-inventory.txt` to have
 run and passed, and fails on any `SKIP` line, ignored test, failure, zero count
 or missing name. Under a plain `cargo test` without the environment the
 conformance tests print `SKIP` and return; that output can never satisfy the
-gate. Missing checkout, missing Python, an unfetchable or differing pin, a
+gate. Missing source, missing Python, an unfetchable checkout pin or differing bundle object, a
 removed hook or an absent named test are all red before merging.
 
 The inventory currently requires:
 
-| Test                               | Real contract exercised                                                                                                                                                                                                                                                                                             |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `conformance_flush_turn`           | The pinned Stop hook imports through both routing mechanisms, advancing its real cursor only after committed acknowledgements, including retry after a failed commit and metadata-only storage.                                                                                                                     |
-| `conformance_plugin_transport`     | The pinned decoder and token client against the headless binary: initialize, SSE `tools/list`, token mint/list/delete, notification and empty-import rejection.                                                                                                                                                     |
-| `conformance_native_reader_stream` | The pinned `readers_cli.py` over the fixture catalog's synthetic native Codex/Cursor files ([F18 and F20](FIXTURES.md)); see [acceptance](acceptance/plugin-conformance.md).                                                                                                                                        |
-| `conformance_native_import`        | The complete native import through the pinned readers into a disposable index: identity and counts per session, a repeated run adds nothing, source bytes unchanged; see [native import](acceptance/native-import.md).                                                                                              |
-| `conformance_bundled_readers`      | The bundled reader sources are byte for byte the pinned commit's scripts tree and notices, and read F18 in place, without a checkout or Git, to the same index as the verified checkout.                                                                                                                            |
-| `conformance_exact_detail`         | The pinned producer's exact-detail mode, from the bundle and from the checkout, reads F18's Codex and Cursor JSONL sessions whole and record for record as the ordinary export does, refuses its Cursor store beside a committed write-ahead log, and changes no file under the home or in the temporary directory. |
+| Test                               | Real contract exercised                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `conformance_flush_turn`           | The pinned Stop hook imports through both routing mechanisms, advancing its real cursor only after committed acknowledgements, including retry after a failed commit and metadata-only storage.                                                                                                                                                                             |
+| `conformance_plugin_transport`     | The pinned decoder and token client against the headless binary: initialize, SSE `tools/list`, token mint/list/delete, notification and empty-import rejection.                                                                                                                                                                                                             |
+| `conformance_native_reader_stream` | The pinned `readers_cli.py` over the fixture catalog's synthetic native Codex/Cursor files ([F18 and F20](FIXTURES.md)); see [acceptance](acceptance/plugin-conformance.md).                                                                                                                                                                                                |
+| `conformance_native_import`        | The complete native import through the pinned readers into a disposable index: identity and counts per session, a repeated run adds nothing, source bytes unchanged; see [native import](acceptance/native-import.md).                                                                                                                                                      |
+| `conformance_bundled_readers`      | Both modes verify the pinned bundled scripts and read F18 in place to its expected identities and counts, leaving sources unchanged. Checkout mode additionally compares every scripts file and LICENSE/NOTICE byte with the producer commit and compares the two independent indexes.                                                                                      |
+| `conformance_exact_detail`         | The bundle's exact-detail mode reads F18's JSONL sessions and a synthetic paginated Codex group whole, matches ordinary export record for record, refuses the Cursor store beside a committed write-ahead log, and changes no source or temporary snapshot. Checkout mode additionally runs exact detail through the verified checkout and uses its own pagination fixture. |
 
 Record in the PR the pin commit printed by the hook and the `executed N of N`
-line with its test names. Every producer release train that Desktop adopts
+line with its test names and the selected source mode. A bundle-mode pass does
+not certify the independent checkout/index comparison, the producer checkout's
+pagination fixture, or notices against upstream Git; run checkout mode for those
+checks. A bundle execution is never reported as an independent checkout.
+Every producer release train that Desktop adopts
 updates `.plugin-pin`, the release workflow's producer `ref`, the reader source
 object IDs, the bundled copy (`sh scripts/vendor-readers.sh`, then the printed
 scripts tree ID in the pin) and, when the reader stream changes on purpose, the fixture goldens

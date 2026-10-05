@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import urllib.request
+from bundle_source import bundle_mode, verify_bundle
 
 
 def main():
@@ -20,13 +21,18 @@ def main():
     parser.add_argument("--plugin-root", type=Path, required=True)
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--pin", type=Path)
     args = parser.parse_args()
     root = args.plugin_root.resolve()
-    repo = Path(subprocess.check_output(["git", "-C", str(root), "rev-parse", "--show-toplevel"], text=True).strip())
-    actual = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    if bundle_mode():
+        actual = verify_bundle(args.plugin_root, args.pin, expected=args.expected_commit)
+        repo = root
+    else:
+        repo = Path(subprocess.check_output(["git", "-C", str(root), "rev-parse", "--show-toplevel"], text=True).strip())
+        actual = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     if actual != args.expected_commit or len(actual) != 40:
         raise RuntimeError("Plugin commit does not match the expected revision")
-    for name in ["pak.py", "mcp_http.py", "atomic_write.py"]:
+    for name in ([] if bundle_mode() else ["pak.py", "mcp_http.py", "atomic_write.py"]):
         path = root / "scripts" / name
         if path.is_symlink() or not path.resolve().is_relative_to(repo):
             raise RuntimeError("Plugin source path is not a regular checkout file")
@@ -34,6 +40,7 @@ def main():
         if path.read_bytes() != expected:
             raise RuntimeError("Plugin source differs from its pinned revision")
     os.environ["NO_PROXY"] = "127.0.0.1,localhost,::1"
+    sys.dont_write_bytecode = True
     sys.path.insert(0, str(root / "scripts"))
     pak = importlib.import_module("pak")
     mcp = importlib.import_module("mcp_http")

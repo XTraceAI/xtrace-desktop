@@ -36,6 +36,8 @@ fn run_harness(name: &str, script: &str) {
         .arg("--plugin-root")
         .arg(plugin_root)
         .args(["--expected-commit", &pinned_commit()])
+        .arg("--pin")
+        .arg(repo_root().join(".plugin-pin"))
         .args(["--binary", env!("CARGO_BIN_EXE_xtrace-core")])
         .output()
         .expect("Run the pinned plugin conformance harness");
