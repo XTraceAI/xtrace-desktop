@@ -554,8 +554,30 @@ fn a_spawn_needs_its_typed_parent_corroborated_by_session_id() {
     related.sort();
     assert_eq!(
         related,
-        [(id(&n(41)), id(PARENT)), (id(&n(42)), id(PARENT))]
+        [
+            (id(&n(41)), id(PARENT)),
+            (id(&n(42)), id(PARENT)),
+            (id(&n(51)), id(PARENT))
+        ]
     );
+    let rows = db
+        .store()
+        .sessions_page_filtered(&SessionFilter::default(), None)
+        .unwrap();
+    for native in [n(41), n(42)] {
+        let row = rows.iter().find(|row| row.id == id(&native)).unwrap();
+        assert_eq!(
+            row.parent.as_ref().unwrap().evidence,
+            ParentEvidence::NativeSpawn
+        );
+    }
+    let reviewer = rows.iter().find(|row| row.id == id(&n(51))).unwrap();
+    assert_eq!(
+        reviewer.parent.as_ref().unwrap().evidence,
+        ParentEvidence::NativeReviewer
+    );
+    assert!(reviewer.automated_review);
+    assert!(db.store().session_creation(&id(&n(51))).unwrap().is_none());
 }
 
 #[test]
