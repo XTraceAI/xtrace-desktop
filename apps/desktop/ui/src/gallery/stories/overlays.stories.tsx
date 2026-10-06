@@ -1,5 +1,5 @@
 import { useId, useRef, useState } from 'react';
-import { Popover, Modal, HubPopover, Button } from '../../kit';
+import { Popover, Modal, HubPopover, LocalUpdatesPopover, Button } from '../../kit';
 import { createPopoverHandle, PopoverTrigger, PopoverClose } from '../../kit/Popover';
 import { ModalClose } from '../../kit/Modal';
 import { story } from '../story';
@@ -9,7 +9,7 @@ function OverlayExample({
   initial,
   connected = false,
 }: {
-  kind: 'popover' | 'modal' | 'hub';
+  kind: 'popover' | 'modal' | 'hub' | 'updates';
   initial: boolean;
   connected?: boolean;
 }) {
@@ -53,6 +53,14 @@ function OverlayExample({
           </label>
           <ModalClose render={<Button />}>Close example</ModalClose>
         </Modal>
+      ) : kind === 'updates' ? (
+        <LocalUpdatesPopover
+          id={id}
+          open={open}
+          onOpenChange={setOpen}
+          handle={handle}
+          controls={{ viewPublicReleases: async () => {} }}
+        />
       ) : (
         <HubPopover
           id={id}
@@ -68,6 +76,9 @@ function OverlayExample({
   );
 }
 export const overlayStories = [
+  story('local-updates/information-only', ['LocalUpdatesPopover'], [620, 400], () => (
+    <OverlayExample kind="updates" initial />
+  )),
   ...(['popover', 'modal'] as const).flatMap((kind) =>
     [false, true].map((initial) =>
       story(

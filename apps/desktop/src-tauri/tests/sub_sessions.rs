@@ -6,7 +6,7 @@
 //! never a link.
 use jiff::{SignedDuration, Timestamp, tz::TimeZone};
 use serde_json::{Value, json};
-use xt_metrics::{MetricsDb, TypingRate};
+use xt_metrics::{BreakLength, MetricsDb, TypingRate};
 use xt_store::{
     CanonicalRecord, Host, SessionMeta, SessionSource, Store,
     creation::{
@@ -17,8 +17,8 @@ use xt_store::{
 use xtrace_desktop::{
     dashboard::{assemble, fixture_catalog},
     dto::{
-        DashboardMetrics, MetricClock, SessionPage, SessionParentLink, SessionQuery,
-        SubSessionEvidence, session_page, session_row,
+        DashboardMetrics, MetricClock, SessionChildCheck, SessionPage, SessionParentContext,
+        SessionParentLink, SessionQuery, SubSessionEvidence, session_page, session_row,
     },
 };
 
@@ -129,16 +129,29 @@ fn dashboard(metrics: &MetricsDb) -> DashboardMetrics {
         MetricClock::Fixture,
         &fixture_catalog(None).unwrap(),
         TypingRate::default(),
+        BreakLength::default(),
     )
     .unwrap()
 }
 
-/// Compare every agent/work field; assert the changed parent and Human fields separately.
+/// Compare every agent/work field; assert the changed parent, known-child,
+/// referenced-parent and Human fields separately.
 fn without_parent_and_human(value: &impl serde::Serialize) -> Value {
     fn strip(value: &mut Value) {
         match value {
             Value::Object(object) => {
-                for key in ["parent", "human_messages", "human_hours_est", "ratio"] {
+                for key in [
+                    "parent",
+                    "known_child",
+                    "child_check",
+                    "referenced_parents",
+                    "human_messages",
+                    "human_hours_est",
+                    // "Your hours" and the leverage over them read the same
+                    // Human classification the parent link changes.
+                    "human_hours",
+                    "leverage",
+                ] {
                     object.remove(key);
                 }
                 object.values_mut().for_each(strip);
@@ -150,6 +163,42 @@ fn without_parent_and_human(value: &impl serde::Serialize) -> Value {
     let mut value = serde_json::to_value(value).unwrap();
     strip(&mut value);
     value
+}
+
+/// The report with only the returned sessions' context: a parent the lanes
+/// do not name gets a context-only entry, asserted separately.
+fn returned_only(report: &DashboardMetrics) -> DashboardMetrics {
+    let mut report = report.clone();
+    let returned: std::collections::BTreeSet<String> = report
+        .lanes
+        .iter()
+        .map(|span| span.session_id.clone())
+        .collect();
+    report
+        .lane_sessions
+        .retain(|session| returned.contains(&session.session_id));
+    report
+}
+
+/// A page's context-only entry for a parent it does not list.
+fn parent_context(
+    native: &str,
+    known_child: bool,
+    parent: Option<SessionParentLink>,
+) -> SessionParentContext {
+    // No display check is run here: a session that is no known child is
+    // still checking.
+    SessionParentContext {
+        session_id: id(native),
+        host: "codex".into(),
+        known_child,
+        parent,
+        child_check: Some(if known_child {
+            SessionChildCheck::Child
+        } else {
+            SessionChildCheck::Checking
+        }),
+    }
 }
 
 fn parent_link(native: &str) -> SessionParentLink {
@@ -213,7 +262,12 @@ fn a_parent_link_excludes_child_human_inputs_and_preserves_agent_work() {
         before_pages
             .iter()
             .flat_map(|page| &page.rows)
-            .all(|row| row.parent.is_none())
+            .all(|row| row.parent.is_none() && row.known_child == Some(false))
+    );
+    assert!(
+        before_pages
+            .iter()
+            .all(|page| page.referenced_parents.is_empty())
     );
     assert!(
         before_dashboard
@@ -253,13 +307,25 @@ fn a_parent_link_excludes_child_human_inputs_and_preserves_agent_work() {
         serde_json::to_value(find(PARENT)).unwrap()["metrics"]["human_messages"],
         json!(1)
     );
-    // The parent is on another page: linked, never moved or injected.
+    // The parent is on another page: linked, never moved or injected. The
+    // child's page carries context only for it, and the parent's own page,
+    // which lists it, carries none.
     assert_eq!(after_pages[0].rows[0].id, id(CHILD));
     assert!(!after_pages[0].rows.iter().any(|row| row.id == id(PARENT)));
     assert!(after_pages[1].rows.iter().any(|row| row.id == id(PARENT)));
     assert_eq!(find(PARENT).parent, None);
-    // An unindexed parent is not a link.
+    assert_eq!(
+        after_pages[0].referenced_parents,
+        [parent_context(PARENT, false, None)]
+    );
+    assert!(after_pages[1].referenced_parents.is_empty());
+    // Each row's own stored bit, read in the page's snapshot.
+    assert_eq!(find(CHILD).known_child, Some(true));
+    assert_eq!(find(PARENT).known_child, Some(false));
+    // An unindexed parent is not a link, and gains no context entry; the
+    // known child keeps its bit.
     assert_eq!(find(ORPHAN).parent, None);
+    assert_eq!(find(ORPHAN).known_child, Some(true));
     // The detail row is the listed row, parent included.
     assert_eq!(
         &session_row(&metrics, 7, now().as_millisecond(), &id(CHILD))
@@ -276,6 +342,11 @@ fn a_parent_link_excludes_child_human_inputs_and_preserves_agent_work() {
     );
     assert_eq!(child[0].rows.len(), 1);
     assert_eq!(child[0].rows[0].parent, Some(parent_link(PARENT)));
+    // A filtered-out parent: context only, never a row.
+    assert_eq!(
+        child[0].referenced_parents,
+        [parent_context(PARENT, false, None)]
+    );
     let parent = pages(&metrics, parent_search);
     assert_eq!(
         serde_json::to_value(&parent).unwrap(),
@@ -290,7 +361,7 @@ fn a_parent_link_excludes_child_human_inputs_and_preserves_agent_work() {
         before_dashboard.tiles.human_messages.value.map(|n| n - 2.0)
     );
     assert_eq!(
-        without_parent_and_human(&after_dashboard),
+        without_parent_and_human(&returned_only(&after_dashboard)),
         without_parent_and_human(&before_dashboard)
     );
     let lane = |native: &str| {
@@ -300,13 +371,32 @@ fn a_parent_link_excludes_child_human_inputs_and_preserves_agent_work() {
             .find(|session| session.session_id == id(native))
     };
     assert_eq!(lane(CHILD).unwrap().parent, Some(parent_link(PARENT)));
+    assert_eq!(lane(CHILD).unwrap().known_child, Some(true));
+    // A known child whose parent is not indexed: the bit without a parent.
     assert_eq!(lane(ORPHAN).unwrap().parent, None);
-    assert!(lane(PARENT).is_none());
+    assert_eq!(lane(ORPHAN).unwrap().known_child, Some(true));
+    // The parent has no span: it gets context only, with nothing measured,
+    // and still no lane.
+    let parent = lane(PARENT).unwrap();
+    assert_eq!(
+        (
+            parent.cost.clone(),
+            parent.parent.clone(),
+            parent.known_child
+        ),
+        (None, None, Some(false))
+    );
     assert!(
         !after_dashboard
             .lanes
             .iter()
             .any(|span| span.session_id == id(PARENT))
+    );
+    assert!(
+        before_dashboard
+            .lane_sessions
+            .iter()
+            .all(|session| session.known_child == Some(false))
     );
 
     // A conflicting later proof withholds the link everywhere, with nothing
@@ -453,6 +543,11 @@ fn a_launched_claude_session_links_its_codex_parent_and_keeps_its_own_work() {
         without_parent_and_human(&before_search)
     );
     assert_eq!(found[0].rows.len(), 1);
+    assert_eq!(found[0].rows[0].known_child, Some(true));
+    assert_eq!(
+        found[0].referenced_parents,
+        [parent_context(PARENT, false, None)]
+    );
 
     let after_dashboard = dashboard(&metrics);
     assert_eq!(
@@ -469,6 +564,7 @@ fn a_launched_claude_session_links_its_codex_parent_and_keeps_its_own_work() {
         .find(|session| session.session_id == CLAUDE_CHILD)
         .unwrap();
     assert_eq!(lane.parent, Some(link));
+    assert_eq!(lane.known_child, Some(true));
 
     // The same launch claimed for another session withholds both, and every
     // report is again exactly what it was before any relation.
@@ -486,5 +582,254 @@ fn a_launched_claude_session_links_its_codex_parent_and_keeps_its_own_work() {
     assert_eq!(
         serde_json::to_value(dashboard(&metrics)).unwrap(),
         serde_json::to_value(&before_dashboard).unwrap()
+    );
+}
+
+const GRANDPARENT: &str = "019a0000-0000-7000-8000-0000000000a1";
+const MIDDLE: &str = "019a0000-0000-7000-8000-0000000000a2";
+const LEAF: &str = "019a0000-0000-7000-8000-0000000000a3";
+
+/// A returned session's direct parent with no span gets one context-only
+/// entry, read in the same snapshot: the bit and the parent it resolved, and
+/// nothing measured. That entry's own parent is not followed, and every
+/// lane, span, measurement and the returned sessions' own context is what it
+/// was before the relations existed.
+#[test]
+fn an_unreturned_direct_parent_gets_context_only_and_no_further_ancestor() {
+    let root = tempfile::tempdir().unwrap();
+    let db = root.path().join("xtrace.db");
+    let old = |hours: i64| (now() - SignedDuration::from_hours(hours)).to_string();
+    {
+        let mut store = Store::open(&db).unwrap();
+        // Two parents with work only before the lane window, and an indexed
+        // grandparent with none in it either.
+        codex(
+            &mut store,
+            GRANDPARENT,
+            0,
+            &[record("grand-h", &old(24 * 5), true, 0)],
+        );
+        codex(
+            &mut store,
+            PARENT,
+            1,
+            &[record("parent-h", &old(24 * 5), true, 0)],
+        );
+        codex(
+            &mut store,
+            MIDDLE,
+            2,
+            &[record("middle-h", &old(24 * 5), true, 0)],
+        );
+        for (native, start, minutes) in [(CHILD, 10, 0), (LEAF, 11, 20)] {
+            codex(
+                &mut store,
+                native,
+                start,
+                &[
+                    record(&format!("{native}-h"), &at(minutes), true, 0),
+                    record(&format!("{native}-a"), &at(minutes + 3), false, 7),
+                ],
+            );
+        }
+    }
+    let metrics = MetricsDb::open(&db).unwrap();
+    let before = dashboard(&metrics);
+    let mut store = Store::open(&db).unwrap();
+    store
+        .record_session_creations(
+            &[
+                // PARENT is a known child whose own parent is not indexed.
+                spawn(PARENT, UNINDEXED),
+                spawn(CHILD, PARENT),
+                // MIDDLE is a known child of an indexed grandparent.
+                spawn(MIDDLE, GRANDPARENT),
+                spawn(LEAF, MIDDLE),
+            ],
+            1,
+        )
+        .unwrap();
+    let after = dashboard(&metrics);
+    assert_eq!(after.lanes, before.lanes);
+    assert_eq!(
+        without_parent_and_human(&returned_only(&after)),
+        without_parent_and_human(&before)
+    );
+    let entry = |native: &str| {
+        after
+            .lane_sessions
+            .iter()
+            .find(|session| session.session_id == id(native))
+    };
+    // The returned sessions and their two unreturned direct parents, in
+    // identifier order; never the grandparent.
+    let mut expected = vec![id(PARENT), id(MIDDLE), id(LEAF), id(CHILD)];
+    expected.sort();
+    let ids: Vec<String> = after
+        .lane_sessions
+        .iter()
+        .map(|session| session.session_id.clone())
+        .collect();
+    assert_eq!(ids, expected);
+    // The returned children: known, each with its verified parent.
+    assert_eq!(entry(CHILD).unwrap().parent, Some(parent_link(PARENT)));
+    assert_eq!(entry(LEAF).unwrap().parent, Some(parent_link(MIDDLE)));
+    // An unreturned parent that is a known child with no verified parent.
+    let parent = entry(PARENT).unwrap();
+    assert_eq!(
+        (
+            parent.known_child,
+            parent.parent.clone(),
+            parent.cost.clone()
+        ),
+        (Some(true), None, None)
+    );
+    // An unreturned parent with its own verified parent, which is not read.
+    let middle = entry(MIDDLE).unwrap();
+    assert_eq!(
+        (
+            middle.known_child,
+            middle.parent.clone(),
+            middle.cost.clone()
+        ),
+        (Some(true), Some(parent_link(GRANDPARENT)), None)
+    );
+    assert!(entry(GRANDPARENT).is_none());
+    assert!(
+        !after
+            .lanes
+            .iter()
+            .any(|span| [id(PARENT), id(MIDDLE), id(GRANDPARENT)].contains(&span.session_id))
+    );
+
+    // Sessions reads the same context for a parent its filtered page does not
+    // list: the direct parent's own bit and resolved parent, never further.
+    let child = pages(&metrics, &CHILD[CHILD.len() - 6..]);
+    assert_eq!(child[0].rows.len(), 1);
+    assert_eq!(child[0].rows[0].known_child, Some(true));
+    assert_eq!(
+        child[0].referenced_parents,
+        [parent_context(PARENT, true, None)]
+    );
+    let leaf = pages(&metrics, &LEAF[LEAF.len() - 6..]);
+    assert_eq!(leaf[0].rows.len(), 1);
+    assert_eq!(
+        leaf[0].referenced_parents,
+        [parent_context(MIDDLE, true, Some(parent_link(GRANDPARENT)))]
+    );
+    // Listed together, every parent is a row and none is context.
+    let every = pages(&metrics, "");
+    assert_eq!(every.len(), 1);
+    assert!(every[0].referenced_parents.is_empty());
+    let known: Vec<(String, Option<bool>)> = every[0]
+        .rows
+        .iter()
+        .map(|row| (row.id.clone(), row.known_child))
+        .collect();
+    for (native, bit) in [
+        (GRANDPARENT, false),
+        (PARENT, true),
+        (MIDDLE, true),
+        (CHILD, true),
+        (LEAF, true),
+    ] {
+        assert!(known.contains(&(id(native), Some(bit))), "{native}");
+    }
+}
+
+// The grandchild's identifier sorts before its parent's, against the walk's
+// level order, so an identifier-ordered read would put it first.
+const OLD_CHILD: &str = "019a0000-0000-7000-8000-0000000000f9";
+const OLD_GRANDCHILD: &str = "019a0000-0000-7000-8000-000000000001";
+
+#[test]
+fn a_listed_parent_carries_its_older_sub_sessions_with_their_whole_cost() {
+    let root = tempfile::tempdir().unwrap();
+    let db = root.path().join("xtrace.db");
+    let old = |hours: i64| (now() - SignedDuration::from_hours(hours)).to_string();
+    {
+        let mut store = Store::open(&db).unwrap();
+        // The parent and one child are active in the lane window.
+        for (native, start, minutes) in [(PARENT, 1, 0), (CHILD, 2, 30)] {
+            codex(
+                &mut store,
+                native,
+                start,
+                &[
+                    record(&format!("{native}-h"), &at(minutes), true, 0),
+                    record(&format!("{native}-a"), &at(minutes + 3), false, 7),
+                ],
+            );
+        }
+        // A child and its own child that ran only days before the window.
+        for (native, start) in [(OLD_CHILD, 3), (OLD_GRANDCHILD, 4)] {
+            codex(
+                &mut store,
+                native,
+                start,
+                &[
+                    record(&format!("{native}-h"), &old(24 * 5), true, 0),
+                    record(&format!("{native}-a"), &old(24 * 5 - 1), false, 5),
+                ],
+            );
+        }
+        // An old session linked to a parent that is not indexed is no one's.
+        codex(
+            &mut store,
+            ORPHAN,
+            5,
+            &[record("orphan-a", &old(24 * 5), false, 5)],
+        );
+        store
+            .record_session_creations(
+                &[
+                    spawn(CHILD, PARENT),
+                    spawn(OLD_CHILD, PARENT),
+                    spawn(OLD_GRANDCHILD, OLD_CHILD),
+                    spawn(ORPHAN, UNINDEXED),
+                ],
+                1,
+            )
+            .unwrap();
+    }
+    let metrics = MetricsDb::open(&db).unwrap();
+    let report = dashboard(&metrics);
+    // The lanes are still only the sessions active in the window.
+    let lanes: std::collections::BTreeSet<&str> = report
+        .lanes
+        .iter()
+        .map(|span| span.session_id.as_str())
+        .collect();
+    assert_eq!(
+        lanes,
+        [id(PARENT), id(CHILD)].iter().map(String::as_str).collect()
+    );
+    // Nearer levels first — the old child, then its own child, though its
+    // identifier sorts first — each with its verified parent and its whole
+    // cost; the orphan is not carried.
+    let older: Vec<_> = report
+        .lane_sub_sessions
+        .iter()
+        .map(|s| {
+            (
+                s.session_id.clone(),
+                s.parent.as_ref().map(|p| p.session_id.clone()),
+                s.cost.as_ref().map(|c| c.selected_observations),
+            )
+        })
+        .collect();
+    assert_eq!(
+        older,
+        [
+            (id(OLD_CHILD), Some(id(PARENT)), Some(1)),
+            (id(OLD_GRANDCHILD), Some(id(OLD_CHILD)), Some(1)),
+        ]
+    );
+    // Nothing was left out, so no listed session counts any.
+    assert!(
+        report
+            .lane_sessions
+            .iter()
+            .all(|s| s.sub_sessions_not_shown.is_none())
     );
 }

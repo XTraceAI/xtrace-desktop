@@ -19,7 +19,9 @@ pub mod environment;
 mod environment_dto;
 pub mod gh_cli;
 pub mod hook_names;
+pub mod human_break;
 pub mod live_codex_status;
+mod local_updates;
 pub mod native_index;
 pub mod pr_analytics;
 mod pr_analytics_dto;
@@ -48,6 +50,13 @@ pub const NATIVE_INDEX_EVENT: &str = "native-index://status";
 /// emitted only after a committed write, never for a batch that changed
 /// nothing.
 pub const PR_REFRESH_EVENT: &str = "prs://refreshed";
+/// Published, with no payload, whenever the automatic pull-request check
+/// starts, finishes or pauses. The frontend reads `prs_auto_check_status` and
+/// the Dashboard reports again.
+pub const PR_AUTO_CHECK_EVENT: &str = "prs://auto-check";
+/// Set to `off` to switch the automatic pull-request check off for a launch.
+/// The manual refresh keeps working.
+pub const PR_AUTO_CHECK_ENV: &str = "XTRACE_PR_AUTO_CHECK";
 /// Published only after a committed purge cleared stored content.
 pub const CONTENT_PURGED_EVENT: &str = "store://content-purged";
 /// Published once after a background pass of the native index committed a
@@ -534,9 +543,8 @@ async fn prs_sessions(
 }
 
 /// Refresh a selection of stored pull requests. The identifiers are storage's
-/// own; no URL, repository or executable crosses this boundary. This is the
-/// only thing that ever starts a refresh: nothing here runs on a timer, at
-/// startup or on focus.
+/// own; no URL, repository or executable crosses this boundary. An automatic
+/// check that is running gives way to this request.
 ///
 /// A batch blocks for as long as its budget allows, so it runs on the command
 /// thread pool rather than the main thread: the window stays responsive and
@@ -556,6 +564,25 @@ fn prs_refresh(
 #[tauri::command]
 fn prs_refresh_cancel(refresh: tauri::State<'_, pr_refresh::PrRefreshService>) -> bool {
     refresh.cancel()
+}
+
+/// Where the automatic pull-request check stands. Reading this starts nothing.
+#[tauri::command]
+fn prs_auto_check_status(
+    refresh: tauri::State<'_, pr_refresh::PrRefreshService>,
+) -> dto::PrAutoCheckStatus {
+    refresh.auto_status()
+}
+
+/// The Dashboard was shown: ask the automatic check to look soon. It decides
+/// for itself whether anything is due; this never waits for it.
+#[tauri::command]
+fn prs_auto_check(
+    refresh: tauri::State<'_, pr_refresh::PrRefreshService>,
+    worker: tauri::State<'_, pr_refresh::AutoCheckWorker>,
+) -> dto::PrAutoCheckStatus {
+    worker.wake();
+    refresh.auto_status()
 }
 
 /// Today's local-calendar summary for the tray. The window is the local day,
@@ -631,6 +658,20 @@ async fn set_typing_speed(app: tauri::AppHandle, wpm: u32) -> Result<u32, String
     write_on_worker(app, move |state| state.set_typing_speed(wpm)).await
 }
 
+/// Minutes between two of your messages that still count as one stretch of
+/// "your hours"; 60 when nothing was saved.
+#[tauri::command]
+async fn human_break(app: tauri::AppHandle) -> Result<u32, String> {
+    read_on_worker(app, |state| state.human_break()).await
+}
+
+/// A whole number of minutes, 5 to 240; anything else is refused before
+/// storage is touched. Returns the length read back after commit.
+#[tauri::command]
+async fn set_human_break(app: tauri::AppHandle, minutes: u32) -> Result<u32, String> {
+    write_on_worker(app, move |state| state.set_human_break(minutes)).await
+}
+
 /// Main window only: opens the fixed official test page in the system
 /// browser. The renderer cannot name a URL, and the app never navigates.
 #[tauri::command]
@@ -641,6 +682,24 @@ async fn open_typing_test(webview_window: tauri::WebviewWindow) -> Result<(), St
     on_worker(OPEN_WORKER_FAILED, typing_speed::open_typing_test).await
 }
 const OPEN_WORKER_FAILED: &str = "the typing test could not be opened in the browser";
+
+/// No URL argument: this only hands the compiled release page to the OS browser.
+#[tauri::command]
+async fn open_public_releases<R: tauri::Runtime>(
+    webview_window: tauri::WebviewWindow<R>,
+) -> Result<(), String> {
+    local_updates::require_main_window(webview_window.label())?;
+    let app = webview_window.app_handle();
+    local_updates::require_local_updates(
+        app.state::<state::AppState>().app_info().fixture.is_some(),
+        updates::updates_enabled(app.clone()),
+    )?;
+    on_worker(
+        "public releases could not be opened in the browser",
+        local_updates::open_public_releases,
+    )
+    .await
+}
 
 /// The renderer confirms first; this clears registered content fields in one
 /// store transaction and never touches original host files. The event is
@@ -741,6 +800,37 @@ pub fn run() {
                 Some(now_ms) => pr_refresh::PrRefreshService::fixture(now_ms, refreshed),
                 None => pr_refresh::PrRefreshService::production(github_cli, refreshed),
             };
+            let auto_checked: pr_refresh::Publish = {
+                let handle = app.handle().clone();
+                Arc::new(move || {
+                    let _ = handle.emit(PR_AUTO_CHECK_EVENT, ());
+                })
+            };
+            let refresh = refresh.with_auto_publish(auto_checked);
+            // The automatic check reads GitHub through the same service, so in
+            // fixture mode it is the same synthetic source and never runs the
+            // GitHub CLI. It runs on one background thread: on window focus,
+            // when the Dashboard is shown and about once an hour.
+            let auto_off = std::env::var_os(PR_AUTO_CHECK_ENV).is_some_and(|value| value == "off");
+            let (refresh, auto_worker) = if auto_off {
+                (
+                    refresh.without_auto_check(),
+                    pr_refresh::AutoCheckWorker::disabled(),
+                )
+            } else {
+                let handle = app.handle().clone();
+                let worker =
+                    pr_refresh::AutoCheckWorker::start(pr_refresh::AUTO_INTERVAL, move || {
+                        let (Some(state), Some(refresh)) = (
+                            handle.try_state::<state::AppState>(),
+                            handle.try_state::<pr_refresh::PrRefreshService>(),
+                        ) else {
+                            return true;
+                        };
+                        !matches!(refresh.auto_check(&state), pr_refresh::AutoRun::Stopped)
+                    });
+                (refresh, worker)
+            };
             // The default rulebook source under the native home startup
             // selected; none in fixture mode. Nothing is read until a view
             // asks.
@@ -772,6 +862,7 @@ pub fn run() {
             app.manage(dashboard::SpanDetailReads::default());
             app.manage(hook_names::HookNameReads::default());
             app.manage(refresh);
+            app.manage(auto_worker);
             tray::setup(app)?;
             Ok(())
         })
@@ -779,6 +870,14 @@ pub fn run() {
             tray::on_window_event(window, event);
             if window.label() != tray::TRAY_LABEL {
                 window_controls::on_window_event(window, event);
+            }
+            // The main window gaining focus asks the automatic pull-request
+            // check to look; it skips the run when one finished recently.
+            if window.label() == tray::MAIN_LABEL
+                && matches!(event, tauri::WindowEvent::Focused(true))
+                && let Some(worker) = window.try_state::<pr_refresh::AutoCheckWorker>()
+            {
+                worker.wake();
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -814,6 +913,8 @@ pub fn run() {
             prs_sessions,
             prs_refresh,
             prs_refresh_cancel,
+            prs_auto_check_status,
+            prs_auto_check,
             today_summary,
             tray_hide,
             tray_open_main,
@@ -823,7 +924,10 @@ pub fn run() {
             purge_stored_content,
             typing_speed,
             set_typing_speed,
-            open_typing_test
+            open_typing_test,
+            open_public_releases,
+            human_break,
+            set_human_break
         ])
         .build(tauri::generate_context!())
         .expect("Could not start XTrace Desktop")
@@ -868,6 +972,9 @@ pub fn run() {
                 // progress is cancelled next, so its child is killed and its
                 // last result persisted while storage is still open; storage
                 // refuses a write after it closes either way.
+                if let Some(worker) = app.try_state::<pr_refresh::AutoCheckWorker>() {
+                    worker.stop();
+                }
                 if let Some(refresh) = app.try_state::<pr_refresh::PrRefreshService>() {
                     refresh.shutdown();
                 }
@@ -935,6 +1042,10 @@ mod tests {
             (
                 "typing_speed",
                 Arc::new(|s: &AppState| s.typing_speed().map(json)),
+            ),
+            (
+                "human_break",
+                Arc::new(|s: &AppState| s.human_break().map(json)),
             ),
             (
                 "session_row",
@@ -1031,6 +1142,7 @@ mod tests {
                         "db_counts"
                             | "content_retention"
                             | "typing_speed"
+                            | "human_break"
                             | "prs_list"
                             | "today_summary"
                     );

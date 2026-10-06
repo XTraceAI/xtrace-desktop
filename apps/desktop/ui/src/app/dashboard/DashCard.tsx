@@ -14,18 +14,24 @@ import '../../styles/metrics.css';
  * controls never clip at the narrowest window.
  */
 export function DashCard({
+  id: cardId,
   title,
   rule,
   context,
+  definition,
   className = '',
   layered = false,
   actions,
   children,
 }: {
+  /** The card's own id, for a control elsewhere that names it. */
+  id?: string;
   title: string;
   rule: RuleId;
   /** Read after the rule in the card's definition. */
   context?: string;
+  /** Plain words shown instead of the rule's own definition. */
+  definition?: string;
   className?: string;
   /** The title row on the canvas, the children in an inset surface panel. */
   layered?: boolean;
@@ -36,13 +42,14 @@ export function DashCard({
   const id = useId();
   return (
     <section
+      id={cardId}
       className={`xt-dash-card ${className}`}
       data-layered={layered || undefined}
       aria-labelledby={id}
     >
       <header className="xt-dash-card-header">
         <h2 id={id}>{title}</h2>
-        <DefinitionInfo ruleId={rule} name={title} context={context} />
+        <DefinitionInfo ruleId={rule} name={title} context={context} text={definition} />
         {actions && <span className="xt-dash-card-end">{actions}</span>}
       </header>
       {layered ? <div className="xt-section-panel">{children}</div> : children}

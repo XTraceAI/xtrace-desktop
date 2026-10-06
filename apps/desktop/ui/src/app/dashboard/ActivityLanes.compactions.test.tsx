@@ -194,7 +194,7 @@ it('keeps resolved counts and ticks across scrolling, then applies genuine refre
   show(['first', 'zero', 'unknown', 'later']);
   await waitFor(() => expect(pending).toHaveLength(2));
   stable();
-  expect(within(row('later')).getByLabelText('Recorded compactions: unknown')).toBeTruthy();
+  expect(within(row('later')).getByLabelText('Recorded compactions: reading')).toBeTruthy();
   await answer(1);
   // Scrolling away and back keeps the answer while a fresh read is pending.
   show(['later']);
@@ -218,7 +218,7 @@ it('keeps resolved counts and ticks across scrolling, then applies genuine refre
   expect(read.mock.calls.every(([ids]) => ids.length <= 50)).toBe(true);
 });
 
-it('replaces retained counts with explicit unknown or failure instead of restoring stale ticks', async () => {
+it('replaces a retained count with a lasting unknown but keeps it through failed reads', async () => {
   const at = (fixture as FixtureExport).dashboards[0].lane_start_ms + 1500;
   const { row, read, source } = setup({
     first: { state: 'count', count: 100, events: [{ at_ms: at, trigger: 'auto' }] },
@@ -237,15 +237,41 @@ it('replaces retained counts with explicit unknown or failure instead of restori
   await within(row('later')).findByLabelText('Recorded compactions: 0');
   show(['first']);
   await within(row('first')).findByLabelText('Recorded compactions: 100');
+  const before = read.mock.calls.length;
   read
     .mockRejectedValueOnce(new Error('source unreadable'))
     .mockRejectedValueOnce(new Error('still unreadable'));
   act(() => source.emit(events.turnCompleted));
-  await within(row('first')).findByLabelText('Recorded compactions: unknown');
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(before + 2));
+  // A failed read is not news about the session: the number and tick stay.
   show(['later']);
   await within(row('later')).findByLabelText('Recorded compactions: 0');
-  expect(within(row('first')).getByLabelText('Recorded compactions: unknown')).toBeTruthy();
-  expect(row('first').querySelector('.xt-compaction-tick')).toBeNull();
+  expect(within(row('first')).getByLabelText('Recorded compactions: 100')).toBeTruthy();
+  expect(row('first').querySelectorAll('.xt-compaction-tick')).toHaveLength(1);
+});
+
+it('keeps a running session’s count when a re-read and its retry both find it replaced', async () => {
+  const { row, read, source } = setup({ first: { state: 'count', count: 7, events: [] } });
+  await screen.findByRole('link', { name: 'Open session first, first' });
+  show(['first']);
+  await within(row('first')).findByLabelText('Recorded compactions: 7');
+  const before = read.mock.calls.length;
+  const replaced: SessionCompactions = {
+    counts: [{ id: 'first', outcome: { state: 'unknown', reason: 'replaced' } }],
+  };
+  read.mockResolvedValueOnce(replaced).mockResolvedValueOnce(replaced);
+  const seen = new Set<string | null>();
+  const watch = new MutationObserver(() =>
+    seen.add(row('first').querySelector('.xt-compaction')?.getAttribute('aria-label') ?? null),
+  );
+  watch.observe(row('first'), { subtree: true, childList: true, attributes: true });
+  act(() => source.emit(events.turnCompleted));
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(before + 2));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  watch.disconnect();
+  expect(within(row('first')).getByLabelText('Recorded compactions: 7')).toBeTruthy();
+  // Never a dash or a spinner in between.
+  expect([...seen].filter((label) => label !== 'Recorded compactions: 7')).toEqual([]);
 });
 
 it('keeps four ticks through a temporary source failure, then applies the fifth with count 101', async () => {
@@ -279,7 +305,7 @@ it('keeps four ticks through a temporary source failure, then applies the fifth 
   expect(row('first').querySelectorAll('.xt-compaction-tick')).toHaveLength(5);
 });
 
-it('clears retained counts on range/source changes and drops cancelled late answers', async () => {
+it('keeps retained counts on a range change, clears them on a source change, and drops cancelled late answers', async () => {
   const { row, read, cancel, view, page, source } = setup({
     first: { state: 'count', count: 100, events: [] },
   });
@@ -293,11 +319,12 @@ it('clears retained counts on range/source changes and drops cancelled late answ
   view.rerender(page('14d'));
   await waitFor(() => expect(pending).toHaveLength(2));
   expect(cancel).toHaveBeenCalled();
-  expect(within(row('first')).getByLabelText('Recorded compactions: unknown')).toBeTruthy();
+  // A count does not depend on the range, so it stays while the new range reads.
+  expect(within(row('first')).getByLabelText('Recorded compactions: 100')).toBeTruthy();
   await act(async () =>
     pending[0]({ counts: [{ id: 'first', outcome: { state: 'count', count: 999, events: [] } }] }),
   );
-  expect(within(row('first')).getByLabelText('Recorded compactions: unknown')).toBeTruthy();
+  expect(within(row('first')).getByLabelText('Recorded compactions: 100')).toBeTruthy();
   await act(async () =>
     pending[1]({ counts: [{ id: 'first', outcome: { state: 'count', count: 2, events: [] } }] }),
   );
@@ -317,11 +344,11 @@ it('clears retained counts on range/source changes and drops cancelled late answ
   await screen.findByRole('link', { name: 'Open session first, first' });
   show(['first']);
   await waitFor(() => expect(pending).toHaveLength(4));
-  expect(within(row('first')).getByLabelText('Recorded compactions: unknown')).toBeTruthy();
+  expect(within(row('first')).getByLabelText('Recorded compactions: reading')).toBeTruthy();
   await act(async () =>
     pending[2]({ counts: [{ id: 'first', outcome: { state: 'count', count: 888, events: [] } }] }),
   );
-  expect(within(row('first')).getByLabelText('Recorded compactions: unknown')).toBeTruthy();
+  expect(within(row('first')).getByLabelText('Recorded compactions: reading')).toBeTruthy();
   await act(async () =>
     pending[3]({ counts: [{ id: 'first', outcome: { state: 'count', count: 3, events: [] } }] }),
   );

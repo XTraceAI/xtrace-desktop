@@ -111,6 +111,7 @@ export const unpricedText: Record<MetricUnpricedReason, string> = {
   missing_cache_split: '5m/1h cache-write split not recorded',
   inconsistent_cache_split: 'cache-write split is inconsistent',
   missing_rate: 'catalog has no rate for this usage',
+  missing_timestamp: 'no time recorded',
 };
 
 export const usageGapText: Record<MetricUsageGap, string> = {
@@ -153,23 +154,67 @@ export const unavailableReason = (
   fallback: string,
 ) => unavailable.find((item) => item.key === key)?.reason ?? fallback;
 
-/** How many samples a tile's windows drew on, in the report's own unit. */
-const sampleText = (tile: MetricTile) =>
-  tile.current_n === null
-    ? null
-    : `n = ${tile.current_n.toLocaleString('en-US')} ${tile.sample_unit}; previous period ${tile.previous_n?.toLocaleString('en-US') ?? '—'}.`;
+/**
+ * Said when the report hides a tile's change against the previous period:
+ * either period has fewer than five samples, or the previous value is zero.
+ */
+export const DELTA_HIDDEN =
+  'No change shown: too little data in this or the last period, or the last period was zero.';
 
 /**
- * Everything the report says about one tile beyond its number: why it is
- * unmeasured, the note it carries, whatever the caller adds, its sample counts
- * and, when the report suppressed the change, why no change is shown. One
- * wording, so a metric reads the same wherever its tile appears.
+ * The report's fixed "no number" reasons in everyday words. A reason the
+ * report adds later and this table does not know is shown as written.
+ */
+export const plainReasons: Record<string, string> = {
+  'Agent time is unmeasured': 'Agent time could not be measured in this range.',
+  'Human classification or required typing length is unmeasured':
+    'Could not tell which messages are yours or how long they were.',
+  'Human classification is unmeasured': 'Could not tell which messages are yours.',
+  'No positive-duration active spans': 'No measurable agent activity in this range.',
+  'No measurable eligible hands-off stretches':
+    'No stretch where an agent worked on its own in this range.',
+  'Sessions are unmeasured': 'Sessions could not be counted in this range.',
+  'Tool count is unmeasured': 'Tool calls could not be counted in this range.',
+  'Selected usage counters are absent or incomplete': 'Some token counts are missing.',
+  'Selected usage is absent or unpriced; see cost reasons':
+    'Some usage has no price; the cost details say why.',
+  'Rule-fire data is unavailable': 'Rule fire data is not available.',
+  "Your hours are unknown: a message's sender is not classified":
+    'Could not tell which messages are yours, so your hours are unknown.',
+  'You sent no messages to agents in this range': 'You sent no messages to agents in this range.',
+};
+
+/** A report reason for a missing number, as one plain sentence. */
+export const plainReason = (reason: string) => plainReasons[reason] ?? sentence(reason);
+
+/** Why a tile has no number, in plain words; nothing when it has one. */
+export const tileReason = (tile: MetricTile) =>
+  tile.value === null && tile.reason ? plainReason(tile.reason) : undefined;
+
+/**
+ * The one short note a tile's definition adds after the rule's summary (and,
+ * for a tile with no number, after the reason the tile itself shows): the
+ * caller's own note, otherwise why no change is shown. The report's longer
+ * method notes are not repeated; the rule's summary says what the number means.
  */
 export function tileTip(tile: MetricTile, ...extra: (string | null | undefined)[]) {
-  const parts = [tile.reason, tile.note, ...extra, sampleText(tile)];
-  if (tile.current_n !== null && tile.delta.suppressed)
-    parts.push(
-      'Change vs the previous period is hidden: a window has fewer than 5 samples or the previous value is zero.',
-    );
-  return parts.filter(Boolean).join(' ');
+  const note = extra.find(Boolean);
+  if (note) return note;
+  if (tile.value !== null && tile.current_n !== null && tile.delta.suppressed) return DELTA_HIDDEN;
+  return undefined;
+}
+
+/** A report phrase as a sentence: capitalised and closed with a full stop. */
+export const sentence = (text: string) => {
+  const trimmed = text.trim();
+  const capital = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+  return /[.!?]$/.test(capital) ? capital : `${capital}.`;
+};
+
+/** Which surfaces a hands-off figure leaves out, in one short sentence. */
+export function excludedNote(surfaces: readonly MetricExcludedSurface[]) {
+  if (surfaces.length === 0) return undefined;
+  if (surfaces.length === 1)
+    return `Leaves out ${surfaceLabel(surfaces[0].host, surfaces[0].surface)}: its timestamps are too coarse.`;
+  return `Leaves out ${surfaces.length} apps whose timestamps are too coarse.`;
 }

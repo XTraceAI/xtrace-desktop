@@ -1,14 +1,13 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import fixture from '../fixtures/F1.json' with { type: 'json' };
-import { syntheticEnvironment } from '../src/app/dashboard/environment.synthetic';
 import { withPrEffort, type SectionSpec } from '../src/app/dashboard/pr-effort.synthetic';
 import type { FixtureExport } from '../src/data/generated/FixtureExport';
 
 /**
  * Every limitation at once, over test-only synthetic data served in place of
  * the F1 export (not real history, not a design sample): an incomplete index,
- * untimed history, partial pricing, an unresolved session and unresolved
- * environment observations. Each keeps a short visible state while its
+ * untimed history, partial pricing, an unresolved session and an unknown
+ * merged count. Each keeps a short visible state while its
  * explanation is one native disclosure away, reachable by keyboard, inside its
  * card and the viewport, in both schemes at both native widths.
  */
@@ -39,7 +38,6 @@ combined.dashboards = combined.dashboards.map((report) => ({
     ],
   },
 }));
-combined.environments = combined.environments.map(syntheticEnvironment);
 combined.native_index = {
   ...combined.native_index,
   phase: { phase: 'ready' },
@@ -89,17 +87,6 @@ async function openByKeyboard(page: Page, summary: Locator) {
   await page.keyboard.press('Enter');
 }
 /** Every drawn part of `inner` sits inside `outer`, horizontally. */
-/** A header triangle sits at its card's top right: the header's last control, at its right edge. */
-async function expectTopRight(flag: Locator, card: Locator) {
-  const [box, header] = await Promise.all([
-    flag.boundingBox(),
-    card.locator('.xt-dash-card-header').boundingBox(),
-  ]);
-  expect(box!.y).toBeLessThan(header!.y + header!.height);
-  expect(header!.x + header!.width - (box!.x + box!.width)).toBeLessThanOrEqual(20);
-  expect(box!.width).toBeLessThanOrEqual(20);
-}
-
 async function inside(inner: Locator, outer: Locator) {
   const frame = await outer.evaluate((element) => {
     const box = element.getBoundingClientRect();
@@ -127,9 +114,9 @@ for (const [width, viewportHeight] of [
     }, info) => {
       await open(page, '/dashboard', width, viewportHeight, scheme);
       const effort = card(page, 'Effort');
-      const environment = card(page, 'Environment');
+      const overview = card(page, 'Overview');
       await expect(effort.getByTestId('effort-by-type')).toBeVisible();
-      await expect(environment.getByTestId(/^environment-(columns|empty)$/)).toBeVisible();
+      await expect(overview.getByTestId('overview-tile')).toHaveCount(4);
       await page.evaluate(() => document.fonts.ready);
 
       await page
@@ -142,7 +129,7 @@ for (const [width, viewportHeight] of [
       await expect(effort.getByRole('button', { name: /^Unresolved type/ })).toHaveCount(0);
       const notes = page.getByTestId('effort-notes');
       await expect(notes).toHaveCount(0);
-      const method = effort.getByRole('button', { name: 'Method' });
+      const method = effort.getByRole('button', { name: 'Details', exact: true });
       expect(await height(method)).toBeLessThanOrEqual(ONE_LINE);
       // Partial pricing is a priced subtotal marked +, on the total and on its
       // day, with the unpriced responses named.
@@ -171,60 +158,28 @@ for (const [width, viewportHeight] of [
       await expect(method).toBeFocused();
       await page.mouse.move(0, 0);
 
-      // Environment: the fixed scope (the strip column's header) and the unresolved count read
-      // in view; the strip note is closed.
-      const legend = environment.getByTestId('environment-strip-legend');
-      await expect(legend).toHaveText('14 days');
-      await expect(legend).toHaveAccessibleName('14 days · activity strips, fixed 14 local days');
-      expect(await height(legend)).toBeLessThanOrEqual(ONE_LINE);
-      const note = page.getByTestId('environment-strip-note');
-      await expect(note).toHaveCount(0);
-      const environmentFlag = environment.getByRole('button', {
-        name: 'Unresolved attribution: 38 unresolved observations, including untimed',
-      });
-      await expect(environmentFlag).toBeVisible();
-      await expectTopRight(environmentFlag, environment);
-      await expect(environment.getByRole('note')).toHaveCount(0);
-      await expect(environment.getByText('Inventory unknown')).toHaveCount(0);
-      const closed = {
-        effort: await height(effort),
-        environment: await height(environment),
-      };
-      await openByKeyboard(page, legend);
-      const strips = page.getByRole('dialog', { name: 'Activity strips' });
-      await expect(note).toBeVisible();
-      await expect(note).toContainText('fixed 14 local days');
-      await expect(note).toContainText('installed components are unknown');
-      expect(await inside(note, strips)).toBe(true);
-      await page.keyboard.press('Escape');
-      await expect(strips).toHaveCount(0);
-      await expect(legend).toBeFocused();
-      // Focus alone reads the unresolved counts, the untimed ones apart; opening states them whole.
-      await environmentFlag.focus();
+      // Overview: the unknown merged count is said in words, one line, and its
+      // explanation opens from the tile's definition on focus, without moving
+      // anything.
+      const closed = { effort: await height(effort), overview: await height(overview) };
+      const merged = overview.getByTestId('overview-tile').filter({ hasText: 'Merged PRs' });
+      await expect(merged.getByTestId('overview-value')).toHaveText('1so far');
+      await expect(merged.locator('.xt-overview-sub')).toHaveText(
+        /^1 (not checked yet|could not be checked)$/,
+      );
+      expect(await height(merged.locator('.xt-overview-sub'))).toBeLessThanOrEqual(ONE_LINE);
+      const mergedInfo = overview.getByRole('button', { name: 'Merged PRs definition' });
+      await mergedInfo.focus();
       const gist = page.getByRole('tooltip');
-      await expect(gist).toContainText('38 unresolved observations, including untimed');
-      await expect(gist).toContainText('Untimed, in no selected range: codex');
-      await page.keyboard.press('Enter');
-      const unresolved = page.getByRole('dialog', { name: 'Unresolved attribution' });
-      await expect(unresolved.getByRole('list', { name: 'Untimed observations' })).toBeVisible();
+      await expect(gist).toContainText(/1 PR (not checked yet|could not be checked)/);
+      expect(await inside(gist, page.locator('body'))).toBe(true);
       await page.keyboard.press('Escape');
-      await expect(unresolved).toHaveCount(0);
-      await expect(environmentFlag).toBeFocused();
-      await legend.focus();
-      // Tab continues from the legend, in the column header, to the list under it and then to
-      // the dialogs beneath.
-      await page.keyboard.press('Tab');
-      await expect(
-        environment.getByRole('list', { name: /^Most-called identities/ }),
-      ).toBeFocused();
-      await page.keyboard.press('Tab');
-      await expect(
-        environment.getByRole('button', { name: 'Observed identities · 11' }),
-      ).toBeFocused();
+      await expect(gist).toHaveCount(0);
+      await expect(mergedInfo).toBeFocused();
 
       const measured = {
         closed,
-        open: { effort: await height(effort), environment: await height(environment) },
+        open: { effort: await height(effort), overview: await height(overview) },
         scrollWidth: await page.evaluate(() => document.documentElement.scrollWidth),
       };
       await info.attach('dashboard-geometry', { body: JSON.stringify(measured, null, 2) });

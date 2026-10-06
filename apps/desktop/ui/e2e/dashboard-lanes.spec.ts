@@ -158,7 +158,7 @@ for (const [width, height] of [
         });
         const scroll = document.querySelector<HTMLElement>('.xt-lanes .xt-table-scroll')!;
         const costHeader = table.querySelector<HTMLElement>(
-          '.xt-table-metric-header[aria-label^="Cost over"]',
+          '.xt-table-metric-header[aria-label^="Whole-session cost"]',
         )!;
         const header = [
           ...table.querySelectorAll<HTMLElement>('.xt-table-head [role="columnheader"]'),

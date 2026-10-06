@@ -1,11 +1,11 @@
 import { useEffect, useSyncExternalStore } from 'react';
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { UpdateController, type UpdateState } from './update-controller';
 import '../styles/update-notice.css';
 
 const controller = new UpdateController({
-  enabled: async () =>
-    isTauri() && !import.meta.env.DEV && (await invoke<boolean>('updates_enabled')),
+  // The data source already confirmed native updater mode before mounting us.
+  enabled: async () => true,
   check: async (options) => (await import('@tauri-apps/plugin-updater')).check(options),
   restart: () => invoke('restart_after_update'),
 });
@@ -16,11 +16,12 @@ if (typeof window !== 'undefined')
   window.addEventListener('pagehide', () => controller.dispose(), { once: true });
 if (import.meta.hot) import.meta.hot.dispose(() => controller.dispose());
 
-export function UpdateNotice() {
+export function UpdateNotice({ enabled }: { enabled: boolean }) {
   const state = useSyncExternalStore(controller.subscribe, controller.snapshot);
   useEffect(() => {
-    controller.start();
-  }, []);
+    if (enabled) controller.start();
+  }, [enabled]);
+  if (!enabled) return null;
   return (
     <UpdateNoticeView
       state={state}

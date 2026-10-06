@@ -54,11 +54,7 @@ const states: Record<string, NativeIndexStatus> = {
         sessions_imported: 12_345,
         sessions_partial: 12,
         sessions_skipped: 3,
-        skipped_conversations: [
-          { conversation_id: null, reason: 'unknown' },
-          { conversation_id: null, reason: 'unknown' },
-          { conversation_id: null, reason: 'unknown' },
-        ],
+        skipped_conversations: [],
         skipped_conversations_omitted: 0,
         records_new: 1_234_567,
         diagnostics: 4,

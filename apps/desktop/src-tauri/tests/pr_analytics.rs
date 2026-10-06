@@ -1394,9 +1394,16 @@ mod native_fixture {
         assert!(
             matches!(
                 (before[0], before[1]),
-                (11, 11) | (12, 12) | (13, 13) | (14, 14) | (15, 15) | (16, 16) | (17, 17)
+                (11, 11)
+                    | (12, 12)
+                    | (13, 13)
+                    | (14, 14)
+                    | (15, 15)
+                    | (16, 16)
+                    | (17, 17)
+                    | (18, 18)
             ),
-            "schema 11 to 17"
+            "schema 11 to 18"
         );
         assert_eq!((before[10], before[11]), (0, 0), "content and confirmed");
 
@@ -1571,7 +1578,7 @@ mod native_fixture {
             println!("{name}: {} -> {}", before[index], after[index]);
         }
         let added: Vec<i64> = before.iter().zip(&after).map(|(b, a)| a - b).collect();
-        assert_eq!((after[0], after[1]), (17, 17), "schema 17");
+        assert_eq!((after[0], after[1]), (18, 18), "schema 18");
         // `seeded`'s, then the adjunct's: one zero member and three on the
         // excluded surface, each degenerate session's three assistant records
         // with one usage row and one tool call apiece.

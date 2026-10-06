@@ -33,9 +33,11 @@
 //!   termination signals, and it is given up exactly once, afterwards.
 //! * Failures are the conservative closed codes of [`PrRefreshError`]. A
 //!   process that ran and exited nonzero is `execution_failed`, whatever it
-//!   wrote: this client never guesses "not found", "unauthorized" or "rate
-//!   limited" from a stderr substring. Those three codes exist in storage for
-//!   an owner that can establish them, and are never produced here.
+//!   wrote, with one exception: exit code 4, which `gh help exit-codes`
+//!   documents as "authentication required", is `unauthorized`. That code is
+//!   read from the exit status alone; this client never guesses anything from
+//!   stderr text, and never produces "not found" or "rate limited". Those two
+//!   codes exist in storage for an owner that can establish them.
 //! * A response is accepted only in its exact documented shape, and only when
 //!   it names the pull request that was requested. Field rules are not
 //!   restated here: the parsed result is checked by
@@ -288,19 +290,40 @@ fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<S
     <Option<String> as serde::Deserialize>::deserialize(deserializer)
 }
 
+/// How a completed run exited, judged by its exit status alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Exited {
+    Success,
+    /// Exit code 4: `gh help exit-codes` documents it as "authentication
+    /// required".
+    NeedsAuthentication,
+    /// Any other nonzero exit, or a death by signal.
+    Failed,
+}
+
+/// gh's documented exit code for "authentication required".
+const GH_EXIT_AUTH: i32 = 4;
+
 /// Turn one completed run into a typed outcome. Everything a response must
 /// satisfy beyond its own shape and identity is the storage layer's
 /// validation, not a second copy of those rules.
 fn interpret(
     identity: &PrIdentity,
     attempted_at: i64,
-    succeeded: bool,
+    exited: Exited,
     stdout: &[u8],
 ) -> RefreshOutcome {
-    if !succeeded {
+    match exited {
+        Exited::Success => {}
+        // gh's documented exit code for a command that needs authentication.
+        Exited::NeedsAuthentication => {
+            return failure(identity, attempted_at, PrRefreshError::Unauthorized);
+        }
         // The process ran and refused. Which refusal it was is not decidable
         // from its output here, so it is reported as one execution failure.
-        return failure(identity, attempted_at, PrRefreshError::ExecutionFailed);
+        Exited::Failed => {
+            return failure(identity, attempted_at, PrRefreshError::ExecutionFailed);
+        }
     }
     let invalid = || failure(identity, attempted_at, PrRefreshError::InvalidResponse);
     let Ok(text) = std::str::from_utf8(stdout) else {
@@ -375,7 +398,7 @@ mod unix {
         };
         match collect(child, client.limits(), cancel) {
             Err(error) => failure(identity, attempted_at, error),
-            Ok((succeeded, stdout)) => super::interpret(identity, attempted_at, succeeded, &stdout),
+            Ok((exited, stdout)) => super::interpret(identity, attempted_at, exited, &stdout),
         }
     }
 
@@ -544,15 +567,15 @@ mod unix {
         }
     }
 
-    /// Await the child and its drains within the bounds. Returns whether the
-    /// child exited successfully and the retained stdout; a bound that ended
+    /// Await the child and its drains within the bounds. Returns how the
+    /// child exited and the retained stdout; a bound that ended
     /// the attempt returns its code instead, with the group terminated and
     /// the child reaped.
     fn collect(
         mut child: Child,
         limits: super::Limits,
         cancel: Option<&CancelFlag>,
-    ) -> Result<(bool, Vec<u8>), PrRefreshError> {
+    ) -> Result<(super::Exited, Vec<u8>), PrRefreshError> {
         // The leader's pid is also its process group's ID. Nothing below
         // reaps it — the poll observes its exit without consuming it — so
         // this ID stays reserved until the single reap at the end.
@@ -610,10 +633,16 @@ mod unix {
         // Nothing is left to signal: the child exited and every writer has
         // closed its pipe. This is the one reap of the whole attempt, and
         // what it returns is the exit status the response is judged by.
-        let succeeded = child.wait().is_ok_and(|status| status.success());
+        let exited = match child.wait() {
+            Ok(status) if status.success() => super::Exited::Success,
+            Ok(status) if status.code() == Some(super::GH_EXIT_AUTH) => {
+                super::Exited::NeedsAuthentication
+            }
+            _ => super::Exited::Failed,
+        };
         let output = stdout.take();
         drop(stderr.take());
-        Ok((succeeded, output))
+        Ok((exited, output))
     }
 
     /// Wait out the drains of a terminated group, then let them go. Only a

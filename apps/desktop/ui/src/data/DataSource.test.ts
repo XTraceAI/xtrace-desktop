@@ -30,12 +30,90 @@ async function nativeSource() {
   return source;
 }
 
+it.each([true, false])(
+  'offers local release information in native main with DEV=%s and sends no URL',
+  async (dev) => {
+    vi.stubEnv('DEV', dev);
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue({ label: 'main' } as WebviewWindow);
+    vi.mocked(invoke).mockImplementation(async (command) =>
+      command === 'updates_enabled' ? false : { fixture: null },
+    );
+    const native = await nativeSource();
+    expect(native.localUpdates).toBeDefined();
+    expect(native.publicUpdates).toBeUndefined();
+    expect(invoke).not.toHaveBeenCalled();
+    await native.localUpdates!.viewPublicReleases();
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('open_public_releases');
+    expect(new TauriDataSource().localUpdates).toBeUndefined();
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue({ label: 'tray' } as WebviewWindow);
+    expect((await nativeSource()).localUpdates).toBeUndefined();
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue({ label: 'main' } as WebviewWindow);
+    vi.mocked(invoke).mockResolvedValue({ fixture: 'F1' });
+    expect((await nativeSource()).localUpdates).toBeUndefined();
+    expect((new FixtureDataSource(shell) as DataSource).localUpdates).toBeUndefined();
+    vi.mocked(isTauri).mockReturnValue(false);
+    vi.mocked(invoke).mockClear();
+    expect((await createDataSource()).localUpdates).toBeUndefined();
+    expect(invoke).not.toHaveBeenCalled();
+  },
+);
+
+it.each([true, false])('selects the public overlay updater with DEV=%s', async (dev) => {
+  vi.stubEnv('DEV', dev);
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.mocked(getCurrentWebviewWindow).mockReturnValue({ label: 'main' } as WebviewWindow);
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === 'updates_enabled' ? true : { fixture: null },
+  );
+  const source = await nativeSource();
+  expect(source.localUpdates).toBeUndefined();
+  expect(source.publicUpdates).toBe(true);
+  expect(invoke).not.toHaveBeenCalled();
+  vi.mocked(getCurrentWebviewWindow).mockReturnValue({ label: 'tray' } as WebviewWindow);
+  expect((await nativeSource()).publicUpdates).toBeUndefined();
+  expect(new TauriDataSource().publicUpdates).toBeUndefined();
+  expect(new TauriDataSource(false, true).publicUpdates).toBeUndefined();
+});
+
+it('exposes neither update capability after a mode read failure, then selects a successful read', async () => {
+  vi.stubEnv('DEV', false);
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.mocked(getCurrentWebviewWindow).mockReturnValue({ label: 'main' } as WebviewWindow);
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === 'updates_enabled') throw new Error('mode unavailable');
+    return { fixture: null };
+  });
+  const failed = await nativeSource();
+  expect(failed.liveSessions).toBeDefined();
+  expect(failed.localUpdates).toBeUndefined();
+  expect(failed.publicUpdates).toBeUndefined();
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === 'updates_enabled' ? false : { fixture: null },
+  );
+  expect((await nativeSource()).localUpdates).toBeDefined();
+});
+
+it.each(['F1', undefined])(
+  'fixture or unknown app mode %s exposes neither update capability',
+  async (fixture) => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue({ label: 'main' } as WebviewWindow);
+    vi.mocked(invoke).mockResolvedValue({ fixture });
+    const source = await createDataSource();
+    expect(source.localUpdates).toBeUndefined();
+    expect(source.publicUpdates).toBeUndefined();
+    expect(invoke).toHaveBeenCalledExactlyOnceWith(commands.appInfo);
+  },
+);
+
 it('enables live sessions only when native app_info confirms live mode', async () => {
   vi.mocked(isTauri).mockReturnValue(true);
   vi.stubEnv('VITE_XTRACE_FIXTURE', 'F1');
   vi.mocked(invoke).mockResolvedValue({ ...shell.app_info, fixture: null });
   const source = await createDataSource();
-  expect(invoke).toHaveBeenCalledExactlyOnceWith(commands.appInfo);
+  expect(invoke).toHaveBeenNthCalledWith(1, commands.appInfo);
+  expect(invoke).toHaveBeenNthCalledWith(2, 'updates_enabled');
   expect(source.liveSessions).toBeDefined();
   const registered = { view_id: 'native-issued-token', states: [] };
   vi.mocked(invoke).mockResolvedValue(registered);

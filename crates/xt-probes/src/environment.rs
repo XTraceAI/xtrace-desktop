@@ -13,15 +13,14 @@
 //!   recursively, reads a transcript, or activates anything. Every path it
 //!   opens is one of the documented paths below, joined onto a root the caller
 //!   supplied. Nothing is discovered; nothing is implicit.
-//! * It never returns hook-command, argument, environment, credential, URL
-//!   or installation-path field values. Only structural names, counts and
-//!   statuses leave this module; a name can itself contain path-like text.
+//! * It never returns a hook command, an argument vector, an environment
+//!   value, a credential, a URL or an installation path. Only structural
+//!   names, counts and statuses leave this module.
 //! * It follows no link. Every component from the filesystem root to a
 //!   supplied root, and from that root to each documented source and to each
 //!   directory entry, is examined without being followed; a link anywhere on
-//!   that path is skipped with the `symlink` reason. Directory handles pin each
-//!   parent before a child is inspected or opened. An opened file must be the
-//!   object found through that parent; replacement links cannot redirect IO.
+//!   that path is skipped with the `symlink` reason. An opened file must be the
+//!   object the walk found, and the walk is repeated after the read.
 //! * Its reads are bounded by construction: at most [`MAX_SOURCE_BYTES`] + 1
 //!   bytes are consumed from a file and at most [`MAX_SOURCE_ENTRIES`] + 1
 //!   entries are enumerated from a directory, whatever either later becomes.
@@ -56,14 +55,10 @@
 use serde::{Deserialize, Serialize, de::IgnoredAny};
 use std::{
     collections::BTreeMap,
-    ffi::OsString,
-    io::{self, ErrorKind, Read},
+    fs,
+    io::{ErrorKind, Read},
     path::{Component, Path, PathBuf},
 };
-
-#[path = "environment_io.rs"]
-mod environment_io;
-use environment_io::{DirHandle, Metadata};
 
 /// Largest supported registry file. A larger file is reported unsupported
 /// rather than read: this probe must never load an unbounded document.
@@ -444,29 +439,15 @@ fn clamp(value: usize) -> u32 {
 impl Reading {
     fn read_root(&mut self, scope: RootScope, index: usize, root: &Path) {
         let index = clamp(index);
-        let opened = DirHandle::open_root(root);
-        let state = match &opened {
-            Ok(_) => RootState::Read,
-            Err(error) => match io_status(error) {
-                SourceStatus::Missing => RootState::Missing,
-                SourceStatus::Unsupported {
-                    reason: UnsupportedReason::Symlink,
-                } => RootState::Symlink,
-                SourceStatus::Unsupported {
-                    reason: UnsupportedReason::NotDirectory,
-                } => RootState::NotDirectory,
-                _ => RootState::Unreadable,
-            },
-        };
+        let state = root_state(root);
         self.roots.push(RootObservation {
             scope,
             index,
             state,
         });
-        let Ok(root) = opened else {
+        if state != RootState::Read {
             return;
-        };
-        let root = &root;
+        }
         self.claude_skills(scope, index, Known::new(root, ".claude/skills"));
         match scope {
             RootScope::Home => {
@@ -562,7 +543,21 @@ impl Reading {
     fn claude_skills(&mut self, scope: RootScope, root_index: u32, known: Known<'_>) {
         let stated = match list_directory(known) {
             Err(status) => Stated::status(status),
-            Ok(listing) => stated_skills(listing),
+            Ok(listing) => {
+                let accepted = listing
+                    .entries
+                    .into_iter()
+                    .filter(|(_, kind)| kind.is_dir())
+                    .filter(|(name, _)| {
+                        matches!(
+                            fs::symlink_metadata(listing.path.join(name).join("SKILL.md")),
+                            Ok(metadata) if metadata.is_file()
+                        )
+                    })
+                    .filter_map(|(name, _)| structural_name(&name).map(|name| (name, None)))
+                    .collect();
+                Stated::counted(accepted, listing.stated, listing.limited)
+            }
         };
         self.record(
             ProbeHost::Claude,
@@ -908,127 +903,155 @@ fn structural_name(raw: &str) -> Option<String> {
     Some(name.to_owned())
 }
 
-/// Map only filesystem outcomes; no path or OS error text leaves the probe.
-fn io_status(error: &io::Error) -> SourceStatus {
-    #[cfg(unix)]
-    match error.raw_os_error() {
-        Some(libc::ELOOP) => {
-            return SourceStatus::Unsupported {
-                reason: UnsupportedReason::Symlink,
-            };
+/// Whether a supplied root can be read. Every component from the filesystem
+/// root down to the supplied root is examined without following it, so a
+/// root reached through a linked ancestor is refused, not resolved.
+fn root_state(root: &Path) -> RootState {
+    let mut prefixes: Vec<&Path> = root.ancestors().collect();
+    prefixes.reverse();
+    for prefix in prefixes {
+        if prefix.parent().is_none() {
+            continue;
         }
-        Some(libc::ENOTDIR) => {
-            return SourceStatus::Unsupported {
-                reason: UnsupportedReason::NotDirectory,
-            };
+        match fs::symlink_metadata(prefix) {
+            Err(error) if error.kind() == ErrorKind::NotFound => return RootState::Missing,
+            Err(_) => return RootState::Unreadable,
+            Ok(metadata) if metadata.file_type().is_symlink() => return RootState::Symlink,
+            Ok(metadata) if !metadata.is_dir() => return RootState::NotDirectory,
+            Ok(_) => {}
         }
-        Some(libc::ENXIO) => {
-            return SourceStatus::Unsupported {
-                reason: UnsupportedReason::NotRegularFile,
-            };
-        }
-        _ => {}
     }
-    if error.kind() == ErrorKind::NotFound {
-        SourceStatus::Missing
-    } else {
-        SourceStatus::Unreadable
-    }
+    RootState::Read
 }
 
-/// A documented path relative to the already opened supplied root.
+/// A documented path below a supplied root, kept as its components so each
+/// one can be examined before anything under it is opened.
 #[derive(Clone, Copy)]
 struct Known<'a> {
-    root: &'a DirHandle,
+    root: &'a Path,
     relative: &'static str,
 }
 
 impl<'a> Known<'a> {
-    fn new(root: &'a DirHandle, relative: &'static str) -> Self {
+    fn new(root: &'a Path, relative: &'static str) -> Self {
         Self { root, relative }
     }
 
-    fn locate(self) -> Result<Located, SourceStatus> {
+    /// Walk the documented components one at a time without following any
+    /// of them. A linked component, intermediate or final, is refused with
+    /// the `symlink` reason; a missing one makes the source `missing`; an
+    /// intermediate that is not a directory cannot hold the source.
+    fn locate(self) -> Result<(PathBuf, fs::Metadata), SourceStatus> {
+        let mut path = self.root.to_path_buf();
         let mut parts = self.relative.split('/').peekable();
-        let mut parent = None;
         while let Some(part) = parts.next() {
-            let directory = parent.as_ref().unwrap_or(self.root);
-            let name = OsString::from(part);
-            let metadata = directory
-                .metadata(&name)
-                .map_err(|error| io_status(&error))?;
-            if metadata.is_symlink() {
+            path.push(part);
+            let metadata = match fs::symlink_metadata(&path) {
+                Err(error) if error.kind() == ErrorKind::NotFound => {
+                    return Err(SourceStatus::Missing);
+                }
+                Err(_) => return Err(SourceStatus::Unreadable),
+                Ok(metadata) => metadata,
+            };
+            if metadata.file_type().is_symlink() {
                 return Err(SourceStatus::Unsupported {
                     reason: UnsupportedReason::Symlink,
                 });
             }
             if parts.peek().is_none() {
-                // Even a source directly under the root owns its parent handle.
-                let parent = match parent {
-                    Some(parent) => parent,
-                    None => self
-                        .root
-                        .clone_handle()
-                        .map_err(|error| io_status(&error))?,
-                };
-                return Ok(Located {
-                    parent,
-                    name,
-                    metadata,
+                return Ok((path, metadata));
+            }
+            if !metadata.is_dir() {
+                return Err(SourceStatus::Unsupported {
+                    reason: UnsupportedReason::NotDirectory,
                 });
             }
-            parent = Some(
-                directory
-                    .open_directory(&name, metadata)
-                    .map_err(|error| io_status(&error))?,
-            );
         }
         Err(SourceStatus::Missing)
     }
-}
 
-/// The final name and identity are always paired with their pinned parent.
-struct Located {
-    parent: DirHandle,
-    name: OsString,
-    metadata: Metadata,
-}
-
-impl Located {
-    fn confirm(&self) -> Result<(), SourceStatus> {
-        self.parent
-            .confirm(&self.name, self.metadata)
-            .map_err(|error| io_status(&error))
+    /// After a read, the same walk must still reach the same object. A path
+    /// that gained a link, or now names another object, invalidates the read.
+    fn confirm(self, read: &fs::Metadata) -> Result<(), SourceStatus> {
+        match self.locate() {
+            Ok((_, now)) if same_object(read, &now) => Ok(()),
+            Ok(_) => Err(SourceStatus::Unreadable),
+            Err(status) => Err(status),
+        }
     }
 }
 
-/// Only a checked regular descriptor reaches the bounded reader.
+/// Read one documented file. Every component is walked without following it,
+/// the opened file must be the object that walk found, at most
+/// [`MAX_SOURCE_BYTES`] + 1 bytes are consumed whatever the file claims or
+/// becomes, and the walk is repeated afterwards.
 fn bounded_text(known: Known<'_>) -> Result<String, SourceStatus> {
-    let located = known.locate()?;
-    if !located.metadata.is_file() {
+    let (path, metadata) = known.locate()?;
+    if !metadata.is_file() {
         return Err(SourceStatus::Unsupported {
             reason: UnsupportedReason::NotRegularFile,
         });
     }
-    if located.metadata.len() > MAX_SOURCE_BYTES {
+    if metadata.len() > MAX_SOURCE_BYTES {
         return Err(SourceStatus::Unsupported {
             reason: UnsupportedReason::FileTooLarge,
         });
     }
-    let bytes = read_located(&located)?;
-    located.confirm()?;
+    let bytes = read_located(&path, &metadata)?;
+    known.confirm(&metadata)?;
     String::from_utf8(bytes).map_err(|_| SourceStatus::Malformed)
 }
 
-fn read_located(located: &Located) -> Result<Vec<u8>, SourceStatus> {
-    let file = located
-        .parent
-        .open_file(&located.name, located.metadata)
-        .map_err(|error| io_status(&error))?;
+/// Open the located file and read it under the byte bound.
+///
+/// On Unix the final component is opened with `O_NOFOLLOW | O_NONBLOCK`, so a
+/// link swapped in after the walk fails the open instead of being followed,
+/// and a FIFO or device swapped in cannot block the open. The opened
+/// descriptor is then `fstat`-validated as the same regular file the walk
+/// located before a single byte is read, so a replacement never blocks a read
+/// either. Nonblocking has no effect on reading a regular file.
+fn read_located(path: &Path, located: &fs::Metadata) -> Result<Vec<u8>, SourceStatus> {
+    let file = open_no_follow(path)?;
+    let opened = file.metadata().map_err(|_| SourceStatus::Unreadable)?;
+    if !opened.is_file() {
+        return Err(SourceStatus::Unsupported {
+            reason: UnsupportedReason::NotRegularFile,
+        });
+    }
+    if !same_object(located, &opened) {
+        return Err(changed(path));
+    }
     read_bounded(file)
 }
 
-/// Consume at most one byte past the bound, including a growing source.
+#[cfg(unix)]
+fn open_no_follow(path: &Path) -> Result<fs::File, SourceStatus> {
+    use std::os::unix::fs::OpenOptionsExt;
+    fs::File::options()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| match error.raw_os_error() {
+            // `O_NOFOLLOW` on a link: the path became a link after the walk.
+            Some(libc::ELOOP) => SourceStatus::Unsupported {
+                reason: UnsupportedReason::Symlink,
+            },
+            Some(libc::ENXIO) => SourceStatus::Unsupported {
+                reason: UnsupportedReason::NotRegularFile,
+            },
+            _ => SourceStatus::Unreadable,
+        })
+}
+
+/// Without no-follow flags the same-object check below still refuses a
+/// replacement; only the Unix build is supported for the desktop app.
+#[cfg(not(unix))]
+fn open_no_follow(path: &Path) -> Result<fs::File, SourceStatus> {
+    fs::File::open(path).map_err(|_| SourceStatus::Unreadable)
+}
+
+/// Consume at most one byte past the bound. A source that grows, or whose
+/// size was misreported, still cannot make this read unbounded.
 fn read_bounded(reader: impl Read) -> Result<Vec<u8>, SourceStatus> {
     let mut bytes = Vec::new();
     reader
@@ -1043,90 +1066,91 @@ fn read_bounded(reader: impl Read) -> Result<Vec<u8>, SourceStatus> {
     Ok(bytes)
 }
 
-/// One bounded level, sorted by name. Saved identities are rechecked when a
-/// skill child is opened; a saved type alone cannot establish a skill.
+/// Why a located object stopped being the one read: a link now stands at the
+/// path, or some other object does.
+fn changed(path: &Path) -> SourceStatus {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => SourceStatus::Unsupported {
+            reason: UnsupportedReason::Symlink,
+        },
+        _ => SourceStatus::Unreadable,
+    }
+}
+
+#[cfg(unix)]
+fn same_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(not(unix))]
+fn same_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.file_type() == right.file_type()
+}
+
+/// One level of one documented directory, in name order.
+///
+/// At most [`MAX_SOURCE_ENTRIES`] + 1 entries are enumerated. Within the
+/// bound, `stated` counts every entry and `entries` holds the real (unlinked)
+/// entries with UTF-8 names; a linked or non-UTF-8 entry is stated and
+/// skipped. Past the bound the enumeration stops, `limited` is set, `stated`
+/// is the lower bound `MAX_SOURCE_ENTRIES + 1`, and `entries` is empty: an
+/// unordered enumeration cannot choose a deterministic subset, so the
+/// conservative answer is no component at all.
 struct Listing {
-    directory: DirHandle,
-    entries: Vec<(String, Metadata)>,
+    path: PathBuf,
+    entries: Vec<(String, fs::FileType)>,
     stated: usize,
     limited: bool,
 }
 
 fn list_directory(known: Known<'_>) -> Result<Listing, SourceStatus> {
-    list_located(&known.locate()?)
+    let (path, metadata) = known.locate()?;
+    if !metadata.is_dir() {
+        return Err(SourceStatus::Unsupported {
+            reason: UnsupportedReason::NotDirectory,
+        });
+    }
+    let listing = list_located(path, &metadata)?;
+    known.confirm(&metadata)?;
+    Ok(listing)
 }
 
-fn list_located(located: &Located) -> Result<Listing, SourceStatus> {
-    let directory = located
-        .parent
-        .open_directory(&located.name, located.metadata)
-        .map_err(|error| io_status(&error))?;
-    let names = directory
-        .names(MAX_SOURCE_ENTRIES + 1)
-        .map_err(|error| io_status(&error))?;
-    let stated = names.len();
-    let limited = stated > MAX_SOURCE_ENTRIES;
-    let mut entries = if limited {
-        Vec::new()
-    } else {
-        listed_entries(&directory, names)?
-    };
-    located.confirm()?;
+/// Enumerate a located directory under the entry bound. The directory must
+/// still be the located, unlinked object after enumeration, so a link swapped
+/// in meanwhile discards what was enumerated.
+fn list_located(path: PathBuf, located: &fs::Metadata) -> Result<Listing, SourceStatus> {
+    let reader = fs::read_dir(&path).map_err(|_| SourceStatus::Unreadable)?;
+    let mut entries = Vec::new();
+    let mut stated = 0_usize;
+    let mut limited = false;
+    for entry in reader {
+        stated += 1;
+        if stated > MAX_SOURCE_ENTRIES {
+            limited = true;
+            entries.clear();
+            break;
+        }
+        let entry = entry.map_err(|_| SourceStatus::Unreadable)?;
+        let kind = entry.file_type().map_err(|_| SourceStatus::Unreadable)?;
+        if kind.is_symlink() {
+            continue;
+        }
+        if let Some(name) = entry.file_name().to_str() {
+            entries.push((name.to_owned(), kind));
+        }
+    }
+    match fs::symlink_metadata(&path) {
+        Ok(now) if !now.file_type().is_symlink() && same_object(located, &now) => {}
+        _ => return Err(changed(&path)),
+    }
     entries.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(Listing {
-        directory,
+        path,
         entries,
         stated,
         limited,
     })
-}
-
-fn listed_entries(
-    directory: &DirHandle,
-    names: Vec<OsString>,
-) -> Result<Vec<(String, Metadata)>, SourceStatus> {
-    let mut entries = Vec::new();
-    for name in names {
-        let metadata = match directory.metadata(&name) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == ErrorKind::NotFound => continue,
-            Err(_) => return Err(SourceStatus::Unreadable),
-        };
-        if !metadata.is_symlink()
-            && let Some(name) = name.to_str()
-        {
-            entries.push((name.to_owned(), metadata));
-        }
-    }
-    Ok(entries)
-}
-
-fn stated_skills(listing: Listing) -> Stated {
-    let accepted = listing
-        .entries
-        .into_iter()
-        .filter_map(|(name, metadata)| {
-            // Opening through the listing handle refuses a replaced child and
-            // pins the original child before SKILL.md is inspected.
-            let child = listing
-                .directory
-                .open_directory(std::ffi::OsStr::new(&name), metadata)
-                .ok()?;
-            let skill = child.metadata(std::ffi::OsStr::new("SKILL.md")).ok()?;
-            if !skill.is_file() {
-                return None;
-            }
-            child
-                .confirm(std::ffi::OsStr::new("SKILL.md"), skill)
-                .ok()?;
-            listing
-                .directory
-                .confirm(std::ffi::OsStr::new(&name), metadata)
-                .ok()?;
-            structural_name(&name).map(|name| (name, None))
-        })
-        .collect();
-    Stated::counted(accepted, listing.stated, listing.limited)
 }
 
 #[cfg(test)]

@@ -2,9 +2,10 @@
 import type { DashboardUnpriced } from "./DashboardUnpriced";
 
 /**
- * One lane session's priced responses over the lane window. A slice of the
- * cost tile's selection: a Claude Code sidechain counts with its parent
- * session, a separately indexed sub-session on its own row.
+ * One lane session's priced responses over its whole history. The cost
+ * tile's selection, restricted to the session but not to a window: a Claude
+ * Code sidechain counts with its parent session, a separately indexed
+ * sub-session on its own row.
  */
 export type DashboardLaneCost = { 
 /**

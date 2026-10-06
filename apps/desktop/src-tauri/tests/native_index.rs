@@ -533,8 +533,8 @@ fn a_background_sub_session_change_is_announced_once_and_leaves_the_status_alone
     let db = temp.path().join("data/xtrace.sqlite");
     fs::create_dir_all(db.parent().unwrap()).unwrap();
     let parent = codex_rollout(&home, PARENT, PARENT, json!("cli"));
-    // A spawned thread's header names its parent in `session_id`, as Codex
-    // writes one.
+    // A first-level spawned thread's header names its parent, the root of
+    // its spawn tree, in `session_id`, as Codex writes one.
     let child = codex_rollout(
         &home,
         CHILD,

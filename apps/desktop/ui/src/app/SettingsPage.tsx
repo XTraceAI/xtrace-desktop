@@ -2,7 +2,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useId, useRef, useState } from 'react';
 import { discardStoredWords } from '../data/content-purges';
 import { useData } from '../data/DataProvider';
-import type { RetentionControls, TypingSpeedControls } from '../data/DataSource';
+import type {
+  HumanBreakControls,
+  RetentionControls,
+  TypingSpeedControls,
+} from '../data/DataSource';
 import type { ContentPurge } from '../data/generated/ContentPurge';
 import type { ContentRetention } from '../data/generated/ContentRetention';
 import type { NativeIndexStatus } from '../data/generated/NativeIndexStatus';
@@ -40,6 +44,7 @@ export function SettingsPage() {
         </label>
       </SectionCard>
       <TypingSpeed controls={source.typingSpeed} />
+      <BreakLength controls={source.humanBreak} />
       {source.retention ? (
         <StoredContent controls={source.retention} />
       ) : (
@@ -139,7 +144,7 @@ function TypingSpeed({ controls }: { controls?: TypingSpeedControls }) {
 
 /**
  * How one save ended, from the setting as read afterwards: the requested
- * speed, another speed, or no successful read at all. Unknown keeps the
+ * value, another value, or no successful read at all. Unknown keeps the
  * request, so a later check can settle it.
  */
 type SaveOutcome = { state: 'saved' | 'failed' } | { state: 'unknown'; requested: number };
@@ -147,20 +152,38 @@ type SaveOutcome = { state: 'saved' | 'failed' } | { state: 'unknown'; requested
 /** A write, or a direct read that settles an unknown save of `requested`. */
 type SaveAction = { kind: 'save' | 'check'; requested: number };
 
+/** One saved whole-number setting that every Dashboard range reads. */
+interface SavedNumber {
+  controls: { read(): Promise<number>; set(value: number): Promise<number> };
+  queryKey: readonly unknown[];
+  /** Shown in the saved summary, e.g. `40 WPM (200 characters per minute)`. */
+  text: (value: number) => string;
+  parse: (text: string) => number | null;
+  inputLabel: string;
+  maxLength: number;
+  defaultValue: number;
+  resetLabel: string;
+  invalid: string;
+  /** The setting in a sentence, e.g. `typing speed`. */
+  noun: string;
+  /** Its short name, e.g. `speed`. */
+  short: string;
+  /** The value as a request is stated, e.g. `40 WPM`. */
+  requested: (value: number) => string;
+  testId: string;
+  className: string;
+  summaryClassName: string;
+}
+
 /**
  * The saved value is shown until a save commits; an invalid edit or a failed
  * save changes nothing, and only a committed change re-reads the Dashboard.
- * While a save's outcome is unknown, the cached speed is only the last
+ * While a save's outcome is unknown, the cached value is only the last
  * confirmed one: nothing is written and nothing re-reads it until the user
- * checks the saved speed.
+ * checks the saved value.
  */
-function TypingSpeedControl({
-  controls,
-  hintId,
-}: {
-  controls: TypingSpeedControls;
-  hintId: string;
-}) {
+function SavedNumberControl({ setting, hintId }: { setting: SavedNumber; hintId: string }) {
+  const { controls, queryKey, noun, short } = setting;
   const client = useQueryClient();
   const inputId = useId();
   const errorId = useId();
@@ -169,15 +192,15 @@ function TypingSpeedControl({
   const unknown = outcome?.state === 'unknown' ? outcome : null;
   // One save or check at a time, even before the pending state renders.
   const busy = useRef(false);
-  // Every cached range was computed at the old speed; nothing else reads it.
+  // Every cached range was computed at the old value; nothing else reads it.
   const refreshDashboards = () => void client.invalidateQueries({ queryKey: queryKeys.dashboards });
   const save = useMutation({
     // A write whose reply was lost may still have committed, so a failed write
-    // is settled by reading the setting back once; never by the speed cached before.
+    // is settled by reading the setting back once; never by the value cached before.
     mutationFn: async ({ kind, requested }: SaveAction): Promise<SaveOutcome> => {
       // No read started before this one may land afterwards.
-      await client.cancelQueries({ queryKey: queryKeys.typingSpeed, exact: true });
-      const before = client.getQueryData<number>(queryKeys.typingSpeed);
+      await client.cancelQueries({ queryKey, exact: true });
+      const before = client.getQueryData<number>(queryKey);
       let now: number;
       try {
         now =
@@ -189,7 +212,7 @@ function TypingSpeedControl({
         if (kind === 'save') refreshDashboards();
         return { state: 'unknown', requested };
       }
-      client.setQueryData(queryKeys.typingSpeed, now);
+      client.setQueryData(queryKey, now);
       // A check settles a save whose ranges were already re-read.
       if (kind === 'save' && now !== before) refreshDashboards();
       return { state: now === requested ? 'saved' : 'failed' };
@@ -202,15 +225,15 @@ function TypingSpeedControl({
       busy.current = false;
     },
   });
-  // Serialized with writes, and held while the saved speed is unknown.
-  const speed = useQuery({
-    queryKey: queryKeys.typingSpeed,
+  // Serialized with writes, and held while the saved value is unknown.
+  const value = useQuery({
+    queryKey,
     queryFn: () => controls.read(),
     enabled: !save.isPending && !unknown,
   });
-  const saved = speed.data;
+  const saved = value.data;
   const text = draft ?? (saved === undefined ? '' : String(saved));
-  const parsed = parseWpm(text);
+  const parsed = setting.parse(text);
   const invalid = draft !== null && parsed === null;
   const ready = saved !== undefined && !save.isPending && !unknown;
   const run = (action: SaveAction) => {
@@ -218,9 +241,9 @@ function TypingSpeedControl({
     if (action.kind === 'save') setOutcome(null);
     save.mutate(action);
   };
-  const submit = (wpm: number | null) => {
-    if (busy.current || !ready || wpm === null || wpm === saved) return;
-    run({ kind: 'save', requested: wpm });
+  const submit = (next: number | null) => {
+    if (busy.current || !ready || next === null || next === saved) return;
+    run({ kind: 'save', requested: next });
   };
   const check = () => {
     if (busy.current || !unknown) return;
@@ -228,27 +251,27 @@ function TypingSpeedControl({
   };
   return (
     <>
-      <dl className="xt-typing-speed-summary">
+      <dl className={setting.summaryClassName}>
         <dt>{unknown ? 'Last confirmed' : 'Saved'}</dt>
-        <dd data-testid="typing-speed-saved">
-          {saved !== undefined ? cpmText(saved) : speed.isError ? 'Unavailable' : 'Reading…'}
+        <dd data-testid={setting.testId}>
+          {saved !== undefined ? setting.text(saved) : value.isError ? 'Unavailable' : 'Reading…'}
         </dd>
       </dl>
       <form
-        className="xt-settings-control xt-typing-speed"
+        className={`xt-settings-control ${setting.className}`}
         onSubmit={(event) => {
           event.preventDefault();
           submit(parsed);
         }}
       >
-        <label htmlFor={inputId}>Words per minute</label>
+        <label htmlFor={inputId}>{setting.inputLabel}</label>
         <input
           id={inputId}
           type="text"
           inputMode="numeric"
           autoComplete="off"
           spellCheck={false}
-          maxLength={3}
+          maxLength={setting.maxLength}
           value={text}
           disabled={saved === undefined}
           aria-invalid={invalid}
@@ -266,37 +289,124 @@ function TypingSpeedControl({
         <Button
           variant="outline"
           height={28}
-          disabled={!ready || saved === DEFAULT_WPM}
+          disabled={!ready || saved === setting.defaultValue}
           onClick={() => {
             setDraft(null);
-            submit(DEFAULT_WPM);
+            submit(setting.defaultValue);
           }}
         >
-          Reset to {DEFAULT_WPM} WPM
+          {setting.resetLabel}
         </Button>
         {unknown && (
           <Button variant="outline" height={28} disabled={save.isPending} onClick={check}>
-            {save.isPending ? 'Checking…' : 'Check saved speed'}
+            {save.isPending ? 'Checking…' : `Check saved ${short}`}
           </Button>
         )}
       </form>
       {invalid && (
         <p id={errorId} role="alert">
-          Enter a whole number from {MIN_WPM} to {MAX_WPM}.
+          {setting.invalid}
         </p>
       )}
-      {speed.isError && !unknown && <p role="alert">The typing speed could not be read.</p>}
+      {value.isError && !unknown && <p role="alert">The {noun} could not be read.</p>}
       {unknown && (
         <p role="alert">
-          The typing speed could not be read back, so whether {unknown.requested} WPM was saved is
-          unknown. The speed shown was last confirmed before this save. Check the saved speed before
-          changing it; the Dashboard will read the saved speed again.
+          The {noun} could not be read back, so whether {setting.requested(unknown.requested)} was
+          saved is unknown. The {short} shown was last confirmed before this save. Check the saved{' '}
+          {short} before changing it; the Dashboard will read the saved {short} again.
         </p>
       )}
       {outcome?.state === 'failed' && (
-        <p role="alert">The typing speed could not be saved. The speed shown is the saved one.</p>
+        <p role="alert">
+          The {noun} could not be saved. The {short} shown is the saved one.
+        </p>
       )}
     </>
+  );
+}
+
+function TypingSpeedControl({
+  controls,
+  hintId,
+}: {
+  controls: TypingSpeedControls;
+  hintId: string;
+}) {
+  return (
+    <SavedNumberControl
+      hintId={hintId}
+      setting={{
+        controls,
+        queryKey: queryKeys.typingSpeed,
+        text: cpmText,
+        parse: parseWpm,
+        inputLabel: 'Words per minute',
+        maxLength: 3,
+        defaultValue: DEFAULT_WPM,
+        resetLabel: `Reset to ${DEFAULT_WPM} WPM`,
+        invalid: `Enter a whole number from ${MIN_WPM} to ${MAX_WPM}.`,
+        noun: 'typing speed',
+        short: 'speed',
+        requested: (wpm) => `${wpm} WPM`,
+        testId: 'typing-speed-saved',
+        className: 'xt-typing-speed',
+        summaryClassName: 'xt-typing-speed-summary',
+      }}
+    />
+  );
+}
+
+export const DEFAULT_BREAK_MINUTES = 60;
+const MIN_BREAK_MINUTES = 5;
+const MAX_BREAK_MINUTES = 240;
+
+/** A whole number of minutes in bounds, or null; never a rounded guess. */
+export function parseBreakMinutes(text: string): number | null {
+  const trimmed = text.trim();
+  if (!/^\d{1,3}$/.test(trimmed)) return null;
+  const minutes = Number(trimmed);
+  return minutes >= MIN_BREAK_MINUTES && minutes <= MAX_BREAK_MINUTES ? minutes : null;
+}
+
+/** The saved break length the Dashboard's "your hours" read. */
+function BreakLength({ controls }: { controls?: HumanBreakControls }) {
+  const hintId = useId();
+  return (
+    <SectionCard title="Your hours">
+      {controls ? (
+        <SavedNumberControl
+          hintId={hintId}
+          setting={{
+            controls,
+            queryKey: queryKeys.humanBreak,
+            text: (minutes) => `${minutes} min`,
+            parse: parseBreakMinutes,
+            inputLabel: 'Break after (minutes)',
+            maxLength: 3,
+            defaultValue: DEFAULT_BREAK_MINUTES,
+            resetLabel: `Reset to ${DEFAULT_BREAK_MINUTES} min`,
+            invalid: `Enter a whole number from ${MIN_BREAK_MINUTES} to ${MAX_BREAK_MINUTES}.`,
+            noun: 'break length',
+            short: 'length',
+            requested: (minutes) => `${minutes} min`,
+            testId: 'human-break-saved',
+            className: 'xt-typing-speed',
+            summaryClassName: 'xt-typing-speed-summary',
+          }}
+        />
+      ) : (
+        <p className="xt-settings-note">
+          The break length is saved in the desktop app&apos;s database. This preview uses{' '}
+          {DEFAULT_BREAK_MINUTES} minutes.
+        </p>
+      )}
+      <p id={hintId} className="xt-settings-note">
+        Your hours on the Dashboard come from the times you sent messages to agents, in every
+        conversation and tool. When two of your messages are at most this many minutes apart, the
+        time between them counts. A longer gap, like lunch or sleep, counts as a break. A message on
+        its own adds no time.
+      </p>
+    </SectionCard>
   );
 }
 

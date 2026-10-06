@@ -45,6 +45,14 @@ pub struct ParsedRecord {
     /// is automatic.
     #[serde(skip)]
     pub task_notification: bool,
+    /// A validated claim, from the pinned reader's opt-in automated-input
+    /// evidence on this record's own line, that the Codex or Cursor tool (or
+    /// the reader itself) wrote this input, not a person. Set only by the
+    /// native stream ([`crate::native::tool_sent`]); never read from text. Not
+    /// part of the canonical record: the writer hands it to the Store beside
+    /// the record, which keeps it as a proof that the input is automatic.
+    #[serde(skip)]
+    pub tool_sent: Option<xt_store::tool_sent::ToolSentKind>,
     pub canonical: CanonicalRecord,
     pub native: NativeMetadata,
     pub source: SourceContext,
@@ -245,6 +253,7 @@ pub fn parse_with_context(line: &str, context: &SourceContext) -> Result<Parsed,
     Ok(Parsed::Record(Box::new(ParsedRecord {
         human_adjustment: None,
         task_notification,
+        tool_sent: None,
         canonical,
         native,
         source,

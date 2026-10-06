@@ -144,6 +144,7 @@ fn compaction_command_returns_each_requested_id_without_changing_storage() {
                 at_ms: 1_788_782_402_000,
                 trigger: CompactionTrigger::Unknown,
             }],
+            inherited: None,
         }
     );
     assert_eq!(

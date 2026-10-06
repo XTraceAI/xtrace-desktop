@@ -152,7 +152,8 @@ function expectFiresTile(reason: string, aside: string) {
   const tile = tiles()[0]!;
   const unmeasured = tile.querySelector('.xt-unmeasured')!;
   expect(unmeasured.textContent).toBe(`—Unmeasured: ${reason}`);
-  expect(unmeasured.getAttribute('title')).toBe(reason);
+  // The tile's definition says why; the dash repeats no native tooltip.
+  expect(unmeasured.getAttribute('title')).toBeNull();
   expect(tile.querySelector('.xt-stat-aside')?.textContent).toBe(aside);
   expect(tile.textContent).not.toMatch(/not read/i);
 }
@@ -589,7 +590,7 @@ it('opens a tile’s definition from the keyboard', async () => {
   await waitFor(() => expect(tileValue(0)).toBe('4'));
   act(() => tiles()[1]!.focus());
   expect(await screen.findByRole('tooltip')).toBeTruthy();
-  expect(screen.getByRole('tooltip').textContent).toMatch(/not whether an agent was stopped/);
+  expect(screen.getByRole('tooltip').textContent).toMatch(/not whether the agent was stopped/);
   await act(async () => {});
 });
 

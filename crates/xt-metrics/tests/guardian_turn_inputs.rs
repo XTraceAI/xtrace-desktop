@@ -175,7 +175,7 @@ fn rewind_to_schema_11(path: &std::path::Path) {
          DROP VIEW v_response_usage; DROP VIEW v_usage_records;
          DROP VIEW v_session_events; DROP VIEW v_records;
          DROP TABLE guardian_turn_inputs;
-         DROP TABLE injected_context_inputs; DROP TABLE IF EXISTS task_notification_inputs; DROP TABLE IF EXISTS record_previews; DROP TABLE IF EXISTS human_input_adjustments; DROP TABLE IF EXISTS human_session_origins; DROP TABLE claude_launch_groups; DROP TABLE claude_launch_group_members; DROP TABLE claude_launch_candidates; DROP TABLE claude_launch_staged_candidates;
+         DROP TABLE injected_context_inputs; DROP TABLE IF EXISTS tool_sent_inputs; DROP TABLE IF EXISTS task_notification_inputs; DROP TABLE IF EXISTS record_previews; DROP TABLE IF EXISTS session_child_checks; DROP TABLE IF EXISTS session_child_facts; DROP TABLE IF EXISTS human_input_adjustments; DROP TABLE IF EXISTS human_session_origins; DROP TABLE claude_launch_groups; DROP TABLE claude_launch_group_members; DROP TABLE claude_launch_candidates; DROP TABLE claude_launch_staged_candidates;
          {SCHEMA_11_RECORDS_VIEW}
          {}; {}; {};",
         include_str!("../../xt-store/views/usage_records.sql"),
@@ -293,7 +293,7 @@ fn a_schema_11_index_upgrades_with_its_eight_confirmations_and_metrics_unchanged
 
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 17);
+        assert_eq!(store.schema_version().unwrap(), 22);
         assert!(
             store
                 .guardian_turn_confirmations(GUARDIAN)

@@ -64,15 +64,14 @@ export function medianView(median: MetricPrMedian, noSample = 'no sample'): Medi
   };
 }
 
-/** The report's sample counts for one median, zeros left out except measured. */
-export function medianCounts(median: MetricPrMedian, noSample = 'no sample') {
-  return [
-    `${median.measured_prs} of ${plural(median.eligible_prs, 'merged PR')} measured`,
+/** What a median left out, as one short note; nothing when every PR gave a value. */
+export function medianGap(median: MetricPrMedian, noSample = 'no sample') {
+  const rest = [
     median.unknown_prs > 0 && `${median.unknown_prs} unknown`,
     median.no_sample_prs > 0 && `${median.no_sample_prs} with ${noSample}`,
-  ]
-    .filter((part): part is string => typeof part === 'string')
-    .join(' · ');
+  ].filter((part): part is string => typeof part === 'string');
+  if (rest.length === 0) return undefined;
+  return `Median of ${median.measured_prs} of ${plural(median.eligible_prs, 'merged PR')}; ${rest.join(', ')}.`;
 }
 
 /**

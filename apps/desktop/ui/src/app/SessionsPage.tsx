@@ -1,10 +1,21 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { useData } from '../data/DataProvider';
 import { queryKeys } from '../data/query-client';
 import type { DashboardLaneSession } from '../data/generated/DashboardLaneSession';
 import type { DashboardMetrics } from '../data/generated/DashboardMetrics';
+import type { SessionParentLink } from '../data/generated/SessionParentLink';
 import type { SessionPrLink } from '../data/generated/SessionPrLink';
 import type { SessionRow } from '../data/generated/SessionRow';
 import { EvidenceDot } from '../kit/Badge';
@@ -17,8 +28,21 @@ import { Button } from '../kit/Button';
 import { SectionCard } from '../kit/SectionCard';
 import { MetricCell } from '../kit/MetricCell';
 import { count, tokens as formatTokens } from '../kit/format';
-import { groupSessionLanes, type SessionLane } from './dashboard/lanes';
-import { rangeDays } from './dashboard/present';
+import {
+  absentKey,
+  groupSessionLanes,
+  laneRows,
+  listedLanes,
+  notListed,
+  stillChecking,
+  type ShownContext,
+  sessionKey,
+  type LaneParent,
+  type LaneRow,
+  type ListedSession,
+  type SessionLane,
+} from './dashboard/lanes';
+import { plural, rangeDays } from './dashboard/present';
 import { useSelectedRange } from './dashboard/range';
 import { agentDuration } from './agent-duration';
 import { continuous } from './metric-format';
@@ -36,7 +60,7 @@ import {
 } from './session-search';
 import { RangeIssueFlag, SessionsIssueFlag, type IndexIssue } from './SessionsIssues';
 import { SessionsSummary, SUMMARY_SCOPE, SUMMARY_SCOPE_SHORT } from './SessionsSummary';
-import { ParentMarker, parentName, verifiedParent } from './session-parent';
+import { GroupToggle, ParentMarker, parentName, verifiedParent } from './session-parent';
 import { useSessionTitles, useVisibleIds, type TitleRow } from './session-titles';
 import {
   isLiveSessionHost,
@@ -77,8 +101,70 @@ const RECENT_SESSION_LIMIT = 8;
 type HostTitles = (id: string) => string | null;
 const titleOf = (row: SessionRow, hostTitle: HostTitles) =>
   displayTitle(hostTitle(row.id) ?? row.title, row.automated_review);
-/** A loaded row by its exact identity, or nothing when it is not loaded. */
-type LoadedRow = (id: string) => SessionRow | undefined;
+/**
+ * How this view names a verified parent, wherever it does: the row that
+ * stands for it, its disclosure and every sub-session's marker in both lists.
+ */
+type ParentNames = (parent: SessionParentLink) => string;
+/**
+ * The version a parent is read at when only a group row names it: nothing
+ * about its own source is known here, so it is read once for this view, and
+ * again only when a row of its own, with a version, takes its place.
+ */
+const NAMED_PARENT = 'named parent';
+
+/**
+ * A loaded row as the Dashboard's grouping reads it: keyed by its exact host
+ * and identity, so a parent on another host is never this row.
+ */
+interface ListedRow extends ListedSession {
+  row: SessionRow;
+}
+type TableRow = LaneRow<SessionParentLink, ListedRow>;
+type RecentRow = LaneRow<SessionParentLink>;
+const listedRow = (row: SessionRow): ListedRow => ({
+  key: sessionKey(row.host, row.id),
+  sessionId: row.id,
+  host: row.host,
+  row,
+});
+const rowParent = (listed: ListedRow) => verifiedParent(listed.row);
+
+/**
+ * The group a drawn row stands for: its own session, or the parent an absent
+ * row names. The same group keeps this key when its parent's own row arrives
+ * on a later page, so it stays open or closed as it was.
+ */
+const groupOf = (row: LaneRow<SessionParentLink, ListedSession>) =>
+  row.kind === 'absent' ? sessionKey(row.parent.host, row.parent.session_id) : row.key;
+/** Open groups as the grouping reads them: each under either of its row keys. */
+const openKeys = (open: ReadonlySet<string>) =>
+  new Set([...open].flatMap((key) => [key, absentKey(key)]));
+const toggled = (open: ReadonlySet<string>, key: string) => {
+  const next = new Set(open);
+  if (!next.delete(key)) next.add(key);
+  return next;
+};
+
+/** What a context read says about one session: its host, bit, check and parent. */
+interface ChildContext extends ShownContext {
+  parent?: SessionParentLink | null;
+}
+/**
+ * A session left out, by exact host and identity, as the Dashboard decides it
+ * ([`notListed`]): still being checked, or a known sub-session whose creator is
+ * not verified. Nothing known about a session leaves it out too.
+ */
+const unresolvedIn =
+  (find: (id: string, host: string) => ChildContext | undefined) =>
+  ({ session_id, host }: LaneParent) => {
+    const found = find(session_id, host);
+    return notListed(
+      found,
+      host,
+      verifiedParent({ id: session_id, parent: found?.parent }) !== null,
+    );
+  };
 
 /** Native start, as the reference states it: day and 24-hour time. */
 const startedFormat: Intl.DateTimeFormatOptions = {
@@ -136,26 +222,78 @@ function PrLinks({ row }: { row: SessionRow }) {
   );
 }
 
+/** A cell that belongs to a loaded session; an absent parent's is blank. */
+const onSession =
+  (render: (row: SessionRow) => ReactNode) =>
+  (row: TableRow): ReactNode =>
+    row.kind === 'session' ? render(row.lane.row) : null;
+
+/**
+ * The row that stands for a verified parent this list has not loaded — on a
+ * later page, or filtered out. It names the parent as this view does, opens
+ * its page with this list's address, and holds its loaded sub-sessions behind
+ * one disclosure; it has no measurement, start or details of its own.
+ */
+function AbsentParent({
+  row,
+  name,
+  address,
+  onToggle,
+}: {
+  row: Extract<TableRow, { kind: 'absent' }>;
+  name: string;
+  address: URLSearchParams;
+  onToggle: (group: string) => void;
+}) {
+  return (
+    <div className="xt-session-name" data-group="absent">
+      <span className="xt-session-heading xt-session-title-line">
+        <GroupToggle
+          row={row}
+          name={name}
+          noun="loaded sub-session"
+          onToggle={() => onToggle(groupOf(row))}
+        />
+        <span className="xt-session-group-words">Sub-sessions of</span>
+        <Link
+          className="xt-session-open"
+          to={sessionHref(row.parent.session_id, address)}
+          aria-label={`Open parent session ${name}, ${row.parent.session_id}`}
+          title={`Sub-sessions of ${name} · ${row.parent.session_id}`}
+        >
+          {name}
+        </Link>
+      </span>
+      <span className="xt-session-meta">
+        Main session not loaded here: on a later page or outside these filters
+      </span>
+    </div>
+  );
+}
+
 /**
  * The columns, built with the list's own address so every row can open its
  * session and come back to this list exactly as it is. The address is a
  * parameter rather than a module-level read because a column definition is
  * data: it has no hooks of its own and must not acquire any; the host titles
- * read for this view are passed in the same way.
+ * read for this view, and its parent names, are passed in the same way.
  */
 const buildColumns = (
   address: URLSearchParams,
   hostTitle: HostTitles,
-  loaded: LoadedRow,
+  nameParent: ParentNames,
   compaction: CompactionLookup,
   observe: ReturnType<typeof useVisibleIds>['observe'],
   liveStatus: (id: string) => LiveSessionStatus | undefined,
-): Column<SessionRow>[] => [
+  onToggle: (group: string) => void,
+): Column<TableRow>[] => [
   {
     key: 'host',
     header: <span className="sr-only">Host</span>,
     width: '20px',
-    render: (row) => <HostGlyph host={row.host} size={18} />,
+    render: (row) => (
+      <HostGlyph host={row.kind === 'session' ? row.lane.host : row.parent.host} size={18} />
+    ),
   },
   {
     // The host's own title when its source has one, else a title the index
@@ -164,13 +302,19 @@ const buildColumns = (
     key: 'session',
     header: 'session · repo · branch',
     width: 'minmax(180px, 1fr)',
-    render: (row) => {
+    render: (drawn) => {
+      if (drawn.kind === 'absent')
+        return (
+          <AbsentParent
+            row={drawn}
+            name={nameParent(drawn.parent)}
+            address={address}
+            onToggle={onToggle}
+          />
+        );
+      const { row } = drawn.lane;
       const title = titleOf(row, hostTitle);
       const parent = verifiedParent(row);
-      // A parent already loaded in this list is named as its own row reads
-      // now; one filtered out or on a later page keeps the name the report
-      // sent, and no title is read for it.
-      const shown = parent ? loaded(parent.session_id) : undefined;
       const meta = (
         <span className="xt-session-meta" title={contextTitle(row.repo, row.branch)}>
           {repoName(row.repo) ?? 'Unknown repository'}
@@ -193,8 +337,21 @@ const buildColumns = (
         </span>
       );
       return (
-        <div className="xt-session-name" ref={observe} data-visible-id={row.id}>
+        <div
+          className="xt-session-name"
+          ref={observe}
+          data-visible-id={row.id}
+          style={drawn.depth > 0 ? ({ '--depth': drawn.depth } as CSSProperties) : undefined}
+        >
           <span className="xt-session-heading xt-session-title-line">
+            {drawn.children > 0 && (
+              <GroupToggle
+                row={drawn}
+                name={title ?? `Session ${shortId(row.id)}`}
+                noun="loaded sub-session"
+                onToggle={() => onToggle(groupOf(drawn))}
+              />
+            )}
             <Link
               className="xt-session-open"
               to={sessionHref(row.id, address)}
@@ -216,10 +373,7 @@ const buildColumns = (
               <ParentMarker
                 className="xt-session-parent"
                 parent={parent}
-                name={parentName(
-                  parent,
-                  shown && shown.host === parent.host ? titleOf(shown, hostTitle) : undefined,
-                )}
+                name={nameParent(parent)}
                 to={sessionHref(parent.session_id, address)}
               />
               {meta}
@@ -235,18 +389,21 @@ const buildColumns = (
     key: 'compactions',
     header: <span title={COMPACTION_MEANING}>Compactions</span>,
     width: '92px',
-    render: (row) =>
-      verifiedParent(row) ? null : <CompactionBadge outcome={compaction(row.id)} />,
+    render: onSession((row) =>
+      verifiedParent(row) ? null : (
+        <CompactionBadge outcome={compaction(row.id)} reading={compaction.reading(row.id)} />
+      ),
+    ),
   },
   {
     key: 'prs',
     header: (
-      <span title="Recorded session → pull request links; the dot is the link's evidence (M-13). A link says the session referenced it, not that it merged.">
+      <span title="Linked pull requests. The dot shows how the link was found; linked does not mean merged.">
         PRs
       </span>
     ),
     width: '150px',
-    render: (row) => <PrLinks row={row} />,
+    render: onSession((row) => <PrLinks row={row} />),
   },
   {
     key: 'started',
@@ -260,7 +417,7 @@ const buildColumns = (
       </span>
     ),
     width: '104px',
-    render: (row) =>
+    render: onSession((row) =>
       row.started_at_ms === null ? (
         <MetricCell
           value={null}
@@ -275,20 +432,21 @@ const buildColumns = (
           {new Date(row.started_at_ms).toLocaleString(undefined, startedFormat)}
         </time>
       ),
+    ),
   },
   {
     key: 'human',
     header: <MetricHeader label="msgs" name="Human messages" ruleId="M-02" />,
     width: '52px',
     align: 'right',
-    render: (row) => (
+    render: onSession((row) => (
       <MetricCell
         value={indexed(row)?.human_messages}
         format={count}
         align="right"
         reason={indexed(row) ? 'Human classification is unmeasured (M-02)' : NOT_INDEXED}
       />
-    ),
+    )),
   },
   {
     key: 'tools',
@@ -296,7 +454,7 @@ const buildColumns = (
     header: <MetricHeader label="tools" name="Tool calls" ruleId="M-17" />,
     width: '56px',
     align: 'right',
-    render: (row) => (
+    render: onSession((row) => (
       <MetricCell
         value={indexed(row)?.tool_calls}
         format={count}
@@ -307,28 +465,28 @@ const buildColumns = (
             : NOT_INDEXED
         }
       />
-    ),
+    )),
   },
   {
     key: 'agent',
     header: <MetricHeader label="agent min" name="Agent minutes" ruleId="M-05" />,
     width: '64px',
     align: 'right',
-    render: (row) => <AgentTime row={row} />,
+    render: onSession((row) => <AgentTime row={row} />),
   },
   {
     key: 'hands-off',
     header: <MetricHeader label="hands-off" name="Hands-off median minutes" ruleId="M-09" />,
     width: '68px',
     align: 'right',
-    render: (row) => <HandsOff row={row} />,
+    render: onSession((row) => <HandsOff row={row} />),
   },
   {
     key: 'output',
     header: <MetricHeader label="output" name="Output tokens" ruleId="M-04" />,
     width: '64px',
     align: 'right',
-    render: (row) => (
+    render: onSession((row) => (
       <MetricCell
         value={indexed(row)?.tokens.counters.output_tokens}
         format={formatTokens}
@@ -337,7 +495,7 @@ const buildColumns = (
           indexed(row) ? 'Selected responses do not all state output tokens (M-04)' : NOT_INDEXED
         }
       />
-    ),
+    )),
   },
 ];
 
@@ -437,25 +595,40 @@ function SessionDetails({ row }: { row: SessionRow }) {
   );
 }
 
-/** Recent recorded spans are a way into old-start sessions, not a live state. */
+/**
+ * Recent recorded spans are a way into old-start sessions, not a live state.
+ *
+ * Grouped as the Dashboard's lanes are: a verified sub-session under the
+ * session that created it, collapsed, or under a row that only names a parent
+ * the report returned no activity for. A known sub-session whose creator is
+ * not verified, and anything under it, is not listed.
+ */
 function RecentIndexedActivity({
   address,
   metrics,
   failed,
-  sessions,
-  foundCount,
+  rows,
+  returned,
+  rootCount,
   hostTitle,
+  nameParent,
   compaction,
   liveStatus,
+  onToggle,
 }: {
   address: URLSearchParams;
   metrics: DashboardMetrics | undefined;
   failed: boolean;
-  sessions: readonly SessionLane[];
-  foundCount: number;
+  rows: readonly RecentRow[];
+  /** Sessions the report returned activity for, before any was left out. */
+  returned: number;
+  /** Main sessions and groups listed before the limit. */
+  rootCount: number;
   hostTitle: HostTitles;
+  nameParent: ParentNames;
   compaction: CompactionLookup;
   liveStatus: (id: string) => LiveSessionStatus | undefined;
+  onToggle: (group: string) => void;
 }) {
   // The report orders this context by ID, not by the activity shown here.
   const context = new Map<string, DashboardLaneSession>(
@@ -475,9 +648,10 @@ function RecentIndexedActivity({
         </p>
       </div>
       <p className="xt-sessions-recent-note">
-        {metrics && !failed && sessions.length > 0 && foundCount > RECENT_SESSION_LIMIT && (
+        {metrics && !failed && rows.length > 0 && rootCount > RECENT_SESSION_LIMIT && (
           <span>
-            {RECENT_SESSION_LIMIT} most recent indexed sessions with activity in the last 48 hours
+            {RECENT_SESSION_LIMIT} most recent main sessions and groups with activity in the last 48
+            hours; opening a group also lists its sub-sessions
           </span>
         )}{' '}
         <span>Search and filters affect All sessions only.</span>
@@ -488,12 +662,48 @@ function RecentIndexedActivity({
         <p role="status">Reading recent indexed activity…</p>
       ) : (
         <>
-          {sessions.length === 0 ? (
-            <p>No indexed activity in the last 48 hours.</p>
+          {rows.length === 0 ? (
+            <p>
+              {returned > 0
+                ? 'No session to list with indexed activity in the last 48 hours.'
+                : 'No indexed activity in the last 48 hours.'}
+            </p>
           ) : (
             <>
               <ol className="xt-sessions-recent-list">
-                {sessions.map((lane) => {
+                {rows.map((row) => {
+                  if (row.kind === 'absent') {
+                    const name = nameParent(row.parent);
+                    return (
+                      <li key={row.key} data-group="absent">
+                        <span className="xt-sessions-recent-state">
+                          <span className="xt-sessions-recent-host">
+                            {hostLabels[row.parent.host as SessionHost] ?? row.parent.host}
+                          </span>
+                        </span>
+                        <span className="xt-session-title-line">
+                          <GroupToggle
+                            row={row}
+                            name={name}
+                            noun="recent sub-session"
+                            onToggle={() => onToggle(groupOf(row))}
+                          />
+                          <span className="xt-session-group-words">Sub-sessions of</span>
+                          <Link
+                            to={sessionHref(row.parent.session_id, address)}
+                            aria-label={`Open parent session ${name}, ${row.parent.session_id}`}
+                            title={`Sub-sessions of ${name} · ${row.parent.session_id}`}
+                          >
+                            <span className="xt-sessions-recent-name">{name}</span>
+                          </Link>
+                        </span>
+                        <span className="xt-sessions-recent-quiet">
+                          Main session: no activity returned here
+                        </span>
+                      </li>
+                    );
+                  }
+                  const { lane } = row;
                   const saved = context.get(lane.key);
                   const title = displayTitle(
                     hostTitle(lane.sessionId) ?? saved?.title ?? null,
@@ -501,7 +711,13 @@ function RecentIndexedActivity({
                   );
                   const host = hostLabels[lane.host as SessionHost] ?? lane.host;
                   return (
-                    <li key={lane.key}>
+                    <li
+                      key={lane.key}
+                      data-depth={row.depth > 0 ? row.depth : undefined}
+                      style={
+                        row.depth > 0 ? ({ '--depth': row.depth } as CSSProperties) : undefined
+                      }
+                    >
                       <span className="xt-sessions-recent-state">
                         <span className="xt-sessions-recent-host">{host}</span>
                         {isLiveSessionHost(lane.host) && (
@@ -509,6 +725,14 @@ function RecentIndexedActivity({
                         )}
                       </span>
                       <span className="xt-session-title-line">
+                        {row.children > 0 && (
+                          <GroupToggle
+                            row={row}
+                            name={title ?? `Session ${shortId(lane.sessionId)}`}
+                            noun="recent sub-session"
+                            onToggle={() => onToggle(groupOf(row))}
+                          />
+                        )}
                         <Link
                           to={sessionHref(lane.sessionId, address)}
                           aria-label={`Open recent ${host} session ${title ? `${title}, ` : ''}${lane.sessionId}`}
@@ -518,7 +742,10 @@ function RecentIndexedActivity({
                           <span className="xt-sessions-recent-id">{lane.sessionId}</span>
                         </Link>
                         {!verifiedParent({ id: lane.sessionId, parent: saved?.parent }) && (
-                          <CompactionBadge outcome={compaction(lane.sessionId)} />
+                          <CompactionBadge
+                            outcome={compaction(lane.sessionId)}
+                            reading={compaction.reading(lane.sessionId)}
+                          />
                         )}
                       </span>
                       <time dateTime={new Date(lane.lastMs).toISOString()}>
@@ -544,7 +771,7 @@ function RecentIndexedActivity({
 
 export function SessionsPage() {
   const sectionRef = useRef<HTMLElement>(null);
-  const anchorRef = useRef<{ id: string; offset: number; scrollTop: number } | null>(null);
+  const anchorRef = useRef<{ key: string; offset: number; scrollTop: number } | null>(null);
   const listIdentityRef = useRef('');
   const { source } = useData();
   const index = useNativeIndexStatus();
@@ -614,18 +841,68 @@ export function SessionsPage() {
     getNextPageParam: (page) => page.next ?? undefined,
     enabled: supportedRecent,
   });
-  const rows = useMemo(() => query.data?.pages.flatMap((page) => page.rows) ?? [], [query.data]);
+  const pages = query.data?.pages;
+  // Every loaded row, exactly as the pages returned them: the loaded count,
+  // the cursors and each row's own measurements are these, whatever is drawn.
+  const rows = useMemo(() => pages?.flatMap((page) => page.rows) ?? [], [pages]);
+  const loadedById = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows]);
+  // The loaded rows as the Dashboard groups its lanes: a verified sub-session
+  // under the session that created it, collapsed, or under one row naming a
+  // parent that is not loaded. A known sub-session whose creator is not
+  // verified is left out, with every loaded session under it. Whether a
+  // parent that is not loaded is one is read from the context its child's
+  // page carried; no further page or ancestor is read for it.
+  const listed = useMemo(() => {
+    const context = new Map(
+      pages
+        ?.flatMap((page) => page.referenced_parents ?? [])
+        .map((entry) => [sessionKey(entry.host, entry.session_id), entry]),
+    );
+    return listedLanes(
+      rows.map(listedRow),
+      rowParent,
+      // A loaded row of another host with the same identity is not it.
+      unresolvedIn((id, host) => {
+        const loadedRow = loadedById.get(id);
+        return loadedRow?.host === host ? loadedRow : context.get(sessionKey(host, id));
+      }),
+    );
+  }, [pages, rows, loadedById]);
+  // Open groups by the session they stand for, kept while pages load and
+  // refresh, so a parent arriving on a later page keeps its group as it was.
+  const [openGroups, setOpenGroups] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleGroup = useCallback(
+    (group: string) => setOpenGroups((previous) => toggled(previous, group)),
+    [],
+  );
+  const table = useMemo(
+    () => laneRows(listed, rowParent, openKeys(openGroups)).rows,
+    [listed, openGroups],
+  );
+  /** The loaded rows drawn now: not hidden, and not collapsed under a group. */
+  const shownRows = useMemo(
+    () => table.flatMap((row) => (row.kind === 'session' ? [row.lane.row] : [])),
+    [table],
+  );
+  // Loaded rows still being checked are left out; the rest left out are
+  // sub-sessions with no verified main session, or under one left out.
+  const checkingCount = rows.filter((row) => stillChecking(row, row.host)).length;
+  const hiddenCount = rows.length - listed.length - checkingCount;
+  const groupedCount =
+    listed.length - table.filter((row) => row.kind === 'session' && row.depth === 0).length;
   // A clock or data event replays the pages already loaded. Remember the first
   // visible row before that read, and keep following it if the user scrolls
   // while the read is pending. Restore its latest pixel offset when it lands.
-  // A new range or filter is a new list and starts at its own first page.
+  // A row is remembered by the group it stands for, so a parent that arrives
+  // in place of the row naming it is still found. A new range or filter is a
+  // new list and starts at its own first page.
   useLayoutEffect(() => {
     if (listIdentityRef.current !== listIdentity) {
       listIdentityRef.current = listIdentity;
       anchorRef.current = null;
       return;
     }
-    if (!query.isFetching || rows.length === 0) return;
+    if (!query.isFetching || table.length === 0) return;
     const scroll = sectionRef.current?.querySelector<HTMLElement>('.xt-table-scroll');
     if (!scroll) return;
     const capture = () => {
@@ -634,9 +911,9 @@ export function SessionsPage() {
         scroll.getBoundingClientRect().top +
         (scroll.querySelector<HTMLElement>('.xt-table-head')?.getBoundingClientRect().height ?? 0);
       const index = blocks.findIndex((block) => block.getBoundingClientRect().bottom > top);
-      if (index < 0 || !rows[index]) return;
+      if (index < 0 || !table[index]) return;
       anchorRef.current = {
-        id: rows[index].id,
+        key: groupOf(table[index]),
         offset: blocks[index].getBoundingClientRect().top - top,
         scrollTop: scroll.scrollTop,
       };
@@ -644,13 +921,13 @@ export function SessionsPage() {
     capture();
     scroll.addEventListener('scroll', capture, { passive: true });
     return () => scroll.removeEventListener('scroll', capture);
-  }, [listIdentity, query.isFetching, rows]);
+  }, [listIdentity, query.isFetching, table]);
   useLayoutEffect(() => {
     const anchor = anchorRef.current;
     if (!anchor || query.isFetching || listIdentityRef.current !== listIdentity) return;
     const scroll = sectionRef.current?.querySelector<HTMLElement>('.xt-table-scroll');
     if (scroll) {
-      const index = rows.findIndex((row) => row.id === anchor.id);
+      const index = table.findIndex((row) => groupOf(row) === anchor.key);
       const block = scroll.querySelectorAll<HTMLElement>('.xt-table-block')[index];
       const top =
         scroll.getBoundingClientRect().top +
@@ -660,7 +937,7 @@ export function SessionsPage() {
         : Math.min(anchor.scrollTop, Math.max(0, scroll.scrollHeight - scroll.clientHeight));
     }
     anchorRef.current = null;
-  }, [listIdentity, query.isFetching, query.dataUpdatedAt, rows]);
+  }, [listIdentity, query.isFetching, query.dataUpdatedAt, table]);
   const recentReport = useQuery({
     queryKey: queryKeys.dashboard(days),
     queryFn: () => source.dashboard(days),
@@ -677,7 +954,49 @@ export function SessionsPage() {
         : [],
     [recentMetrics],
   );
-  const recentSessions = useMemo(() => foundRecent.slice(0, RECENT_SESSION_LIMIT), [foundRecent]);
+  // Recent activity is grouped and left out exactly as the Dashboard's lanes
+  // are, from the same report's context, before the limit picks the first
+  // main sessions and groups; opening a group lists its sub-sessions too.
+  const [openRecent, setOpenRecent] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleRecent = useCallback(
+    (group: string) => setOpenRecent((previous) => toggled(previous, group)),
+    [],
+  );
+  const { recentRows, recentRoots } = useMemo(() => {
+    // Keyed by exact host and identity, as the grouping is.
+    const context = new Map(
+      recentMetrics?.lane_sessions.map((session) => [
+        sessionKey(session.host, session.session_id),
+        session,
+      ]),
+    );
+    const linkOf = (lane: SessionLane) =>
+      verifiedParent({
+        id: lane.sessionId,
+        parent: context.get(sessionKey(lane.host, lane.sessionId))?.parent,
+      });
+    const drawn = laneRows(
+      listedLanes(
+        foundRecent,
+        linkOf,
+        unresolvedIn((id, host) => context.get(sessionKey(host, id))),
+      ),
+      linkOf,
+      openKeys(openRecent),
+    ).rows;
+    const kept: RecentRow[] = [];
+    let roots = 0;
+    for (const row of drawn) {
+      if (row.depth === 0) roots += 1;
+      if (roots <= RECENT_SESSION_LIMIT) kept.push(row);
+    }
+    return { recentRows: kept, recentRoots: roots };
+  }, [recentMetrics, foundRecent, openRecent]);
+  /** The recent sessions drawn now, each with its own row. */
+  const recentSessions = useMemo(
+    () => recentRows.flatMap((row) => (row.kind === 'session' ? [row.lane] : [])),
+    [recentRows],
+  );
   const { observe, visible } = useVisibleIds();
   const liveStatus = useLiveSessionStatus(
     JSON.stringify(['sessions', listIdentity, params.toString()]),
@@ -686,7 +1005,7 @@ export function SessionsPage() {
           ...recentSessions
             .filter((lane) => isLiveSessionHost(lane.host))
             .map((lane) => lane.sessionId),
-          ...(!query.isError ? rows : [])
+          ...(!query.isError ? shownRows : [])
             .filter((row) => isLiveSessionHost(row.host) && visible.has(row.id))
             .map((row) => row.id),
         ]
@@ -694,29 +1013,45 @@ export function SessionsPage() {
   );
   // One title read queue serves the list and the recent section. Wait for
   // both initial queries before starting it, so an overlapping session is
-  // named once. Loaded list rows keep priority; only recent IDs not already
-  // loaded follow them. A shared version changes when either source changes.
-  const titleRows = useMemo<TitleRow[]>(() => {
-    if (!supportedRecent || query.isPending || recentReport.isPending) return [];
-    const recentById = new Map(recentSessions.map((lane) => [lane.sessionId, lane.lastMs]));
-    const named = new Set<string>();
+  // named once. Drawn list rows keep priority; only drawn recent IDs not
+  // already named follow them, then the parent each drawn group row names
+  // that no drawn row already does: that row shows the parent's name. A row
+  // left out or collapsed is not read. A shared version changes when either
+  // source changes.
+  const { titleRows, titleHosts } = useMemo(() => {
     const result: TitleRow[] = [];
-    for (const row of rows) {
-      if (named.has(row.id)) continue;
-      named.add(row.id);
+    // Each named identity's exact host, so a parent on another host never
+    // takes the title read for a row with its identity.
+    const named = new Map<string, string>();
+    if (!supportedRecent || query.isPending || recentReport.isPending)
+      return { titleRows: result, titleHosts: named };
+    const recentById = new Map(recentSessions.map((lane) => [lane.sessionId, lane.lastMs]));
+    const name = (id: string, host: string, version: TitleRow['version']) => {
+      if (named.has(id)) return;
+      named.set(id, host);
+      result.push({ id, version });
+    };
+    for (const row of shownRows) {
       const lastMs = recentById.get(row.id);
-      result.push({
-        id: row.id,
-        version: lastMs === undefined ? row.record_count : `${row.record_count}\u0000${lastMs}`,
-      });
+      name(
+        row.id,
+        row.host,
+        lastMs === undefined ? row.record_count : `${row.record_count}\u0000${lastMs}`,
+      );
     }
-    for (const lane of recentSessions) {
-      if (named.has(lane.sessionId)) continue;
-      named.add(lane.sessionId);
-      result.push({ id: lane.sessionId, version: lane.lastMs });
-    }
-    return result;
-  }, [supportedRecent, query.isPending, recentReport.isPending, recentSessions, rows]);
+    for (const lane of recentSessions) name(lane.sessionId, lane.host, lane.lastMs);
+    for (const row of [...table, ...recentRows])
+      if (row.kind === 'absent') name(row.parent.session_id, row.parent.host, NAMED_PARENT);
+    return { titleRows: result, titleHosts: named };
+  }, [
+    supportedRecent,
+    query.isPending,
+    recentReport.isPending,
+    recentSessions,
+    shownRows,
+    table,
+    recentRows,
+  ]);
   const titleVersions = useMemo(
     () => new Map(titleRows.map((row) => [row.id, row.version])),
     [titleRows],
@@ -732,16 +1067,30 @@ export function SessionsPage() {
     },
     [readTitle, titleVersions],
   );
-  // A sub-session names its parent by the parent's own row when this list
-  // has loaded it, and only then; nothing is read for a parent it has not.
-  const pages = query.data?.pages;
+  // A parent is named by the host title read for it in this view only when
+  // that read was for its exact host and identity. A parent loaded in this
+  // list is then named as its own row reads with that title; any other by the
+  // title alone; then as the report sent it ([`parentName`]).
+  const nameParent = useCallback<ParentNames>(
+    (parent) => {
+      const own = loadedById.get(parent.session_id);
+      const exact: HostTitles = (id) => (titleHosts.get(id) === parent.host ? hostTitle(id) : null);
+      return parentName(
+        parent,
+        own?.host === parent.host ? titleOf(own, exact) : exact(parent.session_id),
+      );
+    },
+    [loadedById, hostTitle, titleHosts],
+  );
   const recentContext = new Map(
     recentMetrics?.lane_sessions.map((session) => [session.session_id, session]),
   );
+  // Only drawn sessions are read; a sub-session is not read for compactions,
+  // its parent is.
   const compaction = useSessionCompactions(
     JSON.stringify(['sessions', days, search, hostKey, withPrs]),
     [
-      ...rows.filter((row) => !verifiedParent(row)).map((row) => row.id),
+      ...shownRows.filter((row) => !verifiedParent(row)).map((row) => row.id),
       ...recentSessions
         .filter(
           (lane) =>
@@ -753,14 +1102,10 @@ export function SessionsPage() {
         .map((lane) => lane.sessionId),
     ],
   );
-  const loaded = useMemo<LoadedRow>(() => {
-    const byId = new Map(pages?.flatMap((page) => page.rows.map((row) => [row.id, row])));
-    return (id) => byId.get(id);
-  }, [pages]);
-  // Each cell shares this view's title and live-state lookups.
+  // Each cell shares this view's title, parent-name and live-state lookups.
   const columns = useMemo(
-    () => buildColumns(params, hostTitle, loaded, compaction, observe, liveStatus),
-    [params, hostTitle, loaded, compaction, observe, liveStatus],
+    () => buildColumns(params, hostTitle, nameParent, compaction, observe, liveStatus, toggleGroup),
+    [params, hostTitle, nameParent, compaction, observe, liveStatus, toggleGroup],
   );
   const incomplete = index.data?.hosts.some((h) => h.state !== 'complete');
   const scanning =
@@ -854,15 +1199,35 @@ export function SessionsPage() {
             address={params}
             metrics={recentMetrics}
             failed={recentReport.isError}
-            sessions={recentSessions}
-            foundCount={foundRecent.length}
+            rows={recentRows}
+            returned={foundRecent.length}
+            rootCount={recentRoots}
             hostTitle={hostTitle}
+            nameParent={nameParent}
             compaction={compaction}
             liveStatus={liveStatus}
+            onToggle={toggleRecent}
           />
           <SectionCard
             title="All sessions"
-            meta={`${rows.length} loaded · sorted by started ↓, first recorded when a start is unknown · measured over the last ${range.replace('d', ' days')}`}
+            // The loaded count is every row the pages returned; the grouped
+            // and hidden counts say how many of them are not drawn at the top
+            // level, and why.
+            meta={`${rows.length} loaded${
+              groupedCount > 0
+                ? ` · ${plural(groupedCount, 'sub-session')} grouped under main sessions`
+                : ''
+            }${
+              hiddenCount > 0
+                ? ` · ${plural(hiddenCount, 'sub-session')} hidden: main session unknown`
+                : ''
+            }${
+              checkingCount > 0
+                ? ` · ${plural(checkingCount, 'session')} hidden while checking who started ${
+                    checkingCount === 1 ? 'it' : 'them'
+                  }`
+                : ''
+            } · sorted by started ↓, first recorded when a start is unknown; a group sits at its newest loaded session · measured over the last ${range.replace('d', ' days')}`}
             right={
               <Button
                 variant="outline"
@@ -883,19 +1248,27 @@ export function SessionsPage() {
               <DataTable
                 label="Indexed sessions"
                 columns={columns}
-                rows={rows}
-                getRowKey={(row) => row.id}
+                rows={table}
+                // A loaded session keeps its own identity as its key, so its
+                // details stay open where it moves; a row naming a parent
+                // that is not loaded has a key no session can have.
+                getRowKey={(row) => (row.kind === 'session' ? row.lane.sessionId : row.key)}
                 rowHeight={40}
                 loading={query.isPending}
                 emptyMessage={
-                  search || hosts || withPrs
-                    ? 'No sessions match these filters.'
-                    : 'No indexed sessions yet. Check indexing status in Settings.'
+                  rows.length > 0
+                    ? 'No session to list: every loaded session is a sub-session whose main session is unknown.'
+                    : search || hosts || withPrs
+                      ? 'No sessions match these filters.'
+                      : 'No indexed sessions yet. Check indexing status in Settings.'
                 }
                 minWidth={860}
                 expandedKeys={expanded}
                 onExpandedChange={setExpanded}
-                renderExpanded={(row) => <SessionDetails row={row} />}
+                canExpand={(row) => row.kind === 'session'}
+                renderExpanded={(row) =>
+                  row.kind === 'session' ? <SessionDetails row={row.lane.row} /> : null
+                }
                 // The list takes the page's remaining height and scrolls on
                 // its own, as the reference does: its header stays put above
                 // the rows, and the page around it does not scroll too.

@@ -3,7 +3,8 @@
 Reuse the existing [component kit](../apps/desktop/ui/src/kit/index.ts) and
 [gallery](GALLERY.md) before adding a new primitive. Keep renderer data access behind
 [DataSource](../apps/desktop/ui/src/data/DataSource.ts); product metrics belong in
-Rust rather than duplicated component calculations.
+Rust rather than duplicated component calculations; see
+[one rule per question](ARCHITECTURE.md#one-rule-per-question-single-source-of-truth).
 
 Use the existing theme tokens and semantic CSS variables. `pnpm lint` checks raw
 hex usage; `pnpm check` includes component tests. Preserve keyboard navigation,

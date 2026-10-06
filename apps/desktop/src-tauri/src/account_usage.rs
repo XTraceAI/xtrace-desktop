@@ -161,9 +161,11 @@ impl AccountUsageService {
         }
     }
 
-    /// Adds each window's pace and daily use, from the history when there is
-    /// one (without it, pace uses the window average).
+    /// Keeps only the weekly limits, then adds each window's pace (from the
+    /// reading alone) and its daily use and series (from the history).
     fn with_pace(&self, mut usage: AccountUsage) -> AccountUsage {
+        weekly_only(&mut usage.claude);
+        weekly_only(&mut usage.codex);
         let now = Timestamp::now().as_second();
         let zone = TimeZone::system();
         let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
@@ -485,6 +487,21 @@ pub(super) fn failed(issue: AccountUsageIssue) -> AccountProviderUsage {
         issue: Some(issue),
         checked_at: None,
         windows: Vec::new(),
+    }
+}
+
+/// The app shows weekly limits only: a session (five-hour) limit, or any
+/// limit of another or unknown length, is dropped before the reading is
+/// shown. A reading left with no weekly limit is shown as unavailable.
+fn weekly_only(usage: &mut AccountProviderUsage) {
+    if usage.windows.is_empty() {
+        return;
+    }
+    usage
+        .windows
+        .retain(|window| window.duration_minutes == Some(10080));
+    if usage.windows.is_empty() {
+        *usage = unavailable(AccountUsageIssue::SourceUnavailable);
     }
 }
 
@@ -1052,6 +1069,33 @@ mod tests {
             daily: None,
             series: None,
         }
+    }
+
+    #[test]
+    fn only_weekly_limits_are_shown() {
+        let session = AccountUsageWindow {
+            bucket_key: "five_hour".into(),
+            window_key: "five_hour".into(),
+            window: "Session".into(),
+            used_percent: 48.0,
+            duration_minutes: Some(300),
+            ..week(0.0)
+        };
+        let unknown = AccountUsageWindow {
+            window_key: "secondary".into(),
+            window: "secondary".into(),
+            duration_minutes: None,
+            ..week(0.0)
+        };
+        let shown = AccountUsageService::default().with_pace(AccountUsage {
+            claude: available(vec![session.clone(), week(3.0)]),
+            codex: available(vec![session, unknown]),
+        });
+        assert_eq!(shown.claude.state, AccountUsageState::Available);
+        assert_eq!(shown.claude.windows.len(), 1);
+        assert_eq!(shown.claude.windows[0].used_percent, 3.0);
+        assert_eq!(shown.codex.state, AccountUsageState::Unavailable);
+        assert!(shown.codex.windows.is_empty());
     }
 
     #[cfg(not(feature = "fixtures"))]

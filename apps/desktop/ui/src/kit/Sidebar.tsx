@@ -1,8 +1,10 @@
 import { useId, useState, type ReactNode } from 'react';
 import type { AccountUsage } from '../data/generated/AccountUsage';
+import type { LocalUpdateControls } from '../data/DataSource';
 import { AccountUsageWidget } from './AccountUsageWidget';
 import { BrandMark } from './BrandMark';
 import { HubPopover } from './HubPopover';
+import { LocalUpdatesPopover } from './LocalUpdatesPopover';
 import { createPopoverHandle, Popover, PopoverTrigger } from './Popover';
 import { sidebarIcons } from './sidebar-icons';
 import type { Theme } from '../theme/ThemeProvider';
@@ -68,7 +70,8 @@ export interface SidebarProps {
   localIndex?: LocalIndexStatus;
   version: string;
   updateLabel?: string;
-  /** Caller-owned status/actions beside the version; the kit does not run updates. */
+  localUpdates?: LocalUpdateControls;
+  /** Caller-owned release status/actions beside the version. */
   versionExtra?: ReactNode;
   theme: Theme;
   onToggleTheme: () => void;
@@ -105,6 +108,7 @@ export function Sidebar({
   localIndex,
   version,
   updateLabel,
+  localUpdates,
   versionExtra,
   theme,
   onToggleTheme,
@@ -120,6 +124,9 @@ export function Sidebar({
   const captureId = useId();
   const [captureHandle] = useState(createPopoverHandle);
   const [captureOpen, setCaptureOpen] = useState(false);
+  const updatesId = useId();
+  const [updatesHandle] = useState(createPopoverHandle);
+  const [updatesOpen, setUpdatesOpen] = useState(false);
   const listening = listener.status === 'listening';
   // A port is printed only when the caller supplied one; none is ever assumed.
   const port = listener.status === 'listening' ? listener.port : undefined;
@@ -233,7 +240,7 @@ export function Sidebar({
             </PopoverTrigger>
             <div className="xt-sidebar-version">
               <span
-                className="xt-version-label"
+                className="xt-version-row"
                 title={`v${version}${updateLabel ? ` · ${updateLabel}` : ''}`}
               >
                 <i aria-hidden="true" />
@@ -241,6 +248,15 @@ export function Sidebar({
                   v{version}
                   {updateLabel ? ` · ${updateLabel}` : ''}
                 </span>
+                {localUpdates && (
+                  <PopoverTrigger
+                    handle={updatesHandle}
+                    type="button"
+                    className="xt-updates-trigger"
+                  >
+                    Updates
+                  </PopoverTrigger>
+                )}
               </span>
               <div className="xt-sidebar-version-extra">{versionExtra}</div>
             </div>
@@ -271,7 +287,10 @@ export function Sidebar({
         open={captureOpen}
         onOpenChange={(open) => {
           setCaptureOpen(open);
-          if (open) setHubOpen(false);
+          if (open) {
+            setHubOpen(false);
+            setUpdatesOpen(false);
+          }
         }}
         handle={captureHandle}
         positionAnchor={hubPosition}
@@ -364,7 +383,10 @@ export function Sidebar({
         open={hubOpen}
         onOpenChange={(open) => {
           setHubOpen(open);
-          if (open) setCaptureOpen(false);
+          if (open) {
+            setCaptureOpen(false);
+            setUpdatesOpen(false);
+          }
         }}
         handle={hubHandle}
         positionAnchor={hubPosition}
@@ -372,6 +394,22 @@ export function Sidebar({
         teamLabel={teamLabel}
         onConnect={onConnectHub}
       />
+      {localUpdates && (
+        <LocalUpdatesPopover
+          id={updatesId}
+          open={updatesOpen}
+          onOpenChange={(open) => {
+            setUpdatesOpen(open);
+            if (open) {
+              setHubOpen(false);
+              setCaptureOpen(false);
+            }
+          }}
+          handle={updatesHandle}
+          positionAnchor={hubPosition}
+          controls={localUpdates}
+        />
+      )}
     </aside>
   );
 }

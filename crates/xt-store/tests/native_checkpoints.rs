@@ -23,7 +23,7 @@ fn rewind_before(sql: &Connection, version: u32) {
          ALTER TABLE tool_uses DROP COLUMN group_conflict;
          DROP TABLE confirmed_automated_inputs;
          DROP TABLE guardian_turn_inputs;
-         DROP TABLE injected_context_inputs; DROP TABLE IF EXISTS task_notification_inputs; DROP TABLE IF EXISTS record_previews; DROP TABLE IF EXISTS human_input_adjustments; DROP TABLE IF EXISTS human_session_origins;
+         DROP TABLE injected_context_inputs; DROP TABLE IF EXISTS tool_sent_inputs; DROP TABLE IF EXISTS task_notification_inputs; DROP TABLE IF EXISTS record_previews; DROP TABLE IF EXISTS session_child_checks; DROP TABLE IF EXISTS session_child_facts; DROP TABLE IF EXISTS human_input_adjustments; DROP TABLE IF EXISTS human_session_origins;
          DROP TABLE session_creation_relations;
          DROP TABLE session_creation_bootstrap; DROP TABLE cli_artifact_launch_owners; DROP TABLE claude_launch_groups; DROP TABLE claude_launch_group_members; DROP TABLE claude_launch_candidates; DROP TABLE claude_launch_staged_candidates;
          DROP INDEX sessions_host_native; DROP INDEX source_cursors_tail;"
@@ -246,7 +246,7 @@ fn migration_5_clears_only_transcript_checkpoints_once() {
         .collect::<Vec<_>>();
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 17);
+    assert_eq!(store.schema_version().unwrap(), 22);
     assert!(
         store
             .native_checkpoint(SessionSource::Transcript, transcript_key)
@@ -262,14 +262,14 @@ fn migration_5_clears_only_transcript_checkpoints_once() {
     drop(store);
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 17);
+        assert_eq!(store.schema_version().unwrap(), 22);
         assert_eq!(
             store
                 .native_checkpoint(SessionSource::Transcript, transcript_key)
                 .unwrap(),
             Some(recreated.clone())
         );
-        assert_eq!(count("SELECT count(*) FROM schema_version"), 17);
+        assert_eq!(count("SELECT count(*) FROM schema_version"), 22);
     }
 }
 
@@ -354,7 +354,7 @@ fn migration_6_resets_transcripts_once_and_keeps_everything_else() {
         .collect::<Vec<_>>();
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 17);
+    assert_eq!(store.schema_version().unwrap(), 22);
     assert!(
         store
             .native_checkpoint(SessionSource::Transcript, transcript_key)
@@ -374,14 +374,14 @@ fn migration_6_resets_transcripts_once_and_keeps_everything_else() {
     drop(store);
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 17);
+        assert_eq!(store.schema_version().unwrap(), 22);
         assert_eq!(
             store
                 .native_checkpoint(SessionSource::Transcript, transcript_key)
                 .unwrap(),
             Some(recreated.clone())
         );
-        assert_eq!(count("SELECT count(*) FROM schema_version"), 17);
+        assert_eq!(count("SELECT count(*) FROM schema_version"), 22);
     }
 }
 
@@ -482,7 +482,7 @@ fn migration_7_resets_transcripts_once_and_keeps_everything_else() {
         .collect::<Vec<_>>();
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 17);
+    assert_eq!(store.schema_version().unwrap(), 22);
     assert!(
         store
             .native_checkpoint(SessionSource::Transcript, transcript_key)
@@ -508,14 +508,14 @@ fn migration_7_resets_transcripts_once_and_keeps_everything_else() {
     drop(store);
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 17);
+        assert_eq!(store.schema_version().unwrap(), 22);
         assert_eq!(
             store
                 .native_checkpoint(SessionSource::Transcript, transcript_key)
                 .unwrap(),
             Some(recreated.clone())
         );
-        assert_eq!(count("SELECT count(*) FROM schema_version"), 17);
+        assert_eq!(count("SELECT count(*) FROM schema_version"), 22);
         assert_eq!(tables.map(snapshot), before);
     }
 }

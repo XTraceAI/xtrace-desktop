@@ -206,7 +206,7 @@ for (const [width, height] of SIZES)
     // The child is listed under its parent, behind the parent row's
     // disclosure; opened, it is its own row with the marker.
     await expect(marker).toHaveCount(0);
-    await page.getByRole('button', { name: `1 returned sub-session of ${PARENT_TITLE}` }).click();
+    await page.getByRole('button', { name: `1 sub-session of ${PARENT_TITLE}` }).click();
     await expect(marker).toBeVisible();
     const related = await measure(page, 'Session lanes');
     await info.attach('lanes', { body: JSON.stringify({ plain, related }, null, 2) });
@@ -256,17 +256,23 @@ for (const [width, height] of SIZES)
   }, info) => {
     await open(page, true, '/sessions?q=01a0&host=codex&range=14d', width, height);
     const table = page.getByRole('table', { name: 'Indexed sessions' });
+    // The child is collapsed under its parent's row, which sits where the
+    // child, its newest loaded member, was; opened, the child is its own row.
+    await expect(table.getByRole('link', { name: /^Open session / })).toHaveCount(2);
+    const group = table.getByRole('button', { name: `1 loaded sub-session of ${PARENT_TITLE}` });
+    await group.click();
     await expect(table.getByRole('link', { name: /^Open session / })).toHaveCount(3);
     const measured = await measure(page, 'Indexed sessions');
     await info.attach('sessions', { body: JSON.stringify(measured, null, 2) });
     await page
       .locator('.xt-sessions')
       .screenshot({ path: info.outputPath(`sessions-${width}.png`) });
+    expect(measured.rows.map((row) => row.id)).toEqual([PARENT, CHILD, OTHER]);
     expect(measured.rows.map((row) => row.height)).toEqual([40, 40, 40]);
-    expect(measured.rows.map((row) => row.marker !== null)).toEqual([true, false, false]);
-    expectMarker(measured.rows[0].marker!);
+    expect(measured.rows.map((row) => row.marker !== null)).toEqual([false, true, false]);
+    expectMarker(measured.rows[1].marker!);
     // The row's own context still has room beside the parent.
-    expect(measured.rows[0].context).toBeGreaterThan(40);
+    expect(measured.rows[1].context).toBeGreaterThan(40);
     expect(measured.page.doc[0]).toBeLessThanOrEqual(measured.page.doc[1]);
 
     const marker = table.getByRole('link', {
@@ -279,5 +285,8 @@ for (const [width, height] of SIZES)
     await page.getByRole('link', { name: '← All sessions' }).click();
     await expect(page).toHaveURL(/\/sessions\?q=01a0&host=codex&range=14d$/);
     await expect(page.getByLabel('Search sessions')).toHaveValue('01a0');
+    // The list comes back as the address holds it, its groups collapsed.
+    await expect(group).toHaveAttribute('aria-expanded', 'false');
+    await group.click();
     await expect(marker).toBeVisible();
   });

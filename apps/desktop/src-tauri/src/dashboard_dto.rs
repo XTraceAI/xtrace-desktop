@@ -65,6 +65,9 @@ pub enum MetricUnpricedReason {
     MissingCacheSplit,
     InconsistentCacheSplit,
     MissingRate,
+    /// The response records no time; only a lane session's whole cost counts
+    /// it, as unpriced.
+    MissingTimestamp,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
@@ -104,8 +107,10 @@ pub struct MetricTile {
 pub struct DashboardTiles {
     pub agent_hours: MetricTile,
     pub agent_hours_per_day: MetricTile,
+    /// Agent hours divided by "your hours" ([`DashboardHumanHours`]) over the
+    /// window; unknown when your hours are zero or unknown.
+    pub leverage: MetricTile,
     pub human_hours_est: MetricTile,
-    pub ratio: MetricTile,
     pub concurrency_max: MetricTile,
     pub concurrency_mean: MetricTile,
     pub hands_off_median: MetricTile,
@@ -175,6 +180,118 @@ pub struct DashboardDay {
     pub human_hours_est: Option<f64>,
 }
 
+/// One active stretch inside one local day, in UTC milliseconds; a single
+/// message is a stretch whose end equals its start. `xt_metrics::HumanStretch`
+/// field for field.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MetricHumanStretch {
+    #[ts(type = "number")]
+    pub start_ms: i64,
+    #[ts(type = "number")]
+    pub end_ms: i64,
+}
+
+/// One local day of "your hours": its stretches in time order and their
+/// total; both unknown on every day when a message's classification is.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MetricHumanHoursDay {
+    pub date: String,
+    #[ts(type = "number")]
+    pub start_ms: i64,
+    #[ts(type = "number")]
+    pub end_ms: i64,
+    #[ts(type = "number | null")]
+    pub active_ms: Option<u64>,
+    pub stretches: Vec<MetricHumanStretch>,
+}
+
+/// `xt_metrics::HumanHours` field for field.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MetricHumanHours {
+    pub break_minutes: u32,
+    /// The first local midnight of the whole days your hours cover.
+    #[ts(type = "number")]
+    pub start_ms: i64,
+    /// The local midnight after the last of those days.
+    #[ts(type = "number")]
+    pub end_ms: i64,
+    #[ts(type = "number | null")]
+    pub active_ms: Option<u64>,
+    #[ts(type = "number | null")]
+    pub messages: Option<u64>,
+    pub by_day: Vec<MetricHumanHoursDay>,
+}
+
+/// "Your hours": the stretches you were sending messages to agents, from the
+/// saved break length, over the whole local days of the selected window (one
+/// entry per reported local day, the same dates as `days`, each a whole day),
+/// and the total for the same number of whole days just before.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DashboardHumanHours {
+    pub current: MetricHumanHours,
+    #[ts(type = "number | null")]
+    pub previous_active_ms: Option<u64>,
+}
+
+/// One whole local day of leverage (M-08): that day's agent hours (M-05)
+/// divided by its own hours of yours. `value` is `null` when your hours are
+/// zero or unknown.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct MetricLeverageDay {
+    pub date: String,
+    #[ts(type = "number")]
+    pub start_ms: i64,
+    #[ts(type = "number")]
+    pub end_ms: i64,
+    #[ts(type = "number")]
+    pub agent_ms: u64,
+    #[ts(type = "number | null")]
+    pub human_ms: Option<u64>,
+    pub value: Option<f64>,
+}
+
+/// Leverage's two sides over the whole local days of `human_hours`: the
+/// agent hours `tiles.leverage` divides, for both periods, and each day's
+/// own leverage (the same days as `human_hours.current.by_day`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DashboardLeverage {
+    /// Agent hours over the whole days of `human_hours.current`.
+    #[ts(type = "number")]
+    pub agent_ms: u64,
+    /// Agent hours over the same number of whole days just before.
+    #[ts(type = "number")]
+    pub previous_agent_ms: u64,
+    pub by_day: Vec<MetricLeverageDay>,
+}
+
+/// M-06 measured over one local day alone. `xt_metrics::DayConcurrency`
+/// field for field.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct MetricDayConcurrency {
+    pub date: String,
+    #[ts(type = "number")]
+    pub start_ms: i64,
+    #[ts(type = "number")]
+    pub end_ms: i64,
+    pub max: Option<u32>,
+    pub mean: Option<f64>,
+}
+
+/// M-09 measured over one local day alone. `xt_metrics::DayHandsOff` field
+/// for field.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct MetricDayHandsOff {
+    pub date: String,
+    #[ts(type = "number")]
+    pub start_ms: i64,
+    #[ts(type = "number")]
+    pub end_ms: i64,
+    #[ts(type = "number | null")]
+    pub n: Option<u64>,
+    pub median_min: Option<f64>,
+    pub p90_min: Option<f64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct DashboardLane {
     pub session_id: String,
@@ -185,11 +302,15 @@ pub struct DashboardLane {
     pub end_ms: i64,
 }
 
-/// One session named by the spans this report returns.
+/// One session named by the spans this report returns, or a parent one of
+/// those sessions' context links that the spans do not name.
 ///
 /// The context is stored session metadata, read by identifier in the same
 /// snapshot as the spans and the measurement below it; nothing is derived from
-/// a source file here. Every field but the identity and host is independently
+/// a source file here. A referenced parent's entry is metadata only: it has no
+/// span, and its `cost` is `null` because nothing is measured for it.
+/// Its own `parent` is the one its context read resolved; no further
+/// ancestor is read. Every field but the identity and host is independently
 /// nullable, because a history can carry a session without any of them, and a
 /// session the metadata read found no row for keeps every context field
 /// `null` rather than borrowing a zero.
@@ -221,11 +342,13 @@ pub struct DashboardLaneSession {
     /// when `pr_links` is.
     #[ts(type = "number | null")]
     pub inferred_pr_links: Option<u64>,
-    /// API-equivalent cost of this session's selected responses over the
-    /// whole fixed lane window, not only the spans this report returned: the
-    /// display cap never reduces a measurement. The same selection and prices
-    /// as the cost tile. `null` when no indexed user session owns the
-    /// identifier; never an invented zero.
+    /// API-equivalent cost of this session's selected responses over its
+    /// whole history, whenever they were: the lane window only decides which
+    /// sessions are listed, and neither it nor the display cap reduces this
+    /// number. The same selection and prices as the cost tile; a response
+    /// with no timestamp is in no window and is not priced. `null` when no
+    /// indexed user session owns the identifier, and on a referenced parent's
+    /// context-only entry; never an invented zero.
     pub cost: Option<DashboardLaneCost>,
     /// The session that verifiably created this one, when it is exactly one
     /// indexed user session; `null` otherwise. Display only: it adds no lane,
@@ -233,11 +356,36 @@ pub struct DashboardLaneSession {
     /// outside them.
     #[ts(optional = nullable)]
     pub parent: Option<SessionParentLink>,
+    /// Stored positive evidence says another session created this one: an
+    /// accepted creation relation or an unconflicted saved Human session
+    /// origin bound to this exact session. Read independently of `parent`, so
+    /// a known child whose parent is unindexed or ambiguous is `true` with a
+    /// `null` parent. `null` when no context row was found; an older report
+    /// without the key reads as not known. Display only.
+    #[ts(optional = nullable)]
+    pub known_child: Option<bool>,
+    /// What a list may show of this session, from the same context read
+    /// ([`crate::dto::SessionChildCheck`]). `null` when no context row was
+    /// found, which a list treats as still checking. Display only.
+    #[ts(optional = nullable)]
+    pub child_check: Option<crate::dto::SessionChildCheck>,
+    /// On a listed session's entry: how many verified sub-sessions under it,
+    /// at any depth, were found beyond the report's limit and so are not in
+    /// `lane_sub_sessions`. `null` when none were left out. A lower bound when
+    /// `sub_sessions_cut_short` is `true`.
+    #[ts(optional = nullable, type = "number | null")]
+    pub sub_sessions_not_shown: Option<u64>,
+    /// On a listed session's entry: `true` when the walk for its sub-sessions
+    /// stopped at its ceiling, so `sub_sessions_not_shown` is only a lower
+    /// bound (and may be `null` with some left out). `null` otherwise.
+    #[ts(optional = nullable)]
+    pub sub_sessions_cut_short: Option<bool>,
 }
 
-/// One lane session's priced responses over the lane window. A slice of the
-/// cost tile's selection: a Claude Code sidechain counts with its parent
-/// session, a separately indexed sub-session on its own row.
+/// One lane session's priced responses over its whole history. The cost
+/// tile's selection, restricted to the session but not to a window: a Claude
+/// Code sidechain counts with its parent session, a separately indexed
+/// sub-session on its own row.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct DashboardLaneCost {
     /// Every selected response was priced; `null` when any was not, or when
@@ -593,9 +741,25 @@ pub struct DashboardMetrics {
     pub tokens_by_host: Vec<HostTokenSummary>,
     pub days: Vec<DashboardDay>,
     pub lanes: Vec<DashboardLane>,
-    /// Context and measured output for each distinct session `lanes` names,
-    /// ordered by identifier. Not a display order: rows read it by identity.
+    /// Context and measured cost for each distinct session `lanes` names,
+    /// then context only for each indexed parent those sessions' own context
+    /// links that `lanes` does not name, so a display can tell whether that
+    /// parent is itself a known child with no verified parent. Ordered by
+    /// identifier; not a display order: rows read it by identity, and a
+    /// referenced parent's entry never makes a row. At most twice the returned
+    /// sessions; see [`DashboardLaneSession`].
     pub lane_sessions: Vec<DashboardLaneSession>,
+    /// Every verified sub-session, at any depth and whenever it ran, under a
+    /// session `lanes` names, that `lanes` does not name itself: its context,
+    /// its own `parent` (a listed session or another entry here) and its
+    /// whole cost, read in the same snapshot. It has no span in the lane
+    /// window, so it never makes a row of its own; a display lists it only
+    /// under its parent, so a group can show every sub-session it adds up.
+    /// Nearer levels first, each most recently active first, at most
+    /// [`crate::dashboard::SUB_SESSION_LIMIT`]; the rest are counted on the
+    /// listed session's `sub_sessions_not_shown`. The order is the walk's,
+    /// so a parent always comes before its own sub-sessions here.
+    pub lane_sub_sessions: Vec<DashboardLaneSession>,
     #[ts(type = "number")]
     pub lane_start_ms: i64,
     #[ts(type = "number")]
@@ -614,6 +778,15 @@ pub struct DashboardMetrics {
     pub pr_effort: crate::pr_effort_dto::DashboardPrEffort,
     pub cost: DashboardCost,
     pub unavailable: Vec<DashboardUnavailable>,
+    /// "Your hours" over the selected window, by local day.
+    pub human_hours: DashboardHumanHours,
+    /// Leverage's agent hours and each day's leverage, over the whole local
+    /// days of `human_hours`.
+    pub leverage: DashboardLeverage,
+    /// Each reported local day measured alone, the same days as `days`.
+    pub concurrency_by_day: Vec<MetricDayConcurrency>,
+    /// Each reported local day measured alone, the same days as `days`.
+    pub hands_off_by_day: Vec<MetricDayHandsOff>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]

@@ -321,8 +321,7 @@ fn environment_deduplicates_components_by_host_source_and_structural_name() {
 }
 
 /// The configured facts carry structural names only. No command, argument,
-/// environment value, credential, URL or installation-path field can reach a
-/// caller. Names remain names even when their text happens to look like a path.
+/// environment value, credential, URL or installation path can reach a caller.
 #[test]
 fn environment_configured_facts_carry_no_command_argument_environment_or_url() {
     let probe = environment::probe(&f16_roots());
@@ -362,70 +361,7 @@ fn environment_configured_facts_carry_no_command_argument_environment_or_url() {
             .components
             .iter()
             .all(|component| !component.name.contains('/') && !component.name.contains('\\')),
-        "F16's structural names do not contain path separators"
-    );
-}
-
-#[test]
-fn environment_preserves_names_including_path_shapes_without_returning_field_values() {
-    let (_guard, root) = temp();
-    fs::create_dir_all(root.join(".claude/plugins")).unwrap();
-    fs::create_dir_all(root.join(".codex")).unwrap();
-    let server = "/synthetic/server";
-    let plugin = "C:\\synthetic\\plugin@market";
-    let matcher = "/synthetic/matcher";
-    let field_value = "FIELD_VALUE_MUST_NOT_LEAVE_THE_PROBE";
-    fs::write(
-        root.join(".claude.json"),
-        serde_json::to_vec(&serde_json::json!({
-            "mcpServers": {server: {"command": field_value, "args": [field_value],
-                "env": {"TOKEN": field_value}, "url": field_value, "headers": {"x": field_value}}}
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    fs::write(
-        root.join(".codex/config.toml"),
-        format!("[mcp_servers.'{server}']\ncommand = '{field_value}'\n"),
-    )
-    .unwrap();
-    fs::write(
-        root.join(".claude/plugins/installed_plugins.json"),
-        serde_json::to_vec(&serde_json::json!({
-            "version": 2, "plugins": {plugin: [{"scope": "user", "installPath": field_value,
-                "installedAt": "2026-09-01T00:00:00Z"}]}
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    fs::write(
-        root.join(".claude/settings.json"),
-        serde_json::to_vec(&serde_json::json!({
-            "enabledPlugins": {plugin: true}, "hooks": {"Stop": [{"matcher": matcher,
-                "hooks": [{"type": "command", "command": field_value}]}]}
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    let reading = environment::probe(&ProbeRoots::new().with_home(&root).unwrap());
-    assert_eq!(names(&reading, ConfigSource::ClaudeUserMcpConfig), [server]);
-    assert_eq!(names(&reading, ConfigSource::CodexMcpConfig), [server]);
-    assert_eq!(
-        names(&reading, ConfigSource::ClaudePluginRegistry),
-        [plugin]
-    );
-    assert_eq!(
-        names(&reading, ConfigSource::ClaudeEnabledPlugins),
-        [plugin]
-    );
-    assert_eq!(
-        names(&reading, ConfigSource::ClaudeHookConfig),
-        [format!("Stop:{matcher}")]
-    );
-    assert!(
-        !serde_json::to_string(&reading)
-            .unwrap()
-            .contains(field_value)
+        "a structural name is never a path"
     );
 }
 
@@ -758,7 +694,6 @@ fn environment_reads_nothing_without_an_explicitly_supplied_root() {
 #[test]
 fn environment_launches_no_process_and_opens_no_socket_by_construction() {
     let module = include_str!("../src/environment.rs");
-    let helper = include_str!("../src/environment_io.rs");
     let root = include_str!("../src/lib.rs");
     for forbidden in [
         "std::process",
@@ -772,71 +707,12 @@ fn environment_launches_no_process_and_opens_no_socket_by_construction() {
         "read_link",
         "canonicalize",
         "WalkDir",
+        "unsafe",
     ] {
-        for (name, source) in [
-            ("environment.rs", module),
-            ("environment_io.rs", helper),
-            ("lib.rs", root),
-        ] {
+        for (name, source) in [("environment.rs", module), ("lib.rs", root)] {
             assert!(!source.contains(forbidden), "{name} names {forbidden}");
         }
     }
-    for source in [module, root] {
-        assert!(
-            !source.contains("unsafe"),
-            "C calls belong only in the private helper"
-        );
-    }
-    // With C calls allowed only in the private helper, inspect every libc
-    // identifier there. Adding a process, socket, write or unbounded-read
-    // API requires changing this contract rather than escaping the guard.
-    let libc_identifiers = [
-        "AT_SYMLINK_NOFOLLOW",
-        "DIR",
-        "ELOOP",
-        "ENOTDIR",
-        "ENXIO",
-        "O_CLOEXEC",
-        "O_DIRECTORY",
-        "O_NOFOLLOW",
-        "O_NONBLOCK",
-        "O_RDONLY",
-        "O_SEARCH",
-        "O_PATH",
-        "S_IFDIR",
-        "S_IFLNK",
-        "S_IFMT",
-        "S_IFREG",
-        "__errno_location",
-        "__error",
-        "c_int",
-        "closedir",
-        "fdopendir",
-        "fstatat",
-        "mode_t",
-        "openat",
-        "readdir",
-        "stat",
-    ];
-    for suffix in helper.split("libc::").skip(1) {
-        let end = suffix
-            .find(|character: char| !character.is_ascii_alphanumeric() && character != '_')
-            .unwrap_or(suffix.len());
-        let identifier = &suffix[..end];
-        assert!(
-            libc_identifiers.contains(&identifier),
-            "private helper names libc::{identifier}"
-        );
-    }
-    assert_eq!(
-        helper.matches(".open(").count(),
-        1,
-        "only the fixed filesystem root uses an absolute open"
-    );
-    assert!(helper.contains(".open(\"/\")"));
-    assert!(helper.contains("std::ptr::addr_of!((*entry).d_name).cast()"));
-    assert!(!helper.contains(".d_name.as_ptr()"));
-    assert!(helper.contains("SEARCH_ONLY | libc::O_DIRECTORY"));
     let manifest = include_str!("../Cargo.toml");
     for dependency in ["reqwest", "ureq", "tokio", "hyper", "which", "dirs", "home"] {
         assert!(!manifest.contains(dependency), "{dependency} is declared");
@@ -845,27 +721,18 @@ fn environment_launches_no_process_and_opens_no_socket_by_construction() {
     // opened read-only, no-follow and nonblocking, and consumed only through
     // the bounded reader.
     for allowed in [
+        "fs::symlink_metadata",
+        "fs::read_dir",
         ".read(true)",
-        "libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | flags",
-        "libc::O_DIRECTORY",
-        "libc::O_NONBLOCK",
-        "libc::AT_SYMLINK_NOFOLLOW",
-        "libc::fstatat",
-        "libc::openat",
-        "libc::fdopendir",
-        "libc::readdir",
-        "libc::closedir",
+        "libc::O_NOFOLLOW | libc::O_NONBLOCK",
+        ".take(MAX_SOURCE_BYTES + 1)",
     ] {
-        assert!(helper.contains(allowed), "{allowed} is missing");
+        assert!(module.contains(allowed), "{allowed} is missing");
     }
-    assert!(module.contains(".take(MAX_SOURCE_BYTES + 1)"));
-    assert!(module.contains(".names(MAX_SOURCE_ENTRIES + 1)"));
     for forbidden in [
         "fs::read(",
         "fs::read_to_string",
         "fs::metadata(",
-        "fs::symlink_metadata",
-        "fs::read_dir",
         "fs::write",
         "fs::create_dir",
         "fs::remove",
@@ -874,28 +741,11 @@ fn environment_launches_no_process_and_opens_no_socket_by_construction() {
         ".create(",
         ".create_new(",
         ".truncate(",
-        "libc::O_WRONLY",
-        "libc::O_RDWR",
-        "libc::O_CREAT",
-        "libc::O_TRUNC",
-        "libc::O_APPEND",
-        "libc::write",
-        "libc::unlink",
-        "libc::rename",
-        "libc::mkdir",
-        "libc::chmod",
-        "libc::socket",
-        "libc::connect",
-        "libc::exec",
-        "libc::spawn",
-        "libc::fork",
     ] {
-        for (name, source) in [("environment.rs", module), ("environment_io.rs", helper)] {
-            assert!(
-                !source.contains(forbidden),
-                "{name}: {forbidden} is unbounded or writes"
-            );
-        }
+        assert!(
+            !module.contains(forbidden),
+            "{forbidden} is unbounded or writes"
+        );
     }
 }
 

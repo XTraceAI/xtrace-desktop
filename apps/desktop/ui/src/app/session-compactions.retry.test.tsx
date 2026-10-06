@@ -45,8 +45,7 @@ async function setup(ids = ['main'], retryTransient = true) {
   });
   let currentSource = data;
   const hook = renderHook(
-    ({ ids, scope }) =>
-      useSessionCompactions(scope, ids, { keepResolved: retryTransient, retryTransient }),
+    ({ ids, scope }) => useSessionCompactions(scope, ids, { retryTransient }),
     {
       initialProps: { ids, scope: 'dashboard:7d' },
       wrapper: ({ children }: { children: ReactNode }) => (
@@ -101,7 +100,7 @@ it.each(['transport', 'cancelled', 'limit', 'replaced', 'incomplete'] as const)(
 );
 
 it.each(['transport', 'replaced'] as const)(
-  'clears the count after the final %s failure without a third attempt',
+  'keeps the last count after the final %s failure without a third attempt',
   async (reason) => {
     const { result, data, advance, refresh, initialReads } = await setup();
     if (reason === 'transport')
@@ -115,11 +114,32 @@ it.each(['transport', 'replaced'] as const)(
     await refresh();
     expect(result.current('main')).toEqual(verified);
     await advance(301);
-    expect(result.current('main')).toEqual(
-      reason === 'transport' ? undefined : { state: 'unknown', reason },
-    );
+    // A temporary miss is not news about the session: its number stays.
+    expect(result.current('main')).toEqual(verified);
+    expect(result.current.reading('main')).toBe(false);
     await advance(1000);
     expect(data.compactions.read).toHaveBeenCalledTimes(initialReads + 2);
+  },
+);
+
+it.each(['transport', 'replaced'] as const)(
+  'shows a row with no last count as unknown after a final %s failure',
+  async (reason) => {
+    const { result, data, advance, rerender, initialReads } = await setup();
+    const outcome: CompactionCount = { state: 'unknown', reason: 'replaced' };
+    data.compactions.read.mockImplementation(async (ids) => {
+      if (reason === 'transport') throw new Error('refused');
+      return answer(outcome, ids);
+    });
+    rerender({ ids: ['main', 'new'], scope: 'dashboard:7d' });
+    await advance(1);
+    expect(result.current.reading('new')).toBe(true);
+    await advance(301);
+    expect(data.compactions.read).toHaveBeenCalledTimes(initialReads + 2);
+    expect(result.current('main')).toEqual(verified);
+    // Nothing known: the unknown itself, or not read after a failed read.
+    expect(result.current('new')).toEqual(reason === 'transport' ? undefined : outcome);
+    expect(result.current.reading('new')).toBe(false);
   },
 );
 
@@ -181,14 +201,20 @@ it.each(['visible', 'range', 'unmount'] as const)(
   },
 );
 
-it('does not retry compaction failures on the other surfaces', async () => {
-  const { result, data, advance, refresh, initialReads } = await setup(['main'], false);
-  data.compactions.read.mockRejectedValueOnce(new Error('refused'));
-  await refresh();
-  expect(result.current('main')).toBeUndefined();
-  await advance(1000);
-  expect(data.compactions.read).toHaveBeenCalledTimes(initialReads + 1);
-});
+it.each(['transport', 'replaced', 'missing'] as const)(
+  'does not retry a %s result on the other surfaces; only a lasting one replaces the count',
+  async (reason) => {
+    const { result, data, advance, refresh, initialReads } = await setup(['main'], false);
+    if (reason === 'transport') data.compactions.read.mockRejectedValueOnce(new Error('refused'));
+    else data.compactions.read.mockResolvedValueOnce(answer({ state: 'unknown', reason }));
+    await refresh();
+    expect(result.current('main')).toEqual(
+      reason === 'missing' ? { state: 'unknown', reason } : verified,
+    );
+    await advance(1000);
+    expect(data.compactions.read).toHaveBeenCalledTimes(initialReads + 1);
+  },
+);
 
 it('cancels the native retry attempt and ignores its late answer after a visible selection change', async () => {
   const { result, data, rerender, advance, refresh } = await setup();
@@ -225,7 +251,7 @@ it('keeps terminal results when the other row exhausts its transport retry', asy
   await refresh();
   expect(result.current('terminal')).toEqual({ state: 'unknown', reason: 'ownership' });
   await advance(301);
-  expect(result.current('main')).toBeUndefined();
+  expect(result.current('main')).toEqual(verified);
   expect(result.current('terminal')).toEqual({ state: 'unknown', reason: 'ownership' });
 });
 
@@ -240,7 +266,8 @@ it('keeps initial and retry commands within fifty IDs without retrying successfu
   await refresh();
   expect(result.current(ids[0])).toEqual(verified);
   await advance(301);
-  expect(result.current(ids[0])).toEqual({ state: 'unknown', reason: 'limit' });
+  // A batch that reached its limit twice keeps its last counts.
+  expect(result.current(ids[0])).toEqual(verified);
   expect(result.current([...ids].sort().at(-1)!)).toEqual(fresh);
   const commands = data.compactions.read.mock.calls.slice(initialReads);
   expect(commands.map(([named]) => named.length)).toEqual([50, 50, 50, 12]);
@@ -296,5 +323,104 @@ it.each(['delay', 'native attempt'] as const)(
     });
     await advance(1);
     expect(result.current('main')).toEqual(fresh);
+  },
+);
+
+it.each([
+  ['replaced', true],
+  ['missing', false],
+] as const)(
+  'retries a fork whose inherited part is %s only when that may pass next time',
+  async (reason, retried) => {
+    const { result, data, advance, refresh, initialReads } = await setup();
+    const partial: CompactionCount = {
+      state: 'count',
+      count: 3,
+      events: [],
+      inherited: { state: 'unknown', reason },
+    };
+    const whole: CompactionCount = {
+      state: 'count',
+      count: 3,
+      events: [],
+      inherited: { state: 'count', count: 0 },
+    };
+    data.compactions.read
+      .mockResolvedValueOnce(answer(partial))
+      .mockResolvedValueOnce(answer(whole));
+    await refresh();
+    await advance(301);
+    expect(data.compactions.read).toHaveBeenCalledTimes(initialReads + (retried ? 2 : 1));
+    expect(result.current('main')).toEqual(retried ? whole : partial);
+  },
+);
+
+it.each(['transport', 'replaced'] as const)(
+  'keeps a fork’s proven own count when its retry ends in %s',
+  async (failure) => {
+    const { result, data, advance, refresh, initialReads } = await setup();
+    const partial: CompactionCount = {
+      state: 'count',
+      count: 3,
+      events: [],
+      inherited: { state: 'unknown', reason: 'replaced' },
+    };
+    data.compactions.read.mockResolvedValueOnce(answer(partial));
+    if (failure === 'transport')
+      data.compactions.read.mockRejectedValueOnce(new Error('read refused'));
+    else data.compactions.read.mockResolvedValueOnce(answer({ state: 'unknown', reason: failure }));
+    await refresh();
+    await advance(301);
+    expect(data.compactions.read).toHaveBeenCalledTimes(initialReads + 2);
+    expect(result.current('main')).toEqual(partial);
+  },
+);
+
+it('does not retry an inherited part the next read would not change', async () => {
+  const { result, data, advance, refresh, initialReads } = await setup();
+  const partial: CompactionCount = {
+    state: 'count',
+    count: 3,
+    events: [],
+    inherited: { state: 'unknown', reason: 'incomplete' },
+  };
+  data.compactions.read.mockResolvedValueOnce(answer(partial));
+  await refresh();
+  await advance(1000);
+  expect(data.compactions.read).toHaveBeenCalledTimes(initialReads + 1);
+  expect(result.current('main')).toEqual(partial);
+});
+
+it.each([
+  ['replaced', true],
+  ['replaced', false],
+  ['missing', true],
+] as const)(
+  'gives a fork with a %s inherited part its new own count (retry %s)',
+  async (reason, retryTransient) => {
+    const { result, data, advance, refresh } = await setup(['main'], retryTransient);
+    const whole: CompactionCount = {
+      state: 'count',
+      count: 3,
+      events: [],
+      inherited: { state: 'count', count: 2, copied: true },
+    };
+    data.compactions.read.mockResolvedValueOnce(answer(whole));
+    await refresh();
+    expect(result.current('main')).toEqual(whole);
+    const partial: CompactionCount = {
+      state: 'count',
+      count: 4,
+      events: [],
+      inherited: { state: 'unknown', reason },
+    };
+    data.compactions.read.mockResolvedValue(answer(partial));
+    await refresh();
+    await advance(301);
+    // A temporary miss reuses the inherited count it last had; a lasting one
+    // is shown as it is.
+    expect(result.current('main')).toEqual(
+      reason === 'replaced' ? { ...partial, inherited: whole.inherited } : partial,
+    );
   },
 );

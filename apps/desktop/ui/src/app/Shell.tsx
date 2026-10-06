@@ -151,7 +151,12 @@ export function Shell() {
         listener={pluginReceiver(info.data?.listening)}
         localIndex={localIndex}
         version={info.data?.version ?? '…'}
-        versionExtra={source.kind === 'native' ? <UpdateNotice /> : undefined}
+        localUpdates={source.kind === 'native' ? source.localUpdates : undefined}
+        versionExtra={
+          source.kind === 'native' && source.publicUpdates ? (
+            <UpdateNotice enabled={source.publicUpdates} />
+          ) : undefined
+        }
         theme={theme}
         onToggleTheme={toggle}
         onSettings={() => void navigate('/settings')}

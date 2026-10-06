@@ -98,9 +98,7 @@ const columns = (target: PrTarget): Column<SessionRow>[] => [
   {
     key: 'evidence',
     header: (
-      <span title="This session's own link to the pull request (M-13), and how many other pull requests it also links.">
-        link
-      </span>
+      <span title="How this session links to the PR, and how many other PRs it links.">link</span>
     ),
     width: '92px',
     render: (row) => {
@@ -139,7 +137,7 @@ const columns = (target: PrTarget): Column<SessionRow>[] => [
       return metrics.events === 0 ? (
         <span
           className="xt-pr-meta"
-          title="No work event in this window; a linked member is listed whether or not it was active"
+          title="No work in this window. Linked sessions are listed even when idle."
         >
           idle
         </span>

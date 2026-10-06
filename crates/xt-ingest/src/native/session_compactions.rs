@@ -1,11 +1,17 @@
 //! Recorded compactions from requested indexed sources and explicit history dependencies.
 //! Counts and revision facts live only in bounded native memory; no text or paths in IPC.
+//! A forked Codex conversation's own count is kept apart from the count it
+//! inherits: the compactions of the conversation it was forked from, recorded
+//! before the fork point. An older fork whose file holds a copy of that
+//! history, with no reference to say where it ends, is split by compaction
+//! identity: the copied ones are those the other conversation also recorded.
 use super::checkpoint::{self, FileIdentity, ResumeBasis};
+use super::claude_launch::group::Role;
 use super::readers_cli::CancelToken;
 use super::session_source::{IndexedSource, unchanged};
 use super::session_titles::{
-    Segment, TitleTarget, Untitled, claude_contained, codex_contained, codex_segment, gather,
-    open_regular, title_sources, uuid_shaped,
+    Segment, TitleTarget, Untitled, claude_contained, codex_contained, codex_segment,
+    full_thread_id, gather, open_regular, title_sources, uuid_shaped,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use rusqlite::{Connection, OptionalExtension};
@@ -26,7 +32,7 @@ use xt_store::{
 mod jsonl;
 
 pub const MAX_SESSIONS: usize = 50;
-const VERSION: u32 = 2;
+const VERSION: u32 = 4;
 const MAX_CACHE: usize = 256;
 const MAX_EVENTS: usize = 200_000;
 const MAX_SNAPSHOT: u64 = 1024 * 1024 * 1024;
@@ -35,6 +41,8 @@ const MAX_DECODED: usize = 128 * 1024 * 1024;
 const MAX_NODES: usize = 200_000;
 const MAX_DEPTH: usize = 128;
 const MAX_SQL_BYTES: i64 = 1024 * 1024;
+/// The most referenced rollouts a fork's inherited history may chain through.
+const MAX_REFERENCES: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -50,6 +58,14 @@ pub enum Reason {
     Incomplete,
     Limit,
     Cancelled,
+    /// An approval reviewer's file holds only part of the reviewed
+    /// conversation's history, whose compactions it carries, and none of its
+    /// own: earlier compactions were left out.
+    Snapshot,
+    /// A forked conversation's file holds history copied from the conversation
+    /// it was forked from, and its own compactions could not be told apart
+    /// from the copied ones.
+    CopiedHistory,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -82,16 +98,29 @@ pub struct Event {
 /// its place in the count and simply has no event, so `events.len()` is
 /// at most the count; Cursor summaries carry no time and have no events.
 /// `events` is empty whenever the outcome is unknown.
+///
+/// `inherited` is set only for a forked Codex conversation whose own count is
+/// known: the compactions recorded in the conversation it was forked from
+/// (following its own references) before the fork point, or why that could
+/// not be counted; for an older fork whose file holds a copy of that history,
+/// the copied compactions, and `copied` is set. `outcome` and `events` stay
+/// the fork's own.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Counted {
     pub outcome: Outcome,
     pub events: Vec<Event>,
+    pub inherited: Option<Outcome>,
+    /// `inherited` counts history copied into this conversation's own file,
+    /// not history it references.
+    pub copied: bool,
 }
 impl Counted {
-    fn unknown(reason: Reason) -> Self {
+    pub fn unknown(reason: Reason) -> Self {
         Self {
             outcome: Outcome::unknown(reason),
             events: Vec::new(),
+            inherited: None,
+            copied: false,
         }
     }
 }
@@ -154,6 +183,12 @@ impl Facts {
 #[derive(Clone)]
 struct Entry {
     revisions: Vec<Revision>,
+    /// The referenced rollouts a fork's inherited count was read from, by
+    /// rollout identity: still the one file of that name, unchanged.
+    references: Vec<(String, Revision)>,
+    /// A copied-history fork's origin and the files named for it that its
+    /// split was read from: still exactly those files, each unchanged.
+    origin: Option<(String, Vec<Revision>)>,
     counted: Counted,
 }
 #[derive(Default)]
@@ -232,11 +267,26 @@ impl Reader {
                     return Err(Reason::Missing);
                 }
                 let key = format!("{home:?}/{VERSION}/{target:?}");
-                if let Some(entry) = self.cache.get(&key).filter(|e| e.revisions == revisions) {
+                if let Some(entry) = self.cache.get(&key).filter(|e| {
+                    e.revisions == revisions
+                        && e.references.iter().all(|(rollout, r)| {
+                            referenced(home, rollout, &work).is_ok_and(|(path, _)| path == r.0[0].0)
+                                && revision(&r.0[0].0).as_ref() == Ok(r)
+                        })
+                        && e.origin.as_ref().is_none_or(|(origin, read)| {
+                            codex_files(home, origin, &work).is_ok_and(|now| {
+                                now.len() == read.len()
+                                    && now
+                                        .iter()
+                                        .zip(read)
+                                        .all(|(path, r)| revision(path).as_ref() == Ok(r))
+                            })
+                        })
+                }) {
                     return Ok(entry.counted.clone());
                 }
                 self.scans += 1;
-                let facts = if target.host == Host::Cursor {
+                let (mut facts, lineage) = if target.host == Host::Cursor {
                     let path = &files[0];
                     if !snapshots.contains_key(path) {
                         let dir = snapshot(path, &revisions[0], &mut work)?;
@@ -266,13 +316,14 @@ impl Reader {
                     if snapshot.revision != revisions[0] {
                         return Err(Reason::Replaced);
                     }
-                    cursor_target(
+                    let facts = cursor_target(
                         &snapshot.db,
                         snapshot._dir.path(),
                         path,
                         &target.native_session_id,
                         &mut work,
-                    )?
+                    )?;
+                    (facts, Lineage::Own)
                 } else {
                     jsonl_target(home, target, &files, &mut work)?
                 };
@@ -286,18 +337,67 @@ impl Reader {
                 {
                     return Err(Reason::Replaced);
                 }
-                let answer = facts_counted(&facts)?;
-                // Eviction is only a future miss; proof uses locally held revisions.
-                if self.cache.len() >= MAX_CACHE {
-                    self.cache.clear();
+                // A copied-history fork's own count is what is left once the
+                // copied compactions are told apart; with none at all, every
+                // row's count is its own: zero.
+                let mut origin = None;
+                let mut copied = None;
+                if let Lineage::Copied {
+                    origin: from,
+                    order,
+                } = &lineage
+                    && !order.is_empty()
+                {
+                    let (from, read, ids) = copied_split(
+                        home,
+                        from.as_deref(),
+                        &target.native_session_id,
+                        order,
+                        &mut work,
+                    )?;
+                    for id in &order[..ids] {
+                        facts.events.remove(id);
+                    }
+                    copied = Some(ids);
+                    origin = Some((from, read));
                 }
-                self.cache.insert(
-                    key,
-                    Entry {
-                        revisions,
-                        counted: answer.clone(),
-                    },
-                );
+                let mut answer = facts_counted(&facts)?;
+                if let Some(ids) = copied {
+                    answer.inherited = Some(Outcome::Count {
+                        count: u32::try_from(ids).map_err(|_| Reason::Limit)?,
+                    });
+                    answer.copied = true;
+                }
+                // The own count is proven: a fork's inherited count, read
+                // after it, can only leave its own part unknown.
+                let mut references = Vec::new();
+                if let Lineage::Fork(fork) = &lineage {
+                    answer.inherited = Some(
+                        match inherited(home, fork, &facts, &mut references, &mut work) {
+                            Ok(count) => Outcome::Count { count },
+                            Err(why) => Outcome::unknown(why),
+                        },
+                    );
+                }
+                // An unknown inherited count is never kept: what it rests on
+                // (a missing, duplicate or changing file) is not all held to
+                // be checked again. Its own count is read again with it.
+                let settled = !matches!(answer.inherited, Some(Outcome::Unknown { .. }));
+                // Eviction is only a future miss; proof uses locally held revisions.
+                if settled {
+                    if self.cache.len() >= MAX_CACHE {
+                        self.cache.clear();
+                    }
+                    self.cache.insert(
+                        key,
+                        Entry {
+                            revisions,
+                            references,
+                            origin,
+                            counted: answer.clone(),
+                        },
+                    );
+                }
                 Ok(answer)
             })()
             .unwrap_or_else(Counted::unknown);
@@ -331,6 +431,8 @@ fn facts_counted(facts: &Facts) -> Result<Counted, Reason> {
     Ok(Counted {
         outcome: Outcome::Count { count },
         events,
+        inherited: None,
+        copied: false,
     })
 }
 /// A marker's own recorded time, in UTC milliseconds; absent when unreadable.
@@ -462,6 +564,34 @@ fn target_files(home: &Path, target: &Target, work: &Work<'_>) -> Result<Vec<Pat
 // Filename discovery only: bodies of other threads are never opened. Match
 // the supported root and up to YYYY/MM/DD, using real directories only.
 fn codex_files(home: &Path, native: &str, work: &Work<'_>) -> Result<Vec<PathBuf>, Reason> {
+    codex_names(home, work, |path| codex_segment(path, native).is_some())
+}
+/// The one rollout named with the immutable rollout identity `rollout`, as
+/// the reader's `references` finds it, and the thread its name gives it.
+fn referenced(home: &Path, rollout: &str, work: &Work<'_>) -> Result<(PathBuf, String), Reason> {
+    let named = |path: &Path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .and_then(super::claude_launch::group::census_name)
+    };
+    let found = codex_names(home, work, |path| {
+        named(path).is_some_and(|(_, id, _)| id == rollout)
+    })?;
+    let [path] = found.as_slice() else {
+        return Err(if found.is_empty() {
+            Reason::Missing
+        } else {
+            Reason::Ambiguous
+        });
+    };
+    let (thread, _, _) = named(path).ok_or(Reason::IdentityMismatch)?;
+    Ok((path.clone(), thread))
+}
+fn codex_names(
+    home: &Path,
+    work: &Work<'_>,
+    wanted: impl Fn(&Path) -> bool,
+) -> Result<Vec<PathBuf>, Reason> {
     let root = home.join(".codex/sessions");
     if !safe(&root, home) {
         return Err(Reason::IdentityMismatch);
@@ -480,7 +610,7 @@ fn codex_files(home: &Path, native: &str, work: &Work<'_>) -> Result<Vec<PathBuf
             }
             let entry = entry.map_err(|_| Reason::Unreadable)?;
             let path = entry.path();
-            if codex_segment(&path, native).is_some() {
+            if wanted(&path) {
                 if !safe(&path, home) {
                     return Err(Reason::IdentityMismatch);
                 }
@@ -513,6 +643,35 @@ struct Header {
     boundary: Option<u64>,
     first: Option<u64>,
     paginated: bool,
+    /// The different conversation it says it was forked from, when that and
+    /// any fork cutoff it states agree with its base.
+    fork: Option<String>,
+    role: Role,
+    /// Its rows may hold history copied from the conversation it names, with
+    /// nothing to say where that ends: that name, when it is text.
+    copied: Option<Option<String>>,
+}
+/// Where a thread's history comes from, beyond its own files.
+enum Lineage {
+    Own,
+    /// A fork whose first rollout references the other conversation's.
+    Fork(Fork),
+    /// An older fork whose file holds a copy of the other conversation's
+    /// history: the conversation it names, and its counted compaction
+    /// identities in the order they were recorded.
+    Copied {
+        origin: Option<String>,
+        order: Vec<String>,
+    },
+}
+/// A forked conversation's first rollout: the conversation it was forked
+/// from, and the rollout, byte cutoff and ordinal cutoff its history
+/// continues.
+struct Fork {
+    parent: String,
+    base: (String, u64, u64),
+    /// The fork's own rollout identities.
+    own: BTreeSet<String>,
 }
 fn codex_header(row: &Value, path: &Path, native: &str) -> Result<Header, Reason> {
     let checked = super::claude_launch::group::header(
@@ -538,6 +697,13 @@ fn codex_header(row: &Value, path: &Path, native: &str) -> Result<Header, Reason
     if rollout != native && (!paginated || base.is_none()) {
         return Err(Reason::Unsupported);
     }
+    let fork = checked
+        .forked
+        .then(|| row["payload"]["forked_from_id"].as_str().map(str::to_owned))
+        .flatten();
+    let copied = checked
+        .copied
+        .then(|| row["payload"]["forked_from_id"].as_str().map(str::to_owned));
     let start = base
         .as_ref()
         .map_or(Some(0), |base| base["end_ordinal_exclusive"].as_u64());
@@ -550,6 +716,9 @@ fn codex_header(row: &Value, path: &Path, native: &str) -> Result<Header, Reason
         boundary,
         first,
         paginated,
+        fork,
+        role: checked.role,
+        copied,
     })
 }
 fn jsonl_target(
@@ -557,7 +726,7 @@ fn jsonl_target(
     target: &Target,
     paths: &[PathBuf],
     work: &mut Work<'_>,
-) -> Result<Facts, Reason> {
+) -> Result<(Facts, Lineage), Reason> {
     let native = &target.native_session_id;
     let roots = vec![home.join(if target.host == Host::Claude {
         ".claude/projects"
@@ -612,6 +781,7 @@ fn jsonl_target(
         return Err(Reason::IdentityMismatch);
     }
     let mut headers = Vec::new();
+    let mut lineage = Lineage::Own;
     if target.host == Host::Codex {
         for file in &files {
             let observed = regular(&file.path)?;
@@ -629,17 +799,55 @@ fn jsonl_target(
         if headers.iter().any(|h| !h.paginated) && headers.len() > 1 {
             return Err(Reason::Ambiguous);
         }
-        if headers.iter().filter(|h| h.base.is_none()).count() != 1
-            || !headers
-                .iter()
-                .any(|h| h.rollout == *native && h.base.is_none())
-        {
+        // The first rollout is the thread's own original or, as the reader's
+        // `codex_history.plan` has it, a fork's whose base is another
+        // conversation's rollout outside this group.
+        let first = |h: &Header| match &h.base {
+            None => true,
+            Some(base) => {
+                h.fork.is_some()
+                    && base["thread_id"]
+                        .as_str()
+                        .is_some_and(|id| !by_id.contains_key(id))
+            }
+        };
+        let roots: Vec<&Header> = headers.iter().filter(|h| first(h)).collect();
+        let [root] = roots.as_slice() else {
             return Err(Reason::Incomplete);
+        };
+        if root.rollout != *native {
+            return Err(Reason::Incomplete);
+        }
+        // A copied history is split only within its one file.
+        if let Some(origin) = &root.copied {
+            if headers.len() != 1 {
+                return Err(Reason::CopiedHistory);
+            }
+            lineage = Lineage::Copied {
+                origin: origin.clone(),
+                order: Vec::new(),
+            };
+        }
+        if let (Some(parent), Some(base)) = (&root.fork, &root.base) {
+            lineage = Lineage::Fork(Fork {
+                parent: parent.clone(),
+                base: (
+                    base["thread_id"]
+                        .as_str()
+                        .ok_or(Reason::Incomplete)?
+                        .to_owned(),
+                    base["end_byte_offset"].as_u64().ok_or(Reason::Incomplete)?,
+                    base["end_ordinal_exclusive"]
+                        .as_u64()
+                        .ok_or(Reason::Incomplete)?,
+                ),
+                own: by_id.keys().map(|id| (*id).to_owned()).collect(),
+            });
         }
         for header in &headers {
             let mut visited = BTreeSet::new();
             let mut current = header;
-            while let Some(base) = &current.base {
+            while let Some(base) = current.base.as_ref().filter(|_| !first(current)) {
                 let id = base["thread_id"].as_str().ok_or(Reason::Ownership)?;
                 if !visited.insert(id) {
                     return Err(Reason::Incomplete);
@@ -655,7 +863,10 @@ fn jsonl_target(
     }
     let mut facts = Facts::default();
     let mut claude_owner = false;
+    // An inherited compaction row in a file whose marker is not a spawned
+    // thread's, and whether that file is an approval reviewer's.
     let mut inherited_marker = false;
+    let mut reviewer_snapshot = false;
     for (file_index, file) in files.iter().enumerate() {
         // Refuse a torn final line; title reads intentionally tolerate it.
         let observed = regular(&file.path)?;
@@ -781,7 +992,17 @@ fn jsonl_target(
                 }
                 if row["type"] == "compacted" {
                     if inherited {
-                        inherited_marker = true;
+                        // A spawned thread's own marker says which rows it
+                        // was handed: they are never its own, and none of
+                        // its own is missing beside them.
+                        match header.role {
+                            Role::Spawned => {}
+                            Role::Reviewer => {
+                                inherited_marker = true;
+                                reviewer_snapshot = true;
+                            }
+                            Role::Own => inherited_marker = true,
+                        }
                     } else {
                         let payload = &row["payload"];
                         let id = payload["compaction_response_id"]
@@ -800,6 +1021,11 @@ fn jsonl_target(
                             at_ms,
                             trigger: Trigger::Unknown,
                         });
+                        if let Lineage::Copied { order, .. } = &mut lineage
+                            && !facts.events.contains_key(id)
+                        {
+                            order.push(id.to_owned());
+                        }
                         facts.count(id.to_owned(), event);
                     }
                 }
@@ -824,11 +1050,249 @@ fn jsonl_target(
     if target.host == Host::Claude && !claude_owner {
         facts.uncertain = true;
     }
-    // Retained inherited marker alone proves no own compaction count.
+    // Retained inherited marker alone proves no own compaction count. An
+    // approval reviewer's such file is a partial copy of the reviewed
+    // conversation, whose earlier compactions were left out.
     if inherited_marker && facts.events.is_empty() {
+        if reviewer_snapshot {
+            return Err(Reason::Snapshot);
+        }
         facts.uncertain = true;
     }
-    Ok(facts)
+    Ok((facts, lineage))
+}
+/// Split a copied-history fork's compactions, `order` as recorded, into
+/// those copied from the conversation `origin` it names and its own. The
+/// copied ones are every compaction recorded in a file named for `origin`
+/// whose saved header is that conversation's own: they must be one unbroken
+/// run at the start of `order`, and none after it may be one of them.
+/// Every compaction of `origin`'s history must be in those files: an origin
+/// that is itself a fork, or whose files continue a rollout not among them,
+/// may hold its history elsewhere, and is not followed. Anything else, or no
+/// such conversation, cannot be split. Returns the origin, the files read
+/// for it, and how many of `order` are copied.
+fn copied_split(
+    home: &Path,
+    origin: Option<&str>,
+    native: &str,
+    order: &[String],
+    work: &mut Work<'_>,
+) -> Result<(String, Vec<Revision>, usize), Reason> {
+    // Only a refusal that can change on its own, such as an origin still
+    // being written, is kept as itself.
+    let settled = |why: Reason| match why {
+        Reason::Limit
+        | Reason::Cancelled
+        | Reason::Replaced
+        | Reason::Unreadable
+        | Reason::Incomplete => why,
+        _ => Reason::CopiedHistory,
+    };
+    let origin = origin
+        .filter(|origin| full_thread_id(origin) && *origin != native)
+        .ok_or(Reason::CopiedHistory)?;
+    let paths = codex_files(home, origin, work).map_err(settled)?;
+    if paths.is_empty() {
+        return Err(Reason::CopiedHistory);
+    }
+    let mut recorded = BTreeSet::new();
+    let mut read = Vec::new();
+    let mut rollouts = BTreeSet::new();
+    let mut bases = Vec::new();
+    for path in &paths {
+        work.check()?;
+        let observed = regular(path).map_err(settled)?;
+        let (mut source, identity) = open_regular(path, &observed).map_err(|_| Reason::Replaced)?;
+        if !identity.known {
+            return Err(Reason::CopiedHistory);
+        }
+        if identity.len > MAX_BATCH.saturating_sub(work.bytes) {
+            return Err(Reason::Limit);
+        }
+        let row = jsonl::Rows::new(&mut source, identity.len, work)
+            .header()
+            .map_err(settled)?;
+        if row["type"] != "session_meta" || row["payload"]["id"].as_str() != Some(origin) {
+            return Err(Reason::CopiedHistory);
+        }
+        // History outside these files: another conversation's, or a page
+        // of this one that is not here.
+        if !row["payload"]["forked_from_id"].is_null() {
+            return Err(Reason::CopiedHistory);
+        }
+        match &row["payload"]["history_base"] {
+            Value::Null => {}
+            base => bases.push(
+                base["thread_id"]
+                    .as_str()
+                    .ok_or(Reason::CopiedHistory)?
+                    .to_owned(),
+            ),
+        }
+        let (_, rollout, _) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(super::claude_launch::group::census_name)
+            .ok_or(Reason::CopiedHistory)?;
+        rollouts.insert(rollout);
+        source
+            .seek(SeekFrom::Start(0))
+            .map_err(|_| Reason::Unreadable)?;
+        let mut lines = 0u64;
+        let mut rows = jsonl::Rows::new(&mut source, identity.len, work);
+        while let Some((row, _)) = rows.next(true).map_err(settled)? {
+            lines += 1;
+            if lines > MAX_EVENTS as u64 {
+                return Err(Reason::Limit);
+            }
+            if row["type"] == "compacted" {
+                let payload = &row["payload"];
+                if let Some(id) = payload["compaction_response_id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .or_else(|| payload["window_id"].as_str().filter(|id| !id.is_empty()))
+                    .filter(|id| id.len() <= 256)
+                {
+                    recorded.insert(id.to_owned());
+                    if recorded.len() > MAX_EVENTS {
+                        return Err(Reason::Limit);
+                    }
+                }
+            }
+        }
+        verify_jsonl(&source, path, &identity)?;
+        read.push(Revision(vec![(path.clone(), Some(identity))]));
+    }
+    if bases.iter().any(|base| !rollouts.contains(base)) {
+        return Err(Reason::CopiedHistory);
+    }
+    let copied = order.iter().take_while(|id| recorded.contains(*id)).count();
+    if order[copied..].iter().any(|id| recorded.contains(id)) {
+        return Err(Reason::CopiedHistory);
+    }
+    Ok((origin.to_owned(), read, copied))
+}
+/// The compactions a fork inherits: those recorded in each referenced
+/// rollout before the cutoff its successor names, following the chain to an
+/// original rollout as the reader's `codex_history.references` does. Each
+/// referenced rollout is the one file named with its rollout identity,
+/// headed as that rollout of the conversation the step allows: at first the
+/// conversation the fork names, then the referenced rollout's own and, when
+/// it is itself a fork, the one it names. Only bytes below the cutoff are
+/// read, ending on a line boundary after the row with the ordinal just before
+/// the cutoff, as the reader's `prefix_usage` proves; what was appended after
+/// the fork is never read. As there, rows below a spawned thread's inherited
+/// context boundary are not its own. Each file read is recorded in `read`.
+fn inherited(
+    home: &Path,
+    fork: &Fork,
+    own: &Facts,
+    read: &mut Vec<(String, Revision)>,
+    work: &mut Work<'_>,
+) -> Result<u32, Reason> {
+    let mut seen = fork.own.clone();
+    let mut allowed = BTreeSet::from([fork.parent.clone()]);
+    let mut next = Some(fork.base.clone());
+    let mut facts = Facts::default();
+    while let Some((rollout, cutoff, end)) = next.take() {
+        work.check()?;
+        if !seen.insert(rollout.clone()) {
+            return Err(Reason::Incomplete);
+        }
+        if read.len() >= MAX_REFERENCES {
+            return Err(Reason::Limit);
+        }
+        let (path, thread) = referenced(home, &rollout, work)?;
+        if !allowed.contains(&thread) {
+            return Err(Reason::Ownership);
+        }
+        let observed = regular(&path)?;
+        let (mut source, identity) =
+            open_regular(&path, &observed).map_err(|_| Reason::Replaced)?;
+        if !identity.known {
+            return Err(Reason::Unsupported);
+        }
+        if cutoff > identity.len {
+            return Err(Reason::Incomplete);
+        }
+        let row = jsonl::Rows::new(&mut source, identity.len, work).header()?;
+        let header = codex_header(&row, &path, &thread)?;
+        if !header.paginated || header.rollout != rollout {
+            return Err(Reason::Unsupported);
+        }
+        source
+            .seek(SeekFrom::Start(0))
+            .map_err(|_| Reason::Unreadable)?;
+        let owned_from = header.boundary.unwrap_or(0);
+        let mut expected = header.first;
+        let mut lines = 0u64;
+        let mut rows = jsonl::Rows::new(&mut source, cutoff, work);
+        while let Some((row, _)) = rows.next(true)? {
+            lines += 1;
+            if lines > MAX_EVENTS as u64 {
+                return Err(Reason::Limit);
+            }
+            let ordinal = row["ordinal"].as_u64();
+            if ordinal.is_none() || ordinal != expected {
+                return Err(Reason::Incomplete);
+            }
+            expected = ordinal.and_then(|ordinal| ordinal.checked_add(1));
+            let own = ordinal.is_some_and(|ordinal| ordinal >= owned_from);
+            // As for the thread's own count: one header, then its own rows.
+            if lines > 1 && row["type"] == "session_meta" && own {
+                return Err(Reason::IdentityMismatch);
+            }
+            if row["type"] == "compacted" && own {
+                let payload = &row["payload"];
+                let id = payload["compaction_response_id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .or_else(|| payload["window_id"].as_str().filter(|id| !id.is_empty()))
+                    .ok_or(Reason::Ownership)?;
+                if id.len() > 256 {
+                    return Err(Reason::Limit);
+                }
+                if ownership_metadata(payload, &thread) {
+                    facts.uncertain = true;
+                }
+                // Counted only: the lane's ticks are the fork's own.
+                facts.count(id.to_owned(), None);
+                if facts.events.len() > MAX_EVENTS {
+                    return Err(Reason::Limit);
+                }
+            }
+        }
+        // A complete prefix ends at the cutoff after the ordinal before it.
+        let complete = if cutoff == 0 {
+            end == 0
+        } else {
+            expected == Some(end)
+        };
+        if !complete {
+            return Err(Reason::Incomplete);
+        }
+        verify_jsonl(&source, &path, &identity)?;
+        read.push((rollout, Revision(vec![(path, Some(identity))])));
+        next = header
+            .base
+            .as_ref()
+            .map(|base| {
+                Some((
+                    base["thread_id"].as_str()?.to_owned(),
+                    base["end_byte_offset"].as_u64()?,
+                    base["end_ordinal_exclusive"].as_u64()?,
+                ))
+            })
+            .map(|base| base.ok_or(Reason::Incomplete))
+            .transpose()?;
+        allowed = BTreeSet::from([thread]);
+        allowed.extend(header.fork);
+    }
+    // The same recorded compaction on both sides cannot be told apart.
+    if facts.uncertain || facts.events.keys().any(|id| own.events.contains_key(id)) {
+        return Err(Reason::Ownership);
+    }
+    u32::try_from(facts.events.len()).map_err(|_| Reason::Limit)
 }
 enum CompactionProofError {
     Stopped(Reason),

@@ -10,6 +10,7 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import type {
   DataSource,
   LiveSessionControls,
+  LocalUpdateControls,
   PullRequestSessionsRequest,
   SessionListFilter,
   TrayControls,
@@ -21,6 +22,7 @@ import type { SessionSourceStatus } from './generated/SessionSourceStatus';
 import type { PrList } from './generated/PrList';
 import type { PrRefreshReport } from './generated/PrRefreshReport';
 import type { PrAnalyticsPage } from './generated/PrAnalyticsPage';
+import type { PrAutoCheckStatus } from './generated/PrAutoCheckStatus';
 import { commands, trayEvents, type DataEvent } from './ipc-names';
 import type { ContentRetention } from './generated/ContentRetention';
 import type { ContentPurge } from './generated/ContentPurge';
@@ -61,7 +63,16 @@ export const trayControls: TrayControls = {
 export class TauriDataSource implements DataSource {
   readonly kind = 'native';
   readonly liveSessions?: LiveSessionControls;
-  constructor(enableLiveSessions = false) {
+  readonly publicUpdates?: true;
+  readonly localUpdates?: LocalUpdateControls;
+  constructor(enableLiveSessions = false, updatesEnabled?: boolean) {
+    if (enableLiveSessions && windowLabel() === 'main') {
+      if (updatesEnabled === true) this.publicUpdates = true;
+      else if (updatesEnabled === false)
+        this.localUpdates = {
+          viewPublicReleases: () => invoke<void>(commands.openPublicReleases),
+        };
+    }
     if (enableLiveSessions) {
       this.liveSessions = {
         read: (sessionIds, viewId) =>
@@ -77,6 +88,10 @@ export class TauriDataSource implements DataSource {
     return invoke<AccountUsage>(commands.refreshClaudeUsage);
   }
   readonly tray = windowLabel() === TRAY_WINDOW ? trayControls : undefined;
+  readonly prAutoCheck = {
+    status: () => invoke<PrAutoCheckStatus>(commands.prAutoCheckStatus),
+    request: () => invoke<PrAutoCheckStatus>(commands.prAutoCheck),
+  };
   readonly retention = {
     read: () => invoke<ContentRetention>(commands.contentRetention),
     set: (mode: ContentRetention) =>
@@ -111,6 +126,10 @@ export class TauriDataSource implements DataSource {
     read: () => invoke<number>(commands.typingSpeed),
     set: (wpm: number) => invoke<number>(commands.setTypingSpeed, { wpm }),
     openTest: () => invoke<void>(commands.openTypingTest),
+  };
+  readonly humanBreak = {
+    read: () => invoke<number>(commands.humanBreak),
+    set: (minutes: number) => invoke<number>(commands.setHumanBreak, { minutes }),
   };
   dashboard(windowDays: number) {
     return invoke<DashboardMetrics>(commands.dashboard, { windowDays });

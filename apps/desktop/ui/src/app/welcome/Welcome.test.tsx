@@ -291,7 +291,7 @@ it('shows each source outcome without install, connection or capture claims', as
           sessions_imported: 40,
           sessions_partial: 2,
           sessions_skipped: 1,
-          skipped_conversations: [{ conversation_id: null, reason: 'unknown' }],
+          skipped_conversations: [],
           skipped_conversations_omitted: 0,
           records_new: 880,
           diagnostics: 3,

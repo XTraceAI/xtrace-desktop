@@ -3,7 +3,8 @@
 XTrace Desktop is an Apache 2.0 project targeting macOS 14 and later. Start with
 the setup and run commands in [README.md](README.md) and the development details
 in [DEVELOPING.md](DEVELOPING.md). The workspace path map is in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), together with the
+[design principles](docs/ARCHITECTURE.md#design-principles) every change follows.
 
 ## Contribution rights and sign-off
 

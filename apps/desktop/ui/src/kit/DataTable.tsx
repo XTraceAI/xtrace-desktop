@@ -30,6 +30,8 @@ export interface DataTableProps<Row> {
   expandedKeys?: readonly string[];
   onExpandedChange?: (keys: string[]) => void;
   renderExpanded?: (row: Row) => ReactNode;
+  /** Whether this row has details to expand; every row does when absent. */
+  canExpand?: (row: Row) => boolean;
   stickyHeader?: boolean;
   maxHeight?: CSSProperties['maxHeight'];
   minWidth?: CSSProperties['minWidth'];
@@ -61,6 +63,7 @@ export function DataTable<Row>({
   expandedKeys = [],
   onExpandedChange,
   renderExpanded,
+  canExpand,
   stickyHeader = false,
   maxHeight,
   minWidth = '100%',
@@ -158,7 +161,8 @@ export function DataTable<Row>({
         ) : (
           rows.map((row) => {
             const key = getRowKey(row);
-            const expanded = expandedKeys.includes(key);
+            const details = canExpand?.(row) ?? true;
+            const expanded = details && expandedKeys.includes(key);
             const detailsId = `${id}-${encodeURIComponent(key)}`;
             const opacity = rowOpacity?.(row);
             return (
@@ -179,7 +183,8 @@ export function DataTable<Row>({
                     if (!ignoreRowClick(event.target, event.currentTarget)) onRowClick?.(row);
                   }}
                 >
-                  {expandable && (
+                  {expandable && !details && <div role="cell" />}
+                  {expandable && details && (
                     <div role="cell">
                       <button
                         className="xt-expand-row"

@@ -1,4 +1,4 @@
-import { isTauri } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 import type { DataSource } from './DataSource';
 import { TauriDataSource } from './TauriDataSource';
 
@@ -8,7 +8,14 @@ export async function createDataSource(): Promise<DataSource> {
     const source = new TauriDataSource();
     try {
       const info = await source.appInfo();
-      return new TauriDataSource(info?.fixture === null);
+      if (info?.fixture !== null) return source;
+      let updatesEnabled: boolean | undefined;
+      try {
+        updatesEnabled = await invoke<boolean>('updates_enabled');
+      } catch {
+        // Unknown updater mode exposes neither update capability.
+      }
+      return new TauriDataSource(true, updatesEnabled);
     } catch {
       return source;
     }

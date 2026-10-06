@@ -16,13 +16,16 @@
 //! member generations and the candidate are exactly what the resolution
 //! checked.
 //!
-//! Only identifiers, closed labels, byte positions, ordinals and file
-//! generations are kept: never a path, prompt, command, output, time or
-//! digest.
+//! Only identifiers, closed labels, byte positions, ordinals, file
+//! generations and a launch-input digest are kept: never a path, prompt,
+//! command or output body.
 
 use crate::{
-    Error, Result, Store,
-    creation::{ClaudeLaunchCreationProof, CreationReport, apply_launch, validate_launch},
+    Error, Host, Result, Store,
+    child_fact::{self, ChildEvidence, ChildFact, ChildFactReport},
+    creation::{
+        ClaudeLaunchCreationProof, CreationReport, LaunchChild, apply_launch, validate_launch,
+    },
     model::text_enum,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -93,6 +96,15 @@ pub struct LaunchCandidate {
     pub acknowledgment_offset: i64,
     pub launch_ordinal: Option<i64>,
     pub acknowledgment_ordinal: Option<i64>,
+    /// The two same-rollout lines proving one-use variable binding, if used.
+    pub binding_call_offset: Option<i64>,
+    pub binding_output_offset: Option<i64>,
+    /// The host of the child the launch names: Claude for a `--session-id`
+    /// launch, Codex for a `codex exec --json` one.
+    pub child_host: Host,
+    /// Digest of decoded launch inputs, time and one-use binding witnesses.
+    /// Missing on rows written before this check existed.
+    pub launch_check_fingerprint: Option<String>,
 }
 
 /// A published launch and its two verdicts.
@@ -111,6 +123,9 @@ pub struct GroupRecord {
     pub allocated: i64,
     pub status: GroupStatus,
     pub validator_version: u32,
+    /// Launches the published validation found started with no first result
+    /// yet: what a restarted scan reads the history again for.
+    pub unfinished_starts: i64,
 }
 
 /// One member file of a published validation.
@@ -132,8 +147,12 @@ pub struct Allocation {
 /// Counts for acceptance reports. Numbers only.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaunchSummary {
+    /// `codex_claude_launch` relations: Claude children.
     pub relations_accepted: u64,
     pub relations_conflicted: u64,
+    /// `codex_cli_launch` relations: Codex children of `codex exec --json`.
+    pub codex_relations_accepted: u64,
+    pub codex_relations_conflicted: u64,
     pub groups_valid: u64,
     pub groups_invalid: u64,
     pub groups_pending: u64,
@@ -146,12 +165,15 @@ pub struct LaunchSummary {
     pub candidates_linked: u64,
     pub candidates_rejected: u64,
     pub candidates_source_rejected: u64,
+    /// Published launches naming a Codex child, whatever their state.
+    pub candidates_codex: u64,
     pub staged: u64,
 }
 
 const FIELDS: &str = "parent_native_session_id,rollout_id,launch_call_id,launch_operation_index,
     child_native_session_id,completion_call_id,completion_operation_index,process_session_id,
-    launch_offset,completion_offset,launch_ordinal,completion_ordinal";
+    launch_offset,completion_offset,launch_ordinal,completion_ordinal,
+    binding_call_offset,binding_output_offset,child_host,launch_check_fingerprint";
 
 fn candidate_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LaunchCandidate> {
     Ok(LaunchCandidate {
@@ -169,23 +191,27 @@ fn candidate_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LaunchCandida
         acknowledgment_offset: row.get(9)?,
         launch_ordinal: row.get(10)?,
         acknowledgment_ordinal: row.get(11)?,
+        binding_call_offset: row.get(12)?,
+        binding_output_offset: row.get(13)?,
+        child_host: row.get(14)?,
+        launch_check_fingerprint: row.get(15)?,
     })
 }
 
 fn row_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CandidateRow> {
     Ok(CandidateRow {
         candidate: candidate_from_row(row)?,
-        source_revision: row.get(12)?,
-        source_verdict: row.get(13)?,
-        child_state: row.get(14)?,
+        source_revision: row.get(16)?,
+        source_verdict: row.get(17)?,
+        child_state: row.get(18)?,
     })
 }
 
 fn group(connection: &Connection, parent: &str) -> Result<Option<GroupRecord>> {
     Ok(connection
         .query_row(
-            "SELECT revision,allocated,status,validator_version FROM claude_launch_groups
-             WHERE parent_native_session_id=?1",
+            "SELECT revision,allocated,status,validator_version,unfinished_starts
+             FROM claude_launch_groups WHERE parent_native_session_id=?1",
             [parent],
             |row| {
                 Ok(GroupRecord {
@@ -193,6 +219,7 @@ fn group(connection: &Connection, parent: &str) -> Result<Option<GroupRecord>> {
                     allocated: row.get(1)?,
                     status: row.get(2)?,
                     validator_version: row.get(3)?,
+                    unfinished_starts: row.get(4)?,
                 })
             },
         )
@@ -241,6 +268,16 @@ fn check_candidate(candidate: &LaunchCandidate) -> Result<()> {
         (Some(launch), Some(acknowledgment)) => launch >= 0 && acknowledgment > launch,
         _ => false,
     };
+    let binding = match (
+        candidate.binding_call_offset,
+        candidate.binding_output_offset,
+    ) {
+        (None, None) => true,
+        (Some(call), Some(output)) => {
+            call >= 0 && output > call && output < candidate.launch_offset
+        }
+        _ => false,
+    };
     let ok = uuid(&candidate.key.parent_native_session_id)
         && uuid(&candidate.key.rollout_id)
         && uuid(&candidate.child_native_session_id)
@@ -256,7 +293,18 @@ fn check_candidate(candidate: &LaunchCandidate) -> Result<()> {
             })
         && candidate.launch_offset >= 0
         && candidate.acknowledgment_offset > candidate.launch_offset
-        && ordinals;
+        && ordinals
+        && binding
+        && candidate
+            .launch_check_fingerprint
+            .as_deref()
+            .is_none_or(|digest| {
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+        && LaunchChild::of(candidate.child_host).is_some();
     if ok {
         Ok(())
     } else {
@@ -341,7 +389,7 @@ impl Store {
             transaction.execute(
                 &format!(
                     "INSERT INTO claude_launch_staged_candidates(revision,{FIELDS})
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)"
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)"
                 ),
                 params![
                     allocated,
@@ -357,6 +405,10 @@ impl Store {
                     c.acknowledgment_offset,
                     c.launch_ordinal,
                     c.acknowledgment_ordinal,
+                    c.binding_call_offset,
+                    c.binding_output_offset,
+                    c.child_host,
+                    c.launch_check_fingerprint,
                 ],
             )?;
         }
@@ -379,7 +431,57 @@ impl Store {
         members_read: &[MemberRecord],
         staged: usize,
     ) -> Result<bool> {
-        if status == GroupStatus::Pending {
+        self.publish_claude_launch_validation_counted(
+            parent,
+            allocation,
+            status,
+            members_read,
+            staged,
+            0,
+        )
+    }
+
+    /// [`Store::publish_claude_launch_validation`], keeping with it how many
+    /// launches the validation found started with no first result yet
+    /// ([`GroupRecord::unfinished_starts`]). An invalid validation holds none.
+    pub fn publish_claude_launch_validation_counted(
+        &mut self,
+        parent: &str,
+        allocation: Allocation,
+        status: GroupStatus,
+        members_read: &[MemberRecord],
+        staged: usize,
+        unfinished_starts: usize,
+    ) -> Result<bool> {
+        Ok(self
+            .publish_claude_launch_validation_with_reopened(
+                parent,
+                allocation,
+                status,
+                members_read,
+                staged,
+                unfinished_starts,
+            )?
+            .is_some())
+    }
+
+    /// Publish as above and return the number of already completed child
+    /// checks reopened by changed launch inputs, after the transaction commits.
+    #[allow(clippy::too_many_arguments)]
+    pub fn publish_claude_launch_validation_with_reopened(
+        &mut self,
+        parent: &str,
+        allocation: Allocation,
+        status: GroupStatus,
+        members_read: &[MemberRecord],
+        staged: usize,
+        unfinished_starts: usize,
+    ) -> Result<Option<usize>> {
+        let unfinished_starts = i64::try_from(unfinished_starts)
+            .map_err(|_| Error::InvalidInput("too many unfinished launches"))?;
+        if status == GroupStatus::Pending
+            || (status == GroupStatus::Invalid && unfinished_starts != 0)
+        {
             return Err(Error::InvalidInput(
                 "a published validation is valid or invalid",
             ));
@@ -388,7 +490,7 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let Some(current) = group(&transaction, parent)? else {
-            return Ok(false);
+            return Ok(None);
         };
         let count: i64 = transaction.query_row(
             "SELECT count(*) FROM claude_launch_staged_candidates
@@ -401,7 +503,7 @@ impl Store {
             || usize::try_from(count).ok() != Some(staged)
             || (status == GroupStatus::Invalid && staged != 0)
         {
-            return Ok(false);
+            return Ok(None);
         }
         let revision = allocation.allocated;
         transaction.execute(
@@ -433,15 +535,15 @@ impl Store {
         // for an identical structural row.
         transaction.execute(
             &format!(
-                "CREATE TEMP TABLE IF NOT EXISTS claude_launch_publish AS
-                 SELECT {FIELDS},0 AS linked FROM claude_launch_candidates WHERE 0"
+                "CREATE TEMP TABLE IF NOT EXISTS claude_launch_publish_v2 AS
+                 SELECT {FIELDS},0 AS linked,0 AS same FROM claude_launch_candidates WHERE 0"
             ),
             [],
         )?;
-        transaction.execute("DELETE FROM claude_launch_publish", [])?;
+        transaction.execute("DELETE FROM claude_launch_publish_v2", [])?;
         transaction.execute(
             &format!(
-                "INSERT INTO claude_launch_publish SELECT {FIELDS},
+                "INSERT INTO claude_launch_publish_v2 SELECT {FIELDS},
                      EXISTS(SELECT 1 FROM claude_launch_candidates c
                         WHERE c.parent_native_session_id=s.parent_native_session_id
                           AND c.rollout_id=s.rollout_id AND c.launch_call_id=s.launch_call_id
@@ -454,7 +556,28 @@ impl Store {
                           AND c.completion_offset=s.completion_offset
                           AND c.launch_ordinal IS s.launch_ordinal
                           AND c.completion_ordinal IS s.completion_ordinal
-                          AND c.child_state='linked' AND c.source_verdict='valid')
+                          AND c.binding_call_offset IS s.binding_call_offset
+                          AND c.binding_output_offset IS s.binding_output_offset
+                          AND c.child_host=s.child_host
+                          AND c.launch_check_fingerprint=s.launch_check_fingerprint
+                          AND c.child_state='linked' AND c.source_verdict='valid'),
+                     EXISTS(SELECT 1 FROM claude_launch_candidates c
+                        WHERE c.parent_native_session_id=s.parent_native_session_id
+                          AND c.rollout_id=s.rollout_id AND c.launch_call_id=s.launch_call_id
+                          AND c.launch_operation_index=s.launch_operation_index
+                          AND c.child_native_session_id=s.child_native_session_id
+                          AND c.completion_call_id=s.completion_call_id
+                          AND c.completion_operation_index=s.completion_operation_index
+                          AND c.process_session_id IS s.process_session_id
+                          AND c.launch_offset=s.launch_offset
+                          AND c.completion_offset=s.completion_offset
+                          AND c.launch_ordinal IS s.launch_ordinal
+                          AND c.completion_ordinal IS s.completion_ordinal
+                          AND c.binding_call_offset IS s.binding_call_offset
+                          AND c.binding_output_offset IS s.binding_output_offset
+                          AND c.child_host=s.child_host
+                          AND c.launch_check_fingerprint=s.launch_check_fingerprint
+                          AND c.source_verdict='valid')
                  FROM claude_launch_staged_candidates s
                  WHERE s.parent_native_session_id=?1 AND s.revision=?2"
             ),
@@ -469,21 +592,43 @@ impl Store {
                 "INSERT INTO claude_launch_candidates({FIELDS},source_revision,source_verdict,
                      child_state)
                  SELECT {FIELDS},?1,'valid',CASE WHEN linked THEN 'linked' ELSE 'waiting' END
-                 FROM claude_launch_publish"
+                 FROM claude_launch_publish_v2"
             ),
             [revision],
         )?;
-        transaction.execute("DELETE FROM claude_launch_publish", [])?;
+        // A launch naming a session, new or changed, is a reason to look at
+        // that session again: its display check moves on, in this commit.
+        let reopened: i64 = transaction.query_row(
+            "SELECT count(*) FROM session_child_checks k
+             WHERE k.completed_generation=k.required_generation
+               AND k.detector_versions=?1
+               AND k.session_id IN (SELECT s.session_id FROM claude_launch_publish_v2 p
+                   JOIN sessions s ON s.host=p.child_host
+                     AND s.native_session_id=p.child_native_session_id AND s.kind='user'
+                   WHERE NOT p.same)",
+            [crate::child_check::DETECTOR_VERSIONS],
+            |row| row.get(0),
+        )?;
+        transaction.execute(
+            "UPDATE session_child_checks SET required_generation=required_generation+1
+             WHERE session_id IN (SELECT s.session_id FROM claude_launch_publish_v2 p
+                 JOIN sessions s ON s.host=p.child_host
+                   AND s.native_session_id=p.child_native_session_id AND s.kind='user'
+                 WHERE NOT p.same)",
+            [],
+        )?;
+        transaction.execute("DELETE FROM claude_launch_publish_v2", [])?;
         transaction.execute(
             "DELETE FROM claude_launch_staged_candidates WHERE parent_native_session_id=?1",
             [parent],
         )?;
         transaction.execute(
-            "UPDATE claude_launch_groups SET revision=?2,status=?3 WHERE parent_native_session_id=?1",
-            params![parent, revision, status],
+            "UPDATE claude_launch_groups SET revision=?2,status=?3,unfinished_starts=?4
+             WHERE parent_native_session_id=?1",
+            params![parent, revision, status, unfinished_starts],
         )?;
         transaction.commit()?;
-        Ok(true)
+        Ok(Some(usize::try_from(reopened).unwrap_or(0)))
     }
 
     /// A page of a thread's published launches whose child is still to be
@@ -520,6 +665,25 @@ impl Store {
             ))?
             .query_map(params![parent, rollout, call, op, limit], row_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Whether a published launch of a current valid validation names the
+    /// session `child` of `host` and its child check has not ended with a
+    /// decision: still to be looked at (`waiting` or `retry`), or set aside
+    /// (`rejected`) without one ([`Store::defer_claude_launch_child`]).
+    pub fn claude_launch_child_open(&self, child: &str, host: Host) -> Result<bool> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM claude_launch_candidates c
+               WHERE c.child_native_session_id=?1 AND c.child_host=?2
+                 AND (c.child_state IN ('waiting','retry')
+                      OR (c.child_state='rejected' AND c.child_check_complete IS NOT 1))
+                 AND c.source_verdict='valid'
+                 AND c.source_revision=(SELECT revision FROM claude_launch_groups g
+                     WHERE g.parent_native_session_id=c.parent_native_session_id
+                       AND g.status='valid'))",
+            params![child, host],
+            |row| row.get(0),
+        )?)
     }
 
     /// A page of the launches naming the Claude session `child`, after
@@ -594,11 +758,32 @@ impl Store {
 
     /// Set one published launch's child state, only if it is still the
     /// launch that was looked at: same structural fields and revision, parent
-    /// verdict `valid`, and not linked. Returns whether it changed.
+    /// verdict `valid`, and not linked. A `rejected` child was decided: its
+    /// sources were read and are not the launch's. Returns whether it changed.
     pub fn set_claude_launch_child_state(
         &mut self,
         row: &CandidateRow,
         state: ChildState,
+    ) -> Result<bool> {
+        let complete = matches!(state, ChildState::Linked | ChildState::Rejected).then_some(1);
+        self.child_state(row, state, complete)
+    }
+
+    /// Set one published launch aside as `rejected` without a decision: its
+    /// child check did not fit its allowance, or the child's sources could
+    /// not be read as one. It is not looked at again by timed retries; a new
+    /// validation, the child's next import or a restarted worker
+    /// ([`Store::reopen_undecided_claude_launch_children`]) looks again, and
+    /// meanwhile the child it names stays checking.
+    pub fn defer_claude_launch_child(&mut self, row: &CandidateRow) -> Result<bool> {
+        self.child_state(row, ChildState::Rejected, Some(0))
+    }
+
+    fn child_state(
+        &mut self,
+        row: &CandidateRow,
+        state: ChildState,
+        complete: Option<i64>,
     ) -> Result<bool> {
         let transaction = self
             .connection
@@ -608,15 +793,17 @@ impl Store {
         }
         let k = &row.candidate.key;
         let changed = transaction.execute(
-            "UPDATE claude_launch_candidates SET child_state=?5
+            "UPDATE claude_launch_candidates SET child_state=?5,child_check_complete=?6
              WHERE parent_native_session_id=?1 AND rollout_id=?2 AND launch_call_id=?3
-               AND launch_operation_index=?4 AND child_state<>'linked' AND child_state<>?5",
+               AND launch_operation_index=?4 AND child_state<>'linked'
+               AND (child_state<>?5 OR child_check_complete IS NOT ?6)",
             params![
                 k.parent_native_session_id,
                 k.rollout_id,
                 k.launch_call_id,
                 k.launch_operation_index,
-                state
+                state,
+                complete
             ],
         )? > 0;
         transaction.commit()?;
@@ -654,7 +841,7 @@ impl Store {
     /// rejections are left to a new validation. Returns how many reopened.
     pub fn reopen_claude_launch_child(&mut self, child: &str) -> Result<usize> {
         Ok(self.connection.execute(
-            "UPDATE claude_launch_candidates SET child_state='waiting'
+            "UPDATE claude_launch_candidates SET child_state='waiting',child_check_complete=NULL
              WHERE child_native_session_id=?1 AND child_state='rejected'
                AND source_verdict='valid'
                AND source_revision=(SELECT revision FROM claude_launch_groups g
@@ -662,6 +849,36 @@ impl Store {
                      AND g.status='valid')",
             [child],
         )?)
+    }
+
+    /// Look again, once, at every launch of a thread's current valid
+    /// revision set aside without a decision, or stored before decisions
+    /// were kept: they wait to be looked at. Returns their threads.
+    pub fn reopen_undecided_claude_launch_children(&mut self) -> Result<Vec<String>> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let condition = "child_state='rejected' AND child_check_complete IS NOT 1
+               AND source_verdict='valid'
+               AND source_revision=(SELECT revision FROM claude_launch_groups g
+                   WHERE g.parent_native_session_id=claude_launch_candidates.parent_native_session_id
+                     AND g.status='valid')";
+        let parents = transaction
+            .prepare(&format!(
+                "SELECT DISTINCT parent_native_session_id FROM claude_launch_candidates
+                 WHERE {condition} ORDER BY 1"
+            ))?
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        transaction.execute(
+            &format!(
+                "UPDATE claude_launch_candidates SET child_state='waiting',child_check_complete=NULL
+                 WHERE {condition}"
+            ),
+            [],
+        )?;
+        transaction.commit()?;
+        Ok(parents)
     }
 
     /// Whether any launch waits for a timed retry.
@@ -679,7 +896,9 @@ impl Store {
     /// published launch still has exactly the structural fields, revision,
     /// parent verdict and an open child state it checked. Then the reviewed
     /// proof checks apply, and the launch becomes `linked`. `None` when the
-    /// guard failed and nothing was written.
+    /// guard failed and nothing was written. The launch's child host decides
+    /// which proof it is: a `codex_claude_launch`, or a `codex_cli_launch`
+    /// ([`crate::creation::CodexCliLaunchCreationProof`]).
     pub fn record_claude_launch_guarded(
         &mut self,
         proof: &ClaudeLaunchCreationProof,
@@ -687,8 +906,11 @@ impl Store {
         members_checked: &[MemberRecord],
         recorded_at: i64,
     ) -> Result<Option<CreationReport>> {
-        validate_launch(proof)?;
         let c = &row.candidate;
+        let child = LaunchChild::of(c.child_host).ok_or(Error::InvalidInput(
+            "a launch names a Claude or Codex child",
+        ))?;
+        validate_launch(proof, child)?;
         if proof.child_native_session_id != c.child_native_session_id
             || proof.parent_native_session_id != c.key.parent_native_session_id
             || proof.segment_rollout_id != c.key.rollout_id
@@ -707,22 +929,10 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let current = group(&transaction, &c.key.parent_native_session_id)?;
-        let valid_now = current.is_some_and(|group| {
-            group.status == GroupStatus::Valid && group.revision == Some(row.source_revision)
-        });
-        let members_now = members(&transaction, &c.key.parent_native_session_id)?;
-        let mut checked: Vec<&MemberRecord> = members_checked.iter().collect();
-        checked.sort_by(|a, b| a.rollout_id.cmp(&b.rollout_id));
-        let same_members = members_now.len() == checked.len()
-            && members_now
-                .iter()
-                .zip(&checked)
-                .all(|(now, then)| now == *then);
-        if !valid_now || !same_members || !same_row(&transaction, row)? {
+        if !launch_current(&transaction, row, members_checked)? {
             return Ok(None);
         }
-        let (disposition, changed) = apply_launch(&transaction, proof, recorded_at)?;
+        let (disposition, changed) = apply_launch(&transaction, proof, child, recorded_at)?;
         let k = &c.key;
         // An abstention leaves the launch open for its caller to decide.
         if !matches!(
@@ -745,6 +955,52 @@ impl Store {
         Ok(Some(CreationReport {
             dispositions: vec![disposition],
             changed: usize::from(changed),
+        }))
+    }
+
+    /// Write the child fact of one launch only under the same guard as its
+    /// relation ([`Self::record_claude_launch_guarded`]): the thread's
+    /// published validation still `valid` at the resolution's revision with
+    /// exactly the member generations it checked, and the launch still
+    /// exactly as checked and open. The fact must be that launch's own. It
+    /// leaves the launch open: its relation, or the lack of one, decides the
+    /// launch's state. `None` when the guard failed and nothing was written.
+    pub fn record_claude_launch_child_guarded(
+        &mut self,
+        fact: &ChildFact,
+        row: &CandidateRow,
+        members_checked: &[MemberRecord],
+        recorded_at: i64,
+    ) -> Result<Option<ChildFactReport>> {
+        child_fact::validate(fact)?;
+        let c = &row.candidate;
+        let kind = match c.child_host {
+            Host::Codex => ChildEvidence::CodexCliLaunch,
+            _ => ChildEvidence::CodexClaudeLaunch,
+        };
+        if fact.evidence_kind != kind
+            || fact.child_host != c.child_host
+            || fact.child_native_session_id != c.child_native_session_id
+            || fact.source_native_session_id != c.key.parent_native_session_id
+            || fact.source_rollout_id.as_deref() != Some(c.key.rollout_id.as_str())
+            || fact.launch_call_id.as_deref() != Some(c.key.launch_call_id.as_str())
+            || fact.launch_operation_index != Some(c.key.launch_operation_index)
+        {
+            return Err(Error::InvalidInput(
+                "a launch child fact must be its candidate's",
+            ));
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if !launch_current(&transaction, row, members_checked)? {
+            return Ok(None);
+        }
+        let (disposition, changed) = child_fact::apply(&transaction, fact, recorded_at)?;
+        transaction.commit()?;
+        Ok(Some(ChildFactReport {
+            dispositions: vec![disposition],
+            changed,
         }))
     }
 
@@ -773,6 +1029,14 @@ impl Store {
                 "SELECT count(*) FROM session_creation_relations
                  WHERE evidence_kind='codex_claude_launch' AND state='conflicted'",
             )?,
+            codex_relations_accepted: count(
+                "SELECT count(*) FROM session_creation_relations
+                 WHERE evidence_kind='codex_cli_launch' AND state='accepted'",
+            )?,
+            codex_relations_conflicted: count(
+                "SELECT count(*) FROM session_creation_relations
+                 WHERE evidence_kind='codex_cli_launch' AND state='conflicted'",
+            )?,
             groups_valid: status("valid")?,
             groups_invalid: status("invalid")?,
             groups_pending: status("pending")?,
@@ -790,9 +1054,35 @@ impl Store {
             candidates_source_rejected: count(
                 "SELECT count(*) FROM claude_launch_candidates WHERE source_verdict='rejected'",
             )?,
+            candidates_codex: count(
+                "SELECT count(*) FROM claude_launch_candidates WHERE child_host='codex'",
+            )?,
             staged: count("SELECT count(*) FROM claude_launch_staged_candidates")?,
         })
     }
+}
+
+/// Whether, within one transaction, the thread's published validation is
+/// still `valid` at `row`'s revision with exactly the member generations
+/// checked, and the launch still exactly `row` and open.
+fn launch_current(
+    connection: &Connection,
+    row: &CandidateRow,
+    members_checked: &[MemberRecord],
+) -> Result<bool> {
+    let parent = &row.candidate.key.parent_native_session_id;
+    let valid_now = group(connection, parent)?.is_some_and(|group| {
+        group.status == GroupStatus::Valid && group.revision == Some(row.source_revision)
+    });
+    let members_now = members(connection, parent)?;
+    let mut checked: Vec<&MemberRecord> = members_checked.iter().collect();
+    checked.sort_by(|a, b| a.rollout_id.cmp(&b.rollout_id));
+    let same_members = members_now.len() == checked.len()
+        && members_now
+            .iter()
+            .zip(&checked)
+            .all(|(now, then)| now == *then);
+    Ok(valid_now && same_members && same_row(connection, row)?)
 }
 
 /// Whether the published launch still has exactly `row`'s structural

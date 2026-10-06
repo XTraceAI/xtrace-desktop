@@ -1,10 +1,14 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { invoke } from '@tauri-apps/api/core';
+import { check } from '@tauri-apps/plugin-updater';
 import { afterEach, expect, it, vi } from 'vitest';
 import { UpdateNotice, UpdateNoticeView } from './UpdateNotice';
 afterEach(cleanup);
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+vi.mock('@tauri-apps/plugin-updater', () => ({ check: vi.fn() }));
 
-it('keeps browser/development notices hidden and performs no update request', async () => {
-  const { unmount } = render(<UpdateNotice />);
+it('keeps an unselected updater hidden and performs no update request', async () => {
+  const { unmount } = render(<UpdateNotice enabled={false} />);
   expect(screen.queryByRole('button', { name: 'Restart to update' })).toBeNull();
   unmount();
 });
@@ -95,4 +99,30 @@ it('has no actionable control during installation', () => {
   );
   expect(screen.getByRole('status').textContent).toContain('Installing update');
   expect(screen.queryByRole('button')).toBeNull();
+});
+
+it('uses the selected public mode with DEV=true, downloads, and installs only on click', async () => {
+  vi.stubEnv('DEV', true);
+  const resource = {
+    version: '0.1.2',
+    download: vi.fn().mockResolvedValue(undefined),
+    install: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+  vi.mocked(check).mockResolvedValue(resource as unknown as Awaited<ReturnType<typeof check>>);
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  try {
+    render(<UpdateNotice enabled />);
+    const restart = await screen.findByRole('button', { name: 'Restart to update' });
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(resource.download).toHaveBeenCalledTimes(1);
+    expect(resource.install).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+    fireEvent.click(restart);
+    await waitFor(() => expect(resource.install).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(invoke).toHaveBeenCalledExactlyOnceWith('restart_after_update'));
+  } finally {
+    window.dispatchEvent(new Event('pagehide'));
+    vi.unstubAllEnvs();
+  }
 });

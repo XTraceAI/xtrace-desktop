@@ -189,29 +189,6 @@ it('keeps missing measurements, listener and capture coverage explicitly unknown
   expect((screen.getByRole('complementary') as HTMLElement).style.paddingTop).toBe('16px');
 });
 
-it('places a caller-owned update action beside the version without adding a default action', () => {
-  const input = props();
-  const view = render(<Sidebar {...input} />);
-  expect(screen.queryByRole('button', { name: 'Restart to update' })).toBeNull();
-  const restart = vi.fn();
-  view.rerender(
-    <Sidebar
-      {...input}
-      versionExtra={
-        <button type="button" onClick={restart}>
-          Restart to update
-        </button>
-      }
-    />,
-  );
-  const row = screen.getByText('v0.2.3').closest('.xt-sidebar-version');
-  expect(row).toBeTruthy();
-  const button = within(row as HTMLElement).getByRole('button', { name: 'Restart to update' });
-  expect(restart).not.toHaveBeenCalled();
-  fireEvent.click(button);
-  expect(restart).toHaveBeenCalledOnce();
-});
-
 // Synthetic local-index descriptions: the component renders what it is given.
 const updating: LocalIndexStatus = {
   label: 'updating',

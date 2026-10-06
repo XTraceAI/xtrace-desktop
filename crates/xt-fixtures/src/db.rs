@@ -6,6 +6,9 @@ use std::{
 use tempfile::{NamedTempFile, TempDir};
 use xt_store::Store;
 
+/// The own-check key of a fixture session ([`xt_store::child_check`]).
+const FIXTURE_CHECK_KEY: &str = "u1:fixture";
+
 /// Own this value for the whole reader/server test. Dropping the Store before
 /// the TempDir lets SQLite close and checkpoint before its files are removed.
 pub struct TempDb {
@@ -36,6 +39,13 @@ impl TempDb {
         for session in sessions {
             store.upsert_session(&session.metadata, keep_content)?;
             store.upsert_records(&session.metadata.session_id, &session.records, keep_content)?;
+            // A fixture is a closed synthetic catalog: no history any child
+            // detector reads exists for its sessions, as for a host with no
+            // detector. Their display checks are finished under that key.
+            let id = &session.metadata.session_id;
+            if let Some(attempt) = store.observe_own_check(id, Some(FIXTURE_CHECK_KEY))? {
+                store.settle_child_checks(&[(id, attempt.required, FIXTURE_CHECK_KEY)])?;
+            }
         }
         // Links only: the refresh-owned columns stay unset, as they are for a
         // pull request nothing has refreshed yet.

@@ -15,17 +15,26 @@
 //! has exactly one original, unique rollout identities, each continuation's
 //! `history_base` naming another file of the group with no cycle, each
 //! header's ordinal equal to its base's `end_ordinal_exclusive`, and each
-//! base's cutoff a line boundary whose row has the ordinal just before it. A
-//! fork is refused. A spawned thread is read only with an explicit
-//! `subagent_history_start_ordinal`, below which rows are inherited context.
+//! base's cutoff a line boundary whose row has the ordinal just before it.
+//! A history's first rollout carries the thread's own name. A fork's first
+//! rollout has a `history_base` naming a rollout of the conversation it was
+//! forked from, outside this group, and a `forked_from_id` naming that other
+//! conversation (as the reader's `codex_history._fork_origin`); the
+//! referenced history is not this thread's and is not read here. A fork with
+//! no history reference and no inherited-context marker, whose saved file may
+//! hold copied history, is refused. Rows below an explicit
+//! `subagent_history_start_ordinal` are inherited context; a spawned thread
+//! or approval reviewer without one inherited nothing, as the reader's
+//! `codex_history.context_boundary` has it.
 //! Rewinds and abandoned tails are not refused: every file's rows are the
-//! thread's own. Every indexed locator of the thread must be one of the
-//! census's files.
+//! thread's own. Every indexed locator of the thread, if the index holds it,
+//! must be one of the census's files.
 
 use super::rows;
 use super::source::{self, Allowance, BackRead, Budget, LineRead, Reserved, Unread};
 use crate::native::session_titles::{
-    TypedSpawn, codex_contained, codex_segment, corroborated, full_thread_id, typed_spawn,
+    SpawnCheck, TypedSpawn, codex_contained, codex_segment, full_thread_id, spawn_check,
+    typed_spawn,
 };
 use serde_json::Value;
 use std::{
@@ -68,7 +77,7 @@ pub(super) struct Census {
 
 /// The thread, rollout identity and whether it is the original, that a
 /// history file's name gives it.
-fn census_name(name: &str) -> Option<(String, String, bool)> {
+pub(in crate::native) fn census_name(name: &str) -> Option<(String, String, bool)> {
     let stem = name.strip_prefix("rollout-")?.strip_suffix(".jsonl")?;
     let thread_of = |head: &str| -> Option<String> {
         let at = head.len().checked_sub(36)?;
@@ -227,6 +236,22 @@ pub(super) enum Refusal {
     /// A header is not this thread's own, or the group is not one valid
     /// history.
     Structure,
+    /// A fork whose header marks none of its rows as copied: its file may
+    /// hold the history it was forked from, so this version reads no launch
+    /// of it. Explicitly unsupported, not a failed read.
+    Copied,
+}
+
+impl Refusal {
+    /// What the refusal means for a display check waiting on this history.
+    pub fn outcome(self) -> super::ReadOutcome {
+        match self {
+            Self::Copied => super::ReadOutcome::Unsupported,
+            Self::Membership | Self::Source(_) | Self::OverLimit | Self::Structure => {
+                super::ReadOutcome::Failed
+            }
+        }
+    }
 }
 
 /// One file of a validated history, as the generation its header was read
@@ -268,6 +293,52 @@ pub(in crate::native) struct Header {
     pub base: Option<(String, u64, i64)>,
     /// Rows below this ordinal are inherited context.
     pub inherited_below: Option<i64>,
+    /// It names a different conversation it was forked from, and any fork
+    /// cutoff it states is its base's: it can start a forked history when its
+    /// base is not of this thread.
+    pub forked: bool,
+    /// Whose thread the header says this is.
+    pub role: Role,
+    /// It names a conversation it was forked from with neither a history
+    /// reference nor an inherited-context marker: nothing in it says which of
+    /// its rows were copied from that conversation. Launches never read it.
+    pub copied: bool,
+}
+
+/// Whose thread a header says it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::native) enum Role {
+    /// A person's own session, or one that names no other thread.
+    Own,
+    /// A helper thread spawned by its typed parent.
+    Spawned,
+    /// An approval reviewer (`guardian`) of the thread it names.
+    Reviewer,
+}
+
+/// An approval reviewer's header, as the reader's
+/// `codex_witness._guardian_root` checks it: exactly
+/// `{"subagent": {"other": "guardian"}}` from a `guardian_review`, naming the
+/// reviewed thread as its parent and its spawn tree's root as its session,
+/// each a full thread identity other than this thread. `None` when the header
+/// does not say it is a reviewer; `Some(false)` when it says so but does not
+/// fit.
+fn reviewer(payload: &serde_json::Map<String, Value>, thread: &str) -> Option<bool> {
+    let source = payload.get("source")?;
+    if *source != serde_json::json!({"subagent": {"other": "guardian"}}) {
+        return None;
+    }
+    let other = |key: &str| {
+        payload
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|id| full_thread_id(id) && id != thread)
+    };
+    Some(
+        payload.get("thread_source").and_then(Value::as_str) == Some("guardian_review")
+            && other("parent_thread_id")
+            && other("session_id"),
+    )
 }
 
 fn integer(value: Option<&Value>) -> Result<Option<i64>, ()> {
@@ -290,20 +361,25 @@ pub(in crate::native) fn header(line: &[u8], thread: &str) -> Result<Header, ()>
     if payload.get("id").and_then(Value::as_str) != Some(thread) {
         return Err(());
     }
-    if !payload.get("forked_from_id").is_none_or(Value::is_null) {
-        return Err(());
-    }
-    let spawned = match typed_spawn(payload, thread) {
-        TypedSpawn::None => {
-            if !payload
-                .get("session_id")
-                .is_none_or(|session| session.is_null() || session.as_str() == Some(thread))
-            {
-                return Err(());
+    let role = match typed_spawn(payload, thread) {
+        TypedSpawn::None => match reviewer(payload, thread) {
+            Some(true) => Role::Reviewer,
+            Some(false) => return Err(()),
+            None => {
+                if !payload
+                    .get("session_id")
+                    .is_none_or(|session| session.is_null() || session.as_str() == Some(thread))
+                {
+                    return Err(());
+                }
+                Role::Own
             }
-            false
+        },
+        TypedSpawn::Parent(parent)
+            if spawn_check(payload, thread, parent) == SpawnCheck::Corroborated =>
+        {
+            Role::Spawned
         }
-        TypedSpawn::Parent(parent) if corroborated(payload, parent) => true,
         _ => return Err(()),
     };
     let paginated = match payload.get("history_mode") {
@@ -329,21 +405,47 @@ pub(in crate::native) fn header(line: &[u8], thread: &str) -> Result<Header, ()>
     };
     let inherited_below = integer(payload.get("subagent_history_start_ordinal"))?;
     let ordinal = integer(value.get("ordinal"))?;
-    // A spawned thread's inherited context is read only where it is marked.
-    if spawned && inherited_below.is_none() {
-        return Err(());
-    }
+    // A spawned thread or reviewer with no marker inherited nothing: its file
+    // starts with its own task.
     if base.is_some() && !paginated {
         return Err(());
     }
     if inherited_below.is_some() && ordinal.is_none() {
         return Err(());
     }
+    // A fork's own rows are told apart by a history reference or, for a
+    // spawned helper, by its inherited-context marker: with neither, its file
+    // may hold the copied history. A marker on any other fork with no
+    // reference is not one Codex writes, and is refused.
+    let (forked, copied) = match (payload.get("forked_from_id"), &base) {
+        (None | Some(Value::Null), _) => (false, false),
+        (Some(parent), Some((_, _, cutoff))) => {
+            let stated = integer(payload.get("forked_from_ordinal_exclusive"));
+            let forked = parent
+                .as_str()
+                .is_some_and(|parent| full_thread_id(parent) && parent != thread)
+                && stated.is_ok_and(|stated| stated.is_none_or(|stated| stated == *cutoff));
+            (forked, false)
+        }
+        (Some(parent), None) => {
+            if !parent.is_string() {
+                return Err(());
+            }
+            match (role, inherited_below) {
+                (_, None) => (false, true),
+                (Role::Spawned, Some(_)) => (false, false),
+                (Role::Own | Role::Reviewer, Some(_)) => return Err(()),
+            }
+        }
+    };
     Ok(Header {
         paginated,
         ordinal,
         base,
         inherited_below,
+        forked,
+        role,
+        copied,
     })
 }
 
@@ -385,16 +487,19 @@ fn census_bytes(files: &Vec<CensusFile>) -> usize {
 
 impl Planner {
     /// Check the thread's census files against the locators the index
-    /// recorded for it, by names and stats only.
+    /// recorded for it, by names and stats only. A thread the index holds
+    /// (`held`) must have locators; one it does not hold has none, and its
+    /// census files alone are its history.
     pub fn start(
         thread: &str,
         files: &[CensusFile],
         indexed: &[PathBuf],
+        held: bool,
         roots: &[PathBuf],
         allowance: &Allowance,
         max_line: usize,
     ) -> Result<Self, Refusal> {
-        if files.is_empty() || files.len() > MAX_SEGMENTS || indexed.is_empty() {
+        if files.is_empty() || files.len() > MAX_SEGMENTS || (held && indexed.is_empty()) {
             return Err(Refusal::Membership);
         }
         // What the planner keeps, reserved before it is copied: the files,
@@ -515,6 +620,10 @@ impl Planner {
                     .map_err(|_| Refusal::OverLimit)?;
                 header(&line, &self.thread).map_err(|()| Refusal::Structure)?
             };
+            // Copied history is never read as this thread's launches.
+            if parsed.copied {
+                return Err(Refusal::Copied);
+            }
             drop(line);
             self.reading = None;
             let base = parsed.base.as_ref().map_or(0, |(base, _, _)| base.len());
@@ -534,6 +643,12 @@ impl Planner {
                 self.lookback += 1;
                 continue;
             };
+            // A fork's first rollout continues another conversation's
+            // history, which is not this thread's and is not read for it.
+            if !self.segments.iter().any(|segment| segment.rollout == base) {
+                self.lookback += 1;
+                continue;
+            }
             if cutoff == 0 {
                 if ordinal != 0 {
                     return Err(Refusal::Structure);
@@ -634,13 +749,19 @@ impl Planner {
             }
             return Ok(segments);
         }
-        // One original; every base in the group; header ordinals at their
-        // base's cutoff; no cycle.
-        if segments.iter().filter(|s| s.header.base.is_none()).count() != 1 {
-            return Err(Refusal::Structure);
-        }
+        // One first rollout, the thread's own name: an original, or a fork's
+        // whose base is not of this group; every other base in the group;
+        // header ordinals at their base's cutoff; no cycle.
         let by_rollout: BTreeMap<&str, &Segment> =
             segments.iter().map(|s| (s.rollout.as_str(), s)).collect();
+        let first = |segment: &Segment| match &segment.header.base {
+            None => true,
+            Some((base, _, _)) => segment.header.forked && !by_rollout.contains_key(base.as_str()),
+        };
+        let firsts: Vec<&Segment> = segments.iter().filter(|s| first(s)).collect();
+        if !matches!(firsts.as_slice(), [only] if only.rollout == thread) {
+            return Err(Refusal::Structure);
+        }
         for segment in &segments {
             let start = segment
                 .header
@@ -652,7 +773,7 @@ impl Planner {
             }
             let mut seen = BTreeSet::from([segment.rollout.as_str()]);
             let mut at = segment;
-            while let Some((base, _, _)) = &at.header.base {
+            while let Some((base, _, _)) = at.header.base.as_ref().filter(|_| !first(at)) {
                 let next = by_rollout.get(base.as_str()).ok_or(Refusal::Structure)?;
                 if !seen.insert(next.rollout.as_str()) {
                     return Err(Refusal::Structure);
@@ -688,6 +809,222 @@ mod tests {
 
     const THREAD: &str = "01a00000-0000-7000-8000-0000000000aa";
     const NEXT: &str = "01a00000-0000-7000-8000-0000000000b1";
+
+    /// The launch scan reads a spawned header as every other reader does: by
+    /// its typed parent, whatever root `session_id` it shares. An explicit
+    /// parent that disagrees, or no root other than the thread, is not the
+    /// thread's own header.
+    #[test]
+    fn a_nested_spawn_header_is_the_threads_own() {
+        const PARENT: &str = "01a00000-0000-7000-8000-0000000000c1";
+        const ROOT: &str = "01a00000-0000-7000-8000-0000000000c2";
+        let line = |session: Option<&str>, explicit: Option<&str>| {
+            let mut value = serde_json::json!({"type": "session_meta", "ordinal": 0,
+                "payload": {"id": THREAD, "history_mode": "paginated",
+                            "subagent_history_start_ordinal": 1,
+                            "source": {"subagent": {"thread_spawn": {
+                                "parent_thread_id": PARENT, "depth": 2}}}}});
+            if let Some(session) = session {
+                value["payload"]["session_id"] = session.into();
+            }
+            if let Some(explicit) = explicit {
+                value["payload"]["parent_thread_id"] = explicit.into();
+            }
+            value.to_string().into_bytes()
+        };
+        for (session, explicit, own) in [
+            (Some(PARENT), None, true),
+            (Some(PARENT), Some(PARENT), true),
+            (Some(ROOT), Some(PARENT), true),
+            (Some(ROOT), None, true),
+            (Some(ROOT), Some(ROOT), false),
+            (Some(PARENT), Some(ROOT), false),
+            (None, Some(PARENT), false),
+            (Some(THREAD), Some(PARENT), false),
+        ] {
+            assert_eq!(
+                header(&line(session, explicit), THREAD).is_ok(),
+                own,
+                "{session:?} {explicit:?}"
+            );
+        }
+    }
+
+    /// A fork's first header names a different conversation and states the
+    /// cutoff of its history reference, if it states one; one with no
+    /// history reference is marked copied, as its file may hold copied
+    /// history.
+    #[test]
+    fn a_fork_header_needs_a_reference_and_a_consistent_origin() {
+        const PARENT: &str = "01a00000-0000-7000-8000-0000000000c1";
+        let line = |forked: Value, cutoff: Value, base: bool| {
+            let mut value = serde_json::json!({"type": "session_meta", "ordinal": 7,
+                "payload": {"id": THREAD, "session_id": THREAD, "history_mode": "paginated",
+                            "forked_from_id": forked, "forked_from_ordinal_exclusive": cutoff}});
+            if base {
+                value["payload"]["history_base"] = serde_json::json!(
+                    {"thread_id": PARENT, "end_byte_offset": 10, "end_ordinal_exclusive": 7});
+            }
+            value.to_string().into_bytes()
+        };
+        let forked = |forked: Value, cutoff: Value, base: bool| {
+            header(&line(forked, cutoff, base), THREAD).map(|header| (header.forked, header.copied))
+        };
+        assert_eq!(forked(PARENT.into(), 7.into(), true), Ok((true, false)));
+        assert_eq!(forked(PARENT.into(), Value::Null, true), Ok((true, false)));
+        assert_eq!(forked(Value::Null, Value::Null, true), Ok((false, false)));
+        // Not a fork origin it can vouch for: never a first rollout.
+        assert_eq!(forked(PARENT.into(), 6.into(), true), Ok((false, false)));
+        assert_eq!(forked(THREAD.into(), 7.into(), true), Ok((false, false)));
+        assert_eq!(
+            forked("not-a-thread".into(), 7.into(), true),
+            Ok((false, false))
+        );
+        assert_eq!(forked(PARENT.into(), (-1).into(), true), Ok((false, false)));
+        // No history reference: its rows may be copied, whatever thread it
+        // names; a name that is not text is refused.
+        assert_eq!(forked(PARENT.into(), 7.into(), false), Ok((false, true)));
+        assert_eq!(
+            forked("not-a-thread".into(), Value::Null, false),
+            Ok((false, true))
+        );
+        assert_eq!(forked(7.into(), Value::Null, false), Err(()));
+        assert_eq!(
+            forked(serde_json::json!([PARENT]), Value::Null, false),
+            Err(())
+        );
+        assert_eq!(forked(Value::Null, Value::Null, false), Ok((false, false)));
+    }
+
+    /// A spawned helper thread with no inherited-context marker inherited
+    /// nothing. With a marker, one that names a conversation it was forked
+    /// from without a history reference is still read: the marker says which
+    /// rows are copied. Without one, it is copied history.
+    #[test]
+    fn a_spawned_header_needs_no_marker_and_a_marked_fork_is_not_copied() {
+        const PARENT: &str = "01a00000-0000-7000-8000-0000000000c1";
+        let line = |marker: Option<i64>, forked: bool| {
+            let mut value = serde_json::json!({"type": "session_meta", "ordinal": 0,
+                "payload": {"id": THREAD, "session_id": PARENT, "history_mode": "paginated",
+                            "source": {"subagent": {"thread_spawn": {
+                                "parent_thread_id": PARENT, "depth": 1}}}}});
+            if let Some(marker) = marker {
+                value["payload"]["subagent_history_start_ordinal"] = marker.into();
+            }
+            if forked {
+                value["payload"]["forked_from_id"] = PARENT.into();
+            }
+            header(&value.to_string().into_bytes(), THREAD)
+                .map(|header| (header.role, header.inherited_below, header.copied))
+        };
+        assert_eq!(line(None, false), Ok((Role::Spawned, None, false)));
+        assert_eq!(line(Some(5), false), Ok((Role::Spawned, Some(5), false)));
+        assert_eq!(line(Some(5), true), Ok((Role::Spawned, Some(5), false)));
+        assert_eq!(line(None, true), Ok((Role::Spawned, None, true)));
+        // A person's own conversation with a marker and a fork with no
+        // reference is not a shape Codex writes: refused.
+        let own = serde_json::json!({"type": "session_meta", "ordinal": 0,
+            "payload": {"id": THREAD, "session_id": THREAD, "history_mode": "paginated",
+                        "subagent_history_start_ordinal": 5, "forked_from_id": PARENT}});
+        assert_eq!(header(&own.to_string().into_bytes(), THREAD), Err(()));
+    }
+
+    /// An approval reviewer names the reviewed thread as its parent and its
+    /// spawn tree's root as its session; one that does not fit, or names
+    /// itself, is not this thread's header.
+    #[test]
+    fn a_reviewer_header_names_a_different_parent_and_root() {
+        const PARENT: &str = "01a00000-0000-7000-8000-0000000000c1";
+        const ROOT: &str = "01a00000-0000-7000-8000-0000000000c2";
+        let line = |edit: &dyn Fn(&mut Value)| {
+            let mut value = serde_json::json!({"type": "session_meta", "ordinal": 0,
+                "payload": {"id": THREAD, "session_id": ROOT, "parent_thread_id": PARENT,
+                            "history_mode": "paginated", "thread_source": "guardian_review",
+                            "subagent_history_start_ordinal": 3,
+                            "source": {"subagent": {"other": "guardian"}}}});
+            edit(&mut value);
+            header(&value.to_string().into_bytes(), THREAD)
+                .map(|header| (header.role, header.inherited_below))
+        };
+        assert_eq!(line(&|_| {}), Ok((Role::Reviewer, Some(3))));
+        assert_eq!(
+            line(&|v| v["payload"]["session_id"] = PARENT.into()),
+            Ok((Role::Reviewer, Some(3)))
+        );
+        assert_eq!(
+            line(&|v| v["payload"]["subagent_history_start_ordinal"] = Value::Null),
+            Ok((Role::Reviewer, None))
+        );
+        let refused: [(&str, Value); 7] = [
+            // A marked reviewer that also names a fork with no reference.
+            ("/payload/forked_from_id", PARENT.into()),
+            ("/payload/session_id", THREAD.into()),
+            ("/payload/parent_thread_id", THREAD.into()),
+            ("/payload/parent_thread_id", Value::Null),
+            ("/payload/session_id", Value::Null),
+            ("/payload/thread_source", "user".into()),
+            ("/payload/source/subagent/depth", 1.into()),
+        ];
+        for (at, value) in refused {
+            let edit = |v: &mut Value| {
+                let (parent, key) = at.rsplit_once('/').unwrap();
+                v.pointer_mut(parent).unwrap()[key] = value.clone();
+            };
+            assert_eq!(line(&edit), Err(()), "{at} {value}");
+        }
+    }
+
+    /// The first rollout of a paginated history carries the thread's own
+    /// name, as the compaction reader requires; a continuation-named file
+    /// that starts the history is not one history.
+    #[test]
+    fn the_first_rollout_carries_the_threads_name() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap().join("sessions");
+        let day = root.join("2026/09/07");
+        std::fs::create_dir_all(&day).unwrap();
+        let header = serde_json::json!({"type": "session_meta", "ordinal": 0,
+            "payload": {"id": THREAD, "history_mode": "paginated"}});
+        let plan = |name: String, original_name: bool, rollout: &str| {
+            let path = day.join(name);
+            std::fs::write(&path, format!("{header}\n")).unwrap();
+            let files = [CensusFile {
+                path: path.clone(),
+                rollout: rollout.to_owned(),
+                original_name,
+            }];
+            let allowance = Allowance::new(1 << 20);
+            let mut planner = Planner::start(
+                THREAD,
+                &files,
+                &[],
+                false,
+                std::slice::from_ref(&root),
+                &allowance,
+                1 << 16,
+            )?;
+            let mut budget = Budget::new(1 << 20, std::time::Duration::from_secs(10), None);
+            let planned = planner.advance(&mut budget);
+            std::fs::remove_file(path).unwrap();
+            planned.map(|plan| plan.is_some())
+        };
+        assert_eq!(
+            plan(
+                format!("rollout-2026-09-07T00-00-00-{THREAD}.jsonl"),
+                true,
+                THREAD
+            ),
+            Ok(true)
+        );
+        assert_eq!(
+            plan(
+                format!("rollout-2026-09-07T00-00-00-{THREAD}_{NEXT}.jsonl"),
+                false,
+                NEXT
+            ),
+            Err(Refusal::Structure)
+        );
+    }
 
     #[test]
     fn names_give_the_thread_and_rollout() {

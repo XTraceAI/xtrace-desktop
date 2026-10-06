@@ -143,7 +143,7 @@ test('a positive below the shown scale reads as such and still fits', async ({ p
   expect(tiles[2].value).toBe('<0.1');
   expect(tiles[3].value).toBe('<0.1');
   // Absent counters are not an absence of output.
-  expect(tiles[1].value).toContain('Output counters are absent or incomplete');
+  expect(tiles[1].value).toContain('Output token counts are missing or incomplete');
   for (const tile of tiles) expect(tile.valueFits, tile.label ?? '').toBe(true);
   // A row reads the same way, and the longer value fits its narrow column.
   const cell = page

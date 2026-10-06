@@ -57,6 +57,7 @@ for (const report of exported.dashboards) {
 }
 // Counts 1–5 carry one recorded time per compaction, spread across the lane
 // window with each trigger; the count of 9 carries none, as Cursor's do.
+// Sessions 2 and 3 are forks: 3 inherited none, 2's inherited part is unknown.
 const triggers = ['auto', 'manual', 'unknown'] as const;
 const { lane_start_ms: laneStart, lane_end_ms: laneEnd } = exported.dashboards[0];
 const timed = (count: number) =>
@@ -91,7 +92,21 @@ const source = Object.assign(new FixtureDataSource(exported), {
               ? { state: 'count', count: 9, events: [] }
               : n === 7
                 ? { state: 'unknown', reason: 'ownership' }
-                : { state: 'count', count: n, events: timed(n) };
+                : n === 2
+                  ? {
+                      state: 'count',
+                      count: n,
+                      events: timed(n),
+                      inherited: { state: 'unknown', reason: 'missing' },
+                    }
+                  : n === 3
+                    ? {
+                        state: 'count',
+                        count: n,
+                        events: timed(n),
+                        inherited: { state: 'count', count: 0 },
+                      }
+                    : { state: 'count', count: n, events: timed(n) };
           return { id, outcome };
         }),
       };

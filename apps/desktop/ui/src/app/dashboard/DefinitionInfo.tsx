@@ -11,13 +11,16 @@ export function DefinitionInfo({
   ruleId,
   name,
   context,
+  text,
 }: {
   ruleId: RuleId;
   name: string;
   context?: string;
+  /** Plain words shown instead of the rule's own definition. */
+  text?: string;
 }) {
   return (
-    <RulePopover ruleId={ruleId} context={context}>
+    <RulePopover ruleId={ruleId} context={context} text={text}>
       <button type="button" className="xt-dash-definition" aria-label={`${name} definition`}>
         <svg
           width={12}

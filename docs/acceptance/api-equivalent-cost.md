@@ -98,7 +98,7 @@ and the 2026-10-01 models carry their own published rates (gpt-5.5 Priority is
 not supply service tier, and a request that names none is billed at OpenAI's
 default tier, so a Codex observation (host `codex`) with no recorded tier is
 priced at `default` and counted in `assumed_tier_observations` (part of
-`priced_observations`); the Dashboard's cost and Effort's Method say how many. A
+`priced_observations`); the Dashboard's cost and Effort's Details say how many. A
 missing tier on any other host stays unpriced (`missing_service_tier`), as does an
 assumed tier the catalog lacks. The reader itself is unchanged.
 

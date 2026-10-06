@@ -14,7 +14,14 @@ export interface StatTileProps extends Pick<MetricCellProps, 'value' | 'format' 
   deltaTone?: 'good' | 'bad';
   aside?: string;
   tip?: string;
+  /** Words shown in place of the dash when there is no value to show. */
+  placeholder?: string;
+  /** Plain words shown instead of the rule's definition in the tile's tip. */
+  definition?: string;
 }
+
+/** A reason as it reads before a further note: closed with a full stop. */
+const closed = (text: string) => (/[.!?…]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
 
 export function StatTile({
   label,
@@ -29,9 +36,19 @@ export function StatTile({
   deltaTone = 'good',
   aside,
   tip,
+  placeholder,
+  definition,
 }: StatTileProps) {
+  // Words in place of the dash already say why there is no number.
+  const showPlaceholder = placeholder !== undefined && !isMeasured(value);
+  // A tile with no number says why in its definition, once, before any note;
+  // the dash then needs no native tooltip of its own repeating it.
+  const why = isMeasured(value) || !reason || showPlaceholder ? undefined : closed(reason);
+  const context =
+    [why, tip && reason && closed(tip) === why ? undefined : tip].filter(Boolean).join(' ') ||
+    undefined;
   return (
-    <RulePopover ruleId={ruleId} context={tip}>
+    <RulePopover ruleId={ruleId} context={context} text={definition}>
       <button type="button" className="xt-stat-tile">
         <span className="xt-stat-label-group">
           <MetricIcon name={icon} tone={iconTone} />
@@ -39,7 +56,21 @@ export function StatTile({
         </span>
         <span className="xt-stat-row">
           <span className="xt-stat-value">
-            <MetricCell value={value} format={format} reason={reason} size={18} />
+            {showPlaceholder ? (
+              // The cell keeps a number's size, so the smaller words sit on
+              // the same baseline as the other tiles' values.
+              <span className="xt-metric-cell" style={{ fontSize: 18 }}>
+                <span className="xt-stat-placeholder">{placeholder}</span>
+              </span>
+            ) : (
+              <MetricCell
+                value={value}
+                format={format}
+                reason={reason}
+                size={18}
+                reasonTitle={false}
+              />
+            )}
             {unit && <span className="xt-stat-unit">{unit}</span>}
             {isMeasured(value) && typeof delta === 'number' && Number.isFinite(delta) && (
               <span className="xt-stat-delta" data-tone={deltaTone}>

@@ -1,6 +1,8 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import fixture from '../fixtures/F1.json' with { type: 'json' };
 import type { FixtureExport } from '../src/data/generated/FixtureExport';
+import { OVERVIEW_DEFINITION } from '../src/app/dashboard/overview';
+import { ruleSummary } from '../src/kit/rules';
 
 /**
  * Synthetic rows (not real history): F1 indexes one session, which never fills
@@ -23,19 +25,20 @@ const serve = (page: Page, body: FixtureExport) =>
     }),
   );
 
+/** Each card and the definition it opens: a rule's summary, or the card's own plain words. */
 const CARDS = [
-  ['Effort', 'M-19'],
-  ['Environment', 'M-17'],
-  ['Sessions', 'M-05'],
+  ['Effort', ruleSummary('M-19')],
+  ['Overview', OVERVIEW_DEFINITION],
+  ['Sessions', ruleSummary('M-05')],
 ] as const;
 /**
  * Measurements opened from the card they belong to — tokens and cost as sections of Effort's
- * Method, coverage from the Sessions header — each with its definition beside its title.
+ * Details, coverage from the Sessions header — each with its definition beside its title.
  */
 const METHOD = 'How effort is counted · daily values';
 const DETAILS = [
-  ['Tokens per day', 'M-04', 'Effort', /^Method$/, METHOD],
-  ['API-equivalent cost', 'M-04', 'Effort', /^Method$/, METHOD],
+  ['Tokens per day', 'M-04', 'Effort', /^Details$/, METHOD],
+  ['API-equivalent cost', 'M-04', 'Effort', /^Details$/, METHOD],
   ['Coverage', 'M-18', 'Sessions', /^Coverage/, 'Coverage'],
 ] as const;
 
@@ -54,14 +57,14 @@ for (const scheme of ['light', 'dark'] as const)
     expect(visible).not.toMatch(/\b[MRC]-\d{2}\b/);
     await page.screenshot({ path: info.outputPath(`dashboard-${scheme}.png`) });
 
-    const explain = async (control: Locator, id: string, shot?: string) => {
+    const explain = async (control: Locator, text: string, shot?: string) => {
       await control.focus();
       await expect(control).toBeFocused();
       // Small, and drawn in the theme's own ink rather than as a tag.
       const box = await control.boundingBox();
       expect(box!.width).toBeLessThanOrEqual(16);
       const definition = page.getByRole('tooltip');
-      await expect(definition).toContainText(`${id} · `);
+      await expect(definition).toContainText(text);
       if (shot) await page.screenshot({ path: info.outputPath(shot) });
       await page.keyboard.press('Escape');
       await expect(definition).toHaveCount(0);
@@ -69,10 +72,10 @@ for (const scheme of ['light', 'dark'] as const)
     // Agent / human hours and Caught by your rules are hidden, definitions and all.
     for (const title of ['Agent / human hours', 'Caught by your rules'])
       await expect(page.getByRole('button', { name: `${title} definition` })).toHaveCount(0);
-    for (const [title, id] of CARDS)
+    for (const [title, text] of CARDS)
       await explain(
         page.getByRole('button', { name: `${title} definition` }),
-        id,
+        text,
         title === 'Effort' ? `dashboard-definition-${scheme}.png` : undefined,
       );
     for (const [title, id, card, trigger, dialogName] of DETAILS) {
@@ -84,7 +87,7 @@ for (const scheme of ['light', 'dark'] as const)
       await page.keyboard.press('Enter');
       const dialog = page.getByRole('dialog', { name: dialogName });
       await expect(dialog).toBeVisible();
-      await explain(dialog.getByRole('button', { name: `${title} definition` }), id);
+      await explain(dialog.getByRole('button', { name: `${title} definition` }), ruleSummary(id));
       // Escape closed the definition and left its dialog; a second Escape closes that.
       await expect(dialog).toBeVisible();
       await page.keyboard.press('Escape');

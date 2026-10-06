@@ -445,6 +445,11 @@
     "size": [440, 100]
   },
   {
+    "id": "local-updates/information-only",
+    "components": ["LocalUpdatesPopover"],
+    "size": [620, 400]
+  },
+  {
     "id": "popover/closed",
     "components": ["Popover"],
     "size": [600, 340]

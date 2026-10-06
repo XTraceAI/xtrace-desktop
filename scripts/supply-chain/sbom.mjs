@@ -71,6 +71,11 @@ export async function validateSbom(document) {
   return { components: document.components.length, packages: purls.length };
 }
 
+export async function sourceVersion() {
+  const manifest = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
+  return manifest.version;
+}
+
 async function main() {
   if (process.argv.length !== 2) throw new Error('SBOM generation takes no arguments.');
   const tool = process.env.SYFT || 'syft';
@@ -101,7 +106,7 @@ async function main() {
         '--source-name',
         'xtrace-desktop',
         '--source-version',
-        '0.1.0',
+        await sourceVersion(),
         '--output',
         'cyclonedx-json@1.5',
       ],

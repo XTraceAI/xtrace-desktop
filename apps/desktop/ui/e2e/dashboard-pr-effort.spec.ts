@@ -18,6 +18,14 @@ import type { FixtureExport } from '../src/data/generated/FixtureExport';
  */
 const synthetic = structuredClone(fixture as FixtureExport);
 synthetic.dashboards = synthetic.dashboards.map((report) => withPrEffort(report, MANY_TYPES));
+// MANY_TYPES draws #5's last refresh as failed; the tile's counts say so too,
+// so the Effort card shows its red ! and the refresh dialog is one click away.
+for (const report of synthetic.dashboards) {
+  const freshness = report.pr_effort.current.tile.freshness;
+  freshness.refreshed -= 1;
+  freshness.failed_after_refresh += 1;
+}
+const ATTENTION = 'Pull-request checks need your attention';
 
 const HOUR = 3_600_000;
 /** Day 2: 26 h over two models; day 3: nothing priced; day 5: partly priced. */
@@ -85,9 +93,7 @@ for (const [width, height] of [
   [1120, 720],
 ] as const)
   for (const scheme of ['light', 'dark'] as const)
-    test(`effort fits beside Environment at ${width}x${height} ${scheme}`, async ({
-      page,
-    }, info) => {
+    test(`effort fits beside Overview at ${width}x${height} ${scheme}`, async ({ page }, info) => {
       const errors: string[] = [];
       page.on('pageerror', (error) => errors.push(error.message));
       page.on('console', (message) => {
@@ -137,7 +143,7 @@ for (const [width, height] of [
         const markerStyle = getComputedStyle(marker);
         return {
           effort,
-          environment: section('Environment'),
+          overview: section('Overview'),
           sessions: section('Sessions'),
           outside,
           clipped,
@@ -186,13 +192,13 @@ for (const [width, height] of [
       expect(layout.scrollWidth).toBe(width);
       expect(layout.markerColors[0]).not.toBe(layout.markerColors[1]);
       // The 1.6:1 row keeps its place and one height; Sessions stays in view at both sizes.
-      expect(layout.environment.top).toBe(layout.effort.top);
-      expect(layout.effort.width / layout.environment.width).toBeCloseTo(1.6, 1);
-      expect(layout.effort.height).toBe(layout.environment.height);
+      expect(layout.overview.top).toBe(layout.effort.top);
+      expect(layout.effort.width / layout.overview.width).toBeCloseTo(1.6, 1);
+      expect(layout.effort.height).toBe(layout.overview.height);
       expect(layout.sessions.top).toBeGreaterThan(layout.effort.bottom);
       expect(layout.sessions.bottom).toBeLessThanOrEqual(height);
       // The refresh disclosure fits the window without horizontal overflow.
-      await card(page).getByRole('button', { name: 'Refresh PR facts…' }).click();
+      await card(page).getByRole('button', { name: ATTENTION }).click();
       const dialog = page.getByRole('dialog', { name: 'Refresh pull-request facts' });
       await expect(dialog.getByRole('list', { name: 'Indexed pull requests' })).toBeVisible();
       const box = (await dialog.boundingBox())!;
@@ -211,6 +217,10 @@ test('switches the effort measure from the keyboard', async ({ page }) => {
   const agent = card(page).getByRole('radio', { name: 'agent h' });
   await agent.focus();
   await expect(agent).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('ArrowRight');
+  // agent h, then human h, then cost.
+  await expect(card(page).getByRole('radio', { name: 'human h' })).toBeFocused();
+  await expect(page.getByTestId('human-timeline')).toBeVisible();
   await page.keyboard.press('ArrowRight');
   const dollars = card(page).getByRole('radio', { name: 'cost' });
   await expect(dollars).toHaveAttribute('aria-checked', 'true');
@@ -233,7 +243,7 @@ for (const scheme of ['light', 'dark'] as const)
     // The card's definition says what it shows, not per-type series.
     await page.getByRole('button', { name: 'Effort definition' }).focus();
     await expect(page.getByRole('tooltip')).toContainText(
-      'does not split it by work type. Each session’s hours count toward the model it used most.',
+      'This card covers every session in the range, one bar per day, split by model, whether or not it is linked to a PR.',
     );
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Effort definition' }).blur();
@@ -308,9 +318,11 @@ test('refreshes the F1 fixture from the keyboard and updates the tile after the 
   page,
 }) => {
   await open(page, { width: 1440, height: 900, dense: false });
-  const tile = page.getByRole('button', { name: /^Merged PRs/ });
-  await expect(tile).toContainText('0 + 2 unknown');
-  const trigger = card(page).getByRole('button', { name: 'Refresh PR facts…' });
+  const tile = page.getByTestId('overview-tile').filter({ hasText: 'Merged PRs' });
+  await expect(tile).toContainText('2 PRs not checked yet');
+  // F1's links were never checked and this source never checks on its own,
+  // so the red ! is there.
+  const trigger = card(page).getByRole('button', { name: ATTENTION });
   await trigger.focus();
   await page.keyboard.press('Enter');
   const dialog = page.getByRole('dialog', { name: 'Refresh pull-request facts' });
@@ -331,8 +343,15 @@ test('refreshes the F1 fixture from the keyboard and updates the tile after the 
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
-  await expect(tile).toContainText('0 + 1 unknown');
-  await expect(card(page).getByTestId('pr-refresh')).toContainText(
+  // #12's check failed: it was checked, but could not be.
+  await expect(tile).toContainText('0so far1 could not be checked');
+  // The status that used to sit under the chart now opens the dialog; the
+  // failed check keeps the red ! there.
+  await expect(card(page).getByTestId('pr-refresh')).toHaveCount(0);
+  await expect(trigger).toHaveAttribute('data-state', 'attention');
+  await page.keyboard.press('Enter');
+  await expect(dialog.getByTestId('pr-refresh')).toContainText(
     'Confirmed-linked pull requests: 1 refreshed, 1 failed, never refreshed',
   );
+  await page.keyboard.press('Escape');
 });

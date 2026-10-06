@@ -1253,16 +1253,35 @@ fn codex_boundary_does_not_authorize_foreign_or_forked_history() {
         &[header.clone(), compact(1, "inherited"), compact(2, "own")],
     );
     assert_eq!(read(home.path(), &t), Outcome::Count { count: 1 });
+    // A nested spawn: its root `session_id` is another thread, never
+    // compared with the typed parent, which an explicit parent repeats.
     header["payload"]["session_id"] = json!(id(3));
+    header["payload"]["parent_thread_id"] = json!(id(2));
+    write(
+        &path,
+        &[header.clone(), compact(1, "inherited"), compact(2, "own")],
+    );
+    assert_eq!(read(home.path(), &t), Outcome::Count { count: 1 });
+    // An explicit parent that disagrees, or a root that is the thread itself.
+    header["payload"]["parent_thread_id"] = json!(id(3));
     write(
         &path,
         &[header.clone(), compact(1, "inherited"), compact(2, "own")],
     );
     assert_eq!(read(home.path(), &t), Outcome::unknown(Reason::Ownership));
+    header["payload"]["parent_thread_id"] = json!(id(2));
+    header["payload"]["session_id"] = json!(native);
+    write(
+        &path,
+        &[header.clone(), compact(1, "inherited"), compact(2, "own")],
+    );
+    assert_eq!(read(home.path(), &t), Outcome::unknown(Reason::Ownership));
+    // A spawned helper that names a conversation it was forked from with no
+    // history reference: its marker still says which rows were handed to it.
     header["payload"]["session_id"] = json!(id(2));
     header["payload"]["forked_from_id"] = json!(id(4));
     write(&path, &[header, compact(1, "inherited"), compact(2, "own")]);
-    assert_eq!(read(home.path(), &t), Outcome::unknown(Reason::Ownership));
+    assert_eq!(read(home.path(), &t), Outcome::Count { count: 1 });
 }
 
 #[test]
@@ -1412,7 +1431,9 @@ fn claude_unknown_count_has_no_events() {
         read_events(home.path(), &t),
         Counted {
             outcome: Outcome::unknown(Reason::Ownership),
-            events: Vec::new()
+            events: Vec::new(),
+            inherited: None,
+            copied: false
         }
     );
 }
@@ -1514,7 +1535,9 @@ fn cursor_counts_have_no_events() {
         read_events(home.path(), &target(Host::Cursor, &native, &[path])),
         Counted {
             outcome: Outcome::Count { count: 1 },
-            events: Vec::new()
+            events: Vec::new(),
+            inherited: None,
+            copied: false
         }
     );
 }
@@ -1598,7 +1621,9 @@ fn odd_compaction_metadata_and_times_never_change_a_count() {
         read_events(home.path(), &target(Host::Codex, &native, &[path])),
         Counted {
             outcome: Outcome::Count { count: 3 },
-            events: Vec::new()
+            events: Vec::new(),
+            inherited: None,
+            copied: false
         }
     );
 }
@@ -1695,4 +1720,724 @@ fn a_trigger_after_large_preserved_messages_is_read_and_odd_metadata_is_unknown(
         counted.events.iter().map(|e| e.trigger).collect::<Vec<_>>(),
         vec![Trigger::Manual, Trigger::Unknown, Trigger::Unknown]
     );
+}
+
+// A forked Codex conversation: its own count, and the count it inherits from
+// the conversation it was forked from, before the fork point.
+fn forked_meta(native: &str, parent: &str, base: &str, cutoff: u64, ordinal: u64) -> Value {
+    let mut header = ordinary_meta(native, ordinal);
+    header["payload"]["session_id"] = json!(native);
+    header["payload"]["forked_from_id"] = json!(parent);
+    header["payload"]["forked_from_ordinal_exclusive"] = json!(ordinal);
+    header["payload"]["history_base"] =
+        json!({"thread_id": base, "end_byte_offset": cutoff, "end_ordinal_exclusive": ordinal});
+    header
+}
+fn append(path: &Path, rows: &[Value]) {
+    let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
+    for row in rows {
+        file.write_all(format!("{row}\n").as_bytes()).unwrap();
+    }
+}
+fn read_counted(reader: &mut Reader, home: &Path, target: &Target) -> Counted {
+    reader
+        .read_events(home, std::slice::from_ref(target), &CancelToken::new())
+        .remove(0)
+}
+
+#[test]
+fn codex_fork_counts_its_own_and_the_inherited_before_the_fork_point() {
+    let home = tempfile::Builder::new().tempdir_in("/private/tmp").unwrap();
+    let (parent, native) = (id(1), id(2));
+    let base = rollout(
+        home.path(),
+        &parent,
+        "",
+        &[
+            ordinary_meta(&parent, 0),
+            timed(compact(1, "parent-1"), "2026-09-30T01:00:00Z"),
+            compact(2, "parent-2"),
+        ],
+    );
+    let cutoff = fs::metadata(&base).unwrap().len();
+    let fork = rollout(
+        home.path(),
+        &native,
+        "",
+        &[
+            forked_meta(&native, &parent, &parent, cutoff, 3),
+            timed(compact(4, "own-1"), "2026-10-01T01:00:00Z"),
+            compact(5, "own-2"),
+            compact(6, "own-3"),
+        ],
+    );
+    let t = target(Host::Codex, &native, &[fork]);
+    let mut reader = Reader::default();
+    let counted = read_counted(&mut reader, home.path(), &t);
+    assert_eq!(counted.outcome, Outcome::Count { count: 3 });
+    assert_eq!(counted.inherited, Some(Outcome::Count { count: 2 }));
+    assert!(!counted.copied);
+    // The ticks are the fork's own only.
+    assert_eq!(
+        counted.events,
+        vec![Event {
+            at_ms: at("2026-10-01T01:00:00Z"),
+            trigger: Trigger::Unknown
+        }]
+    );
+    read_counted(&mut reader, home.path(), &t);
+    assert_eq!(
+        reader.scans, 1,
+        "an unchanged fork and base are not read again"
+    );
+    // What the parent records after the fork is never inherited.
+    append(&base, &[compact(3, "parent-after-fork")]);
+    let counted = read_counted(&mut reader, home.path(), &t);
+    assert_eq!(counted.outcome, Outcome::Count { count: 3 });
+    assert_eq!(counted.inherited, Some(Outcome::Count { count: 2 }));
+    assert_eq!(reader.scans, 2, "a changed base is read again");
+    // Zero inherited is a count, not an unknown.
+    let none = rollout(
+        home.path(),
+        &id(3),
+        "",
+        &[
+            forked_meta(&id(3), &parent, &parent, 0, 0),
+            compact(1, "only-own"),
+        ],
+    );
+    let counted = read_events(home.path(), &target(Host::Codex, &id(3), &[none]));
+    assert_eq!(counted.outcome, Outcome::Count { count: 1 });
+    assert_eq!(counted.inherited, Some(Outcome::Count { count: 0 }));
+    // A session that is not a fork has no inherited part.
+    let parent_target = target(Host::Codex, &parent, &[base]);
+    assert_eq!(read_events(home.path(), &parent_target).inherited, None);
+}
+
+#[test]
+fn codex_fork_keeps_its_own_count_when_the_base_cannot_be_proven() {
+    let home = tempfile::Builder::new().tempdir_in("/private/tmp").unwrap();
+    let (parent, native) = (id(1), id(2));
+    let baserows = [
+        ordinary_meta(&parent, 0),
+        compact(1, "parent-1"),
+        compact(2, "parent-2"),
+    ];
+    let base = rollout(home.path(), &parent, "", &baserows);
+    let cutoff = fs::metadata(&base).unwrap().len();
+    let fork_rows = |base: &str, cutoff: u64, ordinal: u64| {
+        vec![
+            forked_meta(&native, &parent, base, cutoff, ordinal),
+            compact(ordinal + 1, "own-1"),
+        ]
+    };
+    let fork = rollout(home.path(), &native, "", &fork_rows(&parent, cutoff, 3));
+    let t = target(Host::Codex, &native, std::slice::from_ref(&fork));
+    let inherited = |reason| {
+        let counted = read_events(home.path(), &t);
+        assert_eq!(counted.outcome, Outcome::Count { count: 1 }, "{reason:?}");
+        assert_eq!(counted.inherited, Some(Outcome::unknown(reason)));
+    };
+    // The cutoff is not a line boundary, or not after the ordinal before it.
+    write(&fork, &fork_rows(&parent, cutoff - 3, 3));
+    inherited(Reason::Incomplete);
+    write(&fork, &fork_rows(&parent, cutoff, 4));
+    inherited(Reason::Incomplete);
+    write(&fork, &fork_rows(&parent, cutoff + 1, 3));
+    inherited(Reason::Incomplete);
+    write(&fork, &fork_rows(&parent, cutoff, 3));
+    // Two files claim the referenced rollout.
+    let copy = home
+        .path()
+        .join(".codex/sessions/2026/09/29")
+        .join(format!("rollout-2026-09-29T00-00-00-{parent}.jsonl"));
+    write(&copy, &baserows);
+    inherited(Reason::Ambiguous);
+    fs::remove_file(&copy).unwrap();
+    // The referenced rollout is another conversation's than the fork names.
+    let other = id(4);
+    let stranger = rollout(home.path(), &other, "", &[ordinary_meta(&other, 0)]);
+    write(&fork, &fork_rows(&other, 0, 0));
+    inherited(Reason::Ownership);
+    fs::remove_file(stranger).unwrap();
+    write(&fork, &fork_rows(&parent, cutoff, 3));
+    // An inherited marker that names another owner is not counted.
+    let mut foreign = compact(2, "parent-2");
+    foreign["payload"]["originalSessionId"] = json!(id(9));
+    write(&base, &[baserows[0].clone(), baserows[1].clone(), foreign]);
+    let cutoff = fs::metadata(&base).unwrap().len();
+    write(&fork, &fork_rows(&parent, cutoff, 3));
+    inherited(Reason::Ownership);
+    // The same recorded compaction on both sides is not counted twice.
+    write(&base, &baserows);
+    let cutoff = fs::metadata(&base).unwrap().len();
+    write(
+        &fork,
+        &[
+            forked_meta(&native, &parent, &parent, cutoff, 3),
+            compact(4, "parent-1"),
+        ],
+    );
+    inherited(Reason::Ownership);
+    // The base is gone.
+    write(&fork, &fork_rows(&parent, cutoff, 3));
+    fs::remove_file(&base).unwrap();
+    inherited(Reason::Missing);
+}
+
+#[test]
+fn codex_fork_follows_continuations_and_forks_before_each_cutoff() {
+    let home = tempfile::Builder::new().tempdir_in("/private/tmp").unwrap();
+    let (grandparent, parent, native) = (id(1), id(2), id(3));
+    // The grandparent, with a compaction after the parent forked from it.
+    let first = rollout(
+        home.path(),
+        &grandparent,
+        "",
+        &[ordinary_meta(&grandparent, 0), compact(1, "grandparent-1")],
+    );
+    let first_cutoff = fs::metadata(&first).unwrap().len();
+    append(&first, &[compact(2, "grandparent-after-fork")]);
+    // The parent is a fork of it, continued on a second page.
+    let page = rollout(
+        home.path(),
+        &parent,
+        "",
+        &[
+            forked_meta(&parent, &grandparent, &grandparent, first_cutoff, 2),
+            compact(3, "parent-1"),
+        ],
+    );
+    let page_cutoff = fs::metadata(&page).unwrap().len();
+    let continued = format!("_{}", id(20));
+    let mut header = ordinary_meta(&parent, 4);
+    header["payload"]["history_base"] =
+        json!({"thread_id": parent, "end_byte_offset": page_cutoff, "end_ordinal_exclusive": 4});
+    let second = rollout(
+        home.path(),
+        &parent,
+        &continued,
+        &[header, compact(5, "parent-2")],
+    );
+    let second_cutoff = fs::metadata(&second).unwrap().len();
+    append(&second, &[compact(6, "parent-after-fork")]);
+    // The fork continues the parent's second page.
+    let fork = rollout(
+        home.path(),
+        &native,
+        "",
+        &[
+            forked_meta(&native, &parent, &id(20), second_cutoff, 6),
+            compact(7, "own-1"),
+        ],
+    );
+    let t = target(Host::Codex, &native, &[fork]);
+    let counted = read_events(home.path(), &t);
+    assert_eq!(counted.outcome, Outcome::Count { count: 1 });
+    assert_eq!(counted.inherited, Some(Outcome::Count { count: 3 }));
+    // The parent itself is a fork: its own three, including the one after
+    // the fork, and one inherited.
+    let counted = read_events(home.path(), &target(Host::Codex, &parent, &[page]));
+    assert_eq!(counted.outcome, Outcome::Count { count: 3 });
+    assert_eq!(counted.inherited, Some(Outcome::Count { count: 1 }));
+    // A reference chain that comes back to the fork is refused, never
+    // followed round.
+    let (looped, back) = (id(5), id(6));
+    let back_path = rollout(
+        home.path(),
+        &back,
+        "",
+        &[
+            forked_meta(&back, &looped, &looped, 0, 0),
+            compact(1, "back-1"),
+        ],
+    );
+    let back_cutoff = fs::metadata(&back_path).unwrap().len();
+    let looped_path = rollout(
+        home.path(),
+        &looped,
+        "",
+        &[
+            forked_meta(&looped, &back, &back, back_cutoff, 2),
+            compact(3, "looped-1"),
+        ],
+    );
+    let counted = read_events(home.path(), &target(Host::Codex, &looped, &[looped_path]));
+    assert_eq!(counted.outcome, Outcome::Count { count: 1 });
+    assert_eq!(
+        counted.inherited,
+        Some(Outcome::unknown(Reason::Incomplete))
+    );
+}
+
+#[test]
+fn codex_fork_root_must_state_a_consistent_fork() {
+    let home = tempfile::Builder::new().tempdir_in("/private/tmp").unwrap();
+    let (parent, native) = (id(1), id(2));
+    rollout(home.path(), &parent, "", &[ordinary_meta(&parent, 0)]);
+    let mut header = forked_meta(&native, &parent, &parent, 0, 0);
+    let path = rollout(home.path(), &native, "", &[header.clone()]);
+    let t = target(Host::Codex, &native, std::slice::from_ref(&path));
+    assert_eq!(
+        read_events(home.path(), &t).outcome,
+        Outcome::Count { count: 0 }
+    );
+    // A stated fork cutoff that disagrees with the reference, or a fork of
+    // itself, is not a readable history.
+    for (key, value) in [
+        ("forked_from_ordinal_exclusive", json!(1)),
+        ("forked_from_id", json!(native)),
+    ] {
+        let saved = header["payload"][key].clone();
+        header["payload"][key] = value;
+        write(&path, &[header.clone()]);
+        assert!(
+            matches!(read(home.path(), &t), Outcome::Unknown { .. }),
+            "{key}"
+        );
+        header["payload"][key] = saved;
+    }
+}
+
+/// What the inherited count rests on is checked again on every read: a base
+/// that appears, a duplicate that is removed, and a duplicate that appears
+/// after a count are all noticed by the same reader.
+#[test]
+fn codex_fork_notices_its_base_appearing_or_becoming_ambiguous() {
+    let home = tempfile::Builder::new().tempdir_in("/private/tmp").unwrap();
+    let (parent, native) = (id(1), id(2));
+    let baserows = [ordinary_meta(&parent, 0), compact(1, "parent-1")];
+    let base = rollout(home.path(), &parent, "", &baserows);
+    let cutoff = fs::metadata(&base).unwrap().len();
+    let fork = rollout(
+        home.path(),
+        &native,
+        "",
+        &[
+            forked_meta(&native, &parent, &parent, cutoff, 2),
+            compact(3, "own-1"),
+        ],
+    );
+    let t = target(Host::Codex, &native, &[fork]);
+    let mut reader = Reader::default();
+    let inherited = |reader: &mut Reader| read_counted(reader, home.path(), &t).inherited;
+    let parked = base.with_extension("parked");
+    // Missing, then restored.
+    fs::rename(&base, &parked).unwrap();
+    assert_eq!(
+        inherited(&mut reader),
+        Some(Outcome::unknown(Reason::Missing))
+    );
+    fs::rename(&parked, &base).unwrap();
+    assert_eq!(inherited(&mut reader), Some(Outcome::Count { count: 1 }));
+    // A cached count, then a second file claims the base.
+    let copy = home
+        .path()
+        .join(".codex/sessions/2026/09/29")
+        .join(format!("rollout-2026-09-29T00-00-00-{parent}.jsonl"));
+    write(&copy, &baserows);
+    assert_eq!(
+        inherited(&mut reader),
+        Some(Outcome::unknown(Reason::Ambiguous))
+    );
+    // The duplicate removed.
+    fs::remove_file(&copy).unwrap();
+    assert_eq!(inherited(&mut reader), Some(Outcome::Count { count: 1 }));
+    let scans = reader.scans;
+    assert_eq!(inherited(&mut reader), Some(Outcome::Count { count: 1 }));
+    assert_eq!(reader.scans, scans, "an unchanged count is still kept");
+}
+
+fn spawned_meta(native: &str, parent: &str, boundary: Option<u64>) -> Value {
+    let mut header = ordinary_meta(native, 0);
+    header["payload"]["session_id"] = json!(parent);
+    header["payload"]["source"] =
+        json!({"subagent": {"thread_spawn": {"parent_thread_id": parent, "depth": 1}}});
+    if let Some(boundary) = boundary {
+        header["payload"]["subagent_history_start_ordinal"] = json!(boundary);
+    }
+    header
+}
+fn reviewer_meta(native: &str, reviewed: &str, root: &str, boundary: Option<u64>) -> Value {
+    let mut header = ordinary_meta(native, 0);
+    header["payload"]["session_id"] = json!(root);
+    header["payload"]["parent_thread_id"] = json!(reviewed);
+    header["payload"]["thread_source"] = json!("guardian_review");
+    header["payload"]["source"] = json!({"subagent": {"other": "guardian"}});
+    if let Some(boundary) = boundary {
+        header["payload"]["subagent_history_start_ordinal"] = json!(boundary);
+    }
+    header
+}
+fn note(ordinal: u64) -> Value {
+    json!({"type":"event_msg","ordinal":ordinal,"payload":{"type":"note"}})
+}
+
+/// A spawned helper thread with no inherited-context marker starts with its
+/// own task: every row is its own, as the reader's `context_boundary` has it.
+#[test]
+fn codex_spawned_helper_without_a_marker_counts_every_row_as_its_own() {
+    let home = tempfile::Builder::new().tempdir_in("/private/tmp").unwrap();
+    let native = id(1);
+    let quiet = rollout(
+        home.path(),
+        &native,
+        "",
+        &[spawned_meta(&native, &id(2), None), note(1)],
+    );
+    let t = target(Host::Codex, &native, std::slice::from_ref(&quiet));
+    let counted = read_events(home.path(), &t);
+    assert_eq!(counted.outcome, Outcome::Count { count: 0 });
+    assert_eq!(counted.inherited, None);
+    write(
+        &quiet,
+        &[
+            spawned_meta(&native, &id(2), None),
+            note(1),
+            compact(2, "own-1"),
+            compact(3, "own-2"),
+        ],
+    );
+    assert_eq!(read(home.path(), &t), Outcome::Count { count: 2 });
+}
+
+/// An approval reviewer is read like a spawned thread: rows below its marker
+/// are the reviewed conversation's, the rest its own. A file that is only a
+/// partial copy of the reviewed conversation, carrying one of its
+/// compactions and none of the reviewer's own, is refused with its own
+/// reason.
+#[test]
+fn codex_reviewer_counts_its_own_rows_and_refuses_a_snapshot() {
+    let home = tempfile::Builder::new().tempdir_in("/private/tmp").unwrap();
+    let (native, reviewed, root) = (id(1), id(2), id(3));
+    let path = rollout(home.path(), &native, "", &[]);
+    let t = target(Host::Codex, &native, std::slice::from_ref(&path));
+    let cases: Vec<(&str, Vec<Value>, Outcome)> = vec![
+        (
+            "own rows after the marker",
+            vec![
+                reviewer_meta(&native, &reviewed, &reviewed, Some(2)),
+                compact(1, "reviewed"),
+                note(2),
+                compact(3, "own"),
+            ],
+            Outcome::Count { count: 1 },
+        ),
+        (
+            "a nested reviewer: its root is another thread",
+            vec![
+                reviewer_meta(&native, &reviewed, &root, Some(2)),
+                compact(1, "reviewed"),
+                compact(2, "own"),
+            ],
+            Outcome::Count { count: 1 },
+        ),
+        (
+            "no marker, no compactions",
+            vec![reviewer_meta(&native, &reviewed, &reviewed, None), note(1)],
+            Outcome::Count { count: 0 },
+        ),
+        (
+            "marker at the end, no compactions",
+            vec![
+                reviewer_meta(&native, &reviewed, &reviewed, Some(2)),
+                note(1),
+            ],
+            Outcome::Count { count: 0 },
+        ),
+        (
+            "a snapshot: only the reviewed conversation's compaction",
+            vec![
+                reviewer_meta(&native, &reviewed, &reviewed, Some(3)),
+                note(1),
+                compact(2, "reviewed-window-4"),
+            ],
+            Outcome::unknown(Reason::Snapshot),
+        ),
+        (
+            "a reviewer that names itself",
+            vec![
+                reviewer_meta(&native, &native, &reviewed, Some(2)),
+                compact(1, "reviewed"),
+                compact(2, "own"),
+            ],
+            Outcome::unknown(Reason::Ownership),
+        ),
+    ];
+    for (name, rows, outcome) in cases {
+        write(&path, &rows);
+        assert_eq!(read(home.path(), &t), outcome, "{name}");
+    }
+}
+
+/// A spawned helper forked from its parent with no history reference, but
+/// with a marker: rows below it are the copied ones, and a helper whose only
+/// compactions are copied has none of its own.
+#[test]
+fn codex_marked_helper_fork_counts_only_rows_after_its_marker() {
+    let home = tempfile::Builder::new().tempdir_in("/private/tmp").unwrap();
+    let (native, parent) = (id(1), id(2));
+    let header = |boundary| {
+        let mut header = spawned_meta(&native, &parent, Some(boundary));
+        header["payload"]["forked_from_id"] = json!(parent);
+        header
+    };
+    let path = rollout(
+        home.path(),
+        &native,
+        "",
+        &[
+            header(3),
+            compact(1, "parent-1"),
+            compact(2, "parent-2"),
+            compact(3, "own-1"),
+        ],
+    );
+    let t = target(Host::Codex, &native, std::slice::from_ref(&path));
+    let counted = read_events(home.path(), &t);
+    assert_eq!(counted.outcome, Outcome::Count { count: 1 });
+    assert_eq!(counted.inherited, None);
+    write(
+        &path,
+        &[
+            header(3),
+            compact(1, "parent-1"),
+            compact(2, "parent-2"),
+            note(3),
+        ],
+    );
+    assert_eq!(read(home.path(), &t), Outcome::Count { count: 0 });
+    // The same copied-only file with no marker cannot be split from its
+    // rows: nothing names a conversation that recorded them.
+    let mut unmarked = header(3);
+    unmarked["payload"]["subagent_history_start_ordinal"] = Value::Null;
+    write(
+        &path,
+        &[unmarked, compact(1, "parent-1"), compact(2, "parent-2")],
+    );
+    assert_eq!(
+        read(home.path(), &t),
+        Outcome::unknown(Reason::CopiedHistory)
+    );
+}
+
+fn copied_meta(native: &str, origin: &str) -> Value {
+    let mut header = json!({"type":"session_meta","ordinal":0,"payload":{"id":native,
+        "session_id":native,"source":"vscode"}});
+    header["payload"]["forked_from_id"] = json!(origin);
+    header
+}
+
+/// An older desktop fork whose file holds a copy of the history it was
+/// forked from, with no reference to say where that ends. With no
+/// compaction rows at all, its count is zero whatever thread it names, and it
+/// has no copied part. A name that is not text is refused.
+#[test]
+fn codex_copied_fork_with_no_compactions_counts_zero() {
+    let home = tempfile::Builder::new().tempdir_in("/private/tmp").unwrap();
+    let native = id(1);
+    for origin in [json!("b11b574a-0000-4000-8000-imported0001"), json!(id(9))] {
+        let mut header = copied_meta(&native, &id(9));
+        header["payload"]["forked_from_id"] = origin.clone();
+        let path = rollout(home.path(), &native, "", &[header, note(1), note(2)]);
+        let counted = read_events(home.path(), &target(Host::Codex, &native, &[path]));
+        assert_eq!(counted.outcome, Outcome::Count { count: 0 }, "{origin}");
+        assert_eq!(counted.inherited, None, "{origin}");
+    }
+    let mut header = copied_meta(&native, &id(9));
+    header["payload"]["forked_from_id"] = json!(7);
+    let path = rollout(home.path(), &native, "", &[header, note(1), note(2)]);
+    assert!(matches!(
+        read(home.path(), &target(Host::Codex, &native, &[path])),
+        Outcome::Unknown { .. }
+    ));
+}
+
+/// The real shape: the fork's file starts with the copied history, whose
+/// compactions the conversation it was forked from also recorded, then its
+/// own. It shows "own + copied". What the origin records after the fork is
+/// never part of either.
+#[test]
+fn codex_copied_fork_splits_own_and_copied_by_the_origins_compactions() {
+    let home = tempfile::Builder::new().tempdir_in("/private/tmp").unwrap();
+    let (origin, native) = (id(1), id(2));
+    let origin_rows = [
+        json!({"type":"session_meta","ordinal":0,"payload":{"id":origin,"source":"vscode"}}),
+        compact(1, "origin-1"),
+        note(2),
+        compact(3, "origin-2"),
+        note(4),
+    ];
+    let base = rollout(home.path(), &origin, "", &origin_rows);
+    let fork_rows = vec![
+        copied_meta(&native, &origin),
+        compact(1, "origin-1"),
+        note(2),
+        compact(3, "origin-2"),
+        note(4),
+        timed(compact(5, "own-1"), "2026-10-01T01:00:00Z"),
+        compact(6, "own-2"),
+        compact(7, "own-3"),
+    ];
+    let fork = rollout(home.path(), &native, "", &fork_rows);
+    let t = target(Host::Codex, &native, std::slice::from_ref(&fork));
+    let mut reader = Reader::default();
+    let counted = read_counted(&mut reader, home.path(), &t);
+    assert_eq!(counted.outcome, Outcome::Count { count: 3 });
+    assert_eq!(counted.inherited, Some(Outcome::Count { count: 2 }));
+    assert!(counted.copied);
+    // The ticks are the fork's own only.
+    assert_eq!(
+        counted.events,
+        vec![Event {
+            at_ms: at("2026-10-01T01:00:00Z"),
+            trigger: Trigger::Unknown
+        }]
+    );
+    read_counted(&mut reader, home.path(), &t);
+    assert_eq!(
+        reader.scans, 1,
+        "an unchanged fork and origin are not read again"
+    );
+    // The origin goes on after the fork: read again, the split is the same.
+    append(&base, &[compact(5, "origin-after-fork")]);
+    let counted = read_counted(&mut reader, home.path(), &t);
+    assert_eq!(counted.outcome, Outcome::Count { count: 3 });
+    assert_eq!(counted.inherited, Some(Outcome::Count { count: 2 }));
+    assert_eq!(reader.scans, 2, "a changed origin is read again");
+    // A new file of the origin is noticed too.
+    let continuation = home.path().join(".codex/sessions/2026/10/01").join(format!(
+        "rollout-2026-10-01T00-00-00-{origin}_{}.jsonl",
+        id(3)
+    ));
+    write(&continuation, &origin_rows);
+    read_counted(&mut reader, home.path(), &t);
+    assert_eq!(reader.scans, 3, "a new origin file is read");
+    fs::remove_file(continuation).unwrap();
+    // The fork's own compaction appears in the origin too: no clean split.
+    append(&base, &[compact(6, "own-2")]);
+    assert_eq!(
+        read_counted(&mut reader, home.path(), &t).outcome,
+        Outcome::unknown(Reason::CopiedHistory)
+    );
+    write(&base, &origin_rows);
+    // An own compaction before a copied one is not one copied run.
+    let mut interleaved = fork_rows.clone();
+    interleaved[1] = compact(1, "own-0");
+    write(&fork, &interleaved);
+    assert_eq!(
+        read(home.path(), &t),
+        Outcome::unknown(Reason::CopiedHistory)
+    );
+    write(&fork, &fork_rows);
+    // A file named for the origin whose header is another conversation's.
+    let mut stranger = origin_rows.to_vec();
+    stranger[0]["payload"]["id"] = json!(id(4));
+    write(&base, &stranger);
+    assert_eq!(
+        read(home.path(), &t),
+        Outcome::unknown(Reason::CopiedHistory)
+    );
+    // The origin no longer saved: its copies cannot be told apart.
+    fs::remove_file(&base).unwrap();
+    assert_eq!(
+        read(home.path(), &t),
+        Outcome::unknown(Reason::CopiedHistory)
+    );
+    // An origin that is not a thread, or the fork itself.
+    for named in [json!("not-a-thread"), json!(native)] {
+        let mut rows = fork_rows.clone();
+        rows[0]["payload"]["forked_from_id"] = named.clone();
+        write(&fork, &rows);
+        assert_eq!(
+            read(home.path(), &t),
+            Outcome::unknown(Reason::CopiedHistory),
+            "{named}"
+        );
+    }
+    // Only copied compactions, and the origin present: own zero.
+    write(&base, &origin_rows);
+    write(&fork, &fork_rows[..5]);
+    let counted = read_events(home.path(), &t);
+    assert_eq!(counted.outcome, Outcome::Count { count: 0 });
+    assert_eq!(counted.inherited, Some(Outcome::Count { count: 2 }));
+}
+
+/// The conversation a copied fork names keeps part of its history in other
+/// files: it is itself a newer fork of another conversation, or one of its
+/// pages continues a rollout that is not saved. A compaction copied from
+/// there is in none of its files and would be taken for the fork's own: the
+/// split is refused.
+#[test]
+fn codex_copied_fork_refuses_an_origin_whose_history_is_elsewhere() {
+    let home = tempfile::Builder::new().tempdir_in("/private/tmp").unwrap();
+    let (grand, origin, native) = (id(1), id(2), id(3));
+    let grand_path = rollout(
+        home.path(),
+        &grand,
+        "",
+        &[ordinary_meta(&grand, 0), compact(1, "g-1")],
+    );
+    let cutoff = fs::metadata(&grand_path).unwrap().len();
+    let origin_path = rollout(
+        home.path(),
+        &origin,
+        "",
+        &[forked_meta(&origin, &grand, &grand, cutoff, 2), note(3)],
+    );
+    let fork = rollout(
+        home.path(),
+        &native,
+        "",
+        &[
+            copied_meta(&native, &origin),
+            compact(1, "g-1"),
+            compact(2, "f-1"),
+        ],
+    );
+    let t = target(Host::Codex, &native, std::slice::from_ref(&fork));
+    assert_eq!(
+        read(home.path(), &t),
+        Outcome::unknown(Reason::CopiedHistory)
+    );
+    // An origin whose own pages continue a rollout that is not saved.
+    let mut header = ordinary_meta(&origin, 0);
+    header["payload"]["session_id"] = json!(origin);
+    write(&origin_path, &[header, compact(1, "o-1")]);
+    let mut page = ordinary_meta(&origin, 5);
+    page["payload"]["history_base"] =
+        json!({"thread_id": id(8), "end_byte_offset": 10, "end_ordinal_exclusive": 5});
+    let continuation = rollout(
+        home.path(),
+        &origin,
+        &format!("_{}", id(9)),
+        &[page, note(6)],
+    );
+    write(
+        &fork,
+        &[
+            copied_meta(&native, &origin),
+            compact(1, "o-1"),
+            compact(2, "g-1"),
+            compact(3, "f-1"),
+        ],
+    );
+    assert_eq!(
+        read(home.path(), &t),
+        Outcome::unknown(Reason::CopiedHistory)
+    );
+    // Its pages all saved, the same origin splits.
+    fs::remove_file(continuation).unwrap();
+    write(
+        &fork,
+        &[
+            copied_meta(&native, &origin),
+            compact(1, "o-1"),
+            compact(2, "f-1"),
+        ],
+    );
+    let counted = read_events(home.path(), &t);
+    assert_eq!(counted.outcome, Outcome::Count { count: 1 });
+    assert_eq!(counted.inherited, Some(Outcome::Count { count: 1 }));
+    assert!(counted.copied);
 }

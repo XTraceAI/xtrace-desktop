@@ -196,9 +196,9 @@ it('shows what was measured even when the text cannot be shown at all', async ()
   expect(await screen.findByText('This transcript is not available to show.')).toBeTruthy();
   expect(screen.getByText(/has changed since it was measured/)).toBeTruthy();
   // Every measured column is still here, under its own rule.
-  expect(screen.getByRole('button', { name: /Human messages, definition M-02/ })).toBeTruthy();
-  expect(screen.getByRole('button', { name: /Tokens, definition M-04/ })).toBeTruthy();
-  expect(screen.getByRole('button', { name: /Agent minutes, definition M-05/ })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Human messages definition' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Tokens definition' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Agent minutes definition' })).toBeTruthy();
   expect(screen.getByText('3')).toBeTruthy();
   expect(screen.getByText('Records 42 · measured over the last 7 days')).toBeTruthy();
   // And it is never worded as a session that recorded nothing.
@@ -375,11 +375,111 @@ it('shows no metric ID as chrome and keeps the M-09 definition one tab stop away
   expect(info.textContent).toBe('');
   fireEvent.focus(info);
   const tip = await screen.findByRole('tooltip');
-  expect(tip.textContent).toMatch(/^Hands-off stretch\./);
+  expect(tip.textContent).toMatch(/^How long an agent works on its own/);
   expect(tip.textContent).not.toMatch(/\b[A-Z]-\d{2}[a-z]?\b/);
   expect(info.getAttribute('aria-describedby')).toBe(tip.id);
   fireEvent.keyDown(info, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+});
+
+it('captions a user-role prompt by its saved role, not as a person, and counts it as nothing more', async () => {
+  // An agent-written prompt is saved under the same `user` role a person's is, and the index
+  // has already left it out of the Human count. The caption names the role and claims no sender.
+  const prompt = 'HUMAN: please check M-02 before you merge.';
+  const { source } = harness({
+    rows: [{ ...row, metrics: { ...row.metrics, human_messages: 0 } as SessionRow['metrics'] }],
+    auto: {
+      ...readable,
+      records: [
+        {
+          id: 'r-user',
+          role: 'user',
+          at: null,
+          blocks: [{ kind: 'text', index: 0, text: prompt }],
+        },
+        {
+          id: 'r-agent',
+          role: 'assistant',
+          at: null,
+          blocks: [
+            { kind: 'text', index: 0, text: 'Checking.' },
+            { kind: 'tool_call', index: 1, name: 'Read', call_id: 'toolu_1', input: null },
+          ],
+        },
+        {
+          id: 'r-result',
+          role: 'user',
+          at: null,
+          blocks: [{ kind: 'tool_result', index: 0, call_id: 'toolu_1', failed: false, parts: [] }],
+        },
+      ],
+    },
+  });
+  const { container } = mount(source);
+  // Recorded text is shown exactly as written, IDs and all.
+  expect(await screen.findByText(prompt)).toBeTruthy();
+  const caption = (id: string) =>
+    container.querySelector(`[data-record-id="${id}"] .xt-turn-head > span`)?.textContent;
+  expect(caption('r-user')).toBe('User');
+  expect(container.querySelector('[data-record-id="r-user"]')?.getAttribute('data-role')).toBe(
+    'user',
+  );
+  expect(caption('r-agent')).toBe('Agent');
+  expect(caption('r-result')).toBe('Tool');
+  // The count is the index's, unchanged by what the caption says.
+  const human = screen.getByRole('button', { name: 'Human messages definition' });
+  expect(human.closest('.xt-session-measure')?.querySelector('dd')?.textContent).toBe('0');
+});
+
+it('names each measure and says why one is missing without a rule ID', async () => {
+  const { source } = harness({
+    rows: [
+      {
+        ...row,
+        metrics: {
+          ...row.metrics,
+          human_messages: null,
+          tokens: {
+            ...(row.metrics.state === 'indexed' ? row.metrics.tokens : never()),
+            counters: {
+              ...(row.metrics.state === 'indexed' ? row.metrics.tokens.counters : never()),
+              total_tokens: null,
+            },
+          },
+        } as SessionRow['metrics'],
+      },
+    ],
+    auto: readable,
+  });
+  mount(source);
+  const card = (await screen.findByText('Measured in this range')).closest('section')!;
+  expect(
+    within(card).getByText('Unmeasured: Could not tell which messages are yours.'),
+  ).toBeTruthy();
+  expect(within(card).getByText('Unmeasured: Some token counts are missing.')).toBeTruthy();
+  const said = [...card.querySelectorAll('[aria-label], [title], .sr-only')].map(
+    (node) =>
+      `${node.getAttribute('aria-label') ?? ''} ${node.getAttribute('title') ?? ''} ${
+        node.classList.contains('sr-only') ? node.textContent : ''
+      }`,
+  );
+  expect(said.join(' ')).not.toMatch(/\b[A-Z]-\d{2}[a-z]?\b/);
+
+  // Each definition still opens on focus with the rule's plain summary, and closes on Escape.
+  for (const [name, summary] of [
+    ['Human messages definition', /^Messages counted as yours\./],
+    ['Tokens definition', /^Tokens used by each model response/],
+    ['Agent minutes definition', /^Time your agent sessions were active/],
+  ] as const) {
+    const trigger = within(card).getByRole('button', { name });
+    fireEvent.focus(trigger);
+    const tip = await screen.findByRole('tooltip');
+    expect(tip.textContent).toMatch(summary);
+    expect(tip.textContent).not.toMatch(/\b[A-Z]-\d{2}[a-z]?\b/);
+    expect(trigger.getAttribute('aria-describedby')).toBe(tip.id);
+    fireEvent.keyDown(trigger, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+  }
 });
 
 it('offers the plain list when there were no filters to carry', async () => {

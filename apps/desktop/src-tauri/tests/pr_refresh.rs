@@ -1977,3 +1977,734 @@ fn a_repeated_fixture_refresh_is_unchanged_and_emits_nothing() {
     assert!(!again.committed);
     assert_eq!(events.load(Ordering::SeqCst), 2);
 }
+
+// ------------------------------------------------- the automatic check -----
+
+use std::collections::HashSet;
+use xtrace_desktop::{
+    dto::PrAutoCheckPause,
+    pr_refresh::{
+        AUTO_GIVE_UP_AFTER, AUTO_MAX_BATCHES, AUTO_QUIET, AUTO_RECHECK_AFTER, AutoCheckWorker,
+        AutoRun, auto_selection,
+    },
+};
+
+const DELTA: &str = "https://github.com/octo-org/delta/pull/4";
+const EPSILON: &str = "https://github.com/octo-org/epsilon/pull/5";
+const MINUTE: i64 = 60_000;
+
+/// A clock the test moves by hand.
+struct HandClock(AtomicI64);
+
+impl HandClock {
+    fn at(start: i64) -> Arc<Self> {
+        Arc::new(Self(AtomicI64::new(start)))
+    }
+    fn advance(&self, ms: i64) {
+        self.0.fetch_add(ms, Ordering::SeqCst);
+    }
+}
+
+impl AttemptClock for HandClock {
+    fn attempted_at(&self) -> i64 {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+fn ms(duration: Duration) -> i64 {
+    i64::try_from(duration.as_millis()).unwrap()
+}
+
+/// Store one result as if an earlier check had answered it.
+fn answered(app: &App, url: &str, at: i64, state: Option<PrState>) {
+    let pull_request = identity(url);
+    let outcome = match state {
+        Some(state) => RefreshOutcome::Success(RefreshSuccess {
+            pull_request,
+            attempted_at: at,
+            title: "Earlier answer".into(),
+            state,
+            merged_at: (state == PrState::Merged).then(|| "2023-11-14T22:13:20Z".into()),
+            additions: 1,
+            deletions: 1,
+            head_ref_name: "feature/earlier".into(),
+        }),
+        None => RefreshOutcome::Failure(RefreshFailure {
+            pull_request,
+            attempted_at: at,
+            error: PrRefreshError::NotFound,
+        }),
+    };
+    app.state.record_pr_refresh(&outcome).unwrap();
+}
+
+fn urls(log: &Log) -> Vec<String> {
+    calls(log).into_iter().map(|call| call.url).collect()
+}
+
+fn ran(run: AutoRun) -> xtrace_desktop::pr_refresh::AutoReport {
+    match run {
+        AutoRun::Ran(report) => report,
+        other => panic!("expected a run, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_automatic_check_picks_never_checked_and_open_pull_requests_and_never_merged_or_closed() {
+    let app = app(&[ALPHA, BETA, GAMMA, DELTA, EPSILON]);
+    let earlier = BASE_ATTEMPT;
+    answered(&app, ALPHA, earlier, Some(PrState::Merged));
+    answered(&app, BETA, earlier, Some(PrState::Closed));
+    answered(&app, GAMMA, earlier, Some(PrState::Open));
+    answered(&app, EPSILON, earlier, None);
+    let (delta, gamma, epsilon) = (app.id(DELTA), app.id(GAMMA), app.id(EPSILON));
+
+    // Soon after: only the pull request that was never checked is due.
+    let soon = earlier + 5 * MINUTE;
+    let selection = app.state.pr_auto_selection(soon, &HashSet::new()).unwrap();
+    assert_eq!(
+        (selection.ids.clone(), selection.never_checked),
+        (vec![delta], 1)
+    );
+
+    // An hour later the open one and the failed one are due again, oldest
+    // check first; merged and closed are final.
+    let later = earlier + ms(AUTO_RECHECK_AFTER);
+    let selection = app.state.pr_auto_selection(later, &HashSet::new()).unwrap();
+    assert_eq!(selection.ids[0], delta);
+    assert_eq!(
+        selection.ids[1..].iter().copied().collect::<HashSet<_>>(),
+        HashSet::from([gamma, epsilon])
+    );
+    // What a run already tried is never picked twice.
+    let tried = HashSet::from([delta, gamma]);
+    assert_eq!(
+        app.state.pr_auto_selection(later, &tried).unwrap().ids,
+        vec![epsilon]
+    );
+
+    // The service runs exactly that selection through the batch.
+    let log = log();
+    let clock = HandClock::at(later);
+    let (publish, events) = publisher();
+    let service =
+        PrRefreshService::injected(attempts(&log, |request, _| success(request)), publish)
+            .with_clock(clock.clone());
+    let report = ran(service.auto_check(&app.state));
+    assert!(report.clean && report.committed && report.paused.is_none());
+    assert_eq!((report.batches, report.attempted), (1, 3));
+    let attempted = urls(&log);
+    assert_eq!(attempted[0], identity(DELTA).url());
+    assert_eq!(
+        attempted.iter().cloned().collect::<HashSet<_>>(),
+        HashSet::from([DELTA, GAMMA, EPSILON].map(|url| identity(url).url()))
+    );
+    assert_eq!(events.load(Ordering::SeqCst), 1);
+    let stored = app.stored();
+    for url in [ALPHA, BETA] {
+        assert_eq!(
+            stored[&identity(url).url()].last_attempted_at,
+            Some(earlier)
+        );
+    }
+}
+
+#[test]
+fn the_automatic_check_works_through_more_than_one_batch_and_stops_at_its_bound() {
+    let many: Vec<String> = (1..=45)
+        .map(|n| format!("https://github.com/octo-org/many/pull/{n}"))
+        .collect();
+    let refs: Vec<&str> = many.iter().map(String::as_str).collect();
+    let app = app(&refs);
+    let log = log();
+    let service =
+        PrRefreshService::injected(attempts(&log, |request, _| success(request)), silent())
+            .with_clock(HandClock::at(BASE_ATTEMPT));
+    let report = ran(service.auto_check(&app.state));
+    assert_eq!((report.batches, report.attempted), (3, 45));
+    assert!(report.clean);
+    assert_eq!(urls(&log).iter().collect::<HashSet<_>>().len(), 45);
+    const { assert!(AUTO_MAX_BATCHES >= 3) };
+
+    // Every one was checked just now, so nothing is due again yet.
+    assert_eq!(service.auto_check(&app.state), AutoRun::NothingDue);
+    assert_eq!(calls(&log).len(), 45);
+}
+
+#[test]
+fn the_automatic_check_waits_after_a_run_unless_a_new_pull_request_appears() {
+    let app = app(&[ALPHA, BETA]);
+    let log = log();
+    let clock = HandClock::at(BASE_ATTEMPT);
+    // The first attempt is rate limited, which ends that batch early.
+    let service = PrRefreshService::injected(
+        attempts(&log, |request, index| {
+            if index == 0 {
+                failure(request, PrRefreshError::RateLimited)
+            } else {
+                success(request)
+            }
+        }),
+        silent(),
+    )
+    .with_clock(clock.clone());
+    let first = ran(service.auto_check(&app.state));
+    assert!(!first.clean && first.paused.is_none());
+    assert_eq!(first.attempted, 1, "a rate limit stops the batch");
+    assert_eq!(calls(&log).len(), 1);
+
+    // Focus flapping right after: the run that stopped early is not repeated,
+    // even for the pull request it never reached.
+    for _ in 0..3 {
+        clock.advance(MINUTE);
+        assert_eq!(service.auto_check(&app.state), AutoRun::Quiet);
+    }
+    assert_eq!(calls(&log).len(), 1);
+
+    // After the quiet period the one it never reached is checked.
+    clock.advance(ms(AUTO_QUIET));
+    let second = ran(service.auto_check(&app.state));
+    assert!(second.clean);
+    assert_eq!(calls(&log).len(), 2);
+
+    // A run that went cleanly lets a newly linked pull request through at
+    // once, and only that one.
+    Store::open(&app.database)
+        .unwrap()
+        .record_pr_link(&PrLinkObservation {
+            session_id: "session-b".into(),
+            pull_request: identity(GAMMA),
+            confidence: PrConfidence::Exact,
+            first_seen_at: 30,
+            last_seen_at: 40,
+        })
+        .unwrap();
+    clock.advance(MINUTE);
+    let third = ran(service.auto_check(&app.state));
+    assert_eq!(third.attempted, 1);
+    assert_eq!(urls(&log).last().unwrap(), &identity(GAMMA).url());
+
+    // Nothing is due within the hour, whatever triggers the check.
+    clock.advance(20 * MINUTE);
+    assert_eq!(service.auto_check(&app.state), AutoRun::NothingDue);
+    // An hour after their checks, the open ones are due again.
+    clock.advance(ms(AUTO_RECHECK_AFTER));
+    let fourth = ran(service.auto_check(&app.state));
+    assert_eq!(fourth.attempted, 3);
+}
+
+#[test]
+fn a_signed_out_github_cli_pauses_automatic_checks_until_a_manual_refresh() {
+    let app = app(&[ALPHA, BETA, GAMMA]);
+    let log = log();
+    let clock = HandClock::at(BASE_ATTEMPT);
+    let (status, status_events) = publisher();
+    let service = PrRefreshService::injected(
+        attempts(&log, |request, _| {
+            failure(request, PrRefreshError::Unauthorized)
+        }),
+        silent(),
+    )
+    .with_clock(clock.clone())
+    .with_auto_publish(status);
+    let report = ran(service.auto_check(&app.state));
+    assert_eq!(report.paused, Some(PrAutoCheckPause::GhSignedOut));
+    assert_eq!(calls(&log).len(), 1, "one refusal, not a batch of them");
+    assert_eq!(
+        service.auto_status().paused,
+        Some(PrAutoCheckPause::GhSignedOut)
+    );
+    assert!(!service.auto_status().checking);
+    // Started and finished.
+    assert_eq!(status_events.load(Ordering::SeqCst), 2);
+
+    // No retry loop: later triggers, even hours later, run nothing.
+    for _ in 0..3 {
+        clock.advance(ms(AUTO_RECHECK_AFTER) * 2);
+        assert_eq!(
+            service.auto_check(&app.state),
+            AutoRun::Paused(PrAutoCheckPause::GhSignedOut)
+        );
+    }
+    assert_eq!(calls(&log).len(), 1);
+
+    // A manual refresh is the user's retry; it lifts the pause.
+    service.refresh(&app.state, &[app.id(ALPHA)]).unwrap();
+    assert_eq!(service.auto_status().paused, None);
+    assert_eq!(status_events.load(Ordering::SeqCst), 3);
+    assert!(matches!(service.auto_check(&app.state), AutoRun::Ran(_)));
+}
+
+#[test]
+fn a_missing_github_cli_pauses_automatic_checks_and_runs_nothing() {
+    let app = app(&[ALPHA]);
+    let root = TempDir::new().unwrap();
+    let absent = root.path().canonicalize().unwrap().join("no-such-gh");
+    let (publish, events) = publisher();
+    let service = PrRefreshService::production(Some(absent.into_os_string()), publish);
+    let report = ran(service.auto_check(&app.state));
+    assert_eq!(report.paused, Some(PrAutoCheckPause::GhMissing));
+    assert_eq!(report.attempted, 0);
+    assert_eq!(
+        service.auto_check(&app.state),
+        AutoRun::Paused(PrAutoCheckPause::GhMissing)
+    );
+    assert_eq!(events.load(Ordering::SeqCst), 0);
+    assert_eq!(app.stored()[&identity(ALPHA).url()].last_attempted_at, None);
+}
+
+#[test]
+fn a_switched_off_automatic_check_reads_and_runs_nothing() {
+    let app = app(&[ALPHA]);
+    let log = log();
+    let service =
+        PrRefreshService::injected(attempts(&log, |request, _| success(request)), silent())
+            .without_auto_check();
+    assert_eq!(service.auto_check(&app.state), AutoRun::Disabled);
+    assert!(!service.auto_status().enabled);
+    assert!(calls(&log).is_empty());
+    // The manual refresh still works.
+    assert_eq!(
+        service
+            .refresh(&app.state, &[app.id(ALPHA)])
+            .unwrap()
+            .attempted,
+        1
+    );
+}
+
+#[cfg(all(debug_assertions, feature = "fixtures"))]
+#[test]
+fn fixture_mode_checks_automatically_without_the_github_cli() {
+    let root = TempDir::new().unwrap();
+    let state = AppState::build(
+        StartupOptions {
+            data_dir: Some(root.path().to_path_buf()),
+            fixture: Some("F1".into()),
+            // Fixture mode must never resolve or run this.
+            github_cli: Some(OsString::from("/definitely/not/an/executable")),
+            ..Default::default()
+        },
+        || panic!("fixture mode must not resolve the live data directory"),
+        || panic!("fixture mode must not resolve the home directory"),
+    )
+    .unwrap();
+    let now_ms = state
+        .fixture_now_ms()
+        .expect("fixture mode pins an instant");
+    let service = PrRefreshService::fixture(now_ms, silent());
+    let report = ran(service.auto_check(&state));
+    assert!(report.attempted >= 1);
+    // A missing GitHub CLI would have paused it; the synthetic source never
+    // looks for one.
+    assert_eq!(report.paused, None);
+    let attempted: Vec<_> = state
+        .pr_list()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter_map(|row| row.last_attempted_at_ms)
+        .collect();
+    assert_eq!(attempted.len(), report.attempted as usize);
+    assert!(attempted.iter().all(|at| *at == now_ms));
+    // The pinned clock never moves, so nothing more runs on later triggers
+    // than the run that is already recorded.
+    assert!(matches!(
+        service.auto_check(&state),
+        AutoRun::Quiet | AutoRun::NothingDue
+    ));
+}
+
+#[test]
+fn an_automatic_check_waits_for_a_running_manual_batch() {
+    let app = app(&[ALPHA, BETA]);
+    let log = log();
+    let gate = Gate::default();
+    let service = Arc::new(
+        PrRefreshService::injected(
+            attempts(&log, {
+                let gate = gate.clone();
+                move |request, _| {
+                    gate.wait();
+                    success(request)
+                }
+            }),
+            silent(),
+        )
+        .with_clock(HandClock::at(BASE_ATTEMPT)),
+    );
+    let manual = {
+        let (service, state, id) = (Arc::clone(&service), Arc::clone(&app.state), app.id(ALPHA));
+        std::thread::spawn(move || service.refresh(&state, &[id]).unwrap())
+    };
+    await_active(&service);
+    assert_eq!(service.auto_check(&app.state), AutoRun::Busy);
+    gate.open();
+    assert_eq!(manual.join().unwrap().attempted, 1);
+    assert_eq!(calls(&log).len(), 1);
+}
+
+#[test]
+fn a_manual_refresh_takes_over_from_a_running_automatic_batch() {
+    let app = app(&[ALPHA, BETA]);
+    let log = log();
+    let started = Gate::default();
+    // An automatic attempt holds until it is cancelled; every later attempt
+    // answers at once.
+    let service = Arc::new(
+        PrRefreshService::injected(
+            attempts(&log, {
+                let started = started.clone();
+                move |request, index| {
+                    if index == 0 {
+                        started.open();
+                        let deadline = Instant::now() + Duration::from_secs(10);
+                        while !request.cancel.is_cancelled() && Instant::now() < deadline {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        return failure(request, PrRefreshError::Cancelled);
+                    }
+                    success(request)
+                }
+            }),
+            silent(),
+        )
+        .with_clock(StepClock::from(BASE_ATTEMPT)),
+    );
+    let automatic = {
+        let (service, state) = (Arc::clone(&service), Arc::clone(&app.state));
+        std::thread::spawn(move || service.auto_check(&state))
+    };
+    assert!(started.wait_within(Duration::from_secs(10)));
+    assert!(service.auto_status().checking);
+    let manual = service.refresh(&app.state, &[app.id(ALPHA)]).unwrap();
+    assert_eq!((manual.attempted, manual.succeeded), (1, 1));
+    let automatic = ran(automatic.join().unwrap());
+    assert!(!automatic.clean, "the automatic batch was cancelled");
+    assert_eq!(automatic.paused, None);
+    assert!(!service.auto_status().checking);
+    // The automatic attempt (newest stored first), then the manual one;
+    // nothing else ran.
+    assert_eq!(
+        urls(&log),
+        vec![identity(BETA).url(), identity(ALPHA).url()]
+    );
+}
+
+#[test]
+fn the_worker_runs_on_request_and_on_its_interval_and_stops() {
+    let runs = Arc::new(AtomicUsize::new(0));
+    let (sender, receiver) = mpsc::channel::<()>();
+    let sender = Mutex::new(sender);
+    let worker = AutoCheckWorker::start(Duration::from_secs(3600), {
+        let runs = Arc::clone(&runs);
+        move || {
+            runs.fetch_add(1, Ordering::SeqCst);
+            let _ = sender.lock().unwrap().send(());
+            true
+        }
+    });
+    // Nothing runs until it is asked.
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(runs.load(Ordering::SeqCst), 0);
+    worker.wake();
+    receiver.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+    worker.stop();
+    worker.wake();
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+
+    // A short interval runs on its own, and a run that answers false ends it.
+    let ticks = Arc::new(AtomicUsize::new(0));
+    let _worker = AutoCheckWorker::start(Duration::from_millis(5), {
+        let ticks = Arc::clone(&ticks);
+        move || ticks.fetch_add(1, Ordering::SeqCst) < 2
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while ticks.load(Ordering::SeqCst) < 3 {
+        assert!(Instant::now() < deadline, "the interval never fired");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(ticks.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn the_selection_is_bounded_and_ignores_unlinked_rows() {
+    let many: Vec<String> = (1..=30)
+        .map(|n| format!("https://github.com/octo-org/bound/pull/{n}"))
+        .collect();
+    let refs: Vec<&str> = many.iter().map(String::as_str).collect();
+    let app = app(&refs);
+    let snapshot = Store::open(&app.database)
+        .unwrap()
+        .linked_pull_requests()
+        .unwrap();
+    let selection = auto_selection(&snapshot, BASE_ATTEMPT, &HashSet::new());
+    assert_eq!(selection.ids.len(), MAX_SELECTION);
+    assert_eq!(selection.never_checked, 30);
+    let unlinked: Vec<_> = snapshot
+        .into_iter()
+        .map(|mut row| {
+            row.linked_sessions = 0;
+            row
+        })
+        .collect();
+    assert!(
+        auto_selection(&unlinked, BASE_ATTEMPT, &HashSet::new())
+            .ids
+            .is_empty()
+    );
+}
+
+/// A fake `gh` that logs every run to `log` and answers `body` (a shell
+/// fragment) — this test's own file, never the real GitHub CLI.
+fn fake_gh(base: &Path, log: &Path, body: &str) -> OsString {
+    let executable = base.join("gh");
+    write_executable(
+        &executable,
+        &format!(
+            "#!/bin/sh\necho run >> \"{log}\"\n{body}\n",
+            log = log.display()
+        ),
+    );
+    executable.into_os_string()
+}
+
+fn runs(log: &Path) -> usize {
+    std::fs::read_to_string(log)
+        .map(|text| text.lines().count())
+        .unwrap_or(0)
+}
+
+/// gh's documented "authentication required" exit (4) is the one reliable
+/// sign of a signed-out GitHub CLI. Through the real client it pauses
+/// automatic checks after one gh run, and nothing runs on later triggers
+/// until a manual refresh.
+#[test]
+fn a_signed_out_github_cli_pauses_after_one_run_through_the_real_client() {
+    let app = app(&[ALPHA, BETA, GAMMA, DELTA, EPSILON]);
+    let root = TempDir::new().unwrap();
+    let base = root.path().canonicalize().unwrap();
+    let log = base.join("runs");
+    let gh = fake_gh(
+        &base,
+        &log,
+        "echo 'To get started with GitHub CLI, please run:  gh auth login' >&2\nexit 4",
+    );
+    let clock = HandClock::at(BASE_ATTEMPT);
+    let service = PrRefreshService::production(Some(gh), silent()).with_clock(clock.clone());
+
+    let report = ran(service.auto_check(&app.state));
+    assert_eq!(report.paused, Some(PrAutoCheckPause::GhSignedOut));
+    assert_eq!(runs(&log), 1, "one gh run, not one per pull request");
+    assert_eq!(
+        service.auto_status().paused,
+        Some(PrAutoCheckPause::GhSignedOut)
+    );
+    for _ in 0..3 {
+        clock.advance(ms(AUTO_RECHECK_AFTER) * 2);
+        assert_eq!(
+            service.auto_check(&app.state),
+            AutoRun::Paused(PrAutoCheckPause::GhSignedOut)
+        );
+    }
+    assert_eq!(runs(&log), 1);
+
+    // A manual refresh is the user's retry, and lifts the pause.
+    service.refresh(&app.state, &[app.id(ALPHA)]).unwrap();
+    assert_eq!(service.auto_status().paused, None);
+}
+
+/// Any other gh failure (offline, a VPN, an outage, a broken gh) says nothing
+/// reliable about sign-in. Through the real client, three failures before any
+/// success stop the run as a cost cap, nothing pauses, and a later trigger
+/// tries again.
+#[test]
+fn a_github_cli_that_only_fails_stops_the_run_but_never_pauses() {
+    let app = app(&[ALPHA, BETA, GAMMA, DELTA, EPSILON]);
+    let root = TempDir::new().unwrap();
+    let base = root.path().canonicalize().unwrap();
+    let log = base.join("runs");
+    let gh = fake_gh(
+        &base,
+        &log,
+        "echo 'error connecting to api.github.com' >&2\nexit 1",
+    );
+    let clock = HandClock::at(BASE_ATTEMPT);
+    let service = PrRefreshService::production(Some(gh), silent()).with_clock(clock.clone());
+
+    let report = ran(service.auto_check(&app.state));
+    assert_eq!(report.paused, None);
+    assert!(!report.clean);
+    assert_eq!(report.attempted as usize, AUTO_GIVE_UP_AFTER);
+    assert_eq!(runs(&log), AUTO_GIVE_UP_AFTER);
+    assert_eq!(service.auto_status().paused, None);
+
+    // Focus right after runs nothing; after the quiet period the two it never
+    // reached are tried.
+    clock.advance(MINUTE);
+    assert_eq!(service.auto_check(&app.state), AutoRun::Quiet);
+    assert_eq!(runs(&log), AUTO_GIVE_UP_AFTER);
+    clock.advance(ms(AUTO_QUIET));
+    let again = ran(service.auto_check(&app.state));
+    assert_eq!((again.attempted, again.paused), (2, None));
+    assert_eq!(runs(&log), AUTO_GIVE_UP_AFTER + 2);
+}
+
+/// A single never-checked pull request gh cannot open fails without pausing.
+#[test]
+fn a_single_failing_pull_request_never_pauses() {
+    let app = app(&[ALPHA]);
+    let log = log();
+    let service = PrRefreshService::injected(
+        attempts(&log, |request, _| {
+            failure(request, PrRefreshError::ExecutionFailed)
+        }),
+        silent(),
+    )
+    .with_clock(HandClock::at(BASE_ATTEMPT));
+    let report = ran(service.auto_check(&app.state));
+    assert_eq!((report.attempted, report.paused), (1, None));
+    assert!(report.clean);
+    assert_eq!(service.auto_status().paused, None);
+}
+
+/// A pull request gh cannot open (another account's repository, a deleted
+/// one) fails every time. When it is the only one due, its failing again
+/// never pauses automatic checks, so the others are still checked later.
+#[test]
+fn a_pull_request_that_failed_before_failing_again_never_pauses() {
+    let app = app(&[ALPHA, BETA]);
+    let start = BASE_ATTEMPT;
+    answered(&app, ALPHA, start, None);
+    answered(&app, BETA, start + 30 * MINUTE, Some(PrState::Open));
+    let log = log();
+    let clock = HandClock::at(start + ms(AUTO_RECHECK_AFTER));
+    let service = PrRefreshService::injected(
+        attempts(&log, |request, _| {
+            if request.identity.url() == identity(ALPHA).url() {
+                failure(request, PrRefreshError::ExecutionFailed)
+            } else {
+                success(request)
+            }
+        }),
+        silent(),
+    )
+    .with_clock(clock.clone());
+
+    // Only the one that failed before is due; it fails again.
+    let first = ran(service.auto_check(&app.state));
+    assert_eq!((first.attempted, first.paused), (1, None));
+    assert_eq!(service.auto_status().paused, None);
+    assert_eq!(urls(&log), vec![identity(ALPHA).url()]);
+
+    // Later both are due: the open one is checked first and the run goes on.
+    clock.advance(ms(AUTO_RECHECK_AFTER) + MINUTE);
+    let second = ran(service.auto_check(&app.state));
+    assert_eq!((second.attempted, second.paused), (2, None));
+    assert_eq!(
+        urls(&log)[1..],
+        [identity(BETA).url(), identity(ALPHA).url()]
+    );
+    assert_eq!(service.auto_status().paused, None);
+}
+
+/// Pull requests whose last check failed are checked after open ones, so a
+/// few that always fail cannot use up the run's first attempts and pause it.
+#[test]
+fn pull_requests_that_failed_before_come_after_open_ones_and_do_not_pause() {
+    let app = app(&[ALPHA, BETA, GAMMA, DELTA]);
+    let start = BASE_ATTEMPT;
+    for url in [ALPHA, BETA, GAMMA] {
+        answered(&app, url, start, None);
+    }
+    answered(&app, DELTA, start + MINUTE, Some(PrState::Open));
+    let later = start + ms(AUTO_RECHECK_AFTER) + 2 * MINUTE;
+    let selection = app.state.pr_auto_selection(later, &HashSet::new()).unwrap();
+    assert_eq!(selection.ids[0], app.id(DELTA));
+
+    let log = log();
+    let service = PrRefreshService::injected(
+        attempts(&log, |request, _| {
+            if request.identity.url() == identity(DELTA).url() {
+                success(request)
+            } else {
+                failure(request, PrRefreshError::ExecutionFailed)
+            }
+        }),
+        silent(),
+    )
+    .with_clock(HandClock::at(later));
+    let report = ran(service.auto_check(&app.state));
+    assert_eq!(urls(&log)[0], identity(DELTA).url());
+    assert_eq!((report.attempted, report.paused), (4, None));
+    assert_eq!(service.auto_status().paused, None);
+}
+
+/// Three failures before any success stop the run (a cost cap) without
+/// pausing automatic checks.
+#[test]
+fn three_failures_before_any_success_stop_the_run_but_never_pause() {
+    let app = app(&[ALPHA, BETA, GAMMA, DELTA]);
+    let start = BASE_ATTEMPT;
+    for url in [ALPHA, BETA, GAMMA, DELTA] {
+        answered(&app, url, start, None);
+    }
+    let log = log();
+    let service = PrRefreshService::injected(
+        attempts(&log, |request, _| {
+            failure(request, PrRefreshError::ExecutionFailed)
+        }),
+        silent(),
+    )
+    .with_clock(HandClock::at(start + ms(AUTO_RECHECK_AFTER)));
+    let report = ran(service.auto_check(&app.state));
+    assert_eq!(calls(&log).len(), AUTO_GIVE_UP_AFTER);
+    assert_eq!(report.paused, None);
+    assert!(!report.clean);
+    assert_eq!(service.auto_status().paused, None);
+}
+
+/// Once a check in the run has succeeded, gh works: a pull request that then
+/// fails (deleted, no access) is its own problem and never stops the others.
+#[test]
+fn a_failure_after_a_success_never_pauses_automatic_checks() {
+    let app = app(&[ALPHA, BETA, GAMMA, DELTA, EPSILON]);
+    let root = TempDir::new().unwrap();
+    let base = root.path().canonicalize().unwrap();
+    let log = base.join("runs");
+    // Only #5 answers; the run checks the newest stored first, so it goes
+    // first and every later one fails.
+    let response = serde_json::json!({
+        "number": 5,
+        "title": "Synthetic response",
+        "url": identity(EPSILON).url(),
+        "state": "MERGED",
+        "mergedAt": "2026-09-19T12:34:56Z",
+        "additions": 1,
+        "deletions": 1,
+        "headRefName": "feature/answers",
+    })
+    .to_string();
+    let gh = fake_gh(
+        &base,
+        &log,
+        &format!(
+            "case \"$*\" in\n  *\"/pull/5 \"*) cat <<'JSON'\n{response}\nJSON\n  ;;\n  *) exit 1 ;;\nesac"
+        ),
+    );
+    let service =
+        PrRefreshService::production(Some(gh), silent()).with_clock(HandClock::at(BASE_ATTEMPT));
+    let report = ran(service.auto_check(&app.state));
+    assert_eq!(report.paused, None);
+    assert_eq!((report.attempted, report.batches), (5, 1));
+    assert!(report.clean);
+    assert_eq!(runs(&log), 5);
+    assert_eq!(service.auto_status().paused, None);
+    assert_eq!(
+        app.stored()[&identity(EPSILON).url()].state,
+        Some(PrState::Merged)
+    );
+}

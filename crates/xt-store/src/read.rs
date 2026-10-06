@@ -229,7 +229,8 @@ const RECORD_FIELDS: &str = "r.uuid,r.session_id,r.type,r.ts,r.ts_ms,r.api_messa
     EXISTS(SELECT 1 FROM confirmed_automated_inputs a WHERE a.record_uuid=r.uuid AND a.session_id=r.session_id)
     OR EXISTS(SELECT 1 FROM guardian_turn_inputs g WHERE g.record_uuid=r.uuid AND g.session_id=r.session_id)
     OR EXISTS(SELECT 1 FROM injected_context_inputs i WHERE i.record_uuid=r.uuid AND i.session_id=r.session_id)
-    OR EXISTS(SELECT 1 FROM task_notification_inputs n WHERE n.record_uuid=r.uuid AND n.session_id=r.session_id),
+    OR EXISTS(SELECT 1 FROM task_notification_inputs n WHERE n.record_uuid=r.uuid AND n.session_id=r.session_id)
+    OR EXISTS(SELECT 1 FROM tool_sent_inputs t WHERE t.record_uuid=r.uuid AND t.session_id=r.session_id),
     (SELECT human_is_eligible FROM v_human_inputs WHERE uuid=r.uuid),
     (SELECT human_text_len FROM v_human_inputs WHERE uuid=r.uuid),
     (SELECT human_excluded FROM v_human_inputs WHERE uuid=r.uuid)";

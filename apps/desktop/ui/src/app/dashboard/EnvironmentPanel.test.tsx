@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, expect, it, vi } from 'vitest';
 import fixture from '../../../fixtures/F1.json';
@@ -7,8 +8,10 @@ import type { DataSource } from '../../data/DataSource';
 import type { EnvironmentMetrics } from '../../data/generated/EnvironmentMetrics';
 import type { FixtureExport } from '../../data/generated/FixtureExport';
 import { events, type DataEvent } from '../../data/ipc-names';
+import type { TimeRange } from '../../kit/TopBar';
 import { ThemeProvider } from '../../theme/ThemeProvider';
-import { AppRoutes } from '../AppRoutes';
+import { DashboardDetailsProvider } from './DashboardDetailsProvider';
+import { EnvironmentPanel } from './EnvironmentPanel';
 import {
   SYNTHETIC_UNTIMED,
   singleSkillEnvironment,
@@ -76,12 +79,39 @@ function nativeSource(report: (days: number) => EnvironmentMetrics | Promise<Env
   return source;
 }
 
+/**
+ * The panel is no longer on the Dashboard (Overview took its place); its
+ * component and report are kept, so it is tested on its own with a range
+ * control of its own.
+ */
+function Harness() {
+  const [range, setRange] = useState<TimeRange>('7d');
+  return (
+    <DashboardDetailsProvider>
+      <div role="radiogroup" aria-label="Range">
+        {(['7d', '14d', '30d'] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={value === range}
+            onClick={() => setRange(value)}
+          >
+            {value}
+          </button>
+        ))}
+      </div>
+      <EnvironmentPanel range={range} />
+    </DashboardDetailsProvider>
+  );
+}
+
 function mount(source: DataSource) {
   return render(
     <ThemeProvider>
       <DataProvider source={source}>
-        <MemoryRouter initialEntries={['/dashboard']}>
-          <AppRoutes />
+        <MemoryRouter initialEntries={['/']}>
+          <Harness />
         </MemoryRouter>
       </DataProvider>
     </ThemeProvider>,
@@ -133,7 +163,6 @@ const inventoryClaims =
 it('shows a synthetic skill with an unknown inventory beside separately labelled configured facts', async () => {
   const source = nativeSource((days) => singleSkillEnvironment(f1(days)));
   mount(source);
-  await screen.findByTestId('dashboard-summary');
   await loaded();
   // The card shows no summary line of call and identity totals.
   expect(within(panel()).queryByTestId('environment-summary')).toBeNull();
@@ -596,7 +625,6 @@ it('updates selected totals with the range while the strip keeps its fixed 14 da
     new Set([7, 14, 30]),
   );
   expect(source.environment).toHaveBeenLastCalledWith(30);
-  expect(screen.getByRole('region', { name: 'Account usage' })).toBeTruthy();
 });
 
 it('refreshes on enrichment through the shared metrics invalidation', async () => {
@@ -617,7 +645,7 @@ it('refreshes on enrichment through the shared metrics invalidation', async () =
   );
 });
 
-it('shows loading, then a safe error with retry, without hiding the rest of the Dashboard', async () => {
+it('shows loading, then a safe error with retry', async () => {
   let fail = true;
   let release!: () => void;
   const gate = new Promise<void>((done) => (release = done));
@@ -627,7 +655,7 @@ it('shows loading, then a safe error with retry, without hiding the rest of the 
     return f1(days);
   });
   mount(source);
-  await screen.findByTestId('dashboard-summary');
+  await screen.findByRole('heading', { level: 2, name: 'Environment' });
   expect(within(panel()).getByRole('status').textContent).toBe(
     'Reading environment usage for the last 7d…',
   );
@@ -635,7 +663,6 @@ it('shows loading, then a safe error with retry, without hiding the rest of the 
   const alert = await within(panel()).findByRole('alert');
   expect(alert.textContent).toContain('Environment usage could not be loaded.');
   expect(document.body.textContent).not.toMatch(/backend-specific|\/Users|\.claude\.json/);
-  expect(screen.getByRole('heading', { name: 'Sessions' })).toBeTruthy();
   fail = false;
   fireEvent.click(within(alert).getByRole('button', { name: 'Retry environment usage' }));
   expect((await loaded()).textContent).toBe(
@@ -670,7 +697,7 @@ it('states an empty observation without inventing zero-call components', async (
 it('does not read environment usage in a browser preview', async () => {
   const source = { ...nativeSource((days) => f1(days)), kind: 'preview' as const };
   mount(source);
-  await screen.findByText('Open the desktop app to read local Dashboard metrics.');
+  await screen.findByRole('heading', { level: 2, name: 'Environment' });
   expect(source.environment).not.toHaveBeenCalled();
 });
 

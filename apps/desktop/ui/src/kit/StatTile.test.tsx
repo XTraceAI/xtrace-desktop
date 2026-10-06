@@ -25,7 +25,7 @@ it('renders measured values, units, caller-supplied delta tone, aside and curren
   expect(trigger.querySelector('button')).toBeNull();
   fireEvent.focus(trigger);
   const tooltip = await screen.findByRole('tooltip');
-  expect(tooltip.textContent).toContain('parallel sessions add');
+  expect(tooltip.textContent).toContain('Sessions running at once add up');
   expect(tooltip.textContent).not.toContain('M-05');
   view.rerender(
     <StatTile

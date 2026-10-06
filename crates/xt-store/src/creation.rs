@@ -10,7 +10,11 @@
 //! [`Store::record_cli_artifact_creations`], which nothing automatic calls. A
 //! Claude session that the native launch scan proved one Codex agent created
 //! with a recorded `claude -p --session-id` launch goes through
-//! [`Store::record_claude_launch_creations`]. Nothing here accepts or keeps a
+//! [`Store::record_claude_launch_creations`]. A Codex session that the same
+//! scan proved one Codex agent created with a recorded fresh
+//! `codex exec --json` launch rests on the same chain with a Codex child
+//! ([`CodexCliLaunchCreationProof`]), written only through the scan's guarded
+//! write. Nothing here accepts or keeps a
 //! prompt, command, output, path, task path, role, title or a digest of any
 //! of them.
 //!
@@ -49,11 +53,14 @@ pub const MAX_CREATION_DEPTH: usize = 64;
 // recorded foreground Claude CLI launch created the child; see
 // [`CliArtifactCreationProof`]. `codex_claude_launch`: a Codex agent's recorded
 // `claude -p --session-id` launch named and created the child; see
-// [`ClaudeLaunchCreationProof`].
+// [`ClaudeLaunchCreationProof`]. `codex_cli_launch`: a Codex agent's recorded
+// fresh `codex exec --json` launch created the Codex child its own first
+// process result named; see [`CodexCliLaunchCreationProof`].
 text_enum!(CreationEvidence {
     CodexThreadSpawn => "codex_thread_spawn",
     CliArtifactCreate => "cli_artifact_create",
     CodexClaudeLaunch => "codex_claude_launch",
+    CodexCliLaunch => "codex_cli_launch",
 });
 
 // Which structural record carried the evidence. `rollout_opening_session_meta`:
@@ -63,14 +70,26 @@ text_enum!(CreationEvidence {
 // `codex_exec_session_id_launch`: the parent's own `exec` operation whose
 // literal command named the child with `--session-id`, and that operation's
 // own recorded process result (from version 3; its exit 0 in version 1).
+// `codex_exec_json_thread_started`: the parent's own `exec` operation whose
+// literal command was a fresh `codex exec --json`, and that operation's own
+// first process result, whose output's one `thread.started` event named the
+// child.
 text_enum!(CreationWitness {
     RolloutOpeningSessionMeta => "rollout_opening_session_meta",
     ClaudeCliRedirectedJsonResult => "claude_cli_redirected_json_result",
     CodexExecSessionIdLaunch => "codex_exec_session_id_launch",
+    CodexExecJsonThreadStarted => "codex_exec_json_thread_started",
 });
 
-/// Version of the native Codex spawn matcher.
-pub const CODEX_THREAD_SPAWN_VERSION: u32 = 1;
+/// Version of the native Codex spawn matcher. Version 2 reads
+/// `payload.session_id` as the root of the spawn tree, not the parent, and
+/// holds an explicit `payload.parent_thread_id` to the typed parent; version
+/// 1 required `session_id` to be the parent and so refused nested spawns.
+/// Relations version 1 stored stay as stored: both versions read the parent
+/// from the same typed field, so a version 2 proof replays them. Its own
+/// bootstrap pass reads every indexed Codex root again once, reaching the
+/// threads version 1 refused.
+pub const CODEX_THREAD_SPAWN_VERSION: u32 = 2;
 
 /// Version of the foreground Claude CLI artifact validator. It is the only one
 /// accepted: another launch or result shape needs its own reviewed version.
@@ -81,8 +100,24 @@ pub const CLI_ARTIFACT_CREATE_VERSION: u32 = 1;
 /// accepted: another launch form needs its own reviewed version. Version 3
 /// rests a creation on the launch operation's own first process result;
 /// relations version 1 accepted (on the process's exit 0) stay as stored, and
-/// a version 3 proof of the same creation anchor replays them.
-pub const CLAUDE_LAUNCH_CREATE_VERSION: u32 = 3;
+/// a version 3 proof of the same creation anchor replays them. Version 4 also
+/// reads the bare `claude` program, `--name`, `--no-chrome` and a prompt read
+/// from a redirected file, which it never opens: such a launch's child is
+/// bound by its literal `--session-id`, its own acknowledgment and one fresh
+/// saved child with every other check unchanged, and no prompt is compared.
+/// Stored version 1 and 3 relations replay as before. Version 5 adds the
+/// one-use printed UUID binding. Version 6 reads the launch's options
+/// through the shared Claude option map: any output format (text, JSON or
+/// streaming JSON), verbose logging, a standard-error redirection and the
+/// map's neutral options, with the child still bound by its literal
+/// `--session-id` and every other check unchanged. Stored relations and
+/// facts of earlier versions stand as they are.
+pub const CLAUDE_LAUNCH_CREATE_VERSION: u32 = 6;
+
+/// Version of the native Codex launch scan's reading of a fresh
+/// `codex exec --json` launch, whose Codex child its own first process result
+/// named. It is the only one accepted for [`CodexCliLaunchCreationProof`].
+pub const CODEX_CLI_LAUNCH_VERSION: u32 = 1;
 
 /// The identities that prove one session created another. Every field is
 /// structural; none is transcript content.
@@ -221,6 +256,80 @@ pub struct ClaudeLaunchCreationProof {
     pub launch_ordinal: Option<i64>,
     pub acknowledgment_ordinal: Option<i64>,
     pub evidence_version: u32,
+}
+
+/// The structural chain by which a Codex agent's own recorded `exec`
+/// operation created a Codex session with a fresh `codex exec --json`
+/// command, as the native launch scan established it: the fields of
+/// [`ClaudeLaunchCreationProof`], with a Codex child and
+/// [`CODEX_CLI_LAUNCH_VERSION`].
+///
+/// The store checks every identity it holds as for a Claude child: the child
+/// is exactly one indexed Codex user session with this native identity,
+/// `first_record_uuid` is its own first eligible input, and the parent is
+/// exactly one indexed Codex user session with this canonical and native
+/// identity, other than the child. The scan must have proven, before
+/// submitting, that:
+///
+/// - the launch operation is one literal `codex exec --json` command that
+///   starts a fresh saved session: no resume, fork, review, ephemeral run,
+///   help or option the map does not know;
+/// - the launch and its acknowledgment lie in the parent's own rows of the
+///   physical history file `segment_rollout_id`, at their ordinals when that
+///   history is paginated;
+/// - the operation's own first process result — any exit code, or the
+///   running process's `process_session_id` — printed exactly one
+///   `thread.started` event, naming the child, and no malformed event;
+/// - the child's one saved original rollout opens with its own header,
+///   started by `exec` after the launch, naming no parent, fork or inherited
+///   history.
+pub type CodexCliLaunchCreationProof = ClaudeLaunchCreationProof;
+
+/// Which child a native Codex launch proof names: the Claude session of a
+/// `--session-id` launch, or the Codex thread of a `codex exec --json` one.
+/// Each has its own evidence kind, witness and version; the chain is the same.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LaunchChild {
+    Claude,
+    Codex,
+}
+
+impl LaunchChild {
+    pub(crate) fn of(host: Host) -> Option<Self> {
+        match host {
+            Host::Claude => Some(Self::Claude),
+            Host::Codex => Some(Self::Codex),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn host(self) -> Host {
+        match self {
+            Self::Claude => Host::Claude,
+            Self::Codex => Host::Codex,
+        }
+    }
+
+    fn kind(self) -> CreationEvidence {
+        match self {
+            Self::Claude => CreationEvidence::CodexClaudeLaunch,
+            Self::Codex => CreationEvidence::CodexCliLaunch,
+        }
+    }
+
+    fn witness(self) -> CreationWitness {
+        match self {
+            Self::Claude => CreationWitness::CodexExecSessionIdLaunch,
+            Self::Codex => CreationWitness::CodexExecJsonThreadStarted,
+        }
+    }
+
+    fn version(self) -> u32 {
+        match self {
+            Self::Claude => CLAUDE_LAUNCH_CREATE_VERSION,
+            Self::Codex => CODEX_CLI_LAUNCH_VERSION,
+        }
+    }
 }
 
 /// Why one proof changed nothing. None is an error: the store does not know
@@ -412,7 +521,7 @@ impl Store {
             ));
         }
         for proof in proofs {
-            validate_launch(proof)?;
+            validate_launch(proof, LaunchChild::Claude)?;
         }
         let transaction = self
             .connection
@@ -420,7 +529,8 @@ impl Store {
         let mut dispositions = Vec::with_capacity(proofs.len());
         let mut changed = 0;
         for proof in proofs {
-            let (disposition, stored) = apply_launch(&transaction, proof, recorded_at)?;
+            let (disposition, stored) =
+                apply_launch(&transaction, proof, LaunchChild::Claude, recorded_at)?;
             changed += usize::from(stored);
             dispositions.push(disposition);
         }
@@ -437,8 +547,23 @@ impl Store {
         &self,
         child_session_id: &str,
     ) -> Result<Option<(ClaudeLaunchCreationProof, bool)>> {
-        Ok(stored_launch(&self.connection, child_session_id)?
-            .and_then(|(proof, state)| Some((proof?, state == "conflicted"))))
+        Ok(
+            stored_launch(&self.connection, child_session_id, LaunchChild::Claude)?
+                .and_then(|(proof, state)| Some((proof?, state == "conflicted"))),
+        )
+    }
+
+    /// The stored `codex exec --json` launch relation of one Codex child,
+    /// whatever its state: its proof and whether it is withheld as
+    /// conflicted.
+    pub fn codex_cli_launch_creation(
+        &self,
+        child_session_id: &str,
+    ) -> Result<Option<(CodexCliLaunchCreationProof, bool)>> {
+        Ok(
+            stored_launch(&self.connection, child_session_id, LaunchChild::Codex)?
+                .and_then(|(proof, state)| Some((proof?, state == "conflicted"))),
+        )
     }
 
     /// The stored relation of one child, whatever its state: its proof and
@@ -647,7 +772,9 @@ fn validate(proof: &SessionCreationProof) -> Result<()> {
                 && proof.witness == CreationWitness::RolloutOpeningSessionMeta
         }
         // Only their own paths, with their whole witness, record these kinds.
-        CreationEvidence::CliArtifactCreate | CreationEvidence::CodexClaudeLaunch => false,
+        CreationEvidence::CliArtifactCreate
+        | CreationEvidence::CodexClaudeLaunch
+        | CreationEvidence::CodexCliLaunch => false,
     };
     if !fits {
         return Err(Error::InvalidInput(
@@ -777,7 +904,7 @@ fn apply(
 
 /// Why a named child cannot be related, if it cannot: it must be exactly one
 /// indexed user session of `host` with exactly this native identity.
-fn child_abstention(
+pub(crate) fn child_abstention(
     connection: &Connection,
     child_session_id: &str,
     child_host: Host,
@@ -847,7 +974,7 @@ fn leads_back(
 
 /// A structural token of the CLI witness: 1 to 256 printable ASCII characters
 /// with no space, the same rule the table enforces.
-fn token(value: &str) -> Result<()> {
+pub(crate) fn token(value: &str) -> Result<()> {
     if value.is_empty()
         || value.len() > MAX_IDENTIFIER
         || !value.bytes().all(|byte| byte.is_ascii_graphic())
@@ -936,7 +1063,11 @@ fn stored_artifact(
 /// carries text, with no other such user record, with text or without,
 /// untimed or at or before it. An earlier input with no text, an image alone,
 /// was still saved first, so a later text input is not the first.
-fn first_input(connection: &Connection, child_session_id: &str, record_uuid: &str) -> Result<bool> {
+pub(crate) fn first_input(
+    connection: &Connection,
+    child_session_id: &str,
+    record_uuid: &str,
+) -> Result<bool> {
     const ELIGIBLE: &str = "type='user' AND role='user' AND is_meta=0 AND is_sidechain=0
          AND is_tool_result_carrier=0";
     let at: Option<Option<i64>> = connection
@@ -1014,11 +1145,12 @@ fn same_claim(a: &CliClaim<'_>, b: &CliClaim<'_>) -> bool {
         && a.launch_operation_index == b.launch_operation_index
 }
 
-/// Why a CLI claim cannot be related, checked before it claims anything: the
-/// same checks for every CLI kind.
+/// Why a CLI claim for a child of `child_host` cannot be related, checked
+/// before it claims anything: the same checks for every CLI kind.
 fn cli_abstention(
     connection: &Connection,
     proof: &CliClaim<'_>,
+    child_host: Host,
 ) -> Result<Option<CreationAbstention>> {
     if proof.parent_session_id == proof.child_session_id {
         return Ok(Some(CreationAbstention::SelfLink));
@@ -1026,7 +1158,7 @@ fn cli_abstention(
     if let Some(reason) = child_abstention(
         connection,
         proof.child_session_id,
-        Host::Claude,
+        child_host,
         proof.child_native_session_id,
     )? {
         return Ok(Some(reason));
@@ -1068,8 +1200,12 @@ fn cli_abstention(
     // fully validated before it claims anything.
     let reused: bool = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM session_creation_relations
-           WHERE child_host='claude' AND child_native_session_id=?1 AND child_session_id<>?2)",
-        params![proof.child_native_session_id, proof.child_session_id],
+           WHERE child_host=?3 AND child_native_session_id=?1 AND child_session_id<>?2)",
+        params![
+            proof.child_native_session_id,
+            proof.child_session_id,
+            child_host
+        ],
         |row| row.get(0),
     )?;
     if reused {
@@ -1077,7 +1213,7 @@ fn cli_abstention(
     }
     if leads_back(
         connection,
-        (Host::Claude, proof.child_native_session_id),
+        (child_host, proof.child_native_session_id),
         (Host::Codex, proof.parent_native_session_id),
     )? {
         return Ok(Some(CreationAbstention::Cycle));
@@ -1091,7 +1227,7 @@ fn apply_artifact(
     proof: &CliArtifactCreationProof,
     recorded_at: i64,
 ) -> Result<(CreationDisposition, bool)> {
-    if let Some(reason) = cli_abstention(connection, &proof.into())? {
+    if let Some(reason) = cli_abstention(connection, &proof.into(), Host::Claude)? {
         return Ok((CreationDisposition::Abstained(reason), false));
     }
     // Every valid proof claims its launch first, whatever becomes of its
@@ -1146,7 +1282,7 @@ fn apply_artifact(
 /// Claim a valid proof's launch operation for its child. One launch created
 /// one child: the first child claimed keeps it, and a claim for any other
 /// child marks it disputed for good, withholding every accepted relation of
-/// either CLI kind resting on that launch or on its first child, since
+/// any CLI kind resting on that launch or on its first child, since
 /// nothing says which claim is wrong. Returns whether the child holds the
 /// launch undisputed, and how many relations a new dispute withheld.
 fn claim_launch(connection: &Connection, proof: &CliClaim<'_>) -> Result<(bool, usize)> {
@@ -1188,7 +1324,8 @@ fn claim_launch(connection: &Connection, proof: &CliClaim<'_>) -> Result<(bool, 
             )?;
             let withheld = connection.execute(
                 "UPDATE session_creation_relations SET state='conflicted'
-                 WHERE evidence_kind IN ('cli_artifact_create','codex_claude_launch')
+                 WHERE evidence_kind IN ('cli_artifact_create','codex_claude_launch',
+                                         'codex_cli_launch')
                    AND state='accepted'
                    AND ((parent_session_id=?1 AND launch_call_id=?2 AND launch_operation_index=?3)
                         OR child_session_id=?4)",
@@ -1204,7 +1341,7 @@ fn claim_launch(connection: &Connection, proof: &CliClaim<'_>) -> Result<(bool, 
     }
 }
 
-pub(crate) fn validate_launch(proof: &ClaudeLaunchCreationProof) -> Result<()> {
+pub(crate) fn validate_launch(proof: &ClaudeLaunchCreationProof, child: LaunchChild) -> Result<()> {
     for value in [
         &proof.child_session_id,
         &proof.child_native_session_id,
@@ -1236,7 +1373,7 @@ pub(crate) fn validate_launch(proof: &ClaudeLaunchCreationProof) -> Result<()> {
             "a native launch creation proof requires a rollout identity and ordered ordinals",
         ));
     }
-    if proof.evidence_version != CLAUDE_LAUNCH_CREATE_VERSION {
+    if proof.evidence_version != child.version() {
         return Err(Error::InvalidInput(
             "a native launch creation proof requires a known validator version",
         ));
@@ -1249,11 +1386,13 @@ const LAUNCH_FIELDS: &str = "evidence_kind,witness,child_session_id,child_native
     launch_operation_index,process_session_id,completion_call_id,completion_operation_index,
     segment_rollout_id,launch_ordinal,completion_ordinal,evidence_version,state";
 
-/// The stored relation of one child as a native launch proof, and its state.
-/// The proof is `None` when the stored row rests on another kind of evidence.
+/// The stored relation of one child as a native launch proof of `child`'s
+/// kind, and its state. The proof is `None` when the stored row rests on
+/// another kind of evidence.
 fn stored_launch(
     connection: &Connection,
     child_session_id: &str,
+    child: LaunchChild,
 ) -> Result<Option<(Option<ClaudeLaunchCreationProof>, String)>> {
     Ok(connection
         .query_row(
@@ -1266,9 +1405,7 @@ fn stored_launch(
                 let kind: CreationEvidence = row.get(0)?;
                 let witness: CreationWitness = row.get(1)?;
                 let state: String = row.get(16)?;
-                if kind != CreationEvidence::CodexClaudeLaunch
-                    || witness != CreationWitness::CodexExecSessionIdLaunch
-                {
+                if kind != child.kind() || witness != child.witness() {
                     return Ok((None, state));
                 }
                 Ok((
@@ -1297,17 +1434,19 @@ fn stored_launch(
 
 /// A native launch proof's disposition, and whether applying it changed what
 /// is stored. The same order as a foreground CLI proof: every check, then the
-/// launch claim, then the child's stored claim.
+/// launch claim, then the child's stored claim. `child` says which kind of
+/// launch it is.
 pub(crate) fn apply_launch(
     connection: &Connection,
     proof: &ClaudeLaunchCreationProof,
+    child: LaunchChild,
     recorded_at: i64,
 ) -> Result<(CreationDisposition, bool)> {
-    if let Some(reason) = cli_abstention(connection, &proof.into())? {
+    if let Some(reason) = cli_abstention(connection, &proof.into(), child.host())? {
         return Ok((CreationDisposition::Abstained(reason), false));
     }
     let (owned, withheld) = claim_launch(connection, &proof.into())?;
-    if let Some((stored, state)) = stored_launch(connection, &proof.child_session_id)? {
+    if let Some((stored, state)) = stored_launch(connection, &proof.child_session_id, child)? {
         // The same creation anchor, as an earlier launch relation or a
         // foreground CLI one: the stored relation stands exactly as it is.
         let same = match &stored {
@@ -1338,8 +1477,7 @@ pub(crate) fn apply_launch(
              evidence_version,witness,state,recorded_at,parent_session_id,first_record_uuid,
              launch_call_id,launch_operation_index,process_session_id,completion_call_id,
              completion_operation_index,segment_rollout_id,launch_ordinal,completion_ordinal)
-         VALUES (?1,'claude',?2,'codex',?3,'codex_claude_launch',?4,
-             'codex_exec_session_id_launch',?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+         VALUES (?1,?17,?2,'codex',?3,?18,?4,?19,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
         params![
             proof.child_session_id,
             proof.child_native_session_id,
@@ -1357,6 +1495,9 @@ pub(crate) fn apply_launch(
             proof.segment_rollout_id,
             proof.launch_ordinal,
             proof.acknowledgment_ordinal,
+            child.host(),
+            child.kind(),
+            child.witness(),
         ],
     )?;
     Ok(if owned {

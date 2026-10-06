@@ -8,9 +8,34 @@
   font-family: 'Geist Mono', monospace;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+  /* A fork's "3 + 0" stays on one line. */
+  white-space: nowrap;
   color: color-mix(in srgb, var(--danger) var(--compaction-step), var(--meta));
   background: color-mix(in srgb, var(--danger-tint) var(--compaction-step), var(--subtle));
   cursor: help;
+}
+/* While a count is being read: a small spinning ring in place of the dash. */
+.xt-compaction-spinner {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  vertical-align: -1px;
+  border: 1.5px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: xt-compaction-spin 0.9s linear infinite;
+}
+@keyframes xt-compaction-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* No spin: a fainter ring says a read is running. */
+  .xt-compaction-spinner {
+    animation: none;
+    opacity: 0.5;
+  }
 }
 .xt-compaction:focus-visible {
   outline: 2px solid var(--accent);

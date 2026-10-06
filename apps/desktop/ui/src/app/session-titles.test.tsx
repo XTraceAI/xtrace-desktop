@@ -426,6 +426,7 @@ function lanesReport(days: number, ids: readonly string[]): DashboardMetrics {
     pr_links: 0,
     inferred_pr_links: 0,
     cost: null,
+    child_check: 'checked' as const,
   }));
   return report;
 }

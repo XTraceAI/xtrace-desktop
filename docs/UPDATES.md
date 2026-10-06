@@ -20,7 +20,11 @@ release validation; compile and unit checks do not establish that behavior.
 ## Release configuration
 
 The base configuration has no endpoint or trusted public key, so ordinary builds
-leave updates disabled. The release overlay includes the real public
+leave updates disabled. Nonfixture native main windows with updates disabled offer
+an information-only **Updates** control that opens public releases after a click,
+including packaged debug and optimized builds. When native updates are enabled,
+the sidebar uses the public updater instead. If the native mode cannot be read,
+neither update control is exposed. The release overlay includes the real public
 signing key and GitHub Releases endpoint. Debug builds, native fixture builds,
 browser previews, and unsupported platforms never register/use the updater.
 The main window can check, download and install separately; the tray cannot,
@@ -48,9 +52,8 @@ is missing. No signing keys are created by the app or these instructions.
 The repository `XTraceAI/xtrace-desktop` is now public, so its GitHub Releases
 feed needs no authentication. The configured endpoint is
 `https://github.com/XTraceAI/xtrace-desktop/releases/latest/download/latest.json`.
-There are currently zero releases; this endpoint is not live until a real
-`latest.json` and signed updater archive from the notarized/stapled app are
-published. `latest.json` must not offer an update before its real archive and
+The public endpoint is live and v0.1.1 has been published. Preparing v0.1.2
+in source does not publish that version or change the feed. `latest.json` must not offer an update before its real archive and
 signature assets are available. Never embed credentials in the app or URL.
 
 Keep the private signing key and password in private release storage, outside
@@ -77,10 +80,10 @@ remove that variable from the command's environment and pass its local file path
 explicitly:
 
 ```sh
-env -u TAURI_SIGNING_PRIVATE_KEY pnpm tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY" --app-version "0.1.0" "/absolute/path/to/XTrace Desktop.app.tar.gz"
+env -u TAURI_SIGNING_PRIVATE_KEY pnpm tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY" --app-version "0.1.2" "/absolute/path/to/XTrace Desktop.app.tar.gz"
 ```
 
-Replace `0.1.0` with the app's exact release version and the archive path with the
+Replace `0.1.2` with the app's exact release version and the archive path with the
 final archive to sign. The shell expands the key path before `env` removes the
 variable for the signer. Keep `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the local
 environment: empty for an unprotected key, or securely supplied for a protected
@@ -112,5 +115,9 @@ Before publishing, perform this sequence:
 See the [official updater guide](https://v2.tauri.app/plugin/updater/) and the
 [pinned updater source](https://github.com/tauri-apps/plugins-workspace/tree/updater-v2.12.0/plugins/updater).
 This source change configures the public release endpoint and trusted public
-key. It does not publish a release or make the feed live; release packaging and
+key. It does not publish v0.1.2 or change the existing feed; release packaging and
 publication remain manual.
+
+## Beta 0.1.2 limitation
+
+Some nested Guardian review conversations may appear under the root conversation rather than their immediate parent. This beta does not change those existing links.

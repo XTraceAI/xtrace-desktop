@@ -341,3 +341,32 @@ pub struct PrRefreshReport {
     pub committed: bool,
     pub rows: Vec<PrRefreshRow>,
 }
+
+/// Why the automatic check stopped trying until the app starts again or the
+/// user refreshes by hand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum PrAutoCheckPause {
+    /// The GitHub CLI could not be found or started.
+    GhMissing,
+    /// The GitHub CLI answered that it is not signed in (its documented
+    /// "authentication required" exit code).
+    GhSignedOut,
+}
+
+/// Where the automatic pull-request check stands. It only reads GitHub, and
+/// only through the same bounded `gh pr view` batch as the manual refresh.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+pub struct PrAutoCheckStatus {
+    /// False when the automatic check is switched off for this launch.
+    pub enabled: bool,
+    /// An automatic run is checking GitHub now.
+    pub checking: bool,
+    /// Set when automatic checks stopped; they start again on the next launch
+    /// or after a manual refresh.
+    pub paused: Option<PrAutoCheckPause>,
+    /// UTC milliseconds when the last automatic run that checked anything
+    /// finished, by the refresh clock.
+    #[ts(type = "number | null")]
+    pub last_finished_at_ms: Option<i64>,
+}

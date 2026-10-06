@@ -258,8 +258,8 @@ for (const scheme of ['light', 'dark'] as const)
     await open(page, { width: 1120, height: 720, scheme, scenario: 'missing' });
     const failed = 'Not available: the report could not be read';
     const reasons = await page
-      .locator('.xt-prs-tiles .xt-unmeasured')
-      .evaluateAll((items) => items.map((item) => item.getAttribute('title')));
+      .locator('.xt-prs-tiles .xt-unmeasured .sr-only')
+      .evaluateAll((items) => items.map((item) => item.textContent!.replace(/^Unmeasured: /, '')));
     expect(reasons).toEqual([failed, failed, failed, failed]);
     await expect(page.getByTestId('prs-types')).toHaveText(`${failed}.`);
     await expect(page.getByText(/No merged pull request|Reading/)).toHaveCount(0);

@@ -210,7 +210,42 @@ export class FixtureDataSource implements DataSource {
           (value ?? '').toLowerCase().includes(needle),
         ),
     );
-    return { window: page.window, rows: this.currentLinks(rows), next: null };
+    return {
+      window: page.window,
+      rows: this.currentLinks(rows),
+      next: null,
+      referenced_parents: this.parentContext(page, rows),
+    };
+  }
+  /**
+   * Context only for each direct parent the kept rows name that they do not
+   * list themselves, as the native page reads it: from the export's own
+   * context, or from the parent's exported row when the filter dropped it.
+   * Matched by exact identity and host; no further ancestor is read.
+   */
+  private parentContext(page: SessionPage, rows: readonly SessionRow[]) {
+    const kept = new Set(rows.map((row) => row.id));
+    const named = new Map<string, string>();
+    for (const row of rows)
+      if (row.parent && !kept.has(row.parent.session_id))
+        named.set(row.parent.session_id, row.parent.host);
+    const context: NonNullable<SessionPage['referenced_parents']> = [];
+    for (const [id, host] of [...named].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+      const sent = page.referenced_parents?.find(
+        (entry) => entry.session_id === id && entry.host === host,
+      );
+      const listed = page.rows.find((row) => row.id === id && row.host === host);
+      if (sent) context.push(structuredClone(sent));
+      else if (listed)
+        context.push({
+          session_id: listed.id,
+          host: listed.host,
+          known_child: listed.known_child === true,
+          parent: structuredClone(listed.parent ?? null),
+          child_check: listed.child_check ?? null,
+        });
+    }
+    return context;
   }
   /**
    * Rows whose pull-request link titles are this preview's current PR state.

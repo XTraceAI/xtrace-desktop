@@ -556,11 +556,12 @@ fn a_schema_14_index_upgrades_with_every_relation_unchanged() {
                 )
                 .unwrap();
         }
-        // Today's views name the table migration 16 adds; a stand-in lets
-        // them read this older index until the upgrade below replaces it.
+        // Today's views name the tables migrations 16 and 21 add; stand-ins
+        // let them read this older index until the upgrade below replaces them.
         connection
             .execute_batch(
-                "CREATE TABLE task_notification_inputs(record_uuid TEXT, session_id TEXT)",
+                "CREATE TABLE task_notification_inputs(record_uuid TEXT, session_id TEXT);
+                 CREATE TABLE tool_sent_inputs(record_uuid TEXT, session_id TEXT);",
             )
             .unwrap();
         for view in VIEWS {
@@ -638,11 +639,11 @@ fn a_schema_14_index_upgrades_with_every_relation_unchanged() {
     let before = dump();
     Connection::open(&path)
         .unwrap()
-        .execute_batch("DROP TABLE task_notification_inputs")
+        .execute_batch("DROP TABLE task_notification_inputs; DROP TABLE tool_sent_inputs")
         .unwrap();
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 17);
+        assert_eq!(store.schema_version().unwrap(), 22);
         assert_eq!(dump(), before);
         let parents: Vec<(String, String, ParentEvidence)> = shown(&store);
         assert!(parents.contains(&(
@@ -718,6 +719,10 @@ mod group_contract {
             acknowledgment_offset,
             launch_ordinal: Some(3546),
             acknowledgment_ordinal: Some(3939),
+            binding_call_offset: None,
+            binding_output_offset: None,
+            child_host: xt_store::Host::Claude,
+            launch_check_fingerprint: Some("0".repeat(64)),
         }
     }
 
@@ -859,6 +864,33 @@ mod group_contract {
                 .stage_claude_launch_candidates(PARENT, 99, &[bad])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn binding_line_offsets_stage_publish_and_reject_partial_or_reversed_pairs() {
+        let directory = TempDir::new().unwrap();
+        let mut store = open(&directory);
+        seed(&mut store);
+        let mut bound = candidate(CHILD, 900);
+        bound.binding_call_offset = Some(10);
+        bound.binding_output_offset = Some(50);
+        publish(&mut store, &[bound.clone()], 1000);
+        assert_eq!(open_rows(&store).remove(0).candidate, bound);
+        for (call, output) in [
+            (Some(10), None),
+            (None, Some(50)),
+            (Some(50), Some(10)),
+            (Some(10), Some(100)),
+        ] {
+            let mut bad = bound.clone();
+            bad.binding_call_offset = call;
+            bad.binding_output_offset = output;
+            assert!(
+                store
+                    .stage_claude_launch_candidates(PARENT, 999, &[bad])
+                    .is_err()
+            );
+        }
     }
 
     #[test]

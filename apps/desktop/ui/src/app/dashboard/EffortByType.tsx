@@ -14,13 +14,19 @@ import {
   type EffortChart as Chart,
 } from './effort-chart';
 import { agentHours, costCell } from './pr-effort';
-import type { EffortMetric } from './pr-effort';
+import type { BarMetric, EffortMetric } from './pr-effort';
+import { HumanTimeline } from './HumanTimeline';
+import { hoursText } from './overview';
 import { plural, unpricedText, usd } from './present';
 
 const metricOptions = [
   { value: 'agent', label: 'agent h' },
+  { value: 'human', label: 'human h' },
   { value: 'dollars', label: 'cost' },
 ] as const;
+
+/** The bar chart's measure; the days and markers are the same in every view. */
+const barMetric = (metric: EffortMetric): BarMetric => (metric === 'dollars' ? 'dollars' : 'agent');
 
 export function EffortMetricToggle({
   value,
@@ -59,8 +65,9 @@ export function EffortByType({
   metric: EffortMetric;
 }) {
   const { current } = report.pr_effort;
-  const chart = useMemo(() => effortChart(current, metric), [current, metric]);
+  const chart = useMemo(() => effortChart(current, barMetric(metric)), [current, metric]);
   const empty = current.cohort.sessions === 0;
+  if (metric === 'human') return <HumanTimeline report={report} />;
   return (
     <div className="xt-effort" data-testid="effort-by-type">
       {empty ? (
@@ -184,7 +191,7 @@ function EffortPlot({ chart, drawn }: { chart: Chart; drawn: boolean }) {
  * day's total. A day with nothing to draw keeps its empty slot, and still
  * says what it is.
  */
-function DayBar({ bar, metric, count }: { bar: EffortBar; metric: EffortMetric; count: number }) {
+function DayBar({ bar, metric, count }: { bar: EffortBar; metric: BarMetric; count: number }) {
   const theme = useSurfaceTheme();
   // Days in the right half open their card to the left of the column.
   const side = bar.index >= count / 2 ? 'left' : 'right';
@@ -246,7 +253,7 @@ function DayBar({ bar, metric, count }: { bar: EffortBar; metric: EffortMetric; 
   );
 }
 
-function DayCard({ bar, metric }: { bar: EffortBar; metric: EffortMetric }) {
+function DayCard({ bar, metric }: { bar: EffortBar; metric: BarMetric }) {
   return (
     <>
       <span className="xt-effort-tip-head">
@@ -282,6 +289,10 @@ function DayCard({ bar, metric }: { bar: EffortBar; metric: EffortMetric }) {
   );
 }
 
+/** A day's hours of yours; unknown when a message's sender is. */
+const yourHours = (ms: number | null | undefined) =>
+  ms === null || ms === undefined ? 'unknown' : `${hoursText(ms)} h`;
+
 /** A day's cost, compact; a trailing `+` marks a priced subtotal that leaves responses out. */
 function costShort(cost: MetricEffortCost) {
   const cell = costCell(cost);
@@ -313,18 +324,24 @@ export function EffortMethod({
 }: {
   report: DashboardMetrics;
   metric: EffortMetric;
-  /** Held by the page, so an open Method survives another range loading. */
+  /** Held by the page, so an open Details survives another range loading. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   /** Further measurements of the same usage, after the daily values. */
   children?: ReactNode;
 }) {
   const { current } = report.pr_effort;
-  const chart = useMemo(() => effortChart(current, metric), [current, metric]);
+  const chart = useMemo(() => effortChart(current, barMetric(metric)), [current, metric]);
   const cost = current.cohort.cost;
+  const human = report.human_hours.current;
+  // Matched by date: the table's days are the Effort report's.
+  const yoursByDate = useMemo(
+    () => new Map(human.by_day.map((day) => [day.date, day.active_ms])),
+    [human],
+  );
   return (
     <DetailDialog
-      trigger="Method"
+      trigger="Details"
       title="How effort is counted · daily values"
       className="xt-effort-method"
       testId="effort-method"
@@ -332,11 +349,13 @@ export function EffortMethod({
       onOpenChange={onOpenChange}
     >
       <p className="xt-dash-note" data-testid="effort-notes">
-        {metric === 'agent'
-          ? 'Each bar is one local day’s agent time over every session in the range, on one shared scale from zero. Agents running at the same time add up, so a day can pass 24 h; the dashed line marks 24 h. Each session’s hours count toward the model it used most: the most responses in this range, then the most output tokens. A session with no response that names a model counts as no model recorded.'
-          : 'Each bar is one local day’s API-equivalent cost over every session in the range, on the day each response was recorded, not the merge day, on one shared scale from zero. Every token of each response (input, output, cache reads and cache writes, Claude cache writes split by five-minute and one-hour lifetime) is priced at its own model’s public rate, as the API-equivalent cost below prices it, and counts toward that model.'}{' '}
-        Markers count the pull requests merged on each local day, through confirmed links (exact and
-        SHA; inferred links are removed first), and allocate no effort.
+        {metric === 'human'
+          ? `Your hours come from the times you sent messages to agents, across every conversation and tool, on one timeline. When two of your messages are at most ${human.break_minutes} minutes apart (the break length in Settings), the time between them counts; a longer gap is a break. Each bar runs from a message to your last one before a break; a single message is a thin tick and adds no time. Stretches are split at local midnight. Every row is a whole day, midnight to midnight, the first one too; a stretch that began the evening before counts from midnight. Which messages are yours is the same as the human message count; if any is unknown, your hours are unknown.`
+          : `${
+              metric === 'agent'
+                ? 'Each bar is one local day’s agent time over every session in the range, on one shared scale from zero. Agents running at the same time add up, so a day can pass 24 h; the dashed line marks 24 h. Each session’s hours count toward the model it used most: the most responses in this range, then the most output tokens. A session with no response that names a model counts as no model recorded.'
+                : 'Each bar is one local day’s API-equivalent cost over every session in the range, on the day each response was recorded, not the merge day, on one shared scale from zero. Every token of each response (input, output, cache reads and cache writes, Claude cache writes split by five-minute and one-hour lifetime) is priced at its own model’s public rate, as the API-equivalent cost below prices it, and counts toward that model.'
+            } Markers count the pull requests merged on each local day, through confirmed links (exact and SHA; inferred links are removed first), and allocate no effort.`}
         {metric === 'dollars' &&
           cost.unpriced_observations > 0 &&
           ` ${cost.unpriced_observations} of ${plural(cost.selected_observations, 'selected response')} could not be priced (${unpricedModels(cost)}); they add nothing to the bars. A day with some of them is drawn at its priced subtotal with a + above it, a day with none priced has no bar, and any total that leaves responses out is marked + in the table.`}
@@ -359,6 +378,7 @@ export function EffortMethod({
               <tr>
                 <th scope="col">Day</th>
                 <th scope="col">Agent h</th>
+                <th scope="col">Your h</th>
                 <th scope="col">Cost</th>
                 <th scope="col">Merged</th>
               </tr>
@@ -368,6 +388,7 @@ export function EffortMethod({
                 <tr key={day.date}>
                   <th scope="row">{day.date}</th>
                   <td>{agentHours(day.agent_ms)}</td>
+                  <td>{yourHours(yoursByDate.get(day.date))}</td>
                   <td>{costShort(day.cost)}</td>
                   <td>
                     {chart.markers

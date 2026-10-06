@@ -43,11 +43,14 @@ impl Projection {
                 Self::HeaderPayload => matches!(
                     key,
                     "id" | "session_id"
+                        | "parent_thread_id"
                         | "forked_from_id"
+                        | "forked_from_ordinal_exclusive"
                         | "source"
                         | "history_mode"
                         | "history_base"
                         | "subagent_history_start_ordinal"
+                        | "thread_source"
                         | "type"
                         | "call_id"
                         | "name"
@@ -563,6 +566,46 @@ mod tests {
                 .unwrap();
             let after = group::header(&serde_json::to_vec(&after).unwrap(), ID).unwrap();
             assert_eq!(before, after);
+        }
+        // A spawned header's explicit parent is kept, so the shared header
+        // check decides the projection exactly as the whole line: a nested
+        // root with an agreeing parent is the thread's own, a disagreeing
+        // parent is not.
+        let parent = "00000000-0000-4000-8000-000000000002";
+        let root = "00000000-0000-4000-8000-000000000003";
+        for (explicit, own) in [(parent, true), (root, false)] {
+            let value = serde_json::json!({"type":"session_meta","ordinal":0,
+                "payload":{"id":ID,"history_mode":"paginated","session_id":root,
+                    "parent_thread_id":explicit,"subagent_history_start_ordinal":1,
+                    "source":{"subagent":{"thread_spawn":{"parent_thread_id":parent}}}}});
+            let original = serde_json::to_vec(&value).unwrap();
+            let before = group::header(&original, ID);
+            let mut line = original;
+            line.push(b'\n');
+            let after = Rows::new(Cursor::new(&line), line.len() as u64, &mut work(&cancel))
+                .header()
+                .unwrap();
+            let after = group::header(&serde_json::to_vec(&after).unwrap(), ID);
+            assert_eq!(before.is_ok(), own, "{explicit}");
+            assert_eq!(before, after, "{explicit}");
+        }
+        // An approval reviewer's header keeps what says it is one, so the
+        // projection is read as the whole line is.
+        for (thread_source, own) in [("guardian_review", true), ("user", false)] {
+            let value = serde_json::json!({"type":"session_meta","ordinal":0,
+                "payload":{"id":ID,"history_mode":"paginated","session_id":root,
+                    "parent_thread_id":parent,"thread_source":thread_source,
+                    "source":{"subagent":{"other":"guardian"}}}});
+            let original = serde_json::to_vec(&value).unwrap();
+            let before = group::header(&original, ID);
+            let mut line = original;
+            line.push(b'\n');
+            let after = Rows::new(Cursor::new(&line), line.len() as u64, &mut work(&cancel))
+                .header()
+                .unwrap();
+            let after = group::header(&serde_json::to_vec(&after).unwrap(), ID);
+            assert_eq!(before.is_ok(), own, "{thread_source}");
+            assert_eq!(before, after, "{thread_source}");
         }
         // PayloadHead's string fields, unlike output, reject these types.
         for field in ["type", "call_id", "name"] {

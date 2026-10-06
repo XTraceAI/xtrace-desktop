@@ -18,7 +18,7 @@ import { Toggle } from '../kit/Toggle';
 import { agentDuration } from './agent-duration';
 import {
   clockTime,
-  excludedSurfaceText,
+  excludedNote,
   plural,
   recordedTime,
   windowLabel,
@@ -31,14 +31,13 @@ import {
   evidenceWords,
   freshnessText,
   medianAside,
-  medianCounts,
+  medianGap,
   medianSample,
   emptyTypesText,
   REPORT_FAILED,
   REPORT_PENDING,
   medianView,
   mixedEvidence,
-  OVERLAP,
   prIdentity,
   rowHandsOff,
   rowHumanReason,
@@ -69,7 +68,7 @@ function MedianTile({
   view,
   median,
   format,
-  tip,
+  note,
   noSample,
   unavailable,
 }: {
@@ -79,7 +78,8 @@ function MedianTile({
   view: MedianView | undefined;
   median: MetricPrMedian | undefined;
   format: (value: number) => string;
-  tip: string;
+  /** A short live note added after the rule's summary, such as a left-out app. */
+  note?: string;
   noSample?: string;
   /** Why there is no view: the report is still being read, or its read failed. */
   unavailable: string;
@@ -101,7 +101,7 @@ function MedianTile({
               : medianAside(median)
             : undefined
         }
-        tip={median ? `${medianCounts(median, noSample)}. ${tip}` : tip}
+        tip={[median && medianGap(median, noSample), note].filter(Boolean).join(' ') || undefined}
       />
     </div>
   );
@@ -192,9 +192,7 @@ function buildColumns(
     },
     {
       key: 'type',
-      header: (
-        <span title="Title token first, then branch; unresolved is not other (M-19).">type</span>
-      ),
+      header: <span title="Work type, read from the PR title, then its branch name.">type</span>,
       width: '48px',
       render: (row) =>
         row.work_type === null ? (
@@ -333,7 +331,7 @@ function buildColumns(
     {
       key: 'evidence',
       header: (
-        <span title="The strongest retained link, and each linked session's own evidence (M-13).">
+        <span title="How the PR is linked: its strongest link, then each session's own.">
           evidence
         </span>
       ),
@@ -421,7 +419,6 @@ export function PrAnalytics({
     [window],
   );
   const summary = report?.summary;
-  const selected = `Selected window ${window ? windowLabel(window) : ''}, not weekly. ${OVERLAP}.`;
   const excluded = report?.hands_off_excluded_surfaces ?? [];
   const eligibility = report?.eligibility;
 
@@ -476,7 +473,6 @@ export function PrAnalytics({
               : undefined
           }
           format={formatTokens}
-          tip={`Median of each PR's four-counter linked-session tokens. ${selected}`}
         />
         <MedianTile
           unavailable={unavailable}
@@ -486,7 +482,6 @@ export function PrAnalytics({
           median={summary?.human_messages}
           view={summary && medianView(summary.human_messages)}
           format={continuous}
-          tip={`Median of each PR's linked-session human messages. ${selected}`}
         />
         <MedianTile
           unavailable={unavailable}
@@ -496,7 +491,6 @@ export function PrAnalytics({
           median={summary?.agent_ms}
           view={summary && medianView(summary.agent_ms)}
           format={agentText}
-          tip={`Median of each PR's linked-session agent time; parallel sessions add. ${selected}`}
         />
         <MedianTile
           unavailable={unavailable}
@@ -507,7 +501,7 @@ export function PrAnalytics({
           view={summary && medianView(summary.hands_off_min, 'no stretch')}
           format={minutesText}
           noSample="no stretch"
-          tip={`Median of each PR's pooled hands-off median, in minutes. ${selected}${excluded.length > 0 ? ` Excluded surfaces: ${excluded.map(excludedSurfaceText).join('; ')}.` : ''}`}
+          note={excludedNote(excluded)}
         />
       </div>
       <div className="xt-prs-main">

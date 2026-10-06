@@ -75,6 +75,18 @@ function navigationSource() {
         end_ms: report.lane_start_ms + 1_200_000,
       }));
       report.lanes_total = lanes.length;
+      // As the native report does: each listed lane's context, checked.
+      report.lane_sessions = lanes.map((lane) => ({
+        ...report.lane_sessions[0],
+        session_id: lane.session_id,
+        host: lane.host,
+        repo: null,
+        branch: null,
+        title: null,
+        parent: null,
+        known_child: false,
+        child_check: 'checked' as const,
+      }));
       return report;
     },
     tokensByHost: async (days) => {

@@ -7,9 +7,11 @@ import type { DataSource } from '../../data/DataSource';
 import { FixtureDataSource } from '../../data/FixtureDataSource';
 import type { DashboardMetrics } from '../../data/generated/DashboardMetrics';
 import type { FixtureExport } from '../../data/generated/FixtureExport';
+import type { PrAutoCheckStatus } from '../../data/generated/PrAutoCheckStatus';
 import type { PrList } from '../../data/generated/PrList';
 import type { PrRefreshReport } from '../../data/generated/PrRefreshReport';
 import type { PrRow } from '../../data/generated/PrRow';
+import { ruleSummary } from '../../kit/rules';
 import { ThemeProvider } from '../../theme/ThemeProvider';
 import { AppRoutes } from '../AppRoutes';
 import {
@@ -22,6 +24,7 @@ import {
   withPrEffort,
   type SectionSpec,
 } from './pr-effort.synthetic';
+import { DELTA_HIDDEN } from './present';
 
 // JSON imports widen literal unions; the export is the generated shape.
 const exported = fixture as FixtureExport;
@@ -98,8 +101,15 @@ const tree = (source: DataSource) => (
 );
 const mount = (source: DataSource) => render(tree(source));
 const loaded = () => screen.findByTestId('dashboard-summary');
-const tile = () =>
-  screen.getAllByRole('button').find((button) => button.textContent?.startsWith('Merged PRs'))!;
+/** The Overview card's Merged PRs tile. */
+const mergedTile = () =>
+  screen.getAllByTestId('overview-tile').find((tile) => tile.dataset.label === 'Merged PRs')!;
+/** The tile as it reads: its label, then its number (or words) and the line under it. */
+const tile = () => ({
+  textContent: `Merged PRs${mergedTile().querySelector('[data-testid="overview-value"]')!.textContent}${mergedTile().querySelector('.xt-overview-sub')!.textContent}`,
+});
+/** The tile's definition control. */
+const tileInfo = () => within(mergedTile()).getByRole('button', { name: 'Merged PRs definition' });
 const effort = () => screen.getByTestId('effort-by-type');
 /** The range's total above the chart, as it reads. */
 const total = () => within(effort()).getByTestId('effort-total').textContent;
@@ -110,10 +120,10 @@ const barred = () =>
   [...effort().querySelectorAll('[data-testid="effort-day"]')]
     .filter((node) => node.querySelector('.xt-effort-bar'))
     .map((node) => node.getAttribute('data-date'));
-const measure = (name: 'agent h' | 'cost') => screen.getByRole('radio', { name });
-/** Opens the method dialog from the card's header: the notes and the daily values. */
+const measure = (name: 'agent h' | 'human h' | 'cost') => screen.getByRole('radio', { name });
+/** Opens the Details dialog from the card's header: the notes and the daily values. */
 async function method() {
-  fireEvent.click(screen.getByRole('button', { name: 'Method' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }));
   return screen.findByRole('dialog', { name: 'How effort is counted · daily values' });
 }
 
@@ -174,20 +184,21 @@ it('confirmed only: an inferred link is gone before the tile and the markers', a
     within(table)
       .getAllByRole('columnheader')
       .map((cell) => cell.textContent),
-  ).toEqual(['Day', 'Agent h', 'Cost', 'Merged']);
+  ).toEqual(['Day', 'Agent h', 'Your h', 'Cost', 'Merged']);
   expect(
     within(table)
       .getAllByRole('row')
       .slice(1)
       .map((row) => row.textContent),
   ).toEqual([
-    '2026-09-010 hno usagenone',
-    '2026-09-020 hno usagenone',
-    '2026-09-030.5 h$2.50none',
-    '2026-09-040 hno usagenone',
-    '2026-09-050 hno usage#1',
-    '2026-09-060 hno usagenone',
-    '2026-09-070 hno usagenone',
+    // Your hours are F1's: its five messages on Sep 7.
+    '2026-09-010 h0 hno usagenone',
+    '2026-09-020 h0 hno usagenone',
+    '2026-09-030.5 h0 h$2.50none',
+    '2026-09-040 h0 hno usagenone',
+    '2026-09-050 h0 hno usage#1',
+    '2026-09-060 h0 hno usagenone',
+    '2026-09-070 h0.3 hno usagenone',
   ]);
   fireEvent.keyDown(dialog, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -195,19 +206,15 @@ it('confirmed only: an inferred link is gone before the tile and the markers', a
   expect(screen.queryByTestId('effort-unresolved')).toBeNull();
 });
 
-it('unknown facts: the known subtotal is named and the count stays unknown, never zero', async () => {
+it('unknown facts: the known merged count is shown with how many are not checked yet', async () => {
   mount(nativeSource(sectioned(UNKNOWN_FACTS)));
   await loaded();
-  const text = tile().textContent!;
-  expect(text).toContain(
-    'Unmeasured: 1 known merged; 1 linked pull request has no cached merge facts',
-  );
-  expect(text).toContain('1 + 1 unknown');
+  expect(tile().textContent).toBe('Merged PRs1so far1 not checked yet');
   // An unresolved session's effort is in the day totals like any other's; the
   // card draws no type, so no unresolved-type triangle is in its header.
   expect(total()).toBe('1 agent h');
   expect(screen.queryByTestId('effort-unresolved')).toBeNull();
-  expect(screen.getByTestId('pr-refresh').textContent).toContain(
+  expect(await statusLine()).toContain(
     'Confirmed-linked pull requests: 1 refreshed, 1 never refreshed',
   );
 });
@@ -215,7 +222,7 @@ it('unknown facts: the known subtotal is named and the count stays unknown, neve
 it('zero: no link at all is a measured 0 and the work still shows', async () => {
   mount(nativeSource(sectioned(NO_LINKS)));
   await loaded();
-  expect(within(tile()).getByText('0')).toBeTruthy();
+  expect(within(mergedTile()).getByText('0')).toBeTruthy();
   expect(tile().textContent).not.toMatch(/known|unknown|Unmeasured/);
   expect(barred()).toEqual(['2026-09-02']);
   expect(within(effort()).getAllByText('0 PRs').length).toBe(1);
@@ -329,6 +336,10 @@ it('switches the measure from the keyboard and keeps it across a range change', 
   expect(agent.getAttribute('aria-checked')).toBe('true');
   agent.focus();
   fireEvent.keyDown(agent, { key: 'ArrowRight' });
+  await waitFor(() => expect(measure('human h').getAttribute('aria-checked')).toBe('true'));
+  expect(document.activeElement).toBe(measure('human h'));
+  expect(screen.getByTestId('human-timeline')).toBeTruthy();
+  fireEvent.keyDown(measure('human h'), { key: 'ArrowRight' });
   await waitFor(() => expect(measure('cost').getAttribute('aria-checked')).toBe('true'));
   expect(document.activeElement).toBe(measure('cost'));
   fireEvent.click(screen.getByRole('radio', { name: '14d' }));
@@ -339,8 +350,32 @@ it('switches the measure from the keyboard and keeps it across a range change', 
 
 // --- manual refresh ----------------------------------------------------------
 
-const refreshButton = () => screen.getByRole('button', { name: 'Refresh PR facts…' });
+const ATTENTION = 'Pull-request checks need your attention';
+const RUNNING = 'Refreshing pull-request facts…';
+/** The Effort card's red !: it opens the refresh dialog, and is drawn only when needed. */
+const refreshButton = () => screen.findByRole('button', { name: ATTENTION });
+/** The red ! or, while a batch runs, its quiet stand-in. */
+const attentionMark = () => screen.queryByTestId('pr-attention');
 const dialog = () => screen.getByRole('dialog', { name: 'Refresh pull-request facts' });
+/** The confirmed links' status, which the refresh dialog states first. */
+async function statusLine() {
+  fireEvent.click(await refreshButton());
+  const text = within(await screen.findByRole('dialog')).getByTestId('pr-refresh').textContent!;
+  fireEvent.keyDown(dialog(), { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  return text;
+}
+/**
+ * The same native-shaped source whose automatic check paused because gh is
+ * missing, so the red ! is there whatever the report's counts.
+ */
+function ghMissing<S extends ReturnType<typeof nativeSource>>(source: S) {
+  const status = autoStatus({ paused: 'gh_missing' });
+  return {
+    ...source,
+    prAutoCheck: { status: vi.fn(async () => status), request: vi.fn(async () => status) },
+  };
+}
 const option = (text: RegExp) => within(dialog()).getByRole('checkbox', { name: text });
 const start = () => within(dialog()).getByRole('button', { name: /^Refresh \d+ pull request/ });
 
@@ -352,12 +387,13 @@ it('asks nothing of storage or GitHub until opened, and refreshes only on the bu
   await loaded();
   expect(list).not.toHaveBeenCalled();
   expect(refresh).not.toHaveBeenCalled();
-  fireEvent.click(refreshButton());
+  fireEvent.click(await refreshButton());
   await within(dialog()).findByRole('list', { name: 'Indexed pull requests' });
   expect(list).toHaveBeenCalledOnce();
   const text = dialog().textContent!;
   expect(text).toContain('It only reads: nothing is written to GitHub');
-  expect(text).toContain('only the Refresh button starts a batch');
+  expect(text).toContain('XTrace also checks on its own, the same way');
+  expect(text).toContain('Merged and closed ones are not checked again');
   expect(text).toContain('up to 20 pull requests');
   expect(text).toContain('120 seconds');
   for (const number of [11, 12, 13]) expect(option(new RegExp(`#${number}`))).toBeTruthy();
@@ -370,7 +406,7 @@ it('refreshes a selection, updates the Dashboard after a commit, and replays a r
   const dashboard = vi.spyOn(source, 'dashboard');
   mount(source);
   await loaded();
-  fireEvent.click(refreshButton());
+  fireEvent.click(await refreshButton());
   fireEvent.click(await within(dialog()).findByRole('checkbox', { name: /#11/ }));
   expect(within(dialog()).getByText(/1 of 20 selected/)).toBeTruthy();
   const before = dashboard.mock.calls.length;
@@ -403,8 +439,8 @@ it('a partial failure keeps earlier facts, and the whole refresh shows what the 
   const source = new FixtureDataSource(exported);
   mount(source);
   await loaded();
-  expect(tile().textContent).toContain('0 + 2 unknown');
-  fireEvent.click(refreshButton());
+  expect(tile().textContent).toContain('2 PRs not checked yet');
+  fireEvent.click(await refreshButton());
   for (const number of [11, 12, 13])
     fireEvent.click(
       await within(dialog()).findByRole('checkbox', { name: new RegExp(`#${number}`) }),
@@ -418,8 +454,10 @@ it('a partial failure keeps earlier facts, and the whole refresh shows what the 
     expect(within(dialog()).getByText(/failed \(rate limited\); never refreshed/)).toBeTruthy(),
   );
   fireEvent.keyDown(dialog(), { key: 'Escape' });
-  await waitFor(() => expect(tile().textContent).toContain('0 + 1 unknown'));
-  expect(screen.getByTestId('pr-refresh').textContent).toContain(
+  // #12's check failed, so it is not "not checked": it could not be checked.
+  // #11 was checked, so the known zero shows, marked incomplete.
+  await waitFor(() => expect(tile().textContent).toContain('0so far1 could not be checked'));
+  expect(await statusLine()).toContain(
     'Confirmed-linked pull requests: 1 refreshed, 1 failed, never refreshed',
   );
 });
@@ -460,13 +498,15 @@ const cancelledReport = (ids: number[]): PrRefreshReport => ({
 });
 
 it('selects at most twenty pull requests and sends exactly those', async () => {
-  const source = nativeSource(sectioned(NO_LINKS), {
-    pullRequests: async () => ({ rows: rows(25) }),
-    refreshPullRequests: async (ids) => cancelledReport(ids),
-  });
+  const source = ghMissing(
+    nativeSource(sectioned(NO_LINKS), {
+      pullRequests: async () => ({ rows: rows(25) }),
+      refreshPullRequests: async (ids) => cancelledReport(ids),
+    }),
+  );
   mount(source);
   await loaded();
-  fireEvent.click(refreshButton());
+  fireEvent.click(await refreshButton());
   const boxes = await within(dialog()).findAllByRole('checkbox');
   expect(boxes).toHaveLength(25);
   for (const box of boxes.slice(0, 20)) fireEvent.click(box);
@@ -482,22 +522,26 @@ it('selects at most twenty pull requests and sends exactly those', async () => {
 
 it('cancels a running batch and reports what it skipped', async () => {
   let finish: (report: PrRefreshReport) => void = () => {};
-  const source = nativeSource(sectioned(NO_LINKS), {
-    pullRequests: async () => ({ rows: rows(2) }),
-    refreshPullRequests: () =>
-      new Promise((resolve) => {
-        finish = resolve;
-      }),
-    cancelPullRequestRefresh: async () => true,
-  });
+  const source = ghMissing(
+    nativeSource(sectioned(NO_LINKS), {
+      pullRequests: async () => ({ rows: rows(2) }),
+      refreshPullRequests: () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+      cancelPullRequestRefresh: async () => true,
+    }),
+  );
   mount(source);
   await loaded();
   const reads = source.dashboard.mock.calls.length;
-  fireEvent.click(refreshButton());
+  fireEvent.click(await refreshButton());
   for (const box of await within(dialog()).findAllByRole('checkbox')) fireEvent.click(box);
   fireEvent.click(start());
   const cancel = await within(dialog()).findByRole('button', { name: 'Cancel' });
-  expect(screen.getByText('Refreshing pull-request facts…')).toBeTruthy();
+  // While the batch runs, the red ! is a quiet "refreshing" mark instead.
+  expect(attentionMark()!.getAttribute('aria-label')).toBe(RUNNING);
+  expect(attentionMark()!.dataset.state).toBe('running');
   expect(
     within(dialog())
       .getAllByRole('checkbox')
@@ -527,7 +571,7 @@ it('a refused batch is stated and changes nothing already shown', async () => {
   mount(source);
   await loaded();
   const reads = source.dashboard.mock.calls.length;
-  fireEvent.click(refreshButton());
+  fireEvent.click(await refreshButton());
   fireEvent.click(await within(dialog()).findByRole('checkbox', { name: /#100/ }));
   fireEvent.click(start());
   expect((await within(dialog()).findByTestId('pr-refresh-error')).textContent).toBe(
@@ -536,7 +580,7 @@ it('a refused batch is stated and changes nothing already shown', async () => {
   expect(source.dashboard).toHaveBeenCalledTimes(reads);
   fireEvent.keyDown(dialog(), { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  expect(tile().textContent).toContain('1 + 1 unknown');
+  expect(tile().textContent).toContain('1 not checked yet');
 });
 
 it('a stale row keeps its cached facts and says the last refresh failed', async () => {
@@ -550,9 +594,13 @@ it('a stale row keeps its cached facts and says the last refresh failed', async 
     last_attempted_at_ms: Date.parse('2026-09-07T00:00:00Z'),
     status: { status: 'failed_after_refresh', error: 'rate_limited' },
   };
-  mount(nativeSource(sectioned(MANY_TYPES), { pullRequests: async () => ({ rows: [stale] }) }));
+  mount(
+    ghMissing(
+      nativeSource(sectioned(MANY_TYPES), { pullRequests: async () => ({ rows: [stale] }) }),
+    ),
+  );
   await loaded();
-  fireEvent.click(refreshButton());
+  fireEvent.click(await refreshButton());
   const item = (
     await within(dialog()).findByRole('checkbox', { name: /#100 · feat: kept/ })
   ).closest('li')!;
@@ -563,9 +611,11 @@ it('a stale row keeps its cached facts and says the last refresh failed', async 
 });
 
 it('opens from the keyboard and returns focus to its button on Escape', async () => {
-  mount(nativeSource(sectioned(NO_LINKS), { pullRequests: async () => ({ rows: rows(1) }) }));
+  mount(
+    ghMissing(nativeSource(sectioned(NO_LINKS), { pullRequests: async () => ({ rows: rows(1) }) })),
+  );
   await loaded();
-  const button = refreshButton();
+  const button = await refreshButton();
   button.focus();
   fireEvent.click(button);
   const box = await within(dialog()).findByRole('checkbox', { name: /#100/ });
@@ -581,15 +631,16 @@ it('refreshing only the exact link #11 shows the state Rust read for exactly tha
   const source = new FixtureDataSource(exported);
   mount(source);
   await loaded();
-  fireEvent.click(refreshButton());
+  fireEvent.click(await refreshButton());
   fireEvent.click(await within(dialog()).findByRole('checkbox', { name: /#11/ }));
   fireEvent.click(start());
   await within(dialog()).findByTestId('pr-refresh-report');
   fireEvent.keyDown(dialog(), { key: 'Escape' });
   // #11 is refreshed; the SHA link #12 has no facts yet, so the count stays
   // unknown; the inferred #13 is not counted by the confirmed-only Dashboard.
-  await waitFor(() => expect(tile().textContent).toContain('0 + 1 unknown'));
-  expect(screen.getByTestId('pr-refresh').textContent).toContain(
+  // #11 was checked, so the known zero shows, marked incomplete.
+  await waitFor(() => expect(tile().textContent).toContain('0so far1 not checked yet'));
+  expect(await statusLine()).toContain(
     'Confirmed-linked pull requests: 1 refreshed, 1 never refreshed',
   );
 });
@@ -600,35 +651,36 @@ it('keeps a running batch, its Cancel and its result across a range change and a
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const source = nativeSource(sectioned(NO_LINKS), {
-    pullRequests: async () => ({ rows: rows(2) }),
-    refreshPullRequests: () =>
-      new Promise((resolve) => {
-        finish = resolve;
-      }),
-    cancelPullRequestRefresh: async () => true,
-  });
+  const source = ghMissing(
+    nativeSource(sectioned(NO_LINKS), {
+      pullRequests: async () => ({ rows: rows(2) }),
+      refreshPullRequests: () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+      cancelPullRequestRefresh: async () => true,
+    }),
+  );
   source.dashboard.mockImplementation(async (days: number) => {
     if (days === 14) await gate;
     return sectioned(NO_LINKS)(days);
   });
   mount(source);
   await loaded();
-  fireEvent.click(refreshButton());
+  fireEvent.click(await refreshButton());
   for (const box of await within(dialog()).findAllByRole('checkbox')) fireEvent.click(box);
   fireEvent.click(start());
   fireEvent.keyDown(dialog(), { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  expect(screen.getByText('Refreshing pull-request facts…')).toBeTruthy();
+  expect(screen.getByRole('button', { name: RUNNING })).toBeTruthy();
   // An uncached range replaces the whole report, this control included.
   fireEvent.click(screen.getByRole('radio', { name: '14d' }));
   await screen.findByText(/Reading Dashboard metrics for the last 14d/);
-  expect(screen.queryByTestId('pr-refresh')).toBeNull();
+  expect(attentionMark()).toBeNull();
   await act(async () => release());
   await loaded();
   // The batch is still running, still cancellable, and cannot be doubled.
-  expect(screen.getByText('Refreshing pull-request facts…')).toBeTruthy();
-  fireEvent.click(refreshButton());
+  fireEvent.click(screen.getByRole('button', { name: RUNNING }));
   expect(within(dialog()).getByRole('button', { name: 'Refreshing…' })).toHaveProperty(
     'disabled',
     true,
@@ -639,12 +691,12 @@ it('keeps a running batch, its Cancel and its result across a range change and a
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   // Leave the Dashboard while the batch finishes, then come back to its result.
   act(() => go('/sessions'));
-  await waitFor(() => expect(screen.queryByTestId('pr-refresh')).toBeNull());
+  await waitFor(() => expect(attentionMark()).toBeNull());
   await act(async () => finish(cancelledReport([1, 2])));
   act(() => go('/dashboard'));
   await loaded();
-  expect(screen.queryByText('Refreshing pull-request facts…')).toBeNull();
-  fireEvent.click(refreshButton());
+  expect(screen.queryByRole('button', { name: RUNNING })).toBeNull();
+  fireEvent.click(await refreshButton());
   expect((await within(dialog()).findByTestId('pr-refresh-report')).textContent).toBe(
     'Requested 2: 0 refreshed, 0 failed, 2 skipped. The batch was cancelled. No stored facts changed.',
   );
@@ -653,32 +705,242 @@ it('keeps a running batch, its Cancel and its result across a range change and a
 
 it('a replaced source starts with no batch and ignores the old one', async () => {
   let finish: (report: PrRefreshReport) => void = () => {};
-  const first = nativeSource(sectioned(NO_LINKS), {
-    pullRequests: async () => ({ rows: rows(1) }),
-    refreshPullRequests: () =>
-      new Promise((resolve) => {
-        finish = resolve;
-      }),
-  });
-  const second = nativeSource(sectioned(NO_LINKS), {
-    pullRequests: async () => ({ rows: rows(1) }),
-  });
+  const first = ghMissing(
+    nativeSource(sectioned(NO_LINKS), {
+      pullRequests: async () => ({ rows: rows(1) }),
+      refreshPullRequests: () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    }),
+  );
+  const second = ghMissing(
+    nativeSource(sectioned(NO_LINKS), {
+      pullRequests: async () => ({ rows: rows(1) }),
+    }),
+  );
   const view = mount(first);
   await loaded();
-  fireEvent.click(refreshButton());
+  fireEvent.click(await refreshButton());
   fireEvent.click(await within(dialog()).findByRole('checkbox', { name: /#100/ }));
   fireEvent.click(start());
   fireEvent.keyDown(dialog(), { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   view.rerender(tree(second));
   await loaded();
-  expect(screen.queryByText('Refreshing pull-request facts…')).toBeNull();
+  expect(screen.queryByRole('button', { name: RUNNING })).toBeNull();
   const reads = second.dashboard.mock.calls.length;
   await act(async () => finish({ ...cancelledReport([1]), committed: true }));
-  expect(screen.queryByText('Refreshing pull-request facts…')).toBeNull();
-  fireEvent.click(refreshButton());
+  expect(screen.queryByRole('button', { name: RUNNING })).toBeNull();
+  fireEvent.click(await refreshButton());
   await within(dialog()).findByRole('checkbox', { name: /#100/ });
   expect(within(dialog()).queryByTestId('pr-refresh-report')).toBeNull();
   expect(second.dashboard).toHaveBeenCalledTimes(reads);
   expect(second.refreshPullRequests).not.toHaveBeenCalled();
+});
+
+// --- automatic check ---------------------------------------------------------
+
+function autoStatus(status: Partial<PrAutoCheckStatus> = {}): PrAutoCheckStatus {
+  return { enabled: true, checking: false, paused: null, last_finished_at_ms: null, ...status };
+}
+/** F1's report from a native-shaped source that also checks GitHub on its own. */
+function autoChecked(status: PrAutoCheckStatus) {
+  const prAutoCheck = {
+    status: vi.fn(async () => status),
+    request: vi.fn(async () => status),
+  };
+  return { ...nativeSource(() => f1()), prAutoCheck };
+}
+async function mergedTip() {
+  fireEvent.focus(tileInfo());
+  return (await screen.findByRole('tooltip')).textContent!;
+}
+
+it('asks the app to check GitHub when the Dashboard is shown, and says so while it checks', async () => {
+  const source = autoChecked(autoStatus({ checking: true }));
+  mount(source);
+  await loaded();
+  expect(source.prAutoCheck.request).toHaveBeenCalledOnce();
+  await waitFor(() => expect(tile().textContent).toBe('Merged PRs2 PRs not checked yetchecking…'));
+  expect(await mergedTip()).toContain('Checking GitHub now… 2 PRs not checked yet.');
+  // The automatic check is the app's own; no manual batch starts.
+  expect(source.refreshPullRequests).not.toHaveBeenCalled();
+  expect(source.pullRequests).not.toHaveBeenCalled();
+});
+
+it('the Merged PRs tip says in plain words what it counts and how fresh it is', async () => {
+  mount(autoChecked(autoStatus()));
+  await loaded();
+  await waitFor(() => expect(tile().textContent).toBe('Merged PRs2 PRs not checked yet'));
+  const text = await mergedTip();
+  expect(text).toContain(
+    'Pull requests your agent sessions opened or pushed to, and how many of them merged on GitHub in this range. XTrace checks GitHub using your gh sign-in; it only reads.',
+  );
+  expect(text).toContain('2 PRs not checked yet.');
+  // None of the rule's technical wording is in this tile's tip.
+  expect(text).not.toMatch(/unions|confirmed_only|whole-linked-session|cached|gh pr view/);
+  // The Effort card keeps the rule's own summary in its definition.
+  fireEvent.blur(tileInfo());
+  await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+  act(() => screen.getByRole('button', { name: 'Effort definition' }).focus());
+  expect((await screen.findByRole('tooltip')).textContent).toContain(ruleSummary('M-19'));
+});
+
+it('a paused check says why in plain words, without an error', async () => {
+  mount(autoChecked(autoStatus({ paused: 'gh_signed_out' })));
+  await loaded();
+  await waitFor(() =>
+    expect(tile().textContent).toBe('Merged PRs2 PRs not checked yetgh not signed in'),
+  );
+  expect(await mergedTip()).toContain(
+    'The GitHub CLI (gh) is not signed in, so XTrace stopped checking. 2 PRs not checked yet. Run gh auth login, then click the red ! on the Effort card to check again.',
+  );
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it('a complete count whose change is hidden still says why in its tip', async () => {
+  mount(nativeSource(sectioned(F19_SHARED)));
+  await loaded();
+  expect(await mergedTip()).toContain(DELTA_HIDDEN);
+});
+
+// --- the red ! ---------------------------------------------------------------
+
+/** Focuses the red ! and reads its tip. */
+async function attentionTip() {
+  const button = await refreshButton();
+  fireEvent.focus(button);
+  return (await screen.findByRole('tooltip')).textContent!;
+}
+
+it('shows no red ! and no status line when nothing needs the user', async () => {
+  // Two pull requests not checked yet while automatic checks run: XTrace checks them itself.
+  const source = autoChecked(autoStatus());
+  mount(source);
+  await loaded();
+  await waitFor(() => expect(source.prAutoCheck.status).toHaveBeenCalled());
+  await waitFor(() => expect(tile().textContent).toBe('Merged PRs2 PRs not checked yet'));
+  expect(attentionMark()).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Refresh PR facts…' })).toBeNull();
+  // The old line under the chart is gone; its words live in the dialog now.
+  expect(document.querySelector('.xt-dashboard')!.textContent).not.toContain(
+    'Confirmed-linked pull requests',
+  );
+  // Nor does the tile's tip point to a red ! that is not there.
+  expect(await mergedTip()).not.toContain('red !');
+  // Details holds the per-day table under its new name.
+  expect(screen.queryByRole('button', { name: 'Method' })).toBeNull();
+  expect(await method()).toBeTruthy();
+});
+
+it('shows the red ! with a plain tip when a check failed, and opens the refresh dialog', async () => {
+  const failed: SectionSpec = {
+    ...NO_LINKS,
+    tile: {
+      known_merged: 0,
+      freshness: {
+        never_attempted: 0,
+        refreshed: 1,
+        failed_never_refreshed: 1,
+        failed_after_refresh: 1,
+        oldest_refreshed_at: null,
+        newest_attempted_at: null,
+      },
+    },
+  };
+  const status = autoStatus();
+  const source = {
+    ...nativeSource(sectioned(failed), { pullRequests: async () => ({ rows: rows(1) }) }),
+    prAutoCheck: { status: vi.fn(async () => status), request: vi.fn(async () => status) },
+  };
+  mount(source);
+  await loaded();
+  const button = await refreshButton();
+  expect(button.dataset.state).toBe('attention');
+  // It sits in the Effort card's header, after Details.
+  const header = button.closest('.xt-dash-card-actions, header')!;
+  expect(header.contains(screen.getByRole('button', { name: 'Details' }))).toBe(true);
+  // One never had facts, one kept older ones: each is named in the tile's words.
+  expect(await attentionTip()).toBe(
+    '1 pull request could not be checked. The last check of 1 pull request failed; older facts are shown. Click to check them again.',
+  );
+  fireEvent.click(button);
+  const opened = await screen.findByRole('dialog', { name: 'Refresh pull-request facts' });
+  // The status line that used to sit under the chart opens the dialog.
+  expect(within(opened).getByTestId('pr-refresh').textContent).toBe(
+    'Confirmed-linked pull requests: 1 refreshed, 1 stale after a failed refresh, 1 failed, never refreshed. 1 pull request could not be checked. The last check of 1 pull request failed; older facts are shown. Choose them below and refresh them again.',
+  );
+  expect(source.pullRequests).toHaveBeenCalledOnce();
+});
+
+it('shows the red ! when gh paused the automatic check, and says what to do', async () => {
+  mount(autoChecked(autoStatus({ paused: 'gh_signed_out' })));
+  await loaded();
+  expect(await attentionTip()).toBe(
+    'The GitHub CLI (gh) is not signed in, so XTrace stopped checking. Run gh auth login, then click to check again.',
+  );
+});
+
+it('shows the red ! when automatic checks are off and some were never checked', async () => {
+  mount(autoChecked(autoStatus({ enabled: false })));
+  await loaded();
+  expect(await attentionTip()).toBe(
+    'Automatic checks are off and 2 pull requests were never checked. Click to check them.',
+  );
+  expect(await mergedTip()).toContain('Click the red ! on the Effort card to check them.');
+});
+
+it('returns focus to Details when a refresh cleared what the red ! was for', async () => {
+  const failed: SectionSpec = {
+    ...NO_LINKS,
+    tile: {
+      known_merged: 0,
+      freshness: {
+        never_attempted: 0,
+        refreshed: 0,
+        failed_never_refreshed: 0,
+        failed_after_refresh: 1,
+        oldest_refreshed_at: null,
+        newest_attempted_at: null,
+      },
+    },
+  };
+  let spec = failed;
+  const status = autoStatus();
+  const source = {
+    ...nativeSource((days) => sectioned(spec)(days), {
+      pullRequests: async () => ({ rows: rows(1) }),
+      refreshPullRequests: async (ids) => {
+        // The check succeeds: the next Dashboard read has nothing left to flag.
+        spec = NO_LINKS;
+        return {
+          ...cancelledReport(ids),
+          attempted: ids.length,
+          succeeded: ids.length,
+          skipped: 0,
+          cancelled: false,
+          committed: true,
+          rows: [],
+        };
+      },
+    }),
+    prAutoCheck: { status: vi.fn(async () => status), request: vi.fn(async () => status) },
+  };
+  mount(source);
+  await loaded();
+  const button = await refreshButton();
+  button.focus();
+  fireEvent.click(button);
+  fireEvent.click(await within(dialog()).findByRole('checkbox', { name: /#100/ }));
+  fireEvent.click(start());
+  await within(dialog()).findByTestId('pr-refresh-report');
+  // The re-read report has no failure; the red ! stays only while its dialog is open.
+  await waitFor(() => expect(attentionMark()!.dataset.state).toBe('open'));
+  fireEvent.keyDown(dialog(), { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(attentionMark()).toBeNull();
+  await waitFor(() =>
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Details' })),
+  );
 });

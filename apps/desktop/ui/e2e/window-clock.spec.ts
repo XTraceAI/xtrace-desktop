@@ -34,10 +34,16 @@ const settled = async (page: Page) => {
   return reads(page);
 };
 /** The app's own Shell over F1, on a fake clock that still flows. */
-const open = async (page: Page, path: string, pages = 1, hold?: 'refresh' | 'next') => {
+const open = async (
+  page: Page,
+  path: string,
+  pages = 1,
+  hold?: 'refresh' | 'next',
+  groups = false,
+) => {
   await page.clock.install({ time: new Date('2026-09-23T12:00:00Z') });
   await page.goto(
-    `/e2e/window-clock.html?path=${encodeURIComponent(path)}&pages=${pages}${hold ? `&hold=${hold}` : ''}`,
+    `/e2e/window-clock.html?path=${encodeURIComponent(path)}&pages=${pages}${hold ? `&hold=${hold}` : ''}${groups ? '&groups' : ''}`,
   );
 };
 const setVisibility = (page: Page, state: DocumentVisibilityState) =>
@@ -223,6 +229,52 @@ test('keeps the row a user scrolls to while the next Sessions page is pending', 
   const after = await firstVisible(page);
   expect(after.name).toBe(moved.name);
   expect(Math.abs(after.offset - moved.offset)).toBeLessThanOrEqual(1);
+});
+
+test('keeps an open group and the visible row when its parent arrives late and the list refreshes', async ({
+  page,
+}) => {
+  await open(page, '/sessions', 3, undefined, true);
+  const blocks = page.locator('.xt-table-block');
+  // Five first-page sub-sessions are collapsed under one row that names their
+  // parent on the third page; opened, each is its own row.
+  await expect(blocks).toHaveCount(46);
+  const group = page.getByRole('button', { name: '5 loaded sub-sessions of Clock parent' });
+  const absent = page.locator('[data-group="absent"]');
+  await expect(absent).toHaveCount(1);
+  await group.click();
+  await expect(blocks).toHaveCount(51);
+  await page.getByRole('button', { name: 'Load more sessions' }).click();
+  await expect(blocks).toHaveCount(101);
+  // The row naming the parent is the first visible row while the parent's
+  // own page loads; the parent's row takes its place, still open.
+  await scrollToRow(page, 10);
+  const named = await firstVisible(page);
+  expect(named.name).toBe('Open parent session Clock parent, clock-session-2-49');
+  await page.getByRole('button', { name: 'Load more sessions' }).click();
+  await expect(blocks).toHaveCount(150);
+  await expect(absent).toHaveCount(0);
+  await expect(group).toHaveAttribute('aria-expanded', 'true');
+  const replaced = await firstVisible(page);
+  expect(replaced.name).toBe('Open session Clock parent, clock-session-2-49');
+  expect(Math.abs(replaced.offset - named.offset)).toBeLessThanOrEqual(1);
+  await expect(blocks.nth(11).locator('.xt-session-open')).toHaveAttribute(
+    'aria-label',
+    'Open session clock-session-0-10',
+  );
+
+  // A timed refresh replays all three pages (the third now in another order)
+  // and keeps the open child that was first visible where it was.
+  await scrollToRow(page, 13);
+  const anchored = await firstVisible(page);
+  expect(anchored.name).toBe('Open session clock-session-0-12');
+  const counts = await settled(page);
+  await page.clock.fastForward(maxAge);
+  await expect.poll(async () => (await reads(page)).sessionsList).toBe(counts.sessionsList + 3);
+  await expect.poll(async () => (await firstVisible(page)).name).toBe(anchored.name);
+  const after = await firstVisible(page);
+  expect(Math.abs(after.offset - anchored.offset)).toBeLessThanOrEqual(1);
+  await expect(group).toHaveAttribute('aria-expanded', 'true');
 });
 
 test('re-reads one session and the host tokens, never its transcript', async ({ page }) => {

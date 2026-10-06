@@ -13,6 +13,7 @@ export const eventPrefixes: Record<DataEvent, readonly string[]> = {
   [events.hostConnected]: ['app', ...ingest],
   [events.fireReceived]: ['fires', 'rules'],
   [events.prsRefreshed]: ['prs', 'gh'],
+  [events.prsAutoCheck]: ['prs-auto'],
   [events.nativeIndexStatus]: ['native', ...ingest],
   // Published only after a committed purge: views that can show stored content.
   [events.contentPurged]: ['sessions', 'metrics'],
@@ -43,6 +44,12 @@ export const eventKeyPrefixes: Partial<Record<DataEvent, readonly QueryKey[]>> =
   [events.hostConnected]: inventory,
   // Only a settled status: initial-scan progress moves the status alone.
   [events.nativeIndexStatus]: inventory,
+  /**
+   * The automatic check started, finished or paused. A finished check may
+   * have committed facts M-19 reads, which only the Dashboard reports carry;
+   * its own `prs://refreshed` re-reads everything else a refresh changes.
+   */
+  [events.prsAutoCheck]: [queryKeys.dashboards],
   [events.prsRefreshed]: [
     queryKeys.sessions(7).slice(0, 2),
     queryKeys.session(7, '').slice(0, 2),

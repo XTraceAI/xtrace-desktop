@@ -1,6 +1,12 @@
 import { expect, it } from 'vitest';
 import type { DashboardLane } from '../../data/generated/DashboardLane';
-import { groupSessionLanes, laneRows, type LaneParent, type SessionLane } from './lanes';
+import {
+  groupSessionLanes,
+  laneRows,
+  listedLanes,
+  type LaneParent,
+  type SessionLane,
+} from './lanes';
 
 const lane = (
   session_id: string,
@@ -121,6 +127,23 @@ it('nests a returned child that has returned children of its own', () => {
   const rows = laneRows(sessions, link, new Set([x.key, sessions[2].key])).rows;
   // x's group holds c1 (the newest), so it sits first.
   expect(shown(rows)).toEqual(['x [1 open]', '  p [1 open]', '    c1', 'c2', 'y']);
+  // Every session under a row at any depth, open or not, in listing order;
+  // a row with nothing under it has no members.
+  const members = (key: string) =>
+    laneRows(sessions, link, new Set())
+      .rows.concat(rows)
+      .find((row) => row.key === key)!
+      .members.map((lane) => lane.sessionId);
+  expect(members(x.key)).toEqual(['p', 'c1']);
+  expect(members(sessions[2].key)).toEqual(['c1']);
+  expect(members(sessions[0].key)).toEqual([]);
+});
+
+it('gives an absent parent’s row every returned session under it as members', () => {
+  const link = parents({ c1: codex('gone'), c2: codex('gone'), x: codex('c2') });
+  const [group] = laneRows(sessions, link, new Set()).rows;
+  expect(group.kind).toBe('absent');
+  expect(group.members.map((lane) => lane.sessionId)).toEqual(['c1', 'c2', 'x']);
 });
 
 it('keeps unknown, self and circular parents as ordinary rows', () => {
@@ -153,4 +176,59 @@ it('matches a parent by host as well as id', () => {
     'c2',
     'y',
   ]);
+});
+
+/** Known sub-sessions with no verified parent, by host and id. */
+const unresolvedOf =
+  (...known: LaneParent[]) =>
+  (session: LaneParent) =>
+    known.some((entry) => entry.session_id === session.session_id && entry.host === session.host);
+const ids = (lanes: readonly SessionLane[]) => lanes.map((lane) => lane.sessionId);
+
+it('lists every returned session when none is a known child with no verified parent', () => {
+  const link = parents({ c1: codex('p'), c2: codex('gone') });
+  expect(listedLanes(sessions, link, unresolvedOf())).toEqual(sessions);
+});
+
+it('leaves out an unresolved known child and every returned session under it', () => {
+  // p is the unresolved child; c1 is under p, and c2 under c1.
+  const link = parents({ c1: codex('p'), c2: codex('c1') });
+  const listed = listedLanes(sessions, link, unresolvedOf(codex('p')));
+  expect(ids(listed)).toEqual(['x', 'y']);
+  // Nothing is left to name the hidden session as an absent parent.
+  expect(shown(laneRows(listed, link, new Set()).rows)).toEqual(['x', 'y']);
+});
+
+it('leaves out a returned branch whose unreturned direct parent is an unresolved child', () => {
+  const link = parents({ c1: codex('gone'), c2: codex('c1'), p: codex('kept') });
+  const listed = listedLanes(sessions, link, unresolvedOf(codex('gone')));
+  expect(ids(listed)).toEqual(['x', 'p', 'y']);
+  // An ordinary unreturned parent still gets its one named row.
+  expect(shown(laneRows(listed, link, new Set()).rows)).toEqual(['x', 'absent kept [1]', 'y']);
+});
+
+it('asks an unreturned parent only about itself, never about its own parent', () => {
+  const asked: string[] = [];
+  const link = parents({ c1: codex('gone') });
+  const unresolved = (session: LaneParent) => {
+    asked.push(session.session_id);
+    return false;
+  };
+  expect(listedLanes(sessions, link, unresolved)).toEqual(sessions);
+  expect(asked.filter((id) => id === 'gone')).toEqual(['gone']);
+  expect(asked.filter((id) => !['gone', ...ids(sessions)].includes(id))).toEqual([]);
+});
+
+it('ends the walk at a loop, and matches a hidden session by host as well as id', () => {
+  const loop = parents({ p: codex('c2'), c2: codex('p'), c1: codex('p') });
+  expect(listedLanes(sessions, loop, unresolvedOf())).toEqual(sessions);
+  // The claude session named "p" is not the codex session "p".
+  const link = parents({ c1: codex('p') });
+  expect(listedLanes(sessions, link, unresolvedOf({ session_id: 'p', host: 'claude' }))).toEqual(
+    sessions,
+  );
+  // Named with its own host, the claude session "y" is left out.
+  expect(
+    ids(listedLanes(sessions, link, unresolvedOf({ session_id: 'y', host: 'claude' }))),
+  ).toEqual(['c1', 'x', 'p', 'c2']);
 });

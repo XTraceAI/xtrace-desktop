@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { validateSbom } from './sbom.mjs';
+import { readFile } from 'node:fs/promises';
+import { sourceVersion, validateSbom } from './sbom.mjs';
+
+test('SBOM source version follows the release manifest', async () => {
+  const manifest = JSON.parse(
+    await readFile(new URL('../../package.json', import.meta.url), 'utf8'),
+  );
+  assert.equal(manifest.version, '0.1.2');
+  assert.equal(await sourceVersion(), manifest.version);
+});
 
 const fixture = () => ({
   bomFormat: 'CycloneDX',

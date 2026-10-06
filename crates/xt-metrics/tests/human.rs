@@ -1,6 +1,6 @@
 use jiff::{Timestamp, tz::TimeZone};
 use rusqlite::Connection;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::path::PathBuf;
 use xt_fixtures::{Fixture, TempDb};
 use xt_metrics::{DayHuman, HumanTime, MetricsDb, TypingRate, Window};
@@ -44,7 +44,6 @@ fn human_characters_f1_ratio_and_metadata_replay_parity() {
         assert_eq!(report.human_minutes_est, Some(0.675));
         assert_eq!(report.summed_session_minutes_est, Some(0.675));
         assert_eq!(report.agent_minutes, 23.0);
-        assert_eq!(report.agent_to_human_ratio, Some(23.0 / 0.675));
         for session in f.sessions() {
             seed(
                 &mut db,
@@ -84,8 +83,7 @@ fn human_characters_f2_are_additive_across_sessions() {
                 );
             }
             let report = query(&db, window());
-            let mut expected = snapshot["expected"].clone();
-            expected["agent_to_human_ratio"] = json!(90.0 / 0.92);
+            let expected = snapshot["expected"].clone();
             assert_eq!(serde_json::to_value(report).unwrap(), expected);
         }
     }
@@ -117,7 +115,6 @@ fn human_characters_ignore_agent_gaps_and_tool_result_text() {
 fn human_characters_include_full_length_at_window_start() {
     let mut db = fixture("F3").build_db(false).unwrap();
     assert_eq!(query(&db, window()).human_minutes_est, Some(0.0));
-    assert_eq!(query(&db, window()).agent_to_human_ratio, None);
     let session = fixture("F3").sessions()[0].metadata.session_id.clone();
     db.store_mut()
         .upsert_records(
@@ -128,10 +125,10 @@ fn human_characters_include_full_length_at_window_start() {
         .unwrap();
     let w = Window::new(ms("2026-09-01T00:00:01.900Z"), ms("2026-09-01T00:00:03Z")).unwrap();
     assert_eq!(query(&db, w).human_minutes_est, Some(0.005));
-    assert_eq!(query(&db, w).agent_to_human_ratio, Some(0.0));
+    assert_eq!(query(&db, w).agent_minutes, 0.0);
     let w = Window::new(ms("2026-09-01T00:00:02Z"), ms("2026-09-01T00:00:03Z")).unwrap();
     assert_eq!(query(&db, w).human_minutes_est, Some(0.005));
-    assert_eq!(query(&db, w).agent_to_human_ratio, Some(0.0));
+    assert_eq!(query(&db, w).agent_minutes, 0.0);
 }
 #[test]
 fn human_intervals_tiny_typing_at_large_epoch_and_configurable_rate() {
@@ -183,7 +180,7 @@ fn human_characters_count_same_instant_inputs_and_leap_boundaries() {
     );
     let w = Window::new(ms("2026-09-07T23:59:59Z"), ms("2026-09-08T00:00:01Z")).unwrap();
     assert_eq!(query(&db, w).human_minutes_est, Some(0.005));
-    assert_eq!(query(&db, w).agent_to_human_ratio, Some(3.0));
+    assert_eq!(query(&db, w).agent_minutes, 900.0 / 60_000.0);
 }
 #[test]
 fn human_characters_require_every_eligible_length() {
@@ -209,7 +206,6 @@ fn human_characters_require_every_eligible_length() {
     let result = query(&db, window());
     assert_eq!(result.human_minutes_est, None);
     assert_eq!(result.summed_session_minutes_est, None);
-    assert_eq!(result.agent_to_human_ratio, None);
     assert_eq!(result.agent_minutes, 1.0 / 60.0);
     let w = Window::new(ms("2026-09-07T12:00:00.500Z"), ms("2026-09-07T12:00:02Z")).unwrap();
     c.execute("UPDATE records SET text_len=1 WHERE uuid='human'", [])
@@ -225,7 +221,6 @@ fn human_intervals_empty_ratio_and_serialization_preserve_unknowns() {
             human_minutes_est: Some(0.0),
             summed_session_minutes_est: Some(0.0),
             agent_minutes: 0.0,
-            agent_to_human_ratio: None,
             by_day: (1..=7)
                 .map(|day| DayHuman {
                     date: format!("2026-09-0{day}"),
@@ -236,8 +231,6 @@ fn human_intervals_empty_ratio_and_serialization_preserve_unknowns() {
                 .collect(),
         }
     );
-    let value: Value = serde_json::to_value(query(&db, window())).unwrap();
-    assert_eq!(value["agent_to_human_ratio"], Value::Null);
 }
 
 #[test]
@@ -349,7 +342,7 @@ fn human_by_day_uses_message_timestamp() {
         recut.summed_session_minutes_est,
         report.summed_session_minutes_est
     );
-    assert_eq!(recut.agent_to_human_ratio, report.agent_to_human_ratio);
+    assert_eq!(recut.agent_minutes, report.agent_minutes);
     assert_eq!(
         by_day(&recut, window(), pacific)
             .into_iter()

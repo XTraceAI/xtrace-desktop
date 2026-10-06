@@ -2,7 +2,7 @@ import type { MetricEffortDay } from '../../data/generated/MetricEffortDay';
 import type { MetricModelDayEffort } from '../../data/generated/MetricModelDayEffort';
 import type { MetricPrEffort } from '../../data/generated/MetricPrEffort';
 import type { MetricPrMarker } from '../../data/generated/MetricPrMarker';
-import { agentHours, costCell, markerFreshnessText, type EffortMetric } from './pr-effort';
+import { agentHours, costCell, markerFreshnessText, type BarMetric } from './pr-effort';
 import { plural, usd } from './present';
 
 /**
@@ -97,7 +97,7 @@ export interface EffortHeadline {
   note: string | null;
 }
 export interface EffortChart {
-  metric: EffortMetric;
+  metric: BarMetric;
   /** The unit every plotted value is stated in. */
   unit: 'hours' | 'dollars';
   days: readonly MetricEffortDay[];
@@ -154,7 +154,7 @@ export function timeUnit(maxHours: number): TimeUnit {
 }
 const HOURS: TimeUnit = { factor: 1, suffix: 'h' };
 /** A scale label: `24 h`, `6 min`, `12 s`, `$400`, `$1.5k`, `$0.003`. */
-export function scaleText(value: number, metric: EffortMetric, unit: TimeUnit = HOURS) {
+export function scaleText(value: number, metric: BarMetric, unit: TimeUnit = HOURS) {
   if (metric === 'agent') return `${trimmed(value * unit.factor)} ${unit.suffix}`;
   return value >= 1000 ? `$${trimmed(value / 1000)}k` : `$${trimmed(value)}`;
 }
@@ -183,7 +183,7 @@ function shareText(value: number, total: number) {
 }
 
 /** Every model with a value on the day in this measure, largest first. */
-function modelParts(day: MetricEffortDay, metric: EffortMetric, total: number): ModelPart[] {
+function modelParts(day: MetricEffortDay, metric: BarMetric, total: number): ModelPart[] {
   return day.models
     .filter((model) => (metric === 'agent' ? model.agent_ms > 0 : model.priced_observations > 0))
     .map((model) => {
@@ -228,7 +228,7 @@ function barName(bar: Omit<EffortBar, 'name'>) {
   return parts.join('. ');
 }
 
-export function effortChart(current: MetricPrEffort, metric: EffortMetric): EffortChart {
+export function effortChart(current: MetricPrEffort, metric: BarMetric): EffortChart {
   const days = current.cohort.by_day;
   const count = days.length;
   const byDay = markersByDay(current.markers);
@@ -354,11 +354,7 @@ export function effortChart(current: MetricPrEffort, metric: EffortMetric): Effo
   };
 }
 
-function headline(
-  current: MetricPrEffort,
-  metric: EffortMetric,
-  bars: EffortBar[],
-): EffortHeadline {
+function headline(current: MetricPrEffort, metric: BarMetric, bars: EffortBar[]): EffortHeadline {
   const cohort = current.cohort;
   const range = `last ${plural(cohort.by_day.length, 'day')}`;
   if (metric === 'agent') {

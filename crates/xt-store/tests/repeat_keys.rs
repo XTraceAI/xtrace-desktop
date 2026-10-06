@@ -278,7 +278,7 @@ fn migration_9_leaves_older_rows_unknown_and_asks_for_no_replay() {
          ALTER TABLE tool_uses DROP COLUMN group_conflict;
          DROP TABLE confirmed_automated_inputs;
          DROP TABLE guardian_turn_inputs;
-         DROP TABLE injected_context_inputs; DROP TABLE IF EXISTS task_notification_inputs; DROP TABLE IF EXISTS record_previews; DROP TABLE IF EXISTS human_input_adjustments; DROP TABLE IF EXISTS human_session_origins;
+         DROP TABLE injected_context_inputs; DROP TABLE IF EXISTS tool_sent_inputs; DROP TABLE IF EXISTS task_notification_inputs; DROP TABLE IF EXISTS record_previews; DROP TABLE IF EXISTS session_child_checks; DROP TABLE IF EXISTS session_child_facts; DROP TABLE IF EXISTS human_input_adjustments; DROP TABLE IF EXISTS human_session_origins;
          DROP TABLE session_creation_relations;
          DROP TABLE session_creation_bootstrap; DROP TABLE cli_artifact_launch_owners; DROP TABLE claude_launch_groups; DROP TABLE claude_launch_group_members; DROP TABLE claude_launch_candidates; DROP TABLE claude_launch_staged_candidates;
          DROP INDEX sessions_host_native; DROP INDEX source_cursors_tail;",
@@ -314,7 +314,7 @@ fn migration_9_leaves_older_rows_unknown_and_asks_for_no_replay() {
 
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 17);
+        assert_eq!(store.schema_version().unwrap(), 22);
         // Migration 9 asks for nothing to be read again: the records, the
         // session and the cursors are exactly as they were.
         assert_eq!(

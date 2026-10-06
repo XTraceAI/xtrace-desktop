@@ -25,7 +25,8 @@ use xt_ingest::native::{
 };
 use xt_store::{
     Host, Store,
-    claude_launch::ChildState,
+    child_fact::ChildEvidence,
+    claude_launch::{ChildState, GroupStatus},
     creation::{CreationEvidence, CreationWitness},
     session_list::{ParentEvidence, SessionFilter},
 };
@@ -414,6 +415,8 @@ fn totals(passes: &[LaunchProgress]) -> LaunchProgress {
         total.launches_found += pass.launches_found;
         total.launches_broken += pass.launches_broken;
         total.linked += pass.linked;
+        total.children += pass.children;
+        total.unparented += pass.unparented;
         total.changed += pass.changed;
         total.rejected += pass.rejected;
         total.waiting += pass.waiting;
@@ -467,7 +470,9 @@ fn links_the_actual_shaped_launch_from_an_unindexed_continuation_and_stays_linke
     let passes = settle(&home, &mut store, &mut spawns);
     let total = totals(&passes);
     assert_eq!(total.linked, 1, "{total:?}");
-    assert_eq!(total.changed, 1, "{total:?}");
+    assert_eq!(total.children, 1, "{total:?}");
+    // The child fact, then the relation.
+    assert_eq!(total.changed, 2, "{total:?}");
     assert_eq!(total.launches_found, 1, "{total:?}");
     assert_eq!(total.files_read, 4, "{total:?}");
     let history: u64 = files.iter().map(|f| fs::metadata(f).unwrap().len()).sum();
@@ -492,7 +497,29 @@ fn links_the_actual_shaped_launch_from_an_unindexed_continuation_and_stays_linke
         proof.acknowledgment_ordinal.unwrap(),
         proof.launch_ordinal.unwrap() + 2
     );
-    assert_eq!(proof.evidence_version, 3);
+    assert_eq!(proof.evidence_version, 6);
+    // The child fact, on the same launch, recorded before the relation.
+    assert_eq!(
+        store
+            .child_facts(&child)
+            .unwrap()
+            .into_iter()
+            .map(|(fact, accepted)| (
+                fact.evidence_kind,
+                fact.source_native_session_id,
+                fact.launch_call_id,
+                fact.first_record_uuid,
+                accepted
+            ))
+            .collect::<Vec<_>>(),
+        [(
+            ChildEvidence::CodexClaudeLaunch,
+            PARENT.to_owned(),
+            Some("call_launch".to_owned()),
+            Some(FIRST.to_owned()),
+            true
+        )]
+    );
     let stored = store.session_creation(&child).unwrap().unwrap().0;
     assert_eq!(stored.evidence_kind, CreationEvidence::CodexClaudeLaunch);
     assert_eq!(stored.witness, CreationWitness::CodexExecSessionIdLaunch);
@@ -659,6 +686,14 @@ fn launches_outside_the_supported_form_or_unacknowledged_relate_nothing() {
             replace_cell("--safe-mode", "--safe-mode --continue"),
         ),
         ("help", replace_cell("--safe-mode", "--safe-mode --help")),
+        (
+            "background",
+            replace_cell("--safe-mode", "--safe-mode --bg"),
+        ),
+        (
+            "no saved session",
+            replace_cell("--safe-mode", "--safe-mode --no-session-persistence"),
+        ),
         (
             "unknown option",
             replace_cell("--safe-mode", "--safe-mode --agent x"),
@@ -827,12 +862,512 @@ fn launches_outside_the_supported_form_or_unacknowledged_relate_nothing() {
         let total = totals(&settle(&home, &mut store, &mut spawns));
         let child = child_session(&store).unwrap();
         let linked = store.session_creation(&child).unwrap().is_some();
+        // The bare program name is taken on the recorded command's word.
         assert_eq!(
             linked,
-            name == "control" || name.starts_with("later: "),
+            name == "control" || name == "bare program" || name.starts_with("later: "),
             "{name}: {total:?}"
         );
     }
+}
+
+/// The coordinator's own job form, with the brief read from a redirected
+/// file and the JSON result redirected to another: the bare program, a
+/// quoted session title, no browser.
+fn stdin_cell(child: &str) -> String {
+    format!(
+        "const r = await tools.exec_command({{cmd: {}, workdir: \"/w\", yield_time_ms: 10000}});\ntext(r)",
+        js(&format!(
+            "claude -p --session-id {child} --name \"Fix active session names\" --no-chrome \
+             --model claude-opus-5-5 --effort high --permission-mode bypassPermissions \
+             --output-format json < /w/brief.md > /w/job.json"
+        ))
+    )
+}
+
+/// That job form records its child first. The brief is never opened (here
+/// it does not even exist), so the child's first input may be any one text;
+/// it comes after the launch's running acknowledgment and after the job's
+/// completion, which bound nothing. With the thread exactly one indexed
+/// session the child is linked to it, with the relation's existing Human
+/// effect; with the thread held by two sessions, or by none — its history
+/// found by the census alone — it stays a known child with no parent, and
+/// its Human count is untouched. A restart changes nothing.
+#[test]
+fn the_bare_named_stdin_launch_records_its_child_before_its_parent() {
+    for (ambiguous, unindexed) in [(false, false), (true, false), (true, true)] {
+        let home = Home::new();
+        let mut rows = launch_rows(&home.claude(), CHILD, exit(0, ""));
+        rows[1] = call(0, "call_launch", &stdin_cell(CHILD));
+        let files = write_history(&home, &[vec![message(-3_000_000, "earlier")], rows]);
+        write_child(&home, &child_rows(1_000_000, "Whatever the brief said"));
+        let mut store = home.store();
+        if !unindexed {
+            index_parent(&mut store, &files[0]);
+        }
+        assert_eq!(
+            store
+                .user_sessions_with_native(Host::Codex, PARENT)
+                .unwrap()
+                .is_empty(),
+            unindexed
+        );
+        if ambiguous && !unindexed {
+            let mut twin =
+                xt_store::SessionMeta::new("plugin-twin", "codex", xt_store::SessionSource::Plugin);
+            twin.native_session_id = Some(PARENT.into());
+            store.upsert_session(&twin, false).unwrap();
+        }
+        scan_claude(&home, &mut store, &mut SpawnBacklog::default());
+        let child = child_session(&store).expect("child indexed");
+        let before = eligible(&home.db, &child);
+        assert!(before >= 1);
+        let mut spawns = SpawnBacklog::starting();
+        let total = totals(&settle(&home, &mut store, &mut spawns));
+        assert_eq!(total.children, 1, "{ambiguous} {unindexed}: {total:?}");
+        let facts = store.child_facts(&child).unwrap();
+        assert_eq!(facts.len(), 1, "{facts:?}");
+        assert!(facts[0].1);
+        assert_eq!(facts[0].0.evidence_kind, ChildEvidence::CodexClaudeLaunch);
+        assert_eq!(facts[0].0.first_record_uuid.as_deref(), Some(FIRST));
+        let connection = rusqlite::Connection::open(&home.db).unwrap();
+        let context = xt_store::session_list::context(&connection, &[&child])
+            .unwrap()
+            .remove(0);
+        assert!(context.known_child, "{ambiguous} {unindexed}");
+        if ambiguous {
+            assert_eq!(total.unparented, 1, "{total:?}");
+            assert_eq!(total.linked, 0, "{total:?}");
+            assert!(store.session_creation(&child).unwrap().is_none());
+            assert_eq!(context.parent, None);
+            assert_eq!(eligible(&home.db, &child), before, "Human view untouched");
+        } else {
+            assert_eq!(total.linked, 1, "{total:?}");
+            assert_eq!(
+                shown_parent(&store, &child),
+                Some((format!("codex-{PARENT}"), ParentEvidence::AgentLaunch))
+            );
+            assert_eq!(
+                eligible(&home.db, &child),
+                0,
+                "the relation's existing rule"
+            );
+        }
+        let again = totals(&settle(&home, &mut store, &mut SpawnBacklog::starting()));
+        assert_eq!(again.changed, 0, "{ambiguous} {unindexed}: {again:?}");
+    }
+}
+
+/// The empty-server MCP configuration Claude accepts.
+const EMPTY_MCP: &str = r#"{"mcpServers":{}}"#;
+
+/// The coordinator job form that version 6 refused, with synthetic paths:
+/// options ahead of `--print`, an empty-server MCP configuration, verbose
+/// logging, streaming JSON output, the brief read from one redirected file
+/// and standard output and error redirected to two others, in a cell that
+/// asks for escalated permissions.
+fn streaming_cell(child: &str) -> String {
+    streaming_cell_mcp(child, EMPTY_MCP)
+}
+
+/// That form with the MCP configuration `mcp`.
+fn streaming_cell_mcp(child: &str, mcp: &str) -> String {
+    format!(
+        "text(await tools.exec_command({{\ncmd:{},\nworkdir:\"/w\",sandbox_permissions:\"require_escalated\",\njustification:\"Run the synthetic task.\",yield_time_ms:1000,max_output_tokens:1000\n}}));\n",
+        js(&format!(
+            "claude --safe-mode --no-chrome --model claude-opus-5-5 --effort high \
+             --name 'Synthetic task title' --session-id {child} --permission-mode acceptEdits \
+             --tools 'Bash,Read,Edit,Write,Glob,Grep' --allowedTools 'Bash,Read,Edit,Write,Glob,Grep' \
+             --strict-mcp-config --mcp-config '{mcp}' --print --verbose --output-format stream-json \
+             < /w/prompt.txt > /w/job.jsonl 2> /w/job.stderr"
+        ))
+    )
+}
+
+/// A job retried under the same session ID after a first launch Claude
+/// refuses before saving any session (exit 1): the MCP configuration `{}`,
+/// streaming JSON output without `--verbose`, or a `--max-budget-usd` that
+/// is not a positive number. The retry is valid and its own process still
+/// runs. Only the retry is a supported launch, so the child fact and the
+/// parent relation rest on it and its own process result alone, and a
+/// second pass changes nothing. The exit code is not what decides: the
+/// failed launch is not read as a launch at all.
+#[test]
+fn a_rejected_launch_then_a_valid_retry_of_the_same_id_links_only_the_retry() {
+    let budget = |value: &str| {
+        streaming_cell(CHILD).replacen("--print", &format!("--max-budget-usd {value} --print"), 1)
+    };
+    let cases = [
+        (
+            "invalid MCP configuration",
+            streaming_cell_mcp(CHILD, "{}"),
+            streaming_cell(CHILD),
+            40455,
+        ),
+        (
+            "streaming output without verbose",
+            streaming_cell(CHILD).replacen("--verbose ", "", 1),
+            streaming_cell(CHILD),
+            40456,
+        ),
+        ("budget not a number", budget("nope"), budget("5"), 40457),
+        ("budget zero", budget("0"), budget("2.50"), 40458),
+    ];
+    for (name, failed, retry, handle) in cases {
+        assert_ne!(failed, retry, "{name}");
+        let home = Home::new();
+        let rows = vec![
+            message(-2000, "Starting a synthetic worker"),
+            call(0, "call_failed", &failed),
+            output(500, "call_failed", DONE, &[exit(1, "Error: refused")]),
+            message(30_000, "Retrying with valid options"),
+            call(60_000, "call_retry", &retry),
+            output(61_000, "call_retry", DONE, &[live(handle)]),
+        ];
+        let files = write_history(&home, &[vec![message(-3_000_000, "earlier")], rows]);
+        write_child(&home, &child_rows(1_000_000, "Whatever the brief said"));
+        let mut store = home.store();
+        index_parent(&mut store, &files[0]);
+        scan_claude(&home, &mut store, &mut SpawnBacklog::default());
+        let child = child_session(&store).expect("child indexed");
+        let total = totals(&settle(&home, &mut store, &mut SpawnBacklog::starting()));
+        assert_eq!(total.launches_found, 1, "{name}: {total:?}");
+        assert_eq!((total.children, total.linked), (1, 1), "{name}: {total:?}");
+        let facts = store.child_facts(&child).unwrap();
+        assert_eq!(facts.len(), 1, "{name}: {facts:?}");
+        assert!(facts[0].1, "{name}: {facts:?}");
+        assert_eq!(
+            facts[0].0.launch_call_id.as_deref(),
+            Some("call_retry"),
+            "{name}"
+        );
+        let (proof, conflicted) = store
+            .claude_launch_creation(&child)
+            .unwrap()
+            .expect("linked");
+        assert!(!conflicted, "{name}");
+        assert_eq!(proof.launch_call_id, "call_retry", "{name}");
+        assert_eq!(proof.acknowledgment_call_id, "call_retry", "{name}");
+        assert_eq!(
+            proof.process_session_id.as_deref(),
+            Some(handle.to_string().as_str()),
+            "{name}"
+        );
+        assert_eq!(
+            shown_parent(&store, &child),
+            Some((format!("codex-{PARENT}"), ParentEvidence::AgentLaunch)),
+            "{name}"
+        );
+        let again = totals(&settle(&home, &mut store, &mut SpawnBacklog::starting()));
+        assert_eq!(again.changed, 0, "{name}: {again:?}");
+        assert_eq!(store.child_facts(&child).unwrap(), facts, "{name}");
+    }
+}
+
+/// That job form records its child, and links it to the one indexed
+/// parent, exactly as the JSON job form does: its output format, logging
+/// and standard-error routing are not creation evidence. With the thread
+/// found by the census alone the child stays a known child with no parent.
+/// The same launch resuming, forking or running in the background records
+/// nothing.
+#[test]
+fn the_streaming_verbose_job_form_records_its_child_like_the_json_form() {
+    for unindexed in [false, true] {
+        let home = Home::new();
+        let mut rows = launch_rows(&home.claude(), CHILD, exit(0, ""));
+        rows[1] = call(0, "call_launch", &streaming_cell(CHILD));
+        let files = write_history(&home, &[vec![message(-3_000_000, "earlier")], rows]);
+        write_child(&home, &child_rows(1_000_000, "Whatever the brief said"));
+        let mut store = home.store();
+        if !unindexed {
+            index_parent(&mut store, &files[0]);
+        }
+        scan_claude(&home, &mut store, &mut SpawnBacklog::default());
+        let child = child_session(&store).expect("child indexed");
+        let total = totals(&settle(&home, &mut store, &mut SpawnBacklog::starting()));
+        assert_eq!(total.children, 1, "{unindexed}: {total:?}");
+        let facts = store.child_facts(&child).unwrap();
+        assert_eq!(facts.len(), 1, "{facts:?}");
+        assert!(facts[0].1);
+        assert_eq!(facts[0].0.evidence_kind, ChildEvidence::CodexClaudeLaunch);
+        assert_eq!(
+            facts[0].0.evidence_version,
+            xt_store::creation::CLAUDE_LAUNCH_CREATE_VERSION
+        );
+        assert_eq!(facts[0].0.first_record_uuid.as_deref(), Some(FIRST));
+        if unindexed {
+            assert_eq!(total.linked, 0, "{total:?}");
+            assert!(store.session_creation(&child).unwrap().is_none());
+        } else {
+            assert_eq!(total.linked, 1, "{total:?}");
+            assert_eq!(
+                shown_parent(&store, &child),
+                Some((format!("codex-{PARENT}"), ParentEvidence::AgentLaunch))
+            );
+        }
+        let again = totals(&settle(&home, &mut store, &mut SpawnBacklog::starting()));
+        assert_eq!(again.changed, 0, "{unindexed}: {again:?}");
+    }
+    for (name, from, to) in [
+        ("resume", "--session-id", "--resume"),
+        (
+            "fork",
+            "--print",
+            "--resume 0c000000-0000-4000-8000-0000000000aa --fork-session --print",
+        ),
+        ("background", "--print", "--bg --print"),
+        ("unknown option", "--print", "--agent x --print"),
+        ("appended stderr", "2> /w/job.stderr", "2>> /w/job.stderr"),
+    ] {
+        let home = Home::new();
+        let mut rows = launch_rows(&home.claude(), CHILD, exit(0, ""));
+        let cell = streaming_cell(CHILD);
+        assert!(cell.contains(from), "{name}");
+        rows[1] = call(0, "call_launch", &cell.replacen(from, to, 1));
+        let files = write_history(&home, &[vec![message(-3_000_000, "earlier")], rows]);
+        write_child(&home, &child_rows(1_000_000, "Whatever the brief said"));
+        let mut store = home.store();
+        index_parent(&mut store, &files[0]);
+        scan_claude(&home, &mut store, &mut SpawnBacklog::default());
+        let child = child_session(&store).expect("child indexed");
+        let total = totals(&settle(&home, &mut store, &mut SpawnBacklog::starting()));
+        assert_eq!(total.children, 0, "{name}: {total:?}");
+        assert!(store.child_facts(&child).unwrap().is_empty(), "{name}");
+        assert!(store.session_creation(&child).unwrap().is_none(), "{name}");
+    }
+}
+
+/// The ID is printed by this completed cell, then loaded by only the next
+/// own exec cell. A literal patch operation occupies the first result slot
+/// in each cell; the Python command occupies the next launch slot, so the
+/// Claude process result must be taken from the third operation.
+fn bound_cells(key: &str, receipt: Value) -> Vec<Value> {
+    let binding = format!(
+        "text(await tools.apply_patch(\"synthetic patch\"));\n\
+         const worker=\"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx\".replace(/[xy]/g,c=>{{const n=Math.floor(Math.random()*16);return(c===\"x\"?n:(n&3)|8).toString(16)}});\
+         store({},worker);text({{session_id:worker}});\n\
+         text(await tools.exec_command({{cmd:\"git status --short\"}}));",
+        js(key)
+    );
+    let launch = format!(
+        "text(await tools.apply_patch(\"synthetic patch\"));\n\
+         const worker=load({});\n\
+         text(await tools.exec_command({{cmd:\"python3 -c 'print(1)'\"}}));\n\
+         text(await tools.exec_command({{cmd:\"claude -p --session-id \"+worker+\" --output-format json < /w/brief.md > /w/job.json\"}}));",
+        js(key)
+    );
+    vec![
+        message(-1000, "Start synthetic bound worker"),
+        call(0, "call_binding", &binding),
+        output(
+            100,
+            "call_binding",
+            DONE,
+            &[json!({}), receipt, exit(0, "")],
+        ),
+        call(200, "call_launch", &launch),
+        output(
+            300,
+            "call_launch",
+            DONE,
+            &[json!({}), exit(0, ""), live(HANDLE)],
+        ),
+    ]
+}
+
+#[test]
+fn a_one_use_output_binding_records_the_exact_child_and_optional_parent() {
+    for indexed in [true, false] {
+        let home = Home::new();
+        let rows = bound_cells("synthetic arbitrary key", json!({"session_id": CHILD}));
+        let files = write_history(&home, &[rows]);
+        write_child(&home, &child_rows(4203, "Any fresh first input"));
+        let mut store = home.store();
+        if indexed {
+            index_parent(&mut store, &files[0]);
+        }
+        scan_claude(&home, &mut store, &mut SpawnBacklog::default());
+        let child = child_session(&store).unwrap();
+        let before = eligible(&home.db, &child);
+        let mut spawns = SpawnBacklog::starting();
+        let total = totals(&settle(&home, &mut store, &mut spawns));
+        assert_eq!(total.children, 1, "{total:?}");
+        assert_eq!(store.child_facts(&child).unwrap().len(), 1);
+        let candidate = store
+            .claude_launch_candidates_for_child(CHILD, None, 10)
+            .unwrap()
+            .remove(0)
+            .candidate;
+        assert_eq!(
+            candidate.key.launch_operation_index, 2,
+            "patch, Python, Claude"
+        );
+        assert_eq!(candidate.acknowledgment_operation_index, 2);
+        assert_eq!(candidate.process_session_id.as_deref(), Some("56751"));
+        assert!(candidate.binding_call_offset.is_some());
+        assert!(candidate.binding_output_offset.unwrap() > candidate.binding_call_offset.unwrap());
+        let context = xt_store::session_list::context(
+            &rusqlite::Connection::open(&home.db).unwrap(),
+            &[&child],
+        )
+        .unwrap()
+        .remove(0);
+        assert!(context.known_child);
+        if indexed {
+            assert_eq!(total.linked, 1, "{total:?}");
+            assert!(store.session_creation(&child).unwrap().is_some());
+            assert_eq!(eligible(&home.db, &child), 0);
+        } else {
+            assert_eq!(total.unparented, 1, "{total:?}");
+            assert!(store.session_creation(&child).unwrap().is_none());
+            assert_eq!(eligible(&home.db, &child), before);
+        }
+        assert_eq!(
+            totals(&settle(&home, &mut store, &mut SpawnBacklog::starting())).changed,
+            0
+        );
+    }
+}
+
+#[test]
+fn a_binding_needs_its_own_receipt_and_the_immediately_next_exec() {
+    for name in [
+        "other key",
+        "missing receipt",
+        "wrong receipt",
+        "duplicate receipt",
+        "intervening exec",
+        "untimed intervening exec",
+        "invalid-token intervening exec",
+        "mutation",
+        "unsupported recipe",
+    ] {
+        let home = Home::new();
+        let mut rows = bound_cells("synthetic arbitrary key", json!({"session_id": CHILD}));
+        match name {
+            "other key" => {
+                let code = rows[3]["payload"]["input"].as_str().unwrap();
+                rows[3]["payload"]["input"] = json!(code.replace(
+                    "load(\"synthetic arbitrary key\")",
+                    "load(\"different key\")"
+                ));
+            }
+            "missing receipt" => {
+                rows[2] = output(
+                    100,
+                    "call_binding",
+                    DONE,
+                    &[json!({}), json!({}), exit(0, "")],
+                )
+            }
+            "wrong receipt" => {
+                rows[2] = output(
+                    100,
+                    "call_binding",
+                    DONE,
+                    &[
+                        json!({}),
+                        json!({"session_id": "00000000-0000-4000-8000-000000000000"}),
+                        exit(0, ""),
+                    ],
+                )
+            }
+            "duplicate receipt" => rows.insert(3, rows[2].clone()),
+            "intervening exec" => {
+                rows.insert(
+                    3,
+                    call(
+                        150,
+                        "call_intervening",
+                        "text(await tools.exec_command({cmd:\"echo unrelated\"}));",
+                    ),
+                );
+                rows.insert(4, output(160, "call_intervening", DONE, &[exit(0, "")]))
+            }
+            "untimed intervening exec" => {
+                let mut intervening = call(
+                    150,
+                    "call_untimed",
+                    "text(await tools.exec_command({cmd:\"echo unrelated\"}));",
+                );
+                intervening.as_object_mut().unwrap().remove("timestamp");
+                rows.insert(3, intervening);
+                rows.insert(4, output(160, "call_untimed", DONE, &[exit(0, "")]))
+            }
+            "invalid-token intervening exec" => {
+                rows.insert(
+                    3,
+                    call(
+                        150,
+                        "invalid call id",
+                        "text(await tools.exec_command({cmd:\"echo unrelated\"}));",
+                    ),
+                );
+                rows.insert(4, output(160, "invalid call id", DONE, &[exit(0, "")]))
+            }
+            "mutation" => {
+                let code = rows[1]["payload"]["input"].as_str().unwrap();
+                rows[1]["payload"]["input"] = json!(code.replace("const worker=", "let worker="));
+            }
+            "unsupported recipe" => {
+                let code = rows[1]["payload"]["input"].as_str().unwrap();
+                rows[1]["payload"]["input"] =
+                    json!(code.replace("Math.random()*16", "Math.random()*15"));
+            }
+            _ => unreachable!(),
+        }
+        let files = write_history(&home, &[rows]);
+        write_child(&home, &child_rows(4203, "Any fresh first input"));
+        let mut store = home.store();
+        index_parent(&mut store, &files[0]);
+        scan_claude(&home, &mut store, &mut SpawnBacklog::default());
+        let child = child_session(&store).unwrap();
+        let total = totals(&settle(&home, &mut store, &mut SpawnBacklog::starting()));
+        if matches!(
+            name,
+            "untimed intervening exec" | "invalid-token intervening exec"
+        ) {
+            assert_eq!(
+                store.claude_launch_group(PARENT).unwrap().unwrap().status,
+                GroupStatus::Valid,
+                "{name}"
+            );
+            assert_eq!(total.launches_found, 0, "{name}: {total:?}");
+        }
+        assert!(
+            store.child_facts(&child).unwrap().is_empty(),
+            "{name}: {total:?}"
+        );
+        assert!(store.session_creation(&child).unwrap().is_none(), "{name}");
+    }
+}
+
+#[test]
+fn a_changed_binding_witness_cannot_keep_the_old_candidate() {
+    let home = Home::new();
+    let rows = bound_cells("synthetic arbitrary key", json!({"session_id": CHILD}));
+    let files = write_history(&home, std::slice::from_ref(&rows));
+    let mut store = home.store();
+    index_parent(&mut store, &files[0]);
+    settle(&home, &mut store, &mut SpawnBacklog::starting());
+    let mut changed = rows;
+    changed[2] = output(
+        100,
+        "call_binding",
+        DONE,
+        &[
+            json!({}),
+            json!({"session_id": "00000000-0000-4000-8000-000000000000"}),
+            exit(0, ""),
+        ],
+    );
+    write_history(&home, &[changed]);
+    write_child(&home, &child_rows(4203, "Any fresh first input"));
+    scan_claude(&home, &mut store, &mut SpawnBacklog::default());
+    let child = child_session(&store).unwrap();
+    settle(&home, &mut store, &mut SpawnBacklog::starting());
+    assert!(store.child_facts(&child).unwrap().is_empty());
+    assert!(store.session_creation(&child).unwrap().is_none());
 }
 
 /// The child's side must match: another first input, one dated before the
@@ -874,8 +1409,10 @@ fn a_child_whose_first_input_is_not_the_launch_is_not_linked() {
 }
 
 /// A history that is not one valid group relates nothing: a broken base
-/// cutoff, a continuation whose ordinals skip, a fork, and a spawned thread
-/// whose launch lies in its inherited context.
+/// cutoff, a continuation whose ordinals skip, a second first rollout (a
+/// fork's, beside the original), and a spawned thread whose launch lies in
+/// its inherited context. A continuation that repeats its conversation's
+/// fork origin, as the reader allows, is still one history.
 #[test]
 fn an_invalid_or_inherited_history_relates_nothing() {
     let rewrite_header = |edit: &dyn Fn(&mut Value)| {
@@ -915,9 +1452,17 @@ fn an_invalid_or_inherited_history_relates_nothing() {
             }),
         ),
         (
-            "fork",
+            "fork origin repeated",
             rewrite_header(&|h| {
                 h["payload"]["forked_from_id"] = json!("01a00000-0000-7000-8000-0000000000ee");
+            }),
+        ),
+        (
+            "a fork's first rollout beside the original",
+            rewrite_header(&|h| {
+                h["payload"]["forked_from_id"] = json!("01a00000-0000-7000-8000-0000000000ee");
+                h["payload"]["history_base"]["thread_id"] =
+                    json!("01a00000-0000-7000-8000-0000000000ff");
             }),
         ),
         (
@@ -937,7 +1482,7 @@ fn an_invalid_or_inherited_history_relates_nothing() {
         let total = totals(&settle(&home, &mut store, &mut spawns));
         assert_eq!(
             total.linked,
-            usize::from(name == "control"),
+            usize::from(name == "control" || name == "fork origin repeated"),
             "{name}: {total:?}"
         );
     }
@@ -952,6 +1497,109 @@ fn an_invalid_or_inherited_history_relates_nothing() {
     scan_claude(&home, &mut store, &mut SpawnBacklog::default());
     let total = totals(&settle(&home, &mut store, &mut SpawnBacklog::starting()));
     assert_eq!(total.linked, 0, "{total:?}");
+}
+
+/// A spawned helper with no marker, an approval reviewer, and a helper
+/// forked from its parent with a marker relate the launches in their own
+/// rows. A launch in rows copied from another conversation never does:
+/// below a marker, or anywhere in a fork that says nothing of where its copy
+/// ends.
+#[test]
+fn copied_or_inherited_rows_never_relate_a_launch() {
+    const OTHER: &str = "01a00000-0000-7000-8000-0000000000ee";
+    const ROOT: &str = "01a00000-0000-7000-8000-0000000000ef";
+    let spawned = |h: &mut Value| {
+        h["payload"]["source"] =
+            json!({"subagent": {"thread_spawn": {"parent_thread_id": OTHER, "depth": 1}}});
+        h["payload"]["session_id"] = json!(OTHER);
+    };
+    let reviewer = |h: &mut Value| {
+        h["payload"]["source"] = json!({"subagent": {"other": "guardian"}});
+        h["payload"]["thread_source"] = json!("guardian_review");
+        h["payload"]["parent_thread_id"] = json!(OTHER);
+        h["payload"]["session_id"] = json!(ROOT);
+    };
+    // One file: its header, a message at 1, the launch call at 2, and its
+    // completion after.
+    let marked = |h: &mut Value, below: i64| {
+        h["payload"]["subagent_history_start_ordinal"] = json!(below);
+    };
+    type Edit = Box<dyn Fn(&mut Value)>;
+    let cases: Vec<(&str, Edit, usize)> = vec![
+        ("control", Box::new(|_| {}), 1),
+        ("a spawned helper with no marker", Box::new(spawned), 1),
+        (
+            "a spawned helper whose launch is below its marker",
+            Box::new(move |h| {
+                spawned(h);
+                marked(h, 3);
+            }),
+            0,
+        ),
+        (
+            "a helper fork whose launch is its own",
+            Box::new(move |h| {
+                spawned(h);
+                marked(h, 1);
+                h["payload"]["forked_from_id"] = json!(OTHER);
+            }),
+            1,
+        ),
+        (
+            "a helper fork whose launch is copied",
+            Box::new(move |h| {
+                spawned(h);
+                marked(h, 3);
+                h["payload"]["forked_from_id"] = json!(OTHER);
+            }),
+            0,
+        ),
+        (
+            "a helper fork with no marker",
+            Box::new(move |h| {
+                spawned(h);
+                h["payload"]["forked_from_id"] = json!(OTHER);
+            }),
+            0,
+        ),
+        (
+            "a fork with neither a reference nor a marker",
+            Box::new(|h| h["payload"]["forked_from_id"] = json!(OTHER)),
+            0,
+        ),
+        (
+            "a reviewer whose launch is its own",
+            Box::new(move |h| {
+                reviewer(h);
+                marked(h, 1);
+            }),
+            1,
+        ),
+        (
+            "a reviewer whose launch is copied",
+            Box::new(move |h| {
+                reviewer(h);
+                marked(h, 3);
+            }),
+            0,
+        ),
+    ];
+    for (name, edit, linked) in cases {
+        let home = Home::new();
+        let files = write_history(&home, &[launch_rows(&home.claude(), CHILD, exit(0, ""))]);
+        let body = fs::read_to_string(&files[0]).unwrap();
+        let (header, rest) = body.split_once('\n').unwrap();
+        let mut header: Value = serde_json::from_str(header).unwrap();
+        edit(&mut header);
+        fs::write(&files[0], format!("{header}\n{rest}")).unwrap();
+        write_child(&home, &child_rows(4203, PROMPT));
+        let mut store = home.store();
+        index_parent(&mut store, &files[0]);
+        scan_claude(&home, &mut store, &mut SpawnBacklog::default());
+        let mut spawns = SpawnBacklog::starting();
+        let total = totals(&settle(&home, &mut store, &mut spawns));
+        assert_eq!(total.linked, linked, "{name}: {total:?}");
+    }
 }
 
 /// Many launches in one large history, read in several budget-bounded
@@ -1146,7 +1794,8 @@ fn the_watcher_links_a_saved_launch_without_a_new_event() {
             _ => None,
         })
         .collect();
-    assert_eq!(announced.iter().sum::<usize>(), 1, "{announced:?}");
+    // The child fact and the relation, and the parent's display check.
+    assert_eq!(announced.iter().sum::<usize>(), 3, "{announced:?}");
     assert_eq!(snapshot(&home.home), before, "no host file written");
     let _ = LaunchLimits::default();
 }
@@ -1856,8 +2505,11 @@ fn an_invalid_member_is_not_a_valid_empty_member() {
             );
             assert_eq!(first.linked, 1);
         }
-        // Unchanged: not read again.
+        // Unchanged: not read again. A restarted worker reads an invalid
+        // history once more, to learn again why it is invalid.
         let mut backlog = LaunchBacklog::starting();
+        drain(&home, &mut store, &mut backlog, &LaunchLimits::default());
+        backlog.add_threads([PARENT]);
         let again = totals(&drain(
             &home,
             &mut store,
@@ -3280,7 +3932,8 @@ fn a_history_validated_by(version: u32, mixed: bool) {
         let connection = rusqlite::Connection::open(&home.db).unwrap();
         connection
             .execute(
-                "INSERT INTO claude_launch_groups VALUES (?1,1,1,'valid',?2)",
+                "INSERT INTO claude_launch_groups(parent_native_session_id,revision,allocated,
+                     status,validator_version) VALUES (?1,1,1,'valid',?2)",
                 rusqlite::params![PARENT, version],
             )
             .unwrap();
@@ -3405,7 +4058,8 @@ fn a_relation_the_previous_version_accepted_is_kept_byte_for_byte() {
     let before = dump(&connection);
     let human = eligible(&home.db, &child);
     let total = totals(&settle(&home, &mut store, &mut SpawnBacklog::starting()));
-    assert_eq!((total.linked, total.changed), (1, 0), "{total:?}");
+    // Only the child fact is new: the accepted row is replayed, untouched.
+    assert_eq!((total.linked, total.changed), (1, 1), "{total:?}");
     assert_eq!(dump(&connection), before, "the accepted row is untouched");
     assert_eq!(eligible(&home.db, &child), human);
     let (proof, conflicted) = store.claude_launch_creation(&child).unwrap().unwrap();

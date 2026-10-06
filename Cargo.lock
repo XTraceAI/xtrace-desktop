@@ -5499,7 +5499,7 @@ dependencies = [
 
 [[package]]
 name = "xt-fixtures"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -5513,7 +5513,7 @@ dependencies = [
 
 [[package]]
 name = "xt-ingest"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -5531,11 +5531,11 @@ dependencies = [
 
 [[package]]
 name = "xt-judge"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "xt-metrics"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "jiff",
  "rusqlite",
@@ -5549,7 +5549,7 @@ dependencies = [
 
 [[package]]
 name = "xt-probes"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "libc",
@@ -5563,7 +5563,7 @@ dependencies = [
 
 [[package]]
 name = "xt-rulebook"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "jiff",
  "libc",
@@ -5574,7 +5574,7 @@ dependencies = [
 
 [[package]]
 name = "xt-server"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "axum",
  "chrono",
@@ -5590,7 +5590,7 @@ dependencies = [
 
 [[package]]
 name = "xt-store"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -5604,7 +5604,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde_json",
  "tempfile",
@@ -5614,7 +5614,7 @@ dependencies = [
 
 [[package]]
 name = "xtrace-desktop"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "jiff",

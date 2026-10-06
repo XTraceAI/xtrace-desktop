@@ -593,7 +593,7 @@ def _model_of(obj) -> str | None:
 def _canonicalize(dated_messages: list[tuple[dict, str | None]], *,
                   session_id: str, cwd: str | None, model_hint: str | None,
                   created_ts: str | None, strict: bool = False,
-                  record_guard=None) -> tuple[list[dict], dict]:
+                  record_guard=None, record_origins=None) -> tuple[list[dict], dict]:
     """Transform either native source after it has yielded ordered messages.
 
     Each message's ``ts`` is a clock the artifact carries FOR IT (or None —
@@ -603,6 +603,11 @@ def _canonicalize(dated_messages: list[tuple[dict, str | None]], *,
     It is called with the running record count as each record is kept, so a
     caller's ceiling is reached while the list is growing rather than after it
     has already been built.
+
+    ``record_origins``, when a dict, maps ``id(record)`` to ``(record,
+    derivation, message index)`` for the banner this conversion synthesises
+    (``import_banner``, no message) and each user record it makes from a
+    native user message (``user_message``). It never changes a record.
     """
     ts_holder: dict = {"ts": None}
     out: list[dict] = []
@@ -656,7 +661,10 @@ def _canonicalize(dated_messages: list[tuple[dict, str | None]], *,
         banner += f" · cwd {cwd}"
     banner += "]"
     ts_holder["ts"] = created_ts
-    keep(user(banner))
+    banner_record = user(banner)
+    keep(banner_record)
+    if record_origins is not None:
+        record_origins[id(banner_record)] = (banner_record, "import_banner", None)
 
     title = None
     for message_index, (msg, message_ts) in enumerate(dated_messages):
@@ -670,7 +678,10 @@ def _canonicalize(dated_messages: list[tuple[dict, str | None]], *,
         if role == "user":
             ask = _clean_user_text(_text_of(content))
             if ask:
-                keep(user(ask))
+                asked = user(ask)
+                keep(asked)
+                if record_origins is not None:
+                    record_origins[id(asked)] = (asked, "user_message", message_index)
                 if title is None:
                     # Cursor exposes no host-generated name anywhere in its
                     # artifacts, so the first ask is all there is — but it gets
@@ -814,8 +825,12 @@ def _load_transcript(path: Path, *, strict: bool = False,
 def to_canonical(path, *, session_id: str | None = None,
                  cwd: str | None = None, model: str | None = None,
                  strict: bool = False, source_bytes: bytes | None = None,
-                 record_guard=None) -> tuple[list[dict], dict]:
+                 record_guard=None, automated=None) -> tuple[list[dict], dict]:
     """Load either a legacy ``store.db`` or current hook transcript.
+
+    ``automated``, when a dict, receives the automated-input evidence of the
+    banner this conversion writes and of each Cursor summary message (see
+    ``automated_input``), from this same conversion, without changing records.
 
     ``source_bytes`` are transcript bytes the caller already read through a
     validated descriptor. A store is a database, not JSONL, so it is never
@@ -832,9 +847,10 @@ def to_canonical(path, *, session_id: str | None = None,
         # source-carried instant the transcript offers (None when it offers
         # none; the flush's first-seen stamp covers live sessions).
         created_ts = next((ts for _, ts in messages if ts), None)
-        return _canonicalize(
+        return _evidenced(messages, automated, lambda origins: _canonicalize(
             messages, session_id=sid, cwd=cwd, model_hint=model,
-            created_ts=created_ts, strict=strict, record_guard=record_guard)
+            created_ts=created_ts, strict=strict, record_guard=record_guard,
+            record_origins=origins))
 
     session_dir = source.parent
     mj = _read_meta_json(session_dir, strict=strict) or {}
@@ -851,10 +867,23 @@ def to_canonical(path, *, session_id: str | None = None,
     # it dates the whole undated remainder at flush-adjacent time.
     messages = [(message, _iso_ms(node_ts))
                 for message, node_ts in _load_messages(source, strict=strict)]
-    return _canonicalize(
+    return _evidenced(messages, automated, lambda origins: _canonicalize(
         messages, session_id=session_dir.name, cwd=store_cwd,
         model_hint=None, created_ts=_created_at(mj, strict=strict), strict=strict,
-        record_guard=record_guard)
+        record_guard=record_guard, record_origins=origins))
+
+
+def _evidenced(messages, automated, convert):
+    """``convert`` as it always ran, and, when ``automated`` is a dict, its
+    automated-input evidence from the same conversion."""
+    if automated is None:
+        return convert(None)
+    from . import automated_input, codex_origin
+    origins = {}
+    records, meta = convert(origins)
+    codex_origin.collect(automated, lambda: automated_input.cursor_describe(
+        messages, records, origins, native_session_id=meta["session_id"], out=automated))
+    return records, meta
 
 
 def session_metadata(path, *, meta_text: str | None = None,

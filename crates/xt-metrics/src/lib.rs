@@ -2,10 +2,12 @@
 mod cost;
 mod counts;
 mod coverage;
+mod daily;
 mod environment;
 mod favorite;
 mod hands_off;
 mod human;
+mod human_hours;
 mod pr_analytics;
 mod pr_effort;
 mod prices;
@@ -30,6 +32,7 @@ pub use coverage::{
     CaptureGap, Coverage, CoverageSurface, DiscoveryHealth, HostUsageCoverage, InventoryState,
     SurfaceCapture, SurfaceUsageCoverage, UsageCoverage, UsageCoverageSummary, UsageGap, UsageGate,
 };
+pub use daily::{DayConcurrency, DayHandsOff};
 pub use environment::{
     DayCalls, EnvUsage, HostEnvironment, HostInventory, IdentityCalls, Inventory, InventoryJoin,
     SurfaceCalls, ToolIdentity, UnresolvedCalls, UnresolvedReason,
@@ -37,6 +40,7 @@ pub use environment::{
 pub use favorite::{FavoriteComparison, FavoriteModel, FavoriteUnknown};
 pub use hands_off::{ExcludedSurface, HandsOff};
 pub use human::{DayHuman, HumanTime};
+pub use human_hours::{BreakLength, DayHumanHours, HumanHours, HumanHoursPeriods, HumanStretch};
 pub use pr_analytics::{
     LinkEvidence, PrAnalyticsReport, PrEligibility, PrHandsOff, PrMedian, PrRow, PrSummary,
     PrTokens, TokenMedian, TokenWithheld, TypeSummary,
@@ -50,7 +54,7 @@ pub use repeats::{
     DEFAULT_ACTIVE_MS, DEFAULT_REPEATS, RepeatDensity, RepeatGroup, RepeatThresholds,
     SessionRepeats, StretchRepeats, UnknownRepeats,
 };
-pub use session::{MAX_SESSIONS, SessionWindow};
+pub use session::{MAX_SESSIONS, SUB_SESSION_WALK, SessionWindow, SubSessions};
 pub use session_hands_off::SessionHandsOff;
 pub use session_stretches::{SessionStretch, SessionStretches, ToolBlock};
 pub use sessions::{DaySessions, SessionsPerDay};
@@ -78,6 +82,8 @@ pub enum Error {
     CounterOverflow,
     #[error("Typing rate must be positive characters per minute")]
     InvalidTypingRate,
+    #[error("Break length must be positive whole minutes")]
+    InvalidBreakLength,
     #[error("Duplicate discovery health context for a host/surface")]
     InvalidCoverageContext,
     #[error("Duplicate supplied inventory for a host")]
@@ -117,6 +123,7 @@ impl MetricsDb {
         connection.prepare(&format!("{} LIMIT 0", spans::QUERY))?;
         connection.prepare(&format!("{} LIMIT 0", counts::QUERY))?;
         connection.prepare(&format!("{} LIMIT 0", human::QUERY))?;
+        connection.prepare(&format!("{} LIMIT 0", human_hours::QUERY))?;
         connection.prepare(&format!("{} LIMIT 0", hands_off::QUERY))?;
         for query in [
             coverage::EVENTS_QUERY,

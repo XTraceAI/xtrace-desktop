@@ -539,7 +539,19 @@
 .xt-account-track > span {
   display: block;
   height: 100%;
-  background: var(--host-tone);
+  background: var(--meta);
+}
+/* Less left than even use would leave: the whole bar warns. */
+.xt-account-track > span.is-behind-pace {
+  background: var(--warning);
+}
+/* More left than even use would leave: the length past the mark is green. */
+.xt-account-track > span.is-ahead-of-pace {
+  background: linear-gradient(
+    to right,
+    var(--meta) var(--pace-split),
+    var(--success) var(--pace-split)
+  );
 }
 .xt-account-reset {
   color: var(--meta);
@@ -627,7 +639,7 @@
     monospace;
   overflow-wrap: anywhere;
 }
-.xt-version-label,
+.xt-version-row,
 .xt-capture-trigger {
   display: flex;
   gap: 8px;
@@ -641,19 +653,25 @@
   color: var(--secondary);
   cursor: pointer;
 }
-.xt-version-label > span,
-.xt-capture-trigger > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.xt-updates-trigger {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent-ink);
+  font: inherit;
+  cursor: pointer;
 }
+.xt-updates-trigger:hover {
+  text-decoration: underline;
+}
+
 .xt-sidebar-version {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
-.xt-version-label {
+.xt-version-row {
   min-width: 0;
 }
 .xt-sidebar-version-extra {
@@ -676,13 +694,27 @@
   grid-row: 2;
   align-items: flex-start;
 }
-.xt-sidebar-status:has(.xt-sidebar-version-extra:not(:empty)) .xt-version-label {
+.xt-sidebar-status:has(.xt-sidebar-version-extra:not(:empty)) .xt-version-row {
   flex-shrink: 0;
   padding-top: 4px;
 }
 .xt-sidebar-status:has(.xt-sidebar-version-extra:not(:empty)) .xt-sidebar-actions {
   grid-column: 2;
   grid-row: 1;
+}
+.xt-version-row > span {
+  min-width: 0;
+}
+.xt-updates-popover p {
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.xt-version-row > span,
+.xt-capture-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .xt-version-status i {
   width: 6px;

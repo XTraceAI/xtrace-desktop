@@ -4,7 +4,6 @@
     "human_minutes_est": 0.92,
     "summed_session_minutes_est": 0.92,
     "agent_minutes": 90.0,
-    "agent_to_human_ratio": 97.82608695652173,
     "by_day": [
       {
         "date": "2026-09-01",

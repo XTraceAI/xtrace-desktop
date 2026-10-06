@@ -34,8 +34,10 @@ use xt_ingest::native::{
 };
 use xt_store::{
     Host, Store,
+    child_fact::{ChildEvidence, ChildFactDisposition},
     creation::{
         CODEX_THREAD_SPAWN_VERSION, CreationBootstrap, CreationDisposition, CreationEvidence,
+        CreationWitness, SessionCreationProof,
     },
     session_list::{ParentEvidence, SessionFilter},
 };
@@ -66,9 +68,9 @@ fn rollout_at(home: &Path, time: &str, native: &str) -> PathBuf {
 }
 
 /// A `session_meta` for `native` with this `source`, and its long
-/// instructions, as Codex writes one: a typed spawn's header names its parent
-/// in `payload.session_id` too, as every observed spawned header does; any
-/// other header carries none.
+/// instructions, as Codex writes a first-level spawn: its `payload.session_id`
+/// is the root of its spawn tree, which is the parent itself here; any other
+/// header carries none.
 fn header(native: &str, source: Value) -> String {
     let session = source
         .pointer("/subagent/thread_spawn/parent_thread_id")
@@ -84,6 +86,14 @@ fn header_with(native: &str, source: Value, session: Option<Value>) -> String {
     if let Some(session) = session {
         value["payload"]["session_id"] = session;
     }
+    value.to_string()
+}
+
+/// `line` with this explicit `payload.parent_thread_id`, as current Codex
+/// headers carry beside the typed spawn.
+fn explicit(line: &str, parent: Value) -> String {
+    let mut value: Value = serde_json::from_str(line).unwrap();
+    value["payload"]["parent_thread_id"] = parent;
     value.to_string()
 }
 
@@ -336,11 +346,14 @@ fn foreign_malformed_torn_or_late_headers_abstain() {
             rollout(&header(OTHER, spawned_by(PARENT))),
             refused(SpawnRefusal::IdentityMismatch),
         ),
-        // A spawn whose session_id names a third thread.
+        // A spawn whose explicit parent names a third thread.
         (
             n(12),
-            rollout(&header_with(&n(12), spawned_by(PARENT), Some(json!(OTHER)))),
-            refused(SpawnRefusal::UncorroboratedSpawn),
+            rollout(&explicit(
+                &header_with(&n(12), spawned_by(PARENT), Some(json!(PARENT))),
+                json!(OTHER),
+            )),
+            refused(SpawnRefusal::ContradictedSpawn),
         ),
         // A torn opening line: no newline ends it.
         (
@@ -419,13 +432,18 @@ fn foreign_malformed_torn_or_late_headers_abstain() {
     assert!(shown(db.store()).is_empty());
 }
 
-/// The observed spawned-header grammar: `payload.id` is the child,
-/// `thread_spawn.parent_thread_id` the parent, and `payload.session_id` that
-/// same parent. The typed parent must be corroborated by a present, exact
-/// `session_id`; a `session_id` alone, beside a guardian, a role or path, or a
-/// `history_base`, relates nothing, and neither does a foreign `payload.id`.
+/// The spawned-header grammar: `payload.id` is the child,
+/// `thread_spawn.parent_thread_id` the immediate parent, `payload.session_id`
+/// the root of the spawn tree (the parent itself at the first level, another
+/// thread deeper), and, in current headers, `payload.parent_thread_id` the
+/// immediate parent again. The root is never compared with the parent: a
+/// nested spawn whose root differs is related to its typed parent, with or
+/// without the explicit field. A missing, malformed or child-valued root, or
+/// an explicit parent that disagrees, relates nothing; a `session_id` alone,
+/// beside a guardian, a role or path, or a `history_base`, relates nothing,
+/// and neither does a foreign `payload.id`.
 #[test]
-fn a_spawn_needs_its_typed_parent_corroborated_by_session_id() {
+fn a_spawn_is_related_to_its_typed_parent_whatever_root_it_shares() {
     let temp = tempfile::TempDir::new().unwrap();
     let home = home(temp.path());
     let parent = rollout_path(&home, PARENT);
@@ -455,8 +473,98 @@ fn a_spawn_needs_its_typed_parent_corroborated_by_session_id() {
             spawned(PARENT),
         ),
         (n(42), paginated(&n(42), json!(PARENT)), spawned(PARENT)),
-        // A missing, null, non-string, child-valued, third-thread or
-        // differently spelled session_id.
+        // Current headers: the explicit immediate parent beside a root that
+        // is the parent (first level) or another thread (nested), flat or
+        // paginated; a null explicit field is a header without it.
+        (
+            n(55),
+            explicit(
+                &header_with(&n(55), spawn.clone(), Some(json!(PARENT))),
+                json!(PARENT),
+            ),
+            spawned(PARENT),
+        ),
+        (
+            n(56),
+            explicit(
+                &header_with(&n(56), spawn.clone(), Some(json!(OTHER))),
+                json!(PARENT),
+            ),
+            spawned(PARENT),
+        ),
+        (
+            n(57),
+            explicit(&paginated(&n(57), json!(OTHER)), json!(PARENT)),
+            spawned(PARENT),
+        ),
+        (
+            n(58),
+            explicit(
+                &header_with(&n(58), spawn.clone(), Some(json!(OTHER))),
+                Value::Null,
+            ),
+            spawned(PARENT),
+        ),
+        // An explicit parent that is another thread, the root, the child,
+        // differently spelled or not a string: no parent is read from either
+        // field.
+        (
+            n(59),
+            explicit(
+                &header_with(&n(59), spawn.clone(), Some(json!(PARENT))),
+                json!(OTHER),
+            ),
+            refused(SpawnRefusal::ContradictedSpawn),
+        ),
+        (
+            n(60),
+            explicit(
+                &header_with(&n(60), spawn.clone(), Some(json!(OTHER))),
+                json!(OTHER),
+            ),
+            refused(SpawnRefusal::ContradictedSpawn),
+        ),
+        (
+            n(61),
+            explicit(
+                &header_with(&n(61), spawn.clone(), Some(json!(PARENT))),
+                json!(n(61)),
+            ),
+            refused(SpawnRefusal::ContradictedSpawn),
+        ),
+        (
+            n(62),
+            explicit(
+                &header_with(&n(62), spawn.clone(), Some(json!(PARENT))),
+                json!(PARENT.to_uppercase()),
+            ),
+            refused(SpawnRefusal::ContradictedSpawn),
+        ),
+        (
+            n(63),
+            explicit(
+                &header_with(&n(63), spawn.clone(), Some(json!(PARENT))),
+                json!(7),
+            ),
+            refused(SpawnRefusal::ContradictedSpawn),
+        ),
+        // An agreeing explicit parent cannot stand in for a root that is
+        // missing or the child.
+        (
+            n(64),
+            explicit(&header_with(&n(64), spawn.clone(), None), json!(PARENT)),
+            refused(SpawnRefusal::UncorroboratedSpawn),
+        ),
+        (
+            n(65),
+            explicit(
+                &header_with(&n(65), spawn.clone(), Some(json!(n(65)))),
+                json!(PARENT),
+            ),
+            refused(SpawnRefusal::UncorroboratedSpawn),
+        ),
+        // A missing, null, non-string, child-valued or differently spelled
+        // root.
         (
             n(43),
             header_with(&n(43), spawn.clone(), None),
@@ -478,14 +586,16 @@ fn a_spawn_needs_its_typed_parent_corroborated_by_session_id() {
             refused(SpawnRefusal::UncorroboratedSpawn),
         ),
         (
-            n(47),
-            header_with(&n(47), spawn.clone(), Some(json!(OTHER))),
-            refused(SpawnRefusal::UncorroboratedSpawn),
-        ),
-        (
             n(48),
             header_with(&n(48), spawn.clone(), Some(json!(PARENT.to_uppercase()))),
             refused(SpawnRefusal::UncorroboratedSpawn),
+        ),
+        // A header written before the explicit field: a nested spawn, whose
+        // root is another thread, is held to the rest of the typed contract.
+        (
+            n(47),
+            header_with(&n(47), spawn.clone(), Some(json!(OTHER))),
+            spawned(PARENT),
         ),
         // Another thread's `payload.id`, though parent and session_id agree.
         (
@@ -552,32 +662,175 @@ fn a_spawn_needs_its_typed_parent_corroborated_by_session_id() {
     }
     let mut related = shown(db.store());
     related.sort();
-    assert_eq!(
-        related,
-        [
-            (id(&n(41)), id(PARENT)),
-            (id(&n(42)), id(PARENT)),
-            (id(&n(51)), id(PARENT))
-        ]
-    );
-    let rows = db
-        .store()
-        .sessions_page_filtered(&SessionFilter::default(), None)
-        .unwrap();
-    for native in [n(41), n(42)] {
-        let row = rows.iter().find(|row| row.id == id(&native)).unwrap();
+    // The Guardian reviewer (51) shows its reviewed session as its parent.
+    let mut want: Vec<(String, String)> = [41, 42, 47, 51, 55, 56, 57, 58]
+        .into_iter()
+        .map(|index| (id(&n(index)), id(PARENT)))
+        .collect();
+    want.sort();
+    assert_eq!(related, want);
+}
+
+/// That a thread is an agent's child is kept apart from its parent: a
+/// verified header typed as a spawn or as a Guardian gives a child fact, and
+/// the known-child bit, even when its parent fields are refused, a Guardian
+/// names no usable parent or the parent is not indexed. A header that is not
+/// the thread's own, a malformed or self-naming spawn, and a person's session
+/// give none. The Human input view is not touched by a fact alone.
+#[test]
+fn typed_child_status_survives_a_refused_or_missing_parent() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = home(temp.path());
+    let parent = rollout_path(&home, PARENT);
+    write(&parent, &rollout(&header(PARENT, json!("cli"))));
+    let n = |index: u32| format!("019a0000-0000-7000-8000-{index:012}");
+    let guardian = || json!({"subagent": {"other": "guardian"}});
+    // (thread, opening line, outcome, child fact, relation or origin shown)
+    let cases: Vec<(String, String, SpawnOutcome, Option<ChildEvidence>, bool)> = vec![
+        (
+            n(91),
+            header(&n(91), spawned_by(PARENT)),
+            spawned(PARENT),
+            Some(ChildEvidence::CodexThreadSpawn),
+            true,
+        ),
+        // A spawn whose parent is not indexed.
+        (
+            n(92),
+            header(&n(92), spawned_by(UNINDEXED)),
+            spawned(UNINDEXED),
+            Some(ChildEvidence::CodexThreadSpawn),
+            false,
+        ),
+        // Parent fields refused: no root, or an explicit parent that disagrees.
+        (
+            n(93),
+            header_with(&n(93), spawned_by(PARENT), None),
+            refused(SpawnRefusal::UncorroboratedSpawn),
+            Some(ChildEvidence::CodexThreadSpawn),
+            false,
+        ),
+        (
+            n(94),
+            explicit(
+                &header_with(&n(94), spawned_by(PARENT), Some(json!(PARENT))),
+                json!(OTHER),
+            ),
+            refused(SpawnRefusal::ContradictedSpawn),
+            Some(ChildEvidence::CodexThreadSpawn),
+            false,
+        ),
+        // A Guardian, with its reviewed session or with none usable.
+        (
+            n(95),
+            header_with(&n(95), guardian(), Some(json!(PARENT))),
+            SpawnOutcome::Reviewer {
+                parent_native_session_id: PARENT.into(),
+            },
+            Some(ChildEvidence::CodexGuardian),
+            true,
+        ),
+        (
+            n(96),
+            header_with(&n(96), guardian(), None),
+            SpawnOutcome::NotSpawned,
+            Some(ChildEvidence::CodexGuardian),
+            false,
+        ),
+        // Nothing about the child: another thread's header, a malformed or
+        // self-naming spawn, a person's session.
+        (
+            n(97),
+            header(OTHER, spawned_by(PARENT)),
+            refused(SpawnRefusal::IdentityMismatch),
+            None,
+            false,
+        ),
+        (
+            n(98),
+            header(&n(98), spawned_by("019a0000")),
+            refused(SpawnRefusal::MalformedSpawn),
+            None,
+            false,
+        ),
+        (
+            n(99),
+            header(&n(99), spawned_by(&n(99))),
+            refused(SpawnRefusal::SelfSpawn),
+            None,
+            false,
+        ),
+        (
+            n(100),
+            header(&n(100), json!("cli")),
+            SpawnOutcome::NotSpawned,
+            None,
+            false,
+        ),
+    ];
+    let mut sessions: Vec<(String, PathBuf)> = vec![(PARENT.into(), parent)];
+    for (native, line, ..) in &cases {
+        let path = rollout_path(&home, native);
+        write(&path, &rollout(line));
+        sessions.push((native.clone(), path));
+    }
+    let mut db = TempDb::empty().unwrap();
+    let indexed: Vec<(&str, &Path)> = sessions
+        .iter()
+        .map(|(n, p)| (n.as_str(), p.as_path()))
+        .collect();
+    index(db.store_mut(), &indexed);
+    let natives: Vec<&str> = cases.iter().map(|(native, ..)| native.as_str()).collect();
+    let recording =
+        record_codex_spawns(db.store_mut(), &home, &natives, spawn_limits(), None, T).unwrap();
+    let connection = rusqlite::Connection::open(db.path()).unwrap();
+    for ((native, _, outcome, child, linked), probe) in cases.iter().zip(&recording.probes) {
+        assert_eq!(&probe.outcome, outcome, "{native}");
+        assert_eq!(&probe.child, child, "{native}");
+        let facts = db.store().child_facts(&id(native)).unwrap();
         assert_eq!(
-            row.parent.as_ref().unwrap().evidence,
-            ParentEvidence::NativeSpawn
+            facts
+                .iter()
+                .map(|(fact, accepted)| (fact.evidence_kind, *accepted))
+                .collect::<Vec<_>>(),
+            child.iter().map(|kind| (*kind, true)).collect::<Vec<_>>(),
+            "{native}"
+        );
+        let context = xt_store::session_list::context(&connection, &[&id(native)])
+            .unwrap()
+            .remove(0);
+        assert_eq!(context.known_child, child.is_some(), "{native}");
+        assert_eq!(context.parent.is_some(), *linked, "{native}");
+    }
+    // A fact alone leaves the Human input view as it was.
+    for native in [n(93), n(94), n(96)] {
+        assert!(
+            db.store()
+                .records(&id(&native))
+                .unwrap()
+                .iter()
+                .all(|record| !record.human_excluded),
+            "{native}"
         );
     }
-    let reviewer = rows.iter().find(|row| row.id == id(&n(51))).unwrap();
     assert_eq!(
-        reviewer.parent.as_ref().unwrap().evidence,
-        ParentEvidence::NativeReviewer
+        recording
+            .child_facts
+            .iter()
+            .filter(|(_, disposition)| *disposition == ChildFactDisposition::Recorded)
+            .count(),
+        6
     );
-    assert!(reviewer.automated_review);
-    assert!(db.store().session_creation(&id(&n(51))).unwrap().is_none());
+    // A replay records nothing new.
+    let again =
+        record_codex_spawns(db.store_mut(), &home, &natives, spawn_limits(), None, T + 1).unwrap();
+    assert_eq!(again.changed, 0);
+    assert!(
+        again
+            .child_facts
+            .iter()
+            .all(|(_, disposition)| *disposition == ChildFactDisposition::AlreadyRecorded)
+    );
 }
 
 #[test]
@@ -669,19 +922,30 @@ fn a_rewritten_header_naming_another_parent_is_withheld_not_moved() {
     );
     probe(db.store_mut(), &home, &[CHILD]);
     assert_eq!(shown(db.store()), [(id(CHILD), id(PARENT))]);
-    // Another typed parent that session_id does not corroborate is malformed
-    // evidence, not a second claim: the accepted relation is untouched.
-    for session in [None, Some(json!(PARENT)), Some(json!(CHILD))] {
-        write(
-            &child,
-            &rollout(&header_with(CHILD, spawned_by(OTHER), session)),
-        );
+    // Another typed parent in a header with no root, the child as root, or
+    // an explicit parent that disagrees is malformed evidence, not a second
+    // claim: the accepted relation is untouched.
+    for (line, why) in [
+        (
+            header_with(CHILD, spawned_by(OTHER), None),
+            SpawnRefusal::UncorroboratedSpawn,
+        ),
+        (
+            header_with(CHILD, spawned_by(OTHER), Some(json!(CHILD))),
+            SpawnRefusal::UncorroboratedSpawn,
+        ),
+        (
+            explicit(
+                &header_with(CHILD, spawned_by(OTHER), Some(json!(PARENT))),
+                json!(PARENT),
+            ),
+            SpawnRefusal::ContradictedSpawn,
+        ),
+    ] {
+        write(&child, &rollout(&line));
         let recording =
             record_codex_spawns(db.store_mut(), &home, &[CHILD], spawn_limits(), None, T).unwrap();
-        assert_eq!(
-            recording.probes[0].outcome,
-            refused(SpawnRefusal::UncorroboratedSpawn)
-        );
+        assert_eq!(recording.probes[0].outcome, refused(why));
         assert!(recording.dispositions.is_empty());
         assert_eq!(recording.changed, 0);
         assert_eq!(shown(db.store()), [(id(CHILD), id(PARENT))]);
@@ -874,6 +1138,165 @@ fn a_scan_runs_the_bootstrap_even_when_the_reader_is_unavailable() {
     );
 }
 
+/// An index that version 1 finished with: its pass complete, a first-level
+/// child related and a nested child it refused, whose root `session_id` is
+/// not its parent. The version 2 pass reads every indexed root again once
+/// and relates the nested child to its typed immediate parent; the stored
+/// version 1 relation replays unchanged, the Guardian reviewer is recognized
+/// as before, no host file changes, and nothing is changed again by a second
+/// pass or a replay.
+#[test]
+fn the_version_two_pass_reaches_a_nested_child_version_one_refused() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = home(temp.path());
+    let n = |index: u32| format!("019a0000-0000-7000-8000-{index:012}");
+    let (root, middle, nested, guardian) = (PARENT, CHILD, n(81), n(82));
+    let paths = [root, middle, nested.as_str(), guardian.as_str()]
+        .map(|native| rollout_path(&home, native));
+    write(&paths[0], &rollout(&header(root, json!("cli"))));
+    write(&paths[1], &rollout(&header(middle, spawned_by(root))));
+    write(
+        &paths[2],
+        &rollout(&explicit(
+            &header_with(&nested, spawned_by(middle), Some(json!(root))),
+            json!(middle),
+        )),
+    );
+    write(
+        &paths[3],
+        &rollout(&explicit(
+            &header_with(
+                &guardian,
+                json!({"subagent": {"other": "guardian"}}),
+                Some(json!(root)),
+            ),
+            json!(middle),
+        )),
+    );
+    let mut db = TempDb::empty().unwrap();
+    index(
+        db.store_mut(),
+        &[
+            (root, &paths[0]),
+            (middle, &paths[1]),
+            (&nested, &paths[2]),
+            (&guardian, &paths[3]),
+        ],
+    );
+    let kind = CreationEvidence::CodexThreadSpawn;
+    db.store_mut()
+        .advance_session_creation_bootstrap(
+            kind,
+            1,
+            &CreationBootstrap {
+                after_locator: None,
+                complete: true,
+            },
+        )
+        .unwrap();
+    db.store_mut()
+        .record_session_creations(
+            &[SessionCreationProof {
+                child_session_id: id(middle),
+                child_host: Host::Codex,
+                child_native_session_id: middle.into(),
+                parent_host: Host::Codex,
+                parent_native_session_id: root.into(),
+                evidence_kind: kind,
+                evidence_version: 1,
+                witness: CreationWitness::RolloutOpeningSessionMeta,
+            }],
+            T,
+        )
+        .unwrap();
+    let stored = db.store().session_creation(&id(middle)).unwrap().unwrap();
+    assert_eq!(shown(db.store()), [(id(middle), id(root))]);
+    assert_eq!(CODEX_THREAD_SPAWN_VERSION, 2);
+    assert!(
+        !db.store()
+            .session_creation_bootstrap(kind, CODEX_THREAD_SPAWN_VERSION)
+            .unwrap()
+            .complete
+    );
+    let counts = db.store().counts().unwrap();
+    let before = snapshot(&home);
+
+    let step = bootstrap_codex_spawns(db.store_mut(), &home, spawn_limits(), None, T + 1).unwrap();
+    assert!(step.complete);
+    let mut got = shown(db.store());
+    got.sort();
+    // The Guardian reviewer shows the session its `session_id` names.
+    let mut want = vec![
+        (id(middle), id(root)),
+        (id(&nested), id(middle)),
+        (id(&guardian), id(root)),
+    ];
+    want.sort();
+    assert_eq!(got, want);
+    // The version 1 row is exactly as stored; the new one is version 2.
+    assert_eq!(
+        db.store().session_creation(&id(middle)).unwrap().unwrap(),
+        stored
+    );
+    let (proof, conflicted) = db.store().session_creation(&id(&nested)).unwrap().unwrap();
+    assert_eq!(
+        (
+            proof.parent_native_session_id.as_str(),
+            proof.evidence_version,
+            conflicted
+        ),
+        (middle, 2, false)
+    );
+    // The Guardian reviewer is read as before: its parent still comes from
+    // `session_id`, whatever its explicit parent says.
+    let reviewers: Vec<String> = db
+        .store()
+        .sessions_page_filtered(&SessionFilter::default(), None)
+        .unwrap()
+        .into_iter()
+        .filter(|row| row.automated_review)
+        .map(|row| row.id)
+        .collect();
+    assert_eq!(reviewers, [id(&guardian)]);
+    assert_eq!(db.store().counts().unwrap(), counts);
+    assert_eq!(snapshot(&home), before);
+
+    // A finished pass reads nothing; a replay changes nothing.
+    let step = bootstrap_codex_spawns(db.store_mut(), &home, spawn_limits(), None, T + 2).unwrap();
+    assert!(step.complete);
+    assert_eq!((step.probed, step.bytes_read), (0, 0));
+    let natives = [root, middle, nested.as_str(), guardian.as_str()];
+    let recording =
+        record_codex_spawns(db.store_mut(), &home, &natives, spawn_limits(), None, T + 3).unwrap();
+    assert_eq!(
+        recording
+            .probes
+            .iter()
+            .map(|probe| probe.outcome.clone())
+            .collect::<Vec<_>>(),
+        [
+            SpawnOutcome::NotSpawned,
+            spawned(root),
+            spawned(middle),
+            SpawnOutcome::Reviewer {
+                parent_native_session_id: root.into()
+            },
+        ]
+    );
+    assert_eq!(
+        recording.dispositions,
+        [
+            (middle.to_owned(), CreationDisposition::AlreadyRecorded),
+            (nested.clone(), CreationDisposition::AlreadyRecorded),
+        ]
+    );
+    assert_eq!(recording.changed, 0);
+    assert_eq!(
+        db.store().session_creation(&id(middle)).unwrap().unwrap(),
+        stored
+    );
+}
+
 /// Native ingestion of a new thread relates it through the same guarded
 /// path, with the bootstrap already finished: the pinned reader indexes the
 /// thread, and the scan probes the threads it changed.
@@ -1004,13 +1427,12 @@ fn records_new(outcome: &SessionOutcome) -> usize {
 }
 
 /// The ordinary import path reads an indexed thread's header whether or not
-/// the scan added records to it. A header that gains a typed spawn, in the
-/// observed shape with its parent in `session_id`, relates the thread; one
-/// that loses it keeps the accepted relation (a plain header is no claim of
-/// another parent), and so does one naming a different parent that its
-/// `session_id` does not corroborate; one naming a different, corroborated
-/// parent conflicts the relation and withholds it. Each rescan inserts no
-/// record.
+/// the scan added records to it. A header that gains a typed spawn relates
+/// the thread; one that loses it keeps the accepted relation (a plain header
+/// is no claim of another parent), and so does one naming a different typed
+/// parent that its own explicit `parent_thread_id` contradicts; one
+/// consistently naming a different parent conflicts the relation and
+/// withholds it. Each rescan inserts no record.
 #[test]
 fn a_rescan_that_adds_no_records_still_reads_a_new_or_changed_header() {
     let temp = tempfile::TempDir::new().unwrap();
@@ -1048,17 +1470,20 @@ fn a_rescan_that_adds_no_records_still_reads_a_new_or_changed_header() {
     assert_eq!(records_new(&rescan(db.store_mut(), &home)), 0);
     assert_eq!(shown(db.store()), [(id(CHILD), id(PARENT))]);
 
-    // A different typed parent whose session_id still names the first
-    // corroborates nothing: the accepted relation stays.
+    // A different typed parent whose explicit parent still names the first
+    // is contradicted: the accepted relation stays.
     write(
         &child,
-        &exchange(&header_with(CHILD, spawned_by(OTHER), Some(json!(PARENT)))),
+        &exchange(&explicit(
+            &header_with(CHILD, spawned_by(OTHER), Some(json!(PARENT))),
+            json!(PARENT),
+        )),
     );
     assert_eq!(records_new(&rescan(db.store_mut(), &home)), 0);
     assert_eq!(shown(db.store()), [(id(CHILD), id(PARENT))]);
     assert!(!db.store().session_creation(&id(CHILD)).unwrap().unwrap().1);
 
-    // A different typed parent, corroborated, is a second claim: both are
+    // A different typed parent, consistent, is a second claim: both are
     // withheld.
     write(&child, &exchange(&header(CHILD, spawned_by(OTHER))));
     assert_eq!(records_new(&rescan(db.store_mut(), &home)), 0);
@@ -1144,6 +1569,16 @@ fn a_backlog_past_one_chunk_reaches_a_late_child_over_bounded_passes() {
         continue_codex_spawns(db.store_mut(), &home, &mut backlog, spawn_limits(), None, T)
             .unwrap();
     assert_eq!(progress.decided, total);
+    // What is left is the display checks of the sessions it indexed (and the
+    // header of any still checking that this backlog has not read), and then
+    // nothing.
+    for _ in 0..10 {
+        if !backlog.pending() {
+            break;
+        }
+        continue_codex_spawns(db.store_mut(), &home, &mut backlog, spawn_limits(), None, T)
+            .unwrap();
+    }
     assert!(!backlog.pending());
 }
 
@@ -1392,7 +1827,9 @@ fn a_restart_recovers_an_unread_thread_from_the_index_and_announces_each_change_
     let status = tailer.status();
     tailer.stop();
     assert_eq!(shown(&reader), [(id(CHILD), id(PARENT))]);
-    assert_eq!(changes(&events), [1]);
+    // The relation, the child facts of the child and the Guardian, and the
+    // display checks of the two main sessions, which the pass finished.
+    assert_eq!(changes(&events), [5]);
     assert_eq!(status.reconciles, 1, "{status:?}");
     assert!(
         events
@@ -1421,6 +1858,16 @@ fn a_restart_recovers_an_unread_thread_from_the_index_and_announces_each_change_
     let (stored, conflicted) = reader.session_creation(&id(CHILD)).unwrap().unwrap();
     assert_eq!(stored.parent_native_session_id, PARENT);
     assert!(conflicted);
+    // The child is still known to be a child: only its parent is withheld.
+    assert_eq!(
+        reader
+            .child_facts(&id(CHILD))
+            .unwrap()
+            .iter()
+            .map(|(fact, accepted)| (fact.evidence_kind, *accepted))
+            .collect::<Vec<_>>(),
+        [(ChildEvidence::CodexThreadSpawn, true)]
+    );
 
     // A relation already withheld stays so, silently.
     let (tailer, events, passes) = worker(&database, &home, missing(), spawn_limits());
@@ -1466,7 +1913,8 @@ fn reviewer_assumption_is_found_by_restart_sweep_after_old_bootstrap_completed()
     let progress =
         continue_codex_spawns(db.store_mut(), &home, &mut backlog, spawn_limits(), None, T)
             .unwrap();
-    assert_eq!(progress.changed, 1);
+    // The reviewer origin and the Guardian's child fact.
+    assert_eq!(progress.changed, 2);
     assert!(db.store().records(&id(CHILD)).unwrap()[0].human_excluded);
     assert!(!db.store().records(&id(CHILD)).unwrap()[0].confirmed_automated_input);
     assert!(!db.store().records(&id(OTHER)).unwrap()[0].human_excluded);

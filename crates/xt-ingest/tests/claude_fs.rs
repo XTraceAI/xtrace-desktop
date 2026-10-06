@@ -1752,7 +1752,7 @@ fn v3_upgrade_replays_unchanged_forks_and_repairs_only_confirmed_zeroed_usage() 
                 .unwrap()
                 > 0
         );
-        sql.execute_batch("UPDATE usage SET input_tokens=0,output_tokens=0,cache_read_tokens=0,cache_creation_tokens=0; UPDATE records SET has_conflict=1; DROP VIEW session_work_records; DROP TABLE native_record_copies; DELETE FROM schema_version WHERE version>=4; ALTER TABLE pull_requests DROP COLUMN refresh_error; ALTER TABLE pull_requests DROP COLUMN last_attempted_at; ALTER TABLE tool_uses DROP COLUMN group_key; ALTER TABLE tool_uses DROP COLUMN group_version; ALTER TABLE tool_uses DROP COLUMN group_conflict; DROP TABLE confirmed_automated_inputs; DROP TABLE guardian_turn_inputs; DROP TABLE injected_context_inputs; DROP TABLE IF EXISTS task_notification_inputs; DROP TABLE IF EXISTS record_previews; DROP TABLE IF EXISTS human_input_adjustments; DROP TABLE IF EXISTS human_session_origins; DROP TABLE session_creation_relations; DROP TABLE session_creation_bootstrap; DROP TABLE cli_artifact_launch_owners; DROP TABLE claude_launch_groups; DROP TABLE claude_launch_group_members; DROP TABLE claude_launch_candidates; DROP TABLE claude_launch_staged_candidates; DROP INDEX sessions_host_native; DROP INDEX source_cursors_tail;").unwrap();
+        sql.execute_batch("UPDATE usage SET input_tokens=0,output_tokens=0,cache_read_tokens=0,cache_creation_tokens=0; UPDATE records SET has_conflict=1; DROP VIEW session_work_records; DROP TABLE native_record_copies; DELETE FROM schema_version WHERE version>=4; ALTER TABLE pull_requests DROP COLUMN refresh_error; ALTER TABLE pull_requests DROP COLUMN last_attempted_at; ALTER TABLE tool_uses DROP COLUMN group_key; ALTER TABLE tool_uses DROP COLUMN group_version; ALTER TABLE tool_uses DROP COLUMN group_conflict; DROP TABLE confirmed_automated_inputs; DROP TABLE guardian_turn_inputs; DROP TABLE injected_context_inputs; DROP TABLE IF EXISTS tool_sent_inputs; DROP TABLE IF EXISTS task_notification_inputs; DROP TABLE IF EXISTS record_previews; DROP TABLE IF EXISTS session_child_checks; DROP TABLE IF EXISTS session_child_facts; DROP TABLE IF EXISTS human_input_adjustments; DROP TABLE IF EXISTS human_session_origins; DROP TABLE session_creation_relations; DROP TABLE session_creation_bootstrap; DROP TABLE cli_artifact_launch_owners; DROP TABLE claude_launch_groups; DROP TABLE claude_launch_group_members; DROP TABLE claude_launch_candidates; DROP TABLE claude_launch_staged_candidates; DROP INDEX sessions_host_native; DROP INDEX source_cursors_tail;").unwrap();
         if let Some(first) = original_first {
             record["message"]["usage"]["input_tokens"] = json!(11);
             record["message"]["usage"]["output_tokens"] = json!(7);
@@ -2523,8 +2523,25 @@ fn the_preview_upgrade_reads_unchanged_claude_history_once_to_fill_previews() {
     };
     let stored = records(&sql);
     // What a schema-16 build left: the same rows and checkpoints, no previews.
-    sql.execute_batch("DROP TABLE record_previews; DELETE FROM schema_version WHERE version>=17;")
-        .unwrap();
+    // Migration 20 rebuilds its two tables with their columns unchanged, so
+    // only the columns it, 19 and 22 add to the launch tables are removed.
+    // Opening the store recreates the managed views dropped first.
+    sql.execute_batch(
+        "DROP VIEW v_response_usage; DROP VIEW v_usage_records; DROP VIEW v_session_events; DROP VIEW v_records; DROP VIEW v_human_inputs;
+         DROP TABLE record_previews; DROP TABLE session_child_facts; DROP TABLE IF EXISTS tool_sent_inputs; DROP TABLE session_child_checks;
+         ALTER TABLE claude_launch_groups DROP COLUMN unfinished_starts;
+         ALTER TABLE claude_launch_candidates DROP COLUMN child_check_complete;
+         ALTER TABLE claude_launch_candidates DROP COLUMN launch_check_fingerprint;
+         ALTER TABLE claude_launch_candidates DROP COLUMN child_host;
+         ALTER TABLE claude_launch_candidates DROP COLUMN binding_output_offset;
+         ALTER TABLE claude_launch_candidates DROP COLUMN binding_call_offset;
+         ALTER TABLE claude_launch_staged_candidates DROP COLUMN launch_check_fingerprint;
+         ALTER TABLE claude_launch_staged_candidates DROP COLUMN child_host;
+         ALTER TABLE claude_launch_staged_candidates DROP COLUMN binding_output_offset;
+         ALTER TABLE claude_launch_staged_candidates DROP COLUMN binding_call_offset;
+         DELETE FROM schema_version WHERE version>=17;",
+    )
+    .unwrap();
     assert!(
         sql.query_row(
             "SELECT count(*) FROM native_checkpoints WHERE source='transcript'",
@@ -2536,7 +2553,7 @@ fn the_preview_upgrade_reads_unchanged_claude_history_once_to_fill_previews() {
     );
     let before = hashes(&home);
     let mut store = Store::open(&database).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 17);
+    assert_eq!(store.schema_version().unwrap(), 22);
     assert_eq!(
         sql.query_row(
             "SELECT count(*) FROM native_checkpoints WHERE source='transcript'",

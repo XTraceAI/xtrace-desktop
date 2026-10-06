@@ -3,14 +3,14 @@ import fixture from '../fixtures/F1.json' with { type: 'json' };
 import type { DashboardMetrics } from '../src/data/generated/DashboardMetrics';
 import type { FixtureExport } from '../src/data/generated/FixtureExport';
 import type { MetricTile } from '../src/data/generated/MetricTile';
+import { CONCURRENCY_DEFINITION } from '../src/app/dashboard/overview';
 
 /**
- * Synthetic tile values (not real history), served in place of the development F1 export:
- * `dense` has multi-digit means with percentage changes and asides; `reference` has the
- * shape of the user's 2026-09-23 screenshot, where short values sat beside their labels and
- * dense ones wrapped under theirs (a three-digit change, an unknown merged count with its
- * known and unknown subtotal); `unknown` has every tile unmeasured with its reason. Labels
- * must stay at full width, and every tile draws its label and its value on the same two rows.
+ * Synthetic tile values (not real history), served in place of the development F1 export, in
+ * the Overview card's four tiles: `dense` has multi-digit values with percentage changes and
+ * secondary values; `reference` has a three-digit change, and 32 pull requests not checked
+ * yet, said in words; `unknown` has every tile unmeasured with its reason. Labels must stay
+ * at full width, and every value, change and line under it stays inside its tile.
  */
 const measured = (tile: MetricTile, value: number, pct: number | null): MetricTile => ({
   ...tile,
@@ -27,17 +27,26 @@ const unknown = (tile: MetricTile, reason: string): MetricTile => ({
 });
 type Shape = 'dense' | 'reference' | 'unknown';
 const edits: Record<Shape, (report: DashboardMetrics) => void> = {
-  dense: ({ tiles }) => {
-    tiles.agent_hours_per_day = measured(tiles.agent_hours_per_day, 12.4, 8.5);
+  dense: (report) => {
+    const { tiles } = report;
+    tiles.leverage = measured(tiles.leverage, 12.4, 8.5);
     tiles.concurrency_mean = measured(tiles.concurrency_mean, 1.8, -12.3);
     tiles.concurrency_max = measured(tiles.concurrency_max, 8, null);
     tiles.merged_prs = measured(tiles.merged_prs, 23, 15.2);
+    // A measured count is a complete one: every linked pull request is checked.
+    report.pr_effort.current.tile = {
+      ...report.pr_effort.current.tile,
+      complete: true,
+      known_merged: 23,
+      unknown_facts: 0,
+      merged: 23,
+    };
     tiles.hands_off_median = measured(tiles.hands_off_median, 3.2, -4.1);
     tiles.hands_off_p90 = measured(tiles.hands_off_p90, 14.8, null);
   },
   reference: (report) => {
     const { tiles } = report;
-    tiles.agent_hours_per_day = measured(tiles.agent_hours_per_day, 30, 166.2);
+    tiles.leverage = measured(tiles.leverage, 30, 166.2);
     tiles.concurrency_mean = measured(tiles.concurrency_mean, 2.6, 112.4);
     tiles.concurrency_max = measured(tiles.concurrency_max, 8, null);
     tiles.merged_prs = unknown(tiles.merged_prs, 'Merged pull requests with unknown facts');
@@ -46,12 +55,13 @@ const edits: Record<Shape, (report: DashboardMetrics) => void> = {
       complete: false,
       known_merged: 0,
       unknown_facts: 32,
+      freshness: { ...report.pr_effort.current.tile.freshness, never_attempted: 32 },
     };
     tiles.hands_off_median = measured(tiles.hands_off_median, 5.6, 298.6);
     tiles.hands_off_p90 = measured(tiles.hands_off_p90, 32.1, null);
   },
   unknown: ({ tiles }) => {
-    tiles.agent_hours_per_day = unknown(tiles.agent_hours_per_day, 'No active spans');
+    tiles.leverage = unknown(tiles.leverage, 'No active spans');
     tiles.concurrency_mean = unknown(tiles.concurrency_mean, 'No overlapping spans');
     tiles.concurrency_max = unknown(tiles.concurrency_max, 'No overlapping spans');
     tiles.merged_prs = unknown(tiles.merged_prs, 'No cached pull request facts');
@@ -72,26 +82,26 @@ async function serve(page: Page, shape: Shape) {
   );
 }
 
-const texts: Record<Shape, [string, string, string, string]> = {
+/** Each tile's number with its unit and change, then the line under it. */
+const texts: Record<Shape, [string, string][]> = {
   dense: [
-    'Agent h/day12.4h▲8.5%',
-    'Concurrency1.8▼12.3%max 8',
-    // F1's own merged-PR tile is incomplete, so its known + unknown subtotal
-    // stays beside the value.
-    'Merged PRs23▲15.2%0 + 2 unknown',
-    'Hands-off median3.2min▼4.1%p90 14.8',
+    ['12.4×▲8.5%', '0.4 agent h ÷ 0.3 your h'],
+    ['1.8▼12.3%', 'max 8'],
+    ['23▲15.2%', ''],
+    ['3.2min▼4.1%', 'p90 14.8 min'],
   ],
   reference: [
-    'Agent h/day30h▲166.2%',
-    'Concurrency2.6▲112.4%max 8',
-    'Merged PRs—Unmeasured: Merged pull requests with unknown facts0 + 32 unknown',
-    'Hands-off median5.6min▲298.6%p90 32.1',
+    ['30×▲166.2%', '0.4 agent h ÷ 0.3 your h'],
+    ['2.6▲112.4%', 'max 8'],
+    // Nothing checked yet: words instead of a number, never a zero.
+    ['32 PRs not checked yet', ''],
+    ['5.6min▲298.6%', 'p90 32.1 min'],
   ],
   unknown: [
-    'Agent h/day—Unmeasured: No active spansh',
-    'Concurrency—Unmeasured: No overlapping spans',
-    'Merged PRs—Unmeasured: No cached pull request facts0 + 2 unknown',
-    'Hands-off median—Unmeasured: No hands-off stretchesmin',
+    ['—Unmeasured: No active spans.', '0.4 agent h ÷ 0.3 your h'],
+    ['—Unmeasured: No overlapping spans.', 'No overlapping spans.'],
+    ['2 PRs not checked yet', ''],
+    ['—Unmeasured: No hands-off stretches.', 'No hands-off stretches.'],
   ],
 };
 
@@ -101,29 +111,27 @@ for (const shape of ['dense', 'reference', 'unknown'] as const)
     [1120, 720],
   ] as const)
     for (const scheme of ['light', 'dark'] as const)
-      test(`${shape} tile values keep full labels on one shared value row at ${width}x${height} ${scheme}`, async ({
+      test(`${shape} Overview values keep full labels inside their tiles at ${width}x${height} ${scheme}`, async ({
         page,
       }, info) => {
         await serve(page, shape);
         await page.setViewportSize({ width, height });
         await page.emulateMedia({ colorScheme: scheme });
         await page.goto('/dashboard');
-        await expect(page.locator('.xt-stat-tile')).toHaveCount(4);
+        await expect(page.getByTestId('overview-tile')).toHaveCount(4);
         await page.evaluate(() => document.fonts.ready);
         const tiles = await page.evaluate(() =>
-          [...document.querySelectorAll<HTMLElement>('.xt-dash-tiles .xt-stat-tile')].map(
+          [...document.querySelectorAll<HTMLElement>('[data-testid="overview-tile"]')].map(
             (tile) => {
-              const fits = (selector: string) => {
-                const element = tile.querySelector<HTMLElement>(selector);
-                return element ? element.scrollWidth <= element.clientWidth : true;
-              };
-              const label = tile.querySelector<HTMLElement>('.xt-stat-label')!;
-              const row = tile.querySelector<HTMLElement>('.xt-stat-row')!;
-              const cell = tile.querySelector<HTMLElement>('.xt-stat-value .xt-metric-cell')!;
+              const label = tile.querySelector<HTMLElement>(
+                '.xt-overview-label > span:not(.xt-metric-icon)',
+              )!;
+              const value = tile.querySelector<HTMLElement>('[data-testid="overview-value"]')!;
+              const sub = tile.querySelector<HTMLElement>('.xt-overview-sub')!;
               const box = tile.getBoundingClientRect();
               const inside = [
                 ...tile.querySelectorAll<HTMLElement>(
-                  '.xt-stat-label, .xt-stat-row, .xt-stat-row *',
+                  '.xt-overview-label, .xt-overview-value, .xt-overview-value *, .xt-overview-sub',
                 ),
               ]
                 .map((element) => element.getBoundingClientRect())
@@ -135,35 +143,15 @@ for (const shape of ['dense', 'reference', 'unknown'] as const)
                     rect.top >= box.top &&
                     rect.bottom <= box.bottom + 0.5,
                 );
-              // The value row's baseline: an empty item has none of its own, so
-              // the row aligns its bottom edge to the row's shared baseline.
-              // The value's own text sits on the same line: an empty
-              // inline-block after its text sits on the text's baseline.
-              const baselineIn = (parent: HTMLElement) => {
-                const probe = document.createElement('span');
-                probe.style.display = 'inline-block';
-                parent.append(probe);
-                const bottom = probe.getBoundingClientRect().bottom - box.top;
-                probe.remove();
-                return bottom;
-              };
-              const baseline = baselineIn(row);
-              const textBaseline = baselineIn(cell);
               return {
-                text: tile.textContent,
                 label: label.textContent,
-                labelTop: label.getBoundingClientRect().top - box.top,
-                clientWidth: label.clientWidth,
-                scrollWidth: label.scrollWidth,
+                value: value.textContent,
+                sub: sub.textContent,
                 labelFits: label.scrollWidth <= label.clientWidth,
-                asideFits: fits('.xt-stat-aside'),
-                valueFits: fits('.xt-stat-value .xt-metric-cell'),
-                rowFits: row.scrollWidth <= row.clientWidth,
+                valueFits: value.scrollWidth <= value.clientWidth,
                 valueBelowLabel:
-                  row.getBoundingClientRect().top >= label.getBoundingClientRect().bottom,
-                rowRight: box.right - row.getBoundingClientRect().right,
-                baseline,
-                textBaseline,
+                  value.getBoundingClientRect().top >= label.getBoundingClientRect().bottom,
+                top: box.top,
                 height: box.height,
                 inside,
               };
@@ -171,40 +159,27 @@ for (const shape of ['dense', 'reference', 'unknown'] as const)
           ),
         );
         await info.attach('tiles', { body: JSON.stringify(tiles, null, 2) });
-        await page.locator('.xt-dash-tiles').screenshot({
-          path: info.outputPath(`${shape}-tiles-${width}-${scheme}.png`),
+        await page.getByTestId('overview-grid').screenshot({
+          path: info.outputPath(`${shape}-overview-${width}-${scheme}.png`),
         });
         expect(tiles.map((tile) => tile.label)).toEqual([
-          'Agent h/day',
+          'Leverage',
           'Concurrency',
           'Merged PRs',
           'Hands-off median',
         ]);
-        // Every number, change, aside and reason stays; only Concurrency's
-        // visible "mean" is gone.
-        expect(tiles.map((tile) => tile.text)).toEqual(texts[shape]);
+        // Every number, change, secondary value and reason stays.
+        expect(tiles.map((tile) => [tile.value, tile.sub])).toEqual(texts[shape]);
         for (const tile of tiles) {
-          expect(tile.labelFits, `${tile.label}: ${tile.scrollWidth}/${tile.clientWidth}`).toBe(
-            true,
-          );
-          expect(tile.asideFits, tile.label).toBe(true);
-          expect(tile.valueFits, tile.label).toBe(true);
-          expect(tile.rowFits, tile.label).toBe(true);
-          expect(tile.inside, tile.label).toBe(true);
-          expect(tile.valueBelowLabel, tile.label).toBe(true);
+          expect(tile.labelFits, tile.label!).toBe(true);
+          expect(tile.valueFits, tile.label!).toBe(true);
+          expect(tile.inside, tile.label!).toBe(true);
+          expect(tile.valueBelowLabel, tile.label!).toBe(true);
         }
-        // One label row and one value row, shared by all four: the same
-        // height, the same label top, the same value baseline, every value
-        // ending at the same inset from its tile's right edge.
-        const [first] = tiles;
-        for (const tile of tiles) {
-          expect(tile.height, tile.label).toBeCloseTo(first.height, 1);
-          expect(tile.labelTop, tile.label).toBeCloseTo(first.labelTop, 1);
-          expect(tile.baseline, tile.label).toBeCloseTo(first.baseline, 1);
-          expect(tile.textBaseline, tile.label).toBeCloseTo(tile.baseline, 1);
-          expect(tile.rowRight, tile.label).toBeCloseTo(first.rowRight, 1);
-        }
-        expect(first.height).toBeLessThanOrEqual(64);
+        // Two rows of two, each pair the same height.
+        expect(tiles[0]!.top).toBeCloseTo(tiles[1]!.top, 1);
+        expect(tiles[2]!.top).toBeCloseTo(tiles[3]!.top, 1);
+        expect(tiles[0]!.height).toBeCloseTo(tiles[2]!.height, 0);
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
         expect(
           await page.evaluate(() => {
@@ -223,30 +198,30 @@ test('the Concurrency definition says the shown value is the mean, from the keyb
   await serve(page, 'reference');
   await page.setViewportSize({ width: 1120, height: 720 });
   await page.goto('/dashboard');
-  const tile = page.getByRole('button', { name: /^Concurrency/ });
-  await expect(tile).toContainText('2.6');
+  const tile = page.getByTestId('overview-tile').filter({ hasText: 'Concurrency' });
+  await expect(tile.getByTestId('overview-value')).toContainText('2.6');
   await expect(tile).not.toContainText('mean');
-  // Tab reaches the tile from the tile before it, and focus alone opens the
-  // definition, which the tile names as its description.
-  await page.getByRole('button', { name: /^Agent h\/day/ }).focus();
+  // Tab reaches the definition from the tile before it, and focus alone opens
+  // it, which the control names as its description.
+  const info = page.getByRole('button', { name: 'Concurrency definition' });
+  await page.getByRole('button', { name: 'Leverage definition' }).focus();
   await page.keyboard.press('Tab');
-  await expect(tile).toBeFocused();
-  // The tile before it may still be closing its own definition.
-  const tip = page.getByRole('tooltip', { name: /^M-06 · Concurrency\./ });
+  await expect(info).toBeFocused();
+  // The control before it may still be closing its own definition.
+  const tip = page.getByRole('tooltip', { name: /^How many agent sessions ran at the same time/ });
   await expect(tip).toBeVisible();
-  await expect(tip).toContainText('M-06 · Concurrency.');
-  await expect(tip).toContainText('Displayed value is mean concurrency; max is the peak overlap.');
-  await expect(tile).toHaveAccessibleDescription(/Displayed value is mean concurrency/);
+  await expect(tip).toContainText(CONCURRENCY_DEFINITION);
+  await expect(info).toHaveAccessibleDescription(/average over the time any ran/);
   const box = (await tip.boundingBox())!;
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(1120);
   expect(box.y + box.height).toBeLessThanOrEqual(720);
   await page.keyboard.press('Escape');
   await expect(tip).toBeHidden();
-  await expect(tile).toBeFocused();
+  await expect(info).toBeFocused();
   // Hover shows the same definition.
   await page.mouse.move(0, 0);
-  await tile.hover();
+  await info.hover();
   await expect(tip).toBeVisible();
-  await expect(tip).toContainText('Displayed value is mean concurrency');
+  await expect(tip).toContainText('Max is the most at once');
 });

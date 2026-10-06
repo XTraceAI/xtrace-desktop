@@ -1,17 +1,30 @@
 //! Automatic parent links for Claude sessions a Codex agent created with a
 //! recorded `claude -p --session-id` launch.
 //!
-//! A Codex agent that runs one literal create-mode Claude print command
-//! naming its new session with `--session-id`, and whose own operation the
+//! A Codex agent that runs one create-mode Claude print command naming its
+//! new session with `--session-id` (literal or from the immediately preceding
+//! owned cell's one-use printed binding), and whose own operation the
 //! host acknowledged with a process result (any exit code, or a running
 //! process), created that session once it exists as a fresh saved session
-//! whose first input is that command's prompt. Whether the job later
-//! succeeds, fails or is ever polled again does not matter. This module finds
-//! such launches in the Codex thread's own history and links each to the
-//! Claude session it named once that session is indexed and its first input
-//! is exactly what the launch submitted. The link is shown as the child's
-//! parent; like every creation relation, it also marks the child's user
-//! messages as sent by the agent (the Human input view's existing rule).
+//! whose first input is that command's literal prompt — or, for a prompt read
+//! from a redirected file, which is never opened, any one text. Whether the
+//! job later succeeds, fails or is ever polled again does not matter. This
+//! module finds such launches in the Codex thread's own history and, once
+//! the named session is indexed and proved, records first that it is an
+//! agent's child (a child fact, which needs no parent) and then, when the
+//! thread is exactly one indexed Codex user session, links it to that
+//! parent. The link is shown as the child's parent; like every creation
+//! relation, it also marks the child's user messages as sent by the agent
+//! (the Human input view's existing rule). A child fact alone does neither.
+//!
+//! The same scan finds a Codex agent's literal fresh `codex exec --json`
+//! launch ([`codex_cli`]), whose new Codex thread is the one its own first
+//! process result printed as `thread.started`, even while the run goes on.
+//! Such a child must be a fresh saved Codex session: exactly one indexed
+//! Codex user session, whose one recorded original rollout opens with its own
+//! header, started by `exec` after the launch, naming no parent, fork or
+//! inherited history ([`resolve`]). Its child fact and relation rest on the
+//! same chain, checks and guarded writes, as `codex_cli_launch` evidence.
 //!
 //! Work is kept in a [`LaunchBacklog`] and done in bounded passes
 //! ([`continue_claude_launches_into`]) that the watcher runs after its quiet
@@ -21,8 +34,8 @@
 //!    passes until complete: the index records only a thread's original
 //!    rollout, not its continuations. A census that could not read an entry
 //!    is taken again later; no history is used from an incomplete census.
-//! 2. Threads to look at: every indexed Codex thread once per run (the
-//!    startup sweep), each thread a Codex scan imported, the parents of
+//! 2. Threads to look at: every Codex thread the census found once per run
+//!    (the startup sweep), indexed or not, each thread a Codex scan imported, the parents of
 //!    launches naming a Claude session a Claude scan imported, and the
 //!    parents of launches waiting for a timed retry.
 //! 3. A thread whose published validation is current — made by this
@@ -56,13 +69,17 @@
 //! within [`LaunchLimits::pass_memory`] — 256 MiB in all by default. Map
 //! entries are bounded apart; the census is bounded by its entries.
 //!
-//! Nothing is stored but identifiers, positions, ordinals, generations and
-//! closed labels; no prompt, command, output, path, time or digest.
+//! Only identifiers, positions, ordinals, generations, closed labels and a
+//! digest of launch inputs are stored; no prompt, command, output or path.
 
 mod ack;
+pub mod bash;
 mod cell;
+pub mod check;
+mod codex_cli;
 mod command;
 pub(super) mod group;
+mod options;
 mod resolve;
 mod rows;
 mod scan;
@@ -72,6 +89,7 @@ mod source;
 use super::readers_cli::CancelToken;
 use super::session_source::host_roots;
 use group::{Census, CensusFile, Plan, Planner, Refusal, Segment};
+pub(in crate::native) use resolve::fresh_exec_opened;
 use resolve::{Outcome, Resolve};
 use scan::{Counts, MemberFacts, ScanBounds, ScanError, SegmentScan, Step};
 use source::{Allowance, Budget, Reserved, Unread};
@@ -82,6 +100,7 @@ use std::{
 };
 use xt_store::{
     Host, Store,
+    child_fact::ChildFactDisposition,
     claude_launch::{
         Allocation, CandidateRow, ChildState, GroupStatus, LaunchCandidate, LaunchKey,
         MAX_CANDIDATE_ROWS, MemberRecord, SegmentGeneration,
@@ -92,7 +111,24 @@ use xt_store::{
 /// Version of this scan's history validation, kept with each published
 /// validation. A thread validated by another version is read again once;
 /// it moves apart from the creation evidence version its proofs carry.
-pub const CLAUDE_LAUNCH_VALIDATION_VERSION: u32 = 4;
+/// Version 10 also keeps the launches a history started with no first
+/// result yet ([`scan::Unfinished`]), which hold a session they may have
+/// created unchecked, and reads a spawned helper whose inherited context
+/// starts with the header it copied, so every thread is read again once. Version 9 also
+/// finds fresh `codex exec --json` launches of Codex
+/// children, so every thread is read again once; version 8 reads spawned
+/// helper threads with no inherited-context marker,
+/// approval reviewers, and helper forks whose marker says which rows were
+/// copied, so threads refused for those headers are read again; version 7
+/// reads launch options through the shared option map (creation
+/// version 6), so threads refused for an output format, verbose logging or
+/// standard-error routing are read again; version 6 adds the one-use printed
+/// UUID binding; version 5 found the literal launch forms of creation
+/// version 4.
+pub const CLAUDE_LAUNCH_VALIDATION_VERSION: u32 = 10;
+// The display check stores the scan version it ran under.
+const _: () =
+    assert!(CLAUDE_LAUNCH_VALIDATION_VERSION == xt_store::child_check::LAUNCH_VALIDATION_VERSION);
 
 /// Threads that may hold work in memory at once; another waits its turn.
 pub const MAX_THREADS: usize = 2;
@@ -334,6 +370,18 @@ pub struct LaunchBacklog {
     /// Child transcripts whose last line was still being written, as they
     /// were then.
     unfinished: HashMap<PathBuf, SegmentGeneration>,
+    /// Threads whose validation this run published or found current, with
+    /// the member files it covers and how it ended: what the display check
+    /// compares the census with, and why an invalid one is invalid.
+    confirmed: HashMap<String, Confirmed>,
+    /// The launches each valid validation found started with no first result
+    /// yet, by thread, kept while a newer validation of it is read.
+    starts: HashMap<String, Vec<scan::Unfinished>>,
+    /// A confirmed history changed other than by growing since.
+    captured_changed: bool,
+    /// Launches set aside without a decision by an earlier run were looked
+    /// at again, once, by this one.
+    recovered: bool,
 }
 
 impl Default for LaunchBacklog {
@@ -356,6 +404,10 @@ impl Default for LaunchBacklog {
             pass_memory: None,
             held: HashMap::new(),
             unfinished: HashMap::new(),
+            confirmed: HashMap::new(),
+            starts: HashMap::new(),
+            captured_changed: false,
+            recovered: false,
         }
     }
 }
@@ -383,7 +435,8 @@ impl LaunchBacklog {
         }
     }
 
-    /// Claude sessions a scan imported: their launches are looked at again.
+    /// Sessions a scan imported that a launch may name: their launches are
+    /// looked at again.
     pub fn add_children<'a>(&mut self, natives: impl IntoIterator<Item = &'a str>) {
         for native in natives {
             if self.children_queued.insert(native.to_owned()) {
@@ -412,6 +465,192 @@ impl LaunchBacklog {
     fn census_current(&self) -> bool {
         !self.census_dirty && self.census.as_ref().is_some_and(Census::usable)
     }
+
+    /// The number of the census taken last; a census asked for later has a
+    /// higher one.
+    pub(crate) fn census_epoch(&self) -> u64 {
+        self.census_epoch
+    }
+
+    /// Take the census again before the next threads are read: a session
+    /// born since the last one may have been created by a history it did not
+    /// find.
+    pub(crate) fn renew_census(&mut self) {
+        self.census_dirty = true;
+    }
+
+    /// Whether every Codex history the current census finds has been read
+    /// for launches since census `epoch` — the census in use when a display
+    /// check began — and is still exactly what that read covered: a valid or
+    /// explicitly unsupported validation of this run, its files unchanged,
+    /// with no planning, reading, staging or held read of it in progress. A
+    /// thread whose launches are being resolved counts: its launches are
+    /// known, and another child's resolution does not bear on this one. A
+    /// thread not yet so is queued to be read; one whose read failed is not
+    /// queued again until it changes.
+    pub(crate) fn discovered_since(&mut self, epoch: u64) -> Discovery {
+        if !self.census_current() || self.census_epoch <= epoch {
+            return Discovery::Pending;
+        }
+        let census = self.census.as_ref().expect("current");
+        let mut behind = Vec::new();
+        let mut failed = false;
+        for thread in census.threads() {
+            let reading = self.held.contains_key(thread)
+                || self
+                    .work
+                    .get(thread)
+                    .is_some_and(|work| !matches!(work.phase, Phase::Resolving { .. }));
+            let current = self.confirmed.get(thread).filter(|confirmed| {
+                confirmed.epoch > epoch
+                    && census
+                        .group(thread)
+                        .is_some_and(|files| same_files(files, &confirmed.members))
+            });
+            match current {
+                Some(confirmed) if !reading => {
+                    failed |= confirmed.outcome == ReadOutcome::Failed;
+                }
+                _ => behind.push(thread.to_owned()),
+            }
+        }
+        if !behind.is_empty() {
+            for thread in &behind {
+                self.queue(thread);
+            }
+            return Discovery::Pending;
+        }
+        if failed {
+            Discovery::Failed
+        } else {
+            Discovery::Complete
+        }
+    }
+
+    /// Whether a launch some current history started with no first result
+    /// yet may have created the session `child` of `host`: a Claude launch
+    /// naming exactly it, or a Codex launch made strictly before a fresh
+    /// `exec` thread was opened at `opened_ms`. A launch naming another
+    /// session, or made at or after the thread opened, holds nothing here.
+    pub(crate) fn unfinished_for(&self, host: Host, child: &str, opened_ms: i64) -> bool {
+        let census = self.census.as_ref();
+        self.starts
+            .iter()
+            .filter(|(thread, _)| {
+                thread.as_str() != child
+                    && census.is_some_and(|census| census.group(thread).is_some())
+            })
+            .flat_map(|(_, starts)| starts)
+            .any(|start| {
+                start.host == host
+                    && match host {
+                        Host::Claude => start.child == child,
+                        _ => start.launch_ms < opened_ms,
+                    }
+            })
+    }
+
+    /// Whether a history this display check read since it began changed in
+    /// a way other than growing: a file replaced, shortened, added or gone.
+    /// Taken once: the checks in flight start again.
+    pub(crate) fn take_captured_changed(&mut self) -> bool {
+        std::mem::take(&mut self.captured_changed)
+    }
+
+    /// Keep what a published or confirmed validation covers, its outcome and
+    /// the launches it found with no result yet, for the display check. A
+    /// Claude launch naming a session that the thread's previous launches
+    /// with no result did not name moves that session's check on.
+    fn note_confirmed(
+        &mut self,
+        store: &mut Store,
+        thread: &str,
+        members: &[MemberRecord],
+        outcome: ReadOutcome,
+        starts: Vec<scan::Unfinished>,
+    ) -> xt_store::Result<usize> {
+        if let Some(before) = self.confirmed.get(thread)
+            && !grown(&before.members, members)
+        {
+            self.captured_changed = true;
+        }
+        let known = self.starts.get(thread);
+        let mut reopened = 0;
+        for start in &starts {
+            if start.host == Host::Claude
+                && !known.is_some_and(|known| {
+                    known
+                        .iter()
+                        .any(|old| old.host == Host::Claude && old.child == start.child)
+                })
+            {
+                reopened += store.invalidate_child_checks_of(Host::Claude, &start.child)?;
+            }
+        }
+        self.confirmed.insert(
+            thread.to_owned(),
+            Confirmed {
+                epoch: self.census_epoch,
+                outcome,
+                members: members.to_vec(),
+            },
+        );
+        if starts.is_empty() {
+            self.starts.remove(thread);
+        } else {
+            self.starts.insert(thread.to_owned(), starts);
+        }
+        Ok(reopened)
+    }
+}
+
+/// Whether one validation's member files only grew from another's: the same
+/// files, each the same file at least as long as before.
+fn grown(before: &[MemberRecord], after: &[MemberRecord]) -> bool {
+    before.len() == after.len()
+        && before.iter().all(|old| {
+            after.iter().any(|new| {
+                new.rollout_id == old.rollout_id
+                    && new.generation.device == old.generation.device
+                    && new.generation.inode == old.generation.inode
+                    && new.generation.length >= old.generation.length
+            })
+        })
+}
+
+/// How a thread's history read for launches ended, as the display check
+/// needs it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReadOutcome {
+    /// Every file read and checked: its launches are known.
+    Valid,
+    /// A layout this version does not read for launches, by an explicit
+    /// guard: a fork whose header marks no copied rows.
+    Unsupported,
+    /// Malformed, over its limits, or not readable as one history: whether
+    /// it launched anything is not known.
+    Failed,
+}
+
+/// What a display check knows of the Codex histories that might have
+/// launched its session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Discovery {
+    /// Some are still to be read, or the census to be taken.
+    Pending,
+    /// Every one was read; one or more could not be checked.
+    Failed,
+    /// Every one was read and checked, or is explicitly unsupported.
+    Complete,
+}
+
+/// A thread's validation as this run confirmed it.
+#[derive(Debug)]
+struct Confirmed {
+    /// The census epoch it was confirmed under.
+    epoch: u64,
+    outcome: ReadOutcome,
+    members: Vec<MemberRecord>,
 }
 
 /// What one pass did. Counts only.
@@ -430,6 +669,8 @@ pub struct LaunchProgress {
     /// Validations published, as valid and as invalid.
     pub published_valid: usize,
     pub published_invalid: usize,
+    /// Completed checks reopened by changed launches or unfinished starts.
+    pub reopened: usize,
     /// Threads whose published validation was current and not read.
     pub threads_unchanged: usize,
     /// History files read whole, and member facts reused from memory.
@@ -440,6 +681,11 @@ pub struct LaunchProgress {
     /// occur elsewhere.
     pub launches_broken: usize,
     pub linked: usize,
+    /// Children proved and recorded as child facts, with or without a parent.
+    pub children: usize,
+    /// Of those, children whose thread is not exactly one indexed Codex user
+    /// session now: known children with no parent.
+    pub unparented: usize,
     pub waiting: usize,
     pub retry: usize,
     /// Child checks held by a transcript whose last line is still being
@@ -561,6 +807,15 @@ fn pass(
     }
     if !census.usable() {
         progress.census_pending = true;
+    }
+
+    // Once a run: launches an earlier run set aside without a decision, or
+    // stored before decisions were kept, are looked at again.
+    if !backlog.recovered {
+        for parent in store.reopen_undecided_claude_launch_children()? {
+            backlog.queue(&parent);
+        }
+        backlog.recovered = true;
     }
 
     // 2. Imported children, a page at a time: their child-side rejections
@@ -800,7 +1055,7 @@ impl Phase {
             slots_bytes(facts)
                 + facts
                     .iter()
-                    .map(|read| MemberFacts::held(&read.rollout, &read.chains))
+                    .map(|read| MemberFacts::held(&read.rollout, &read.chains, &read.unfinished))
                     .sum::<usize>()
         };
         match self {
@@ -901,10 +1156,10 @@ fn begin(
     limits: &LaunchLimits,
     progress: &mut LaunchProgress,
 ) -> xt_store::Result<Result<ThreadWork, Visit>> {
-    // Only an indexed thread can be a parent.
-    if store.user_sessions_with_native(Host::Codex, thread)?.len() != 1 {
-        return Ok(Err(Visit::Done));
-    }
+    // A thread is read whether or not the index holds it: the census found
+    // its history files, and a child it launched is known without a parent.
+    // Whether it is exactly one parent is decided only for a child already
+    // proved.
     if !backlog.census_current() {
         return Ok(Err(Visit::Waiting));
     }
@@ -924,9 +1179,22 @@ fn begin(
     let roots = anchored_roots(census.roots(), home);
     let published = store.claude_launch_group(thread)?;
     let members = store.claude_launch_members(thread)?;
+    // A validation that found launches with no result yet is current only
+    // while this run still holds them, and an invalid one only while this run
+    // knows why it is invalid: a restarted worker reads each again, once.
+    let known = backlog
+        .confirmed
+        .get(thread)
+        .map(|confirmed| confirmed.outcome);
     let unchanged = published.as_ref().is_some_and(|group| {
         group.validator_version == CLAUDE_LAUNCH_VALIDATION_VERSION
-            && group.status != GroupStatus::Pending
+            && match group.status {
+                GroupStatus::Valid => {
+                    group.unfinished_starts == 0 || backlog.starts.contains_key(thread)
+                }
+                GroupStatus::Invalid => known.is_some_and(|outcome| outcome != ReadOutcome::Valid),
+                GroupStatus::Pending => false,
+            }
     }) && same_files(&files, &members);
     if backlog.work.len() >= MAX_THREADS {
         return Ok(Err(Visit::Waiting));
@@ -943,6 +1211,14 @@ fn begin(
     if unchanged {
         let group = published.expect("published");
         progress.threads_unchanged += 1;
+        let (outcome, starts) = match group.status {
+            GroupStatus::Valid => (
+                ReadOutcome::Valid,
+                backlog.starts.get(thread).cloned().unwrap_or_default(),
+            ),
+            _ => (known.unwrap_or(ReadOutcome::Failed), Vec::new()),
+        };
+        progress.reopened += backlog.note_confirmed(store, thread, &members, outcome, starts)?;
         if group.status == GroupStatus::Invalid
             || store
                 .claude_launch_open_candidates(thread, None, 1)?
@@ -971,7 +1247,18 @@ fn begin(
     let allocation =
         store.begin_claude_launch_validation(thread, CLAUDE_LAUNCH_VALIDATION_VERSION)?;
     let indexed = group::indexed_paths(store, thread)?;
-    match Planner::start(thread, &files, &indexed, &roots, &memory, limits.max_line) {
+    let held = !store
+        .user_sessions_with_native(Host::Codex, thread)?
+        .is_empty();
+    match Planner::start(
+        thread,
+        &files,
+        &indexed,
+        held,
+        &roots,
+        &memory,
+        limits.max_line,
+    ) {
         Ok(planner) => Ok(Ok(work(Phase::Planning {
             allocation,
             planner: Box::new(planner),
@@ -980,12 +1267,13 @@ fn begin(
             Ok(Err(Visit::Busy))
         }
         // Refused from names and stats alone: nothing was read.
-        Err(_) => Ok(Err(refuse(
+        Err(why) => Ok(Err(refuse(
             store,
             backlog,
             thread,
             allocation,
             &[],
+            why.outcome(),
             progress,
         )?)),
     }
@@ -1004,13 +1292,17 @@ fn planned(segments: &[Segment]) -> Vec<(String, SegmentGeneration)> {
 /// census in which every file whose content the refusal rests on
 /// (`observed`) is still present as the generation it was read as; else
 /// nothing is published and the history is planned again: `Busy`. Files not
-/// read are recorded as they are now.
+/// read are recorded as they are now. `outcome` says, for the display check,
+/// whether an explicit guard refused a layout this version does not read or
+/// the history could not be checked.
+#[allow(clippy::too_many_arguments)]
 fn refuse(
     store: &mut Store,
-    backlog: &LaunchBacklog,
+    backlog: &mut LaunchBacklog,
     thread: &str,
     allocation: Allocation,
     observed: &[(String, SegmentGeneration)],
+    outcome: ReadOutcome,
     progress: &mut LaunchProgress,
 ) -> xt_store::Result<Visit> {
     let files = census_files(backlog, thread);
@@ -1048,6 +1340,10 @@ fn refuse(
         0,
     )?;
     progress.published_invalid += usize::from(published);
+    if published {
+        progress.reopened +=
+            backlog.note_confirmed(store, thread, &members, outcome, Vec::new())?;
+    }
     Ok(if published { Visit::Done } else { Visit::Busy })
 }
 
@@ -1094,6 +1390,7 @@ fn drive(
                                 thread,
                                 allocation,
                                 &planned(&plan.segments),
+                                ReadOutcome::Failed,
                                 progress,
                             );
                         };
@@ -1124,13 +1421,14 @@ fn drive(
                     )) => {
                         return Ok(Visit::Busy);
                     }
-                    Err(_) => {
+                    Err(why) => {
                         return refuse(
                             store,
                             backlog,
                             thread,
                             allocation,
                             &planner.observed(),
+                            why.outcome(),
                             progress,
                         );
                     }
@@ -1165,6 +1463,7 @@ fn drive(
                                     thread,
                                     allocation,
                                     &planned(&plan.segments),
+                                    ReadOutcome::Failed,
                                     progress,
                                 );
                             }
@@ -1200,6 +1499,7 @@ fn drive(
                                 thread,
                                 allocation,
                                 &planned(&plan.segments),
+                                ReadOutcome::Failed,
                                 progress,
                             );
                         }
@@ -1231,6 +1531,7 @@ fn drive(
                                 thread,
                                 allocation,
                                 &planned(&plan.segments),
+                                ReadOutcome::Failed,
                                 progress,
                             );
                         }
@@ -1251,6 +1552,7 @@ fn drive(
                         thread,
                         allocation,
                         &planned(&plan.segments),
+                        ReadOutcome::Failed,
                         progress,
                     );
                 };
@@ -1265,6 +1567,7 @@ fn drive(
                         thread,
                         allocation,
                         &planned(&plan.segments),
+                        ReadOutcome::Failed,
                         progress,
                     );
                 }
@@ -1354,17 +1657,42 @@ fn drive(
                 if !still {
                     return Ok(Visit::Busy);
                 }
+                // The launches still waiting for a first result, of a valid
+                // history only: names and times, at most one window's worth
+                // per file.
+                let starts: Vec<scan::Unfinished> = if *status == GroupStatus::Valid {
+                    facts
+                        .iter()
+                        .flat_map(|read| read.unfinished.iter().cloned())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 #[cfg(test)]
                 tests::fault("publish")?;
-                if !store.publish_claude_launch_validation(
-                    thread, allocation, *status, members, *staged,
-                )? {
+                let Some(reopened) = store.publish_claude_launch_validation_with_reopened(
+                    thread,
+                    allocation,
+                    *status,
+                    members,
+                    *staged,
+                    starts.len(),
+                )?
+                else {
                     return Ok(Visit::Busy);
-                }
+                };
+                progress.reopened += reopened;
                 match status {
                     GroupStatus::Valid => progress.published_valid += 1,
                     _ => progress.published_invalid += 1,
                 }
+                let outcome = if *status == GroupStatus::Valid {
+                    ReadOutcome::Valid
+                } else {
+                    ReadOutcome::Failed
+                };
+                progress.reopened +=
+                    backlog.note_confirmed(store, thread, members, outcome, starts)?;
                 // Keep the member facts idle for the next validation.
                 let cache = backlog.cache.as_mut().expect("made");
                 for read in std::mem::take(facts) {
@@ -1488,6 +1816,14 @@ fn finalize(
                     .unwrap_or(i64::MAX),
                 launch_ordinal: chain.launch_ordinal,
                 acknowledgment_ordinal: chain.acknowledgment_ordinal,
+                binding_call_offset: chain
+                    .binding_call_offset
+                    .and_then(|at| i64::try_from(at).ok()),
+                binding_output_offset: chain
+                    .binding_output_offset
+                    .and_then(|at| i64::try_from(at).ok()),
+                child_host: chain.host,
+                launch_check_fingerprint: Some(chain.launch_check_fingerprint.clone()),
             });
         }
     }
@@ -1528,6 +1864,7 @@ fn resolve_launches(
             max_line: limits.max_line,
             max_child_bytes: limits.max_child_bytes,
             max_child_lines: limits.max_child_lines,
+            max_window_bytes: limits.max_window_bytes,
             unfinished: &backlog.unfinished,
         };
         // Nothing of a history that changed is linked.
@@ -1608,8 +1945,48 @@ fn resolve_launches(
                 }
                 #[cfg(test)]
                 tests::fault("link")?;
+                // The child first: that the launch created it needs no parent.
+                let Some(facts) = store.record_claude_launch_child_guarded(
+                    &ready.fact,
+                    &ready.row,
+                    &ready.members,
+                    recorded_at,
+                )?
+                else {
+                    // The published validation or the launch moved on.
+                    progress.retry += 1;
+                    return Ok(Visit::Busy);
+                };
+                progress.changed += facts.changed;
+                match facts.dispositions.first() {
+                    Some(ChildFactDisposition::Abstained(
+                        CreationAbstention::MissingChild | CreationAbstention::FirstInputMismatch,
+                    )) => {
+                        // The index may not hold yet what the transcript
+                        // already does.
+                        store.set_claude_launch_child_state(&ready.row, ChildState::Retry)?;
+                        progress.retry += 1;
+                        *cursor = Some(ready.row.candidate.key.clone());
+                        continue;
+                    }
+                    Some(ChildFactDisposition::Abstained(_)) | None => {
+                        store.set_claude_launch_child_state(&ready.row, ChildState::Rejected)?;
+                        progress.rejected += 1;
+                        *cursor = Some(ready.row.candidate.key.clone());
+                        continue;
+                    }
+                    Some(_) => progress.children += 1,
+                }
+                let Some(proof) = &ready.proof else {
+                    // No single indexed parent now: the child stays known,
+                    // and the launch is looked at again on its next import.
+                    store.set_claude_launch_child_state(&ready.row, ChildState::Rejected)?;
+                    progress.unparented += 1;
+                    *cursor = Some(ready.row.candidate.key.clone());
+                    continue;
+                };
                 match store.record_claude_launch_guarded(
-                    &ready.proof,
+                    proof,
                     &ready.row,
                     &ready.members,
                     recorded_at,
@@ -1680,7 +2057,9 @@ fn record(
             progress.retry += 1;
             progress.unfinished += 1;
         }
-        Outcome::Rejected | Outcome::SourceRejected | Outcome::Deferred => progress.rejected += 1,
+        Outcome::Rejected | Outcome::SourceRejected | Outcome::Deferred | Outcome::Unclear => {
+            progress.rejected += 1
+        }
     }
     match outcome {
         Outcome::SourceRejected => {
@@ -1688,8 +2067,10 @@ fn record(
         }
         // A check the thread's own allowance cannot hold is its own input
         // alone over its limit.
-        Outcome::Deferred => {
-            store.set_claude_launch_child_state(row, ChildState::Rejected)?;
+        // Set aside without a decision: not retried on a timer, and the child
+        // it names stays checking.
+        Outcome::Deferred | Outcome::Unclear => {
+            store.defer_claude_launch_child(row)?;
         }
         other => {
             if let Some(state) = other.state()

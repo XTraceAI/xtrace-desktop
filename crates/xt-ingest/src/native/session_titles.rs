@@ -364,8 +364,8 @@ pub(super) enum TypedSpawn<'a> {
     Malformed,
     /// A `thread_spawn` naming the thread itself.
     SelfSpawn,
-    /// A `thread_spawn` naming this distinct full parent. Its
-    /// `payload.session_id` has not been looked at.
+    /// A `thread_spawn` naming this distinct full parent. The rest of its
+    /// header has not been looked at ([`spawn_check`]).
     Parent(&'a str),
 }
 
@@ -399,12 +399,42 @@ pub(super) fn typed_spawn<'a>(payload: &'a Map<String, Value>, native: &str) -> 
     }
 }
 
-/// Whether a spawned thread's `payload.session_id` is present and names
-/// exactly the parent its typed spawn names. Every observed spawned header
-/// carries its parent there; it corroborates the typed parent and never
-/// supplies one.
-pub(super) fn corroborated(payload: &Map<String, Value>, parent: &str) -> bool {
-    payload.get("session_id").and_then(Value::as_str) == Some(parent)
+/// What the rest of a spawned thread's header says beside its typed parent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SpawnCheck {
+    /// The header fits the typed parent.
+    Corroborated,
+    /// `payload.session_id` is missing, or is not a full thread identity
+    /// other than this thread.
+    Unrooted,
+    /// `payload.parent_thread_id` is present and is not exactly the typed
+    /// parent.
+    Contradicted,
+}
+
+/// Check a spawned thread's header beside the distinct full `parent` its
+/// typed `thread_spawn` names ([`TypedSpawn::Parent`]).
+///
+/// Codex writes `payload.session_id` as the root thread of the whole spawn
+/// tree, shared by every descendant: the parent itself for a thread spawned
+/// by a root, another thread deeper down. It must be present, a full thread
+/// identity and not this thread, and it is never compared with the parent nor
+/// read as one. Current headers also name the immediate parent in
+/// `payload.parent_thread_id`; when that is present (not null) it must be
+/// exactly the typed parent. A header written before that field existed is
+/// held to the rest of this contract alone. No depth, role, nickname or path
+/// is consulted.
+pub(super) fn spawn_check(payload: &Map<String, Value>, native: &str, parent: &str) -> SpawnCheck {
+    if payload
+        .get("parent_thread_id")
+        .is_some_and(|explicit| !explicit.is_null() && explicit.as_str() != Some(parent))
+    {
+        return SpawnCheck::Contradicted;
+    }
+    match payload.get("session_id").and_then(Value::as_str) {
+        Some(root) if full_thread_id(root) && root != native => SpawnCheck::Corroborated,
+        _ => SpawnCheck::Unrooted,
+    }
 }
 
 /// Read the host title of each target, in order, within one budget and one
@@ -1253,10 +1283,10 @@ enum Header {
 /// and a `history_base` must be an object whose `thread_id` names a rollout.
 /// That rollout is where the history continues from; it is not this thread
 /// and never names it. `payload.session_id`, when present, names this thread
-/// too — except in a spawned thread's header, where Codex writes the parent:
-/// there it must be present and name exactly the distinct full parent the
-/// typed `thread_spawn` names. A `guardian`, role, path or `history_base`
-/// never makes another thread's `session_id` acceptable.
+/// too — except in a spawned thread's header, where Codex writes the root of
+/// its spawn tree: there the header must fit the distinct full parent the
+/// typed `thread_spawn` names ([`spawn_check`]). A `guardian`, role, path or
+/// `history_base` never makes another thread's `session_id` acceptable.
 fn codex_header(line: &[u8], native: &str) -> Result<Header, Untitled> {
     if !contains(line, b"session_meta") {
         return Ok(Header::NotFirst);
@@ -1283,7 +1313,9 @@ fn codex_header(line: &[u8], native: &str) -> Result<Header, Untitled> {
         TypedSpawn::None => payload
             .get("session_id")
             .is_none_or(|session| session.as_str() == Some(native)),
-        TypedSpawn::Parent(parent) => corroborated(payload, parent),
+        TypedSpawn::Parent(parent) => {
+            spawn_check(payload, native, parent) == SpawnCheck::Corroborated
+        }
         TypedSpawn::Malformed | TypedSpawn::SelfSpawn => false,
     };
     if !session {

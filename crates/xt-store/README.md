@@ -191,6 +191,14 @@ that row is an unconflicted, human-classified Claude user input; otherwise it
 abstains. Like a confirmation, the row overrides only that input's effective
 human eligibility; the raw record is unchanged.
 
+`IngestBatch::tool_sent` optionally carries, aligned with the inputs, the kind
+of a validated pinned-reader claim that the Codex or Cursor tool (or the reader
+itself) wrote that input (see `tool_sent.rs`). An accepted marked input binds a
+row in `tool_sent_inputs` to its stored record in the batch's session — new or
+already held — when that row is an unconflicted, human-classified user input
+of the kind's own host; otherwise it abstains. The row overrides only that
+input's effective human eligibility, and withdraws any person preview of it.
+
 Session observations and receipt parents must match the batch's canonical session.
 Record observations and receipt coverage may reference only submitted UUIDs with
 no rejected occurrence anywhere in the batch. This restriction avoids assigning

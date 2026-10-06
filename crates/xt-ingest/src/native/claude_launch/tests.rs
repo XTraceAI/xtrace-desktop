@@ -75,6 +75,12 @@ fn row(offset: i64, payload: Value) -> Value {
 /// than a small pass), a continuation whose base cutoff must be checked,
 /// and a child transcript larger than a small pass.
 fn fixture(parents: &[(&str, &str)]) -> Fixture {
+    fixture_with(parents, None)
+}
+
+/// As [`fixture`]; with `forked`, each parent is a fork of another,
+/// unindexed conversation, whose first header states that fork cutoff.
+fn fixture_with(parents: &[(&str, &str)], forked: Option<u64>) -> Fixture {
     let temp = tempfile::TempDir::new().unwrap();
     let home = temp.path().canonicalize().unwrap().join("home");
     let bin = home.join(".local/bin");
@@ -89,12 +95,36 @@ fn fixture(parents: &[(&str, &str)]) -> Fixture {
     let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
     for (index, (parent, child)) in parents.iter().enumerate() {
         let original = day.join(format!("rollout-2026-09-07T0{index}-00-00-{parent}.jsonl"));
-        let header = json!({"timestamp": iso(-10_000), "type": "session_meta", "ordinal": 0,
+        let mut header = json!({"timestamp": iso(-10_000), "type": "session_meta", "ordinal": 0,
             "payload": {"id": parent, "cwd": "/w", "source": "cli", "history_mode": "paginated",
                 "history_base": null, "instructions": "long instructions ".repeat(1_000)}});
+        // A forked parent's history continues the other conversation's two
+        // rows, which are never its own.
+        let mut start = 0;
+        if let Some(stated) = forked {
+            let from = format!("01a00000-0000-7000-8000-0000000000f{index}");
+            let rows = [
+                json!({"timestamp": iso(-20_000), "type": "session_meta", "ordinal": 0,
+                    "payload": {"id": from, "cwd": "/w", "source": "cli",
+                        "history_mode": "paginated"}}),
+                json!({"timestamp": iso(-19_000), "type": "event_msg", "ordinal": 1,
+                    "payload": {"type": "note", "text": "before the fork"}}),
+            ];
+            let body: String = rows.iter().map(|row| format!("{row}\n")).collect();
+            fs::write(
+                day.join(format!("rollout-2026-09-06T0{index}-00-00-{from}.jsonl")),
+                &body,
+            )
+            .unwrap();
+            start = 2;
+            header["ordinal"] = json!(start);
+            header["payload"]["forked_from_id"] = json!(from);
+            header["payload"]["forked_from_ordinal_exclusive"] = json!(stated);
+            header["payload"]["history_base"] = json!({"thread_id": from, "end_byte_offset": body.len(), "end_ordinal_exclusive": 2});
+        }
         let first = [
             header,
-            json!({"timestamp": iso(-9_000), "type": "event_msg", "ordinal": 1,
+            json!({"timestamp": iso(-9_000), "type": "event_msg", "ordinal": start + 1,
                 "payload": {"type": "note", "text": "filler ".repeat(2_000)}}),
         ];
         let first_body: String = first.iter().map(|row| format!("{row}\n")).collect();
@@ -107,19 +137,19 @@ fn fixture(parents: &[(&str, &str)]) -> Fixture {
             json!({"type": "custom_tool_call", "call_id": "call_launch",
             "name": "exec", "input": launch_cell(&claude, child)}),
         );
-        launch["ordinal"] = json!(3);
+        launch["ordinal"] = json!(start + 3);
         let mut done = row(
             5,
             json!({"type": "custom_tool_call_output", "call_id": "call_launch",
             "output": [{"type": "input_text", "text": "Script completed\nOutput:\n"},
                        {"type": "input_text", "text": json!({"exit_code": 0, "output": ""}).to_string()}]}),
         );
-        done["ordinal"] = json!(4);
+        done["ordinal"] = json!(start + 4);
         let second = [
-            json!({"timestamp": iso(-5_000), "type": "session_meta", "ordinal": 2,
+            json!({"timestamp": iso(-5_000), "type": "session_meta", "ordinal": start + 2,
                 "payload": {"id": parent, "cwd": "/w", "source": "cli", "history_mode": "paginated",
                     "history_base": {"thread_id": parent, "end_byte_offset": first_body.len(),
-                        "end_ordinal_exclusive": 2}}}),
+                        "end_ordinal_exclusive": start + 2}}}),
             launch,
             done,
         ];
@@ -194,6 +224,46 @@ const CHILD_B: &str = "0c000000-0000-4000-8000-0000000000c2";
 
 fn relations(store: &Store) -> u64 {
     store.claude_launch_summary().unwrap().relations_accepted
+}
+
+/// A Codex fork's own history starts at its first rollout, which continues
+/// another conversation's: the launch it made is linked to it, and the
+/// other conversation's rows are not read for it. A first header whose
+/// stated fork cutoff disagrees with its reference is not one history.
+#[test]
+fn a_forked_parent_links_its_own_launch() {
+    for (stated, linked) in [(2, true), (3, false)] {
+        let mut fixture = fixture_with(&[(PARENT_A, CHILD_A)], Some(stated));
+        let mut backlog = LaunchBacklog::starting();
+        for _ in 0..100 {
+            continue_claude_launches(
+                &mut fixture.store,
+                &fixture.home,
+                &mut backlog,
+                &LaunchLimits::default(),
+                None,
+                T,
+            )
+            .unwrap();
+            if !backlog.pending() {
+                break;
+            }
+        }
+        let summary = fixture.store.claude_launch_summary().unwrap();
+        if linked {
+            assert_eq!(
+                (summary.relations_accepted, summary.groups_invalid),
+                (1, 0),
+                "{summary:?}"
+            );
+        } else {
+            assert_eq!(
+                (summary.relations_accepted, summary.groups_invalid),
+                (0, 1),
+                "{summary:?}"
+            );
+        }
+    }
 }
 
 /// Every byte any read returned, pass by pass, is what the pass was
@@ -319,8 +389,8 @@ fn a_failure_after_a_link_keeps_its_count_and_the_queue() {
     }
     assert!(result.is_err());
     assert_eq!(
-        progress.changed, 1,
-        "the committed link is counted: {progress:?}"
+        progress.changed, 2,
+        "the committed child fact and link are counted: {progress:?}"
     );
     assert_eq!(relations(&fixture.store), 1);
     assert!(backlog.threads.contains(&PARENT_B.to_owned()));
@@ -359,6 +429,9 @@ fn a_forced_hash_collision_only_rejects() {
             ordinal: None,
             base: None,
             inherited_below: None,
+            forked: false,
+            role: group::Role::Own,
+            copied: false,
         },
         generation,
     };
@@ -389,14 +462,19 @@ fn a_forced_hash_collision_only_rejects() {
                 launch_call_id: "call_launch".into(),
                 launch_op: 0,
                 child: CHILD_A.into(),
+                host: xt_store::Host::Claude,
                 acknowledgment_call_id: "call_launch".into(),
                 handle: Some("7".into()),
                 launch_offset: 10,
                 acknowledgment_offset: 50,
                 launch_ordinal: None,
                 acknowledgment_ordinal: None,
+                binding_call_offset: None,
+                binding_output_offset: None,
+                launch_check_fingerprint: "0".repeat(64),
                 ids: vec![1, 2],
             }],
+            unfinished: Vec::new(),
             broken: 0,
             entries: allowance.reserve(0).unwrap(),
             bytes: allowance.reserve(0).unwrap(),
@@ -787,7 +865,7 @@ fn what_the_work_keeps_is_within_its_lowered_limits_at_actual_capacity() {
         let actual: usize = cache
             .facts
             .values()
-            .map(|read| MemberFacts::held(&read.rollout, &read.chains))
+            .map(|read| MemberFacts::held(&read.rollout, &read.chains, &read.unfinished))
             .sum();
         cached |= !cache.facts.is_empty();
         assert!(
@@ -1034,7 +1112,24 @@ fn a_header_replaced_while_it_was_read_is_planned_again() {
                 (0, 1),
                 "{summary:?}"
             );
+            // A restarted worker reads it once more, to learn again why it
+            // is invalid, and then not again while it is unchanged.
             let mut backlog = LaunchBacklog::starting();
+            for _ in 0..50 {
+                if !backlog.pending() {
+                    break;
+                }
+                continue_claude_launches(
+                    &mut fixture.store,
+                    &fixture.home,
+                    &mut backlog,
+                    &limits,
+                    None,
+                    T,
+                )
+                .unwrap();
+            }
+            backlog.add_threads([PARENT_A]);
             let again = continue_claude_launches(
                 &mut fixture.store,
                 &fixture.home,
@@ -1044,7 +1139,19 @@ fn a_header_replaced_while_it_was_read_is_planned_again() {
                 T,
             )
             .unwrap();
-            assert_eq!(again.bytes_read, 0, "not read again: {again:?}");
+            assert_eq!(
+                (again.threads_unchanged, again.files_read),
+                (1, 0),
+                "not read again: {again:?}"
+            );
+            assert_eq!(
+                fixture
+                    .store
+                    .claude_launch_summary()
+                    .unwrap()
+                    .groups_invalid,
+                1
+            );
         }
     }
 }
@@ -1134,7 +1241,24 @@ fn a_malformed_member_removed_while_it_was_read_refuses_nothing() {
                 (1, 0),
                 "{summary:?}"
             );
+            // A restarted worker reads it once more, to learn again why it
+            // is invalid, and then not again while it is unchanged.
             let mut backlog = LaunchBacklog::starting();
+            for _ in 0..50 {
+                if !backlog.pending() {
+                    break;
+                }
+                continue_claude_launches(
+                    &mut fixture.store,
+                    &fixture.home,
+                    &mut backlog,
+                    &limits,
+                    None,
+                    T,
+                )
+                .unwrap();
+            }
+            backlog.add_threads([PARENT_A]);
             let again = continue_claude_launches(
                 &mut fixture.store,
                 &fixture.home,
@@ -1144,7 +1268,19 @@ fn a_malformed_member_removed_while_it_was_read_refuses_nothing() {
                 T,
             )
             .unwrap();
-            assert_eq!(again.bytes_read, 0, "not read again: {again:?}");
+            assert_eq!(
+                (again.threads_unchanged, again.files_read),
+                (1, 0),
+                "not read again: {again:?}"
+            );
+            assert_eq!(
+                fixture
+                    .store
+                    .claude_launch_summary()
+                    .unwrap()
+                    .groups_invalid,
+                1
+            );
         }
     }
 }

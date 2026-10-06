@@ -3,6 +3,10 @@
 History references supply legacy usage baselines, not an instruction to discard
 work past a rewind cutoff. Native response ledgers supersede UI token meters.
 Each immutable rollout has its own record identities.
+
+A forked session's first rollout references a rollout of the session it was
+forked from. That rollout is never part of the fork: only its prefix's
+cumulative counters are read, so the fork's first usage delta is its own work.
 """
 from __future__ import annotations
 
@@ -19,8 +23,41 @@ _UUID = r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F
 _NAME = re.compile(rf'rollout-.+-({_UUID})(?:_({_UUID}))?\.jsonl$')
 
 
+def _history_base(meta):
+    """A rollout header's history reference, validated, or None."""
+    base = meta.get('history_base')
+    if base is not None and (not isinstance(base, dict) or
+            not isinstance(base.get('thread_id'), str) or
+            any(type(base.get(k)) is not int or base[k] < 0
+                for k in ('end_byte_offset', 'end_ordinal_exclusive'))):
+        raise ValueError('invalid history reference')
+    return base
+
+
+def _fork_origin(meta, base):
+    """The session a rollout says its history reference belongs to, or None.
+
+    Only a rollout that references history and names a different session it
+    was forked from has one. A stated fork cutoff must be the reference's.
+    """
+    parent = meta.get('forked_from_id')
+    if base is None or parent is None:
+        return None
+    if not isinstance(parent, str) or not parent.strip() or parent == meta.get('id'):
+        raise ValueError('invalid fork origin')
+    cutoff = meta.get('forked_from_ordinal_exclusive')
+    if cutoff is not None and (type(cutoff) is not int or cutoff != base['end_ordinal_exclusive']):
+        raise ValueError('fork cutoff disagrees with history reference')
+    return parent
+
+
 def plan(items, headers):
-    """Validate one discovered same-session group; never choose a newest file."""
+    """Validate one discovered same-session group; never choose a newest file.
+
+    The group's root is its one original rollout, or -- for a forked session
+    -- the one rollout whose history reference names a rollout of the session
+    it was forked from. ``references`` resolves that rollout separately.
+    """
     segments = {}
     started = {}
     for path, revision, header in items:
@@ -33,12 +70,7 @@ def plan(items, headers):
         rid = match[2] or match[1]
         if rid in segments:
             raise ValueError('duplicate immutable rollout ID')
-        base = meta.get('history_base')
-        if base is not None and (not isinstance(base, dict) or
-                not isinstance(base.get('thread_id'), str) or
-                any(type(base.get(k)) is not int or base[k] < 0
-                    for k in ('end_byte_offset', 'end_ordinal_exclusive'))):
-            raise ValueError('invalid history reference')
+        base = _history_base(meta)
         start = 0 if base is None else base['end_ordinal_exclusive']
         if type(raw.get('ordinal')) is not int or raw['ordinal'] != start:
             raise ValueError('rollout header ordinal disagrees with history reference')
@@ -47,7 +79,9 @@ def plan(items, headers):
             raise ValueError('paginated rollout requires a native start time')
         started[rid] = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
         segments[rid] = (path, revision, header, base)
-    roots = [rid for rid, (_, _, _, base) in segments.items() if base is None]
+    roots = [rid for rid, (path, _, _, base) in segments.items()
+             if base is None or (base['thread_id'] not in segments and
+                                 _fork_origin(headers[path]['payload'], base) is not None)]
     if len(roots) != 1:
         raise ValueError('history group requires one original rollout')
     root = roots[0]
@@ -62,7 +96,7 @@ def plan(items, headers):
             return
         visiting.add(rid)
         base = segments[rid][3]
-        if base is not None:
+        if base is not None and rid != root:
             visit(base['thread_id'])
         visiting.remove(rid)
         done.add(rid)
@@ -74,6 +108,72 @@ def plan(items, headers):
     header['mtime'] = max(item[2]['mtime'] for item in segments.values())
     revision = tuple(entry for rid in ordered for entry in segments[rid][1])
     return segments[root][0], revision, header, [(rid, *segments[rid]) for rid in ordered]
+
+
+def reference_facts(path, raw):
+    """``(rollout ID, small header facts)`` for a probed rollout, or None.
+
+    Kept for every rollout discovery identified, whichever session it names,
+    so a fork can find the rollout it references without holding headers.
+    """
+    match = _NAME.fullmatch(Path(path).name)
+    payload = raw.get('payload') if isinstance(raw, dict) else None
+    if not match or not isinstance(payload, dict):
+        return None
+    keys = ('id', 'history_mode', 'history_base', 'forked_from_id', 'forked_from_ordinal_exclusive')
+    return match[2] or match[1], {'ordinal': raw.get('ordinal'),
+                                  'payload': {key: payload.get(key) for key in keys}}
+
+
+def references(group, headers, index):
+    """The rollouts outside a forked group that its usage baseline comes from.
+
+    ``index`` maps a rollout ID to every discovered ``(path, revision, facts)``
+    carrying it (see ``reference_facts``). Each referenced rollout must be the
+    one discovered file of that ID, named and headed as that ID, and belong to
+    the referring rollout's own session or the session it says it was forked
+    from; its own reference is followed the same way until an original
+    rollout. Returned oldest first as ``(rid, path, revision, base)``; empty
+    for a group whose root is an original rollout. Any doubt refuses.
+    """
+    rid, path, _, _, base = group[0]
+    if base is None:
+        return []
+    meta = headers[path]['payload']
+    owner = _fork_origin(meta, base)
+    if owner is None:
+        raise ValueError('history group requires one original rollout')
+    seen = {item[0] for item in group}
+    allowed = {owner}
+    chain = []
+    while base is not None:
+        thread = base['thread_id']
+        if thread in seen:
+            raise ValueError('cyclic history source')
+        seen.add(thread)
+        found = index.get(thread, ())
+        if len(found) != 1:
+            raise ValueError('missing or ambiguous history source')
+        source, revision, facts = found[0]
+        payload = facts['payload']
+        sid = payload.get('id')
+        match = _NAME.fullmatch(Path(source).name)
+        if (not match or match[1] != sid or (match[2] or match[1]) != thread
+                or sid not in allowed or payload.get('history_mode') != 'paginated'):
+            raise ValueError('history source is not the referenced rollout')
+        base = _history_base(payload)
+        start = 0 if base is None else base['end_ordinal_exclusive']
+        if type(facts.get('ordinal')) is not int or facts['ordinal'] != start:
+            raise ValueError('rollout header ordinal disagrees with history reference')
+        chain.append((thread, source, revision, base))
+        try:
+            parent = _fork_origin(payload, base)
+        except ValueError:
+            # Not a fork step it can vouch for: only its own session is next.
+            parent = None
+        allowed = {sid} if parent is None else {sid, parent}
+    chain.reverse()
+    return chain
 
 
 def context_boundary(rows):
@@ -149,7 +249,8 @@ def prefix_usage(source, cutoff, ordinal, inherited):
 
 
 
-def read(group, acquire, *, title_index=None, record_guard=None, origin=None, human=None):
+def read(group, acquire, *, title_index=None, record_guard=None, origin=None, human=None,
+         automated=None, references=()):
     """Normalize every physical segment once, including abandoned tails.
 
     ``acquire`` is the caller's bounded source acquisition, called as
@@ -168,26 +269,45 @@ def read(group, acquire, *, title_index=None, record_guard=None, origin=None, hu
     facts are taken as soon as it is converted, so its rows are let go before
     the next segment is parsed, as they are without evidence. Without it the
     conversion is exactly the one it always was. ``human`` similarly receives
-    image-wrapper length evidence, only for surviving own records.
+    image-wrapper length evidence, only for surviving own records, and
+    ``automated`` automated-input evidence (see ``automated_input``) the same way.
+
+    ``references`` are the rollouts outside a forked group (see
+    ``references``). Each is acquired like a segment, but only its prefix's
+    counters are read: none of its rows become this session's records.
     """
     session_id = group[0][3]["native_session_id"]
-    from . import codex_human, codex_origin
+    from . import automated_input, codex_human, codex_origin
     human_segments = [] if human is not None else None
+    automated_segments = [] if automated is not None else None
     segments = None
     if origin is not None:
         segments = []
     with ExitStack() as stack:
         copies = {rid: stack.enter_context(acquire(path, 'codex', revision))
                   for rid, path, revision, _, _ in group}
+        root = group[0][0]
         seeds = {}
+
+        def inherited(base):
+            if base is None:
+                return None
+            if base['thread_id'] not in copies or base['thread_id'] not in seeds:
+                raise ValueError('cyclic or missing history source')
+            return prefix_usage(copies[base['thread_id']], base['end_byte_offset'],
+                                base['end_ordinal_exclusive'], seeds[base['thread_id']])
+
+        for rid, path, revision, base in references:
+            if rid in copies:
+                raise ValueError('duplicate immutable rollout ID')
+            copies[rid] = stack.enter_context(acquire(path, 'codex', revision))
+            seeds[rid] = inherited(base)
         records = []
         seen_responses = {}
         first_meta = None
         native_title = None
         for rid, _, _, _, base in group:
-            seed = None if base is None else prefix_usage(
-                copies[base['thread_id']], base['end_byte_offset'],
-                base['end_ordinal_exclusive'], seeds[base['thread_id']])
+            seed = inherited(base)
             seeds[rid] = seed
             rows = codex.load_rollout(copies[rid], strict=True)
             if (not rows or rows[0].get('type') != 'session_meta'
@@ -207,8 +327,10 @@ def read(group, acquire, *, title_index=None, record_guard=None, origin=None, hu
             # Held only for origin evidence, until this segment's facts are
             # taken. It keeps every record either conversion made alive until
             # then, so no ``id`` in ``record_sources`` is reused.
-            record_origins = {} if segments is not None or human_segments is not None else None
-            namespace = rid if base is None else f"{session_id}:rollout:{rid}"
+            record_origins = ({} if segments is not None or human_segments is not None
+                              or automated_segments is not None else None)
+            # The root -- original or forked -- keeps its own rollout ID.
+            namespace = rid if rid == root else f"{session_id}:rollout:{rid}"
             # What earlier segments already hold; this segment's guard counts
             # from there, so the bound is the session's and not each file's.
             held = len(records)
@@ -240,6 +362,9 @@ def read(group, acquire, *, title_index=None, record_guard=None, origin=None, hu
             if human_segments is not None:
                 human_segments.append(codex_human.segment(
                     rid, parsed, converted, record_sources, record_origins))
+            if automated_segments is not None:
+                automated_segments.append(automated_input.codex_segment(
+                    rid, parsed, converted, record_sources, record_origins))
             if segments is not None:
                 # ``converted`` is this rollout's own work; ``context`` is what
                 # it inherited, and is never offered for a claim. Only small
@@ -264,4 +389,7 @@ def read(group, acquire, *, title_index=None, record_guard=None, origin=None, hu
         if human_segments is not None:
             codex_origin.collect(human, lambda: codex_human.describe(
                 human_segments, records, native_session_id=session_id, out=human))
+        if automated_segments is not None:
+            codex_origin.collect(automated, lambda: automated_input.codex_describe(
+                automated_segments, records, native_session_id=session_id, out=automated))
         return records, first_meta

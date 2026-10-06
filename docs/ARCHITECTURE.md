@@ -76,6 +76,36 @@ reimplementing calculations. The fixture harness uses the canonical storage API;
 its bounded baseline reference assertions do not implement the production metric
 engine or establish whole-rule coverage.
 
+## Design principles
+
+### One rule per question (single source of truth)
+
+Every question the app answers — "is this week ahead of even use?", "is this
+session live?", "how long did this session run?", "how is this time shown?" —
+is decided by exactly one function. Everything that shows or acts on the answer
+(a label, a color, a warning, a chart, a sort order, a second screen) reads that
+one result instead of working it out again with its own formula or threshold.
+Derive, don't duplicate.
+
+- Before adding a calculation, threshold, label rule or formatter, search for an
+  existing one that answers the same question and reuse it. If it does not quite
+  fit, change it in place rather than writing a near copy.
+- Product decisions and metrics live in Rust and reach the renderer as DTO
+  fields. The renderer formats and arranges them; it does not re-derive them.
+  If the screen needs a new decision, add it to the DTO.
+- When two signals describe the same state (for example a bar color and a
+  warning line), derive both from the same comparison on the same unrounded
+  numbers, and round only for display.
+- A shared constant (a window length, a timeout, a cut-off) is defined once and
+  imported where it is needed.
+- Test the agreement, not only each part: a test should show that every signal
+  derived from one answer changes together.
+
+Example of the failure this prevents: the usage widget once colored its bar by
+comparing use with even use over the whole week, while its "Runs out" warning
+extended the last day's rate. A week below even use could show a green bar and
+a run-out warning at the same time. Both now come from one comparison.
+
 Keep subsystem contracts explicit at crate boundaries. Local checks are in
 [CONTRIBUTING.md](../CONTRIBUTING.md); [CI.md](CI.md) describes automated
 validation and its limits.

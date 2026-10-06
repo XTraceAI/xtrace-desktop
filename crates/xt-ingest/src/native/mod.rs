@@ -23,6 +23,7 @@ pub mod session_creation;
 pub mod session_source;
 pub mod session_titles;
 pub mod stream;
+pub mod tool_sent;
 pub mod watch;
 
 use crate::writer::{MAX_BATCH_RECORDS, WriteBatch, write_batch_proven};
@@ -318,16 +319,30 @@ pub fn scan_native_continued(
             ),
             Host::Claude => {
                 let report = import_claude(store, request, mode, observer);
+                // A scan is a source change: sessions still checking are
+                // looked at, and own reads that failed are made again.
+                spawns.checks.wake();
                 // A Claude session a Codex agent launched may be linked now.
                 spawns.launches.add_children(imported(&report));
+                // A Claude session may be a child a Claude agent launched, or
+                // a caller whose launches now have their result.
+                spawns.bash.add_sessions(imported(&report));
                 report
             }
             Host::Codex => {
                 let report = import_reader_host(store, request, Host::Codex);
+                // Also when the reader could not run: a header read from the
+                // index's own locators is asked for again, so a restored
+                // root rollout is read without the reader.
+                spawns.checks.wake();
                 relate_codex_spawns(store, request, &report, spawns, limits);
                 report
             }
-            Host::Cursor => import_reader_host(store, request, Host::Cursor),
+            Host::Cursor => {
+                let report = import_reader_host(store, request, Host::Cursor);
+                spawns.checks.wake();
+                report
+            }
             Host::Other => HostReport::unavailable(
                 Host::Other,
                 HostStatus::MissingSource,
@@ -361,8 +376,10 @@ fn relate_codex_spawns(
         return;
     }
     spawns.add(imported(report));
-    // Their histories may hold new Claude launches.
+    // Their histories may hold new launches, and each may be the child a
+    // Codex agent's `codex exec --json` launch named.
     spawns.launches.add_threads(imported(report));
+    spawns.launches.add_children(imported(report));
     let _ = session_creation::continue_scanned_spawns(
         store,
         request.home,
@@ -522,12 +539,223 @@ fn anchor(home: &Path) -> std::io::Result<PathBuf> {
     Ok(anchored)
 }
 
+#[cfg(test)]
+mod preflight_tests {
+    use super::*;
+    use serde_json::json;
+    use xt_store::{child_check::ChildCheck, session_list};
+
+    #[test]
+    fn a_changed_codex_header_reopens_before_the_next_record_is_published() {
+        const NATIVE: &str = "019a0000-0000-7000-8000-00000000aa01";
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path();
+        let db = home.join("index.sqlite");
+        let path = home
+            .join(".codex/sessions/2026/10/05")
+            .join(format!("rollout-2026-10-05T15-17-30-{NATIVE}.jsonl"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let opening = |cwd: &str| {
+            json!({"timestamp":"2026-10-05T15:17:30Z","type":"session_meta","ordinal":0,
+                "payload":{"id":NATIVE,"session_id":NATIVE,"timestamp":"2026-10-05T15:17:30Z",
+                    "cwd":cwd,"originator":"Codex Desktop","source":"cli",
+                    "history_mode":"paginated"}})
+        };
+        let header = || {
+            json!({"type":"session","host":"codex","native_session_id":NATIVE,
+                "conversation_id":format!("codex-{NATIVE}"),"source_surface":"codex_cli",
+                "started_at":"2026-10-05T15:17:30Z","cwd":"/w","git_branch":null,
+                "title":null,"path":path.display().to_string(),"mtime":1.0})
+            .to_string()
+        };
+        let record = |uuid: &str| {
+            json!({"uuid":uuid,"type":"user","timestamp":"2026-10-05T15:17:31Z",
+                "message":{"role":"user","content":[{"type":"text","text":"Synthetic"}]}})
+            .to_string()
+        };
+        std::fs::write(&path, format!("{}\n", opening("/w"))).unwrap();
+        let mut store = Store::open(&db).unwrap();
+        let first = import_stream(
+            &mut store,
+            Host::Codex,
+            "test".into(),
+            [Ok(header()), Ok(record("first"))],
+            1,
+            || {
+                Ok(readers_cli::ReaderOutcome {
+                    diagnostics: vec![],
+                    complete: true,
+                })
+            },
+            Evidence::default(),
+            None,
+        );
+        assert_eq!(first.status, HostStatus::Complete, "{first:?}");
+        let checked = || {
+            session_list::context(
+                &rusqlite::Connection::open(&db).unwrap(),
+                &[&format!("codex-{NATIVE}")],
+            )
+            .unwrap()
+            .remove(0)
+            .check
+        };
+        let probe = session_creation::record_codex_spawns(
+            &mut store,
+            home,
+            &[NATIVE],
+            session_creation::spawn_limits(),
+            None,
+            1,
+        )
+        .unwrap();
+        let (_, attempt, observed_opening) = &probe.openings[0];
+        store
+            .settle_child_checks(&[(&format!("codex-{NATIVE}"), *attempt, &observed_opening.key)])
+            .unwrap();
+        assert_eq!(checked(), ChildCheck::Checked);
+
+        std::fs::write(&path, format!("{}\n", opening("/x"))).unwrap();
+        let mut seen = 0;
+        let lines = [Ok(header()), Ok(record("second"))]
+            .into_iter()
+            .inspect(|_| {
+                if seen == 1 {
+                    assert_eq!(checked(), ChildCheck::Checking);
+                    let count: i64 = rusqlite::Connection::open(&db)
+                        .unwrap()
+                        .query_row(
+                            "SELECT count(*) FROM records WHERE session_id=?1",
+                            [format!("codex-{NATIVE}")],
+                            |row| row.get(0),
+                        )
+                        .unwrap();
+                    assert_eq!(count, 1);
+                }
+                seen += 1;
+            });
+        let second = import_stream(
+            &mut store,
+            Host::Codex,
+            "test".into(),
+            lines,
+            2,
+            || {
+                Ok(readers_cli::ReaderOutcome {
+                    diagnostics: vec![],
+                    complete: true,
+                })
+            },
+            Evidence::default(),
+            Some(home),
+        );
+        assert_eq!(second.status, HostStatus::Complete, "{second:?}");
+        assert_eq!(checked(), ChildCheck::Checking);
+
+        // The reader may next report another root path while the old path
+        // still exists. An unchanged old header cannot keep completion for
+        // records arriving from that newly reported source.
+        let probe = session_creation::record_codex_spawns(
+            &mut store,
+            home,
+            &[NATIVE],
+            session_creation::spawn_limits(),
+            None,
+            2,
+        )
+        .unwrap();
+        let (_, attempt, observed_opening) = &probe.openings[0];
+        store
+            .settle_child_checks(&[(&format!("codex-{NATIVE}"), *attempt, &observed_opening.key)])
+            .unwrap();
+        assert_eq!(checked(), ChildCheck::Checked);
+        let relocated = path.with_file_name(format!("rollout-2026-10-05T15-18-30-{NATIVE}.jsonl"));
+        std::fs::write(&relocated, format!("{}\n", opening("/x"))).unwrap();
+        let mut moved_header: serde_json::Value = serde_json::from_str(&header()).unwrap();
+        moved_header["path"] = json!(relocated.display().to_string());
+        let mut seen = 0;
+        let lines = [Ok(moved_header.to_string()), Ok(record("third"))]
+            .into_iter()
+            .inspect(|_| {
+                if seen == 1 {
+                    assert_eq!(checked(), ChildCheck::Checking);
+                }
+                seen += 1;
+            });
+        let third = import_stream(
+            &mut store,
+            Host::Codex,
+            "test".into(),
+            lines,
+            3,
+            || {
+                Ok(readers_cli::ReaderOutcome {
+                    diagnostics: vec![],
+                    complete: true,
+                })
+            },
+            Evidence::default(),
+            Some(home),
+        );
+        assert_eq!(third.status, HostStatus::Complete, "{third:?}");
+    }
+}
+
 fn import_claude(
     store: &mut Store,
     request: &ImportRequest<'_>,
     mode: ScanMode,
     observer: &mut dyn FnMut(&Path),
 ) -> HostReport {
+    // A completed Claude row whose indexed own transcript disappeared must
+    // stop drawing before Ready/Reconciled, even when enumeration cannot see
+    // that missing file. This is a bounded metadata/open check, not a reread
+    // of the source body or a reset of neighboring completed sessions.
+    let mut after = None::<String>;
+    loop {
+        if cancelled(request) {
+            return HostReport::unavailable(
+                Host::Claude,
+                HostStatus::Cancelled,
+                "scan cancelled while checking indexed Claude sources",
+            );
+        }
+        let page = match store.completed_claude_checks(after.as_deref(), 256) {
+            Ok(page) => page,
+            Err(error) => {
+                return HostReport::unavailable(
+                    Host::Claude,
+                    HostStatus::ReaderFailed,
+                    format!("indexed Claude checks could not be read: {error}"),
+                );
+            }
+        };
+        if page.is_empty() {
+            break;
+        }
+        for (session, native) in &page {
+            match claude_launch::bash::transcript_readable(store, request.home, native) {
+                Ok(true) => {}
+                Ok(false) => {
+                    if let Err(error) = store.observe_own_check(session, None) {
+                        return HostReport::unavailable(
+                            Host::Claude,
+                            HostStatus::ReaderFailed,
+                            format!("indexed Claude check could not be withdrawn: {error}"),
+                        );
+                    }
+                }
+                Err(error) => {
+                    return HostReport::unavailable(
+                        Host::Claude,
+                        HostStatus::ReaderFailed,
+                        format!("indexed Claude source could not be checked: {error}"),
+                    );
+                }
+            }
+        }
+        after = page.last().map(|(session, _)| session.clone());
+    }
     let projects = request.home.join(".claude").join("projects");
     for root in [request.home.join(".claude"), projects.clone()] {
         match std::fs::symlink_metadata(&root) {
@@ -686,10 +914,19 @@ fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host
             return HostReport::unavailable(host, HostStatus::PinMismatch, error.to_string());
         }
     };
-    // Codex, and only Codex, is read with its origin evidence.
+    // Codex, and only Codex, is read with its origin evidence. Codex and
+    // Cursor are both read with the automated-input evidence.
     let origin = host == Host::Codex;
+    let tool_sent = matches!(host, Host::Codex | Host::Cursor);
     let spawned = if origin {
         readers_cli::spawn_codex_reader_with_origin_evidence(
+            &python,
+            &producer,
+            request.home,
+            request.cancel,
+        )
+    } else if tool_sent {
+        readers_cli::spawn_cursor_reader_with_tool_sent_evidence(
             &python,
             &producer,
             request.home,
@@ -730,8 +967,18 @@ fn import_reader_host(store: &mut Store, request: &ImportRequest<'_>, host: Host
         lines,
         request.observed_at,
         move || handle.finish(),
-        origin,
+        Evidence { origin, tool_sent },
+        origin.then_some(request.home),
     )
+}
+
+/// Which opt-in reader evidence a stream carries.
+#[derive(Clone, Copy, Default)]
+struct Evidence {
+    /// Codex origin evidence (with its image-wrapper lengths).
+    origin: bool,
+    /// Automated-input evidence ([`tool_sent`]).
+    tool_sent: bool,
 }
 
 /// Import one host's stream as it arrives. Records are written in bounded
@@ -752,7 +999,49 @@ where
     I: IntoIterator<Item = std::io::Result<String>>,
     F: FnOnce() -> Result<readers_cli::ReaderOutcome, ReaderError>,
 {
-    import_stream(store, host, detail, lines, observed_at, finish, false)
+    import_stream(
+        store,
+        host,
+        detail,
+        lines,
+        observed_at,
+        finish,
+        Evidence::default(),
+        None,
+    )
+}
+
+/// [`import_reader_lines`] for a stream read with the automated-input
+/// evidence alone ([`readers_cli::spawn_cursor_reader_with_tool_sent_evidence`]).
+/// Every record is written exactly as the ordinary import writes it, in the
+/// same batches; a record whose own line carries a validated claim is written
+/// with that claim's kind, which the Store keeps as a proof bound to the
+/// stored record, new or already held (see [`tool_sent`]).
+pub fn import_reader_lines_tool_sent<I, F>(
+    store: &mut Store,
+    host: Host,
+    detail: String,
+    lines: I,
+    observed_at: i64,
+    finish: F,
+) -> HostReport
+where
+    I: IntoIterator<Item = std::io::Result<String>>,
+    F: FnOnce() -> Result<readers_cli::ReaderOutcome, ReaderError>,
+{
+    import_stream(
+        store,
+        host,
+        detail,
+        lines,
+        observed_at,
+        finish,
+        Evidence {
+            origin: false,
+            tool_sent: true,
+        },
+        None,
+    )
 }
 
 /// [`import_reader_lines`] for a Codex stream read with its origin evidence
@@ -771,7 +1060,8 @@ where
 /// A proof-bearing batch the Store refuses is written once more without any
 /// proof. The producer's `origin_evidence_withheld` notices are advisory: they
 /// are counted in [`HostReport::origin`], not listed as diagnostics, and do not
-/// by themselves make the host incomplete.
+/// by themselves make the host incomplete. The same stream's automated-input
+/// claims are read as [`import_reader_lines_tool_sent`] reads them.
 pub fn import_reader_lines_origin<I, F>(
     store: &mut Store,
     detail: String,
@@ -783,7 +1073,19 @@ where
     I: IntoIterator<Item = std::io::Result<String>>,
     F: FnOnce() -> Result<readers_cli::ReaderOutcome, ReaderError>,
 {
-    import_stream(store, Host::Codex, detail, lines, observed_at, finish, true)
+    import_stream(
+        store,
+        Host::Codex,
+        detail,
+        lines,
+        observed_at,
+        finish,
+        Evidence {
+            origin: true,
+            tool_sent: true,
+        },
+        None,
+    )
 }
 
 /// A validly claimed record held until its session ends.
@@ -1041,6 +1343,7 @@ pub enum ProvenWrite {
     Refused,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn import_stream<I, F>(
     store: &mut Store,
     host: Host,
@@ -1048,7 +1351,8 @@ fn import_stream<I, F>(
     lines: I,
     observed_at: i64,
     finish: F,
-    origin: bool,
+    evidence: Evidence,
+    preflight_home: Option<&Path>,
 ) -> HostReport
 where
     I: IntoIterator<Item = std::io::Result<String>>,
@@ -1061,11 +1365,15 @@ where
         /// `Some` in origin-evidence mode.
         holding: Option<Holding>,
     }
+    let origin = evidence.origin;
     let mut events = if origin {
         stream::StreamEvents::with_codex_origin_evidence()
     } else {
         stream::StreamEvents::new(host, SessionSource::ReadersCli)
     };
+    if evidence.tool_sent {
+        events = events.with_tool_sent_evidence();
+    }
     let mut tally = origin.then(OriginTally::default);
     let mut sessions: Vec<SessionResult> = Vec::new();
     let mut active: Option<Active> = None;
@@ -1163,6 +1471,73 @@ where
             stream::StreamEvent::Session(header) => {
                 if let Some(previous) = active.take() {
                     complete(store, previous, observed_at, &mut sessions, &mut tally);
+                }
+                if let Some(home) = preflight_home {
+                    let completed = match store.completed_child_check(&header.conversation_id) {
+                        Ok(existing) => existing,
+                        Err(error) => {
+                            sessions.push(SessionResult {
+                                native_session_id: Some(header.native_session_id.clone()),
+                                conversation_id: Some(header.conversation_id.clone()),
+                                source_surface: None,
+                                path: None,
+                                outcome: SessionOutcome::Skipped {
+                                    reason: format!("display check could not be read: {error}"),
+                                },
+                            });
+                            continue;
+                        }
+                    };
+                    if completed {
+                        // Compare the indexed root before any changed canonical
+                        // record can commit. A failed comparison also withdraws
+                        // an old completion until a later successful probe.
+                        let reported_root = format!("codex:{}", header.path);
+                        let indexed_root = matches!(
+                            session_titles::codex_segment(
+                                Path::new(&header.path),
+                                &header.native_session_id,
+                            ),
+                            Some(session_titles::Segment::Root)
+                        ) && session_titles::title_sources(
+                            store,
+                            Host::Codex,
+                            &header.native_session_id,
+                        )
+                        .is_ok_and(|sources| {
+                            sources.iter().any(|source| source.locator == reported_root)
+                        });
+                        let matched = indexed_root
+                            && session_creation::record_codex_spawns(
+                                store,
+                                home,
+                                &[&header.native_session_id],
+                                session_creation::spawn_limits(),
+                                None,
+                                observed_at,
+                            )
+                            .is_ok_and(|result| {
+                                result
+                                    .probes
+                                    .first()
+                                    .is_some_and(|probe| probe.opening.is_some())
+                            });
+                        if !matched
+                            && let Err(error) =
+                                store.observe_own_check(&header.conversation_id, None)
+                        {
+                            sessions.push(SessionResult {
+                                native_session_id: Some(header.native_session_id.clone()),
+                                conversation_id: Some(header.conversation_id.clone()),
+                                source_surface: None,
+                                path: None,
+                                outcome: SessionOutcome::Skipped {
+                                    reason: format!("display check could not be recorded: {error}"),
+                                },
+                            });
+                            continue;
+                        }
+                    }
                 }
                 if let (Some(tally), Some(origin::Origin::Session(state))) =
                     (tally.as_mut(), &evidence)

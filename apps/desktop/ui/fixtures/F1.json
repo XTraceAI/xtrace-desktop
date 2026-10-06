@@ -4,7 +4,7 @@
     "version": "0.1.0",
     "data_dir": "fixture://F1",
     "fixture": "F1",
-    "schema_version": 17,
+    "schema_version": 22,
     "listening": false,
     "had_indexed_history_at_startup": true
   },
@@ -79,6 +79,8 @@
             }
           ],
           "parent": null,
+          "known_child": false,
+          "child_check": "checked",
           "metrics": {
             "state": "indexed",
             "events": 25,
@@ -106,7 +108,8 @@
           }
         }
       ],
-      "next": null
+      "next": null,
+      "referenced_parents": []
     },
     {
       "window": {
@@ -153,6 +156,8 @@
             }
           ],
           "parent": null,
+          "known_child": false,
+          "child_check": "checked",
           "metrics": {
             "state": "indexed",
             "events": 25,
@@ -180,7 +185,8 @@
           }
         }
       ],
-      "next": null
+      "next": null,
+      "referenced_parents": []
     },
     {
       "window": {
@@ -227,6 +233,8 @@
             }
           ],
           "parent": null,
+          "known_child": false,
+          "child_check": "checked",
           "metrics": {
             "state": "indexed",
             "events": 25,
@@ -254,7 +262,8 @@
           }
         }
       ],
-      "next": null
+      "next": null,
+      "referenced_parents": []
     }
   ],
   "session_stretches": [
@@ -637,6 +646,21 @@
             "suppressed": true
           }
         },
+        "leverage": {
+          "value": 1.15,
+          "unit": "ratio",
+          "rule_id": "M-08",
+          "reason": null,
+          "note": "Agent hours divided by your hours, both over the same whole local days. Your hours run from each message you sent to the next one when they are at most 60 minutes apart.",
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
         "human_hours_est": {
           "value": 0.011250000000000001,
           "unit": "hours_est",
@@ -648,21 +672,6 @@
           "sample_unit": "sessions",
           "delta": {
             "previous": 0.0,
-            "pct": null,
-            "suppressed": true
-          }
-        },
-        "ratio": {
-          "value": 34.07407407407407,
-          "unit": "ratio",
-          "rule_id": "M-08",
-          "reason": null,
-          "note": null,
-          "current_n": 1,
-          "previous_n": 0,
-          "sample_unit": "sessions",
-          "delta": {
-            "previous": null,
             "pct": null,
             "suppressed": true
           }
@@ -836,8 +845,8 @@
           "value": null,
           "unit": "prs",
           "rule_id": "M-19",
-          "reason": "0 known merged; 2 linked pull requests have no cached merge facts",
-          "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+          "reason": "0 merged so far; not known yet for 2 linked pull requests",
+          "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
           "current_n": null,
           "previous_n": null,
           "sample_unit": "prs",
@@ -1106,9 +1115,14 @@
               }
             ]
           },
-          "parent": null
+          "parent": null,
+          "known_child": false,
+          "child_check": "checked",
+          "sub_sessions_not_shown": null,
+          "sub_sessions_cut_short": null
         }
       ],
+      "lane_sub_sessions": [],
       "lane_start_ms": 1788652800000,
       "lane_end_ms": 1788825600000,
       "lanes_total": 1,
@@ -1529,6 +1543,243 @@
           "key": "environment",
           "reason": "Environment data is unavailable"
         }
+      ],
+      "human_hours": {
+        "current": {
+          "break_minutes": 60,
+          "start_ms": 1788220800000,
+          "end_ms": 1788825600000,
+          "active_ms": 1200000,
+          "messages": 5,
+          "by_day": [
+            {
+              "date": "2026-09-01",
+              "start_ms": 1788220800000,
+              "end_ms": 1788307200000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-02",
+              "start_ms": 1788307200000,
+              "end_ms": 1788393600000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-03",
+              "start_ms": 1788393600000,
+              "end_ms": 1788480000000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-04",
+              "start_ms": 1788480000000,
+              "end_ms": 1788566400000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-05",
+              "start_ms": 1788566400000,
+              "end_ms": 1788652800000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-06",
+              "start_ms": 1788652800000,
+              "end_ms": 1788739200000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-07",
+              "start_ms": 1788739200000,
+              "end_ms": 1788825600000,
+              "active_ms": 1200000,
+              "stretches": [
+                {
+                  "start_ms": 1788782400000,
+                  "end_ms": 1788783600000
+                }
+              ]
+            }
+          ]
+        },
+        "previous_active_ms": 0
+      },
+      "leverage": {
+        "agent_ms": 1380000,
+        "previous_agent_ms": 0,
+        "by_day": [
+          {
+            "date": "2026-09-01",
+            "start_ms": 1788220800000,
+            "end_ms": 1788307200000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-02",
+            "start_ms": 1788307200000,
+            "end_ms": 1788393600000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-03",
+            "start_ms": 1788393600000,
+            "end_ms": 1788480000000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-04",
+            "start_ms": 1788480000000,
+            "end_ms": 1788566400000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-05",
+            "start_ms": 1788566400000,
+            "end_ms": 1788652800000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-06",
+            "start_ms": 1788652800000,
+            "end_ms": 1788739200000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-07",
+            "start_ms": 1788739200000,
+            "end_ms": 1788825600000,
+            "agent_ms": 1380000,
+            "human_ms": 1200000,
+            "value": 1.15
+          }
+        ]
+      },
+      "concurrency_by_day": [
+        {
+          "date": "2026-09-01",
+          "start_ms": 1788220800000,
+          "end_ms": 1788307200000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-02",
+          "start_ms": 1788307200000,
+          "end_ms": 1788393600000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-03",
+          "start_ms": 1788393600000,
+          "end_ms": 1788480000000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-04",
+          "start_ms": 1788480000000,
+          "end_ms": 1788566400000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-05",
+          "start_ms": 1788566400000,
+          "end_ms": 1788652800000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-06",
+          "start_ms": 1788652800000,
+          "end_ms": 1788739200000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-07",
+          "start_ms": 1788739200000,
+          "end_ms": 1788825600000,
+          "max": 1,
+          "mean": 1.0
+        }
+      ],
+      "hands_off_by_day": [
+        {
+          "date": "2026-09-01",
+          "start_ms": 1788220800000,
+          "end_ms": 1788307200000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-02",
+          "start_ms": 1788307200000,
+          "end_ms": 1788393600000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-03",
+          "start_ms": 1788393600000,
+          "end_ms": 1788480000000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-04",
+          "start_ms": 1788480000000,
+          "end_ms": 1788566400000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-05",
+          "start_ms": 1788566400000,
+          "end_ms": 1788652800000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-06",
+          "start_ms": 1788652800000,
+          "end_ms": 1788739200000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-07",
+          "start_ms": 1788739200000,
+          "end_ms": 1788825600000,
+          "n": 5,
+          "median_min": 3.0,
+          "p90_min": 3.0
+        }
       ]
     },
     {
@@ -1570,6 +1821,21 @@
             "suppressed": true
           }
         },
+        "leverage": {
+          "value": 1.15,
+          "unit": "ratio",
+          "rule_id": "M-08",
+          "reason": null,
+          "note": "Agent hours divided by your hours, both over the same whole local days. Your hours run from each message you sent to the next one when they are at most 60 minutes apart.",
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
         "human_hours_est": {
           "value": 0.011250000000000001,
           "unit": "hours_est",
@@ -1581,21 +1847,6 @@
           "sample_unit": "sessions",
           "delta": {
             "previous": 0.0,
-            "pct": null,
-            "suppressed": true
-          }
-        },
-        "ratio": {
-          "value": 34.07407407407407,
-          "unit": "ratio",
-          "rule_id": "M-08",
-          "reason": null,
-          "note": null,
-          "current_n": 1,
-          "previous_n": 0,
-          "sample_unit": "sessions",
-          "delta": {
-            "previous": null,
             "pct": null,
             "suppressed": true
           }
@@ -1769,8 +2020,8 @@
           "value": null,
           "unit": "prs",
           "rule_id": "M-19",
-          "reason": "0 known merged; 2 linked pull requests have no cached merge facts",
-          "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+          "reason": "0 merged so far; not known yet for 2 linked pull requests",
+          "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
           "current_n": null,
           "previous_n": null,
           "sample_unit": "prs",
@@ -2200,9 +2451,14 @@
               }
             ]
           },
-          "parent": null
+          "parent": null,
+          "known_child": false,
+          "child_check": "checked",
+          "sub_sessions_not_shown": null,
+          "sub_sessions_cut_short": null
         }
       ],
+      "lane_sub_sessions": [],
       "lane_start_ms": 1788652800000,
       "lane_end_ms": 1788825600000,
       "lanes_total": 1,
@@ -2847,6 +3103,453 @@
           "key": "environment",
           "reason": "Environment data is unavailable"
         }
+      ],
+      "human_hours": {
+        "current": {
+          "break_minutes": 60,
+          "start_ms": 1787616000000,
+          "end_ms": 1788825600000,
+          "active_ms": 1200000,
+          "messages": 5,
+          "by_day": [
+            {
+              "date": "2026-08-25",
+              "start_ms": 1787616000000,
+              "end_ms": 1787702400000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-26",
+              "start_ms": 1787702400000,
+              "end_ms": 1787788800000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-27",
+              "start_ms": 1787788800000,
+              "end_ms": 1787875200000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-28",
+              "start_ms": 1787875200000,
+              "end_ms": 1787961600000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-29",
+              "start_ms": 1787961600000,
+              "end_ms": 1788048000000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-30",
+              "start_ms": 1788048000000,
+              "end_ms": 1788134400000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-31",
+              "start_ms": 1788134400000,
+              "end_ms": 1788220800000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-01",
+              "start_ms": 1788220800000,
+              "end_ms": 1788307200000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-02",
+              "start_ms": 1788307200000,
+              "end_ms": 1788393600000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-03",
+              "start_ms": 1788393600000,
+              "end_ms": 1788480000000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-04",
+              "start_ms": 1788480000000,
+              "end_ms": 1788566400000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-05",
+              "start_ms": 1788566400000,
+              "end_ms": 1788652800000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-06",
+              "start_ms": 1788652800000,
+              "end_ms": 1788739200000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-07",
+              "start_ms": 1788739200000,
+              "end_ms": 1788825600000,
+              "active_ms": 1200000,
+              "stretches": [
+                {
+                  "start_ms": 1788782400000,
+                  "end_ms": 1788783600000
+                }
+              ]
+            }
+          ]
+        },
+        "previous_active_ms": 0
+      },
+      "leverage": {
+        "agent_ms": 1380000,
+        "previous_agent_ms": 0,
+        "by_day": [
+          {
+            "date": "2026-08-25",
+            "start_ms": 1787616000000,
+            "end_ms": 1787702400000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-26",
+            "start_ms": 1787702400000,
+            "end_ms": 1787788800000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-27",
+            "start_ms": 1787788800000,
+            "end_ms": 1787875200000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-28",
+            "start_ms": 1787875200000,
+            "end_ms": 1787961600000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-29",
+            "start_ms": 1787961600000,
+            "end_ms": 1788048000000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-30",
+            "start_ms": 1788048000000,
+            "end_ms": 1788134400000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-31",
+            "start_ms": 1788134400000,
+            "end_ms": 1788220800000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-01",
+            "start_ms": 1788220800000,
+            "end_ms": 1788307200000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-02",
+            "start_ms": 1788307200000,
+            "end_ms": 1788393600000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-03",
+            "start_ms": 1788393600000,
+            "end_ms": 1788480000000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-04",
+            "start_ms": 1788480000000,
+            "end_ms": 1788566400000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-05",
+            "start_ms": 1788566400000,
+            "end_ms": 1788652800000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-06",
+            "start_ms": 1788652800000,
+            "end_ms": 1788739200000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-07",
+            "start_ms": 1788739200000,
+            "end_ms": 1788825600000,
+            "agent_ms": 1380000,
+            "human_ms": 1200000,
+            "value": 1.15
+          }
+        ]
+      },
+      "concurrency_by_day": [
+        {
+          "date": "2026-08-25",
+          "start_ms": 1787616000000,
+          "end_ms": 1787702400000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-26",
+          "start_ms": 1787702400000,
+          "end_ms": 1787788800000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-27",
+          "start_ms": 1787788800000,
+          "end_ms": 1787875200000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-28",
+          "start_ms": 1787875200000,
+          "end_ms": 1787961600000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-29",
+          "start_ms": 1787961600000,
+          "end_ms": 1788048000000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-30",
+          "start_ms": 1788048000000,
+          "end_ms": 1788134400000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-31",
+          "start_ms": 1788134400000,
+          "end_ms": 1788220800000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-01",
+          "start_ms": 1788220800000,
+          "end_ms": 1788307200000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-02",
+          "start_ms": 1788307200000,
+          "end_ms": 1788393600000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-03",
+          "start_ms": 1788393600000,
+          "end_ms": 1788480000000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-04",
+          "start_ms": 1788480000000,
+          "end_ms": 1788566400000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-05",
+          "start_ms": 1788566400000,
+          "end_ms": 1788652800000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-06",
+          "start_ms": 1788652800000,
+          "end_ms": 1788739200000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-07",
+          "start_ms": 1788739200000,
+          "end_ms": 1788825600000,
+          "max": 1,
+          "mean": 1.0
+        }
+      ],
+      "hands_off_by_day": [
+        {
+          "date": "2026-08-25",
+          "start_ms": 1787616000000,
+          "end_ms": 1787702400000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-26",
+          "start_ms": 1787702400000,
+          "end_ms": 1787788800000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-27",
+          "start_ms": 1787788800000,
+          "end_ms": 1787875200000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-28",
+          "start_ms": 1787875200000,
+          "end_ms": 1787961600000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-29",
+          "start_ms": 1787961600000,
+          "end_ms": 1788048000000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-30",
+          "start_ms": 1788048000000,
+          "end_ms": 1788134400000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-31",
+          "start_ms": 1788134400000,
+          "end_ms": 1788220800000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-01",
+          "start_ms": 1788220800000,
+          "end_ms": 1788307200000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-02",
+          "start_ms": 1788307200000,
+          "end_ms": 1788393600000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-03",
+          "start_ms": 1788393600000,
+          "end_ms": 1788480000000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-04",
+          "start_ms": 1788480000000,
+          "end_ms": 1788566400000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-05",
+          "start_ms": 1788566400000,
+          "end_ms": 1788652800000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-06",
+          "start_ms": 1788652800000,
+          "end_ms": 1788739200000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-07",
+          "start_ms": 1788739200000,
+          "end_ms": 1788825600000,
+          "n": 5,
+          "median_min": 3.0,
+          "p90_min": 3.0
+        }
       ]
     },
     {
@@ -2888,6 +3591,21 @@
             "suppressed": true
           }
         },
+        "leverage": {
+          "value": 1.15,
+          "unit": "ratio",
+          "rule_id": "M-08",
+          "reason": null,
+          "note": "Agent hours divided by your hours, both over the same whole local days. Your hours run from each message you sent to the next one when they are at most 60 minutes apart.",
+          "current_n": 1,
+          "previous_n": 0,
+          "sample_unit": "sessions",
+          "delta": {
+            "previous": null,
+            "pct": null,
+            "suppressed": true
+          }
+        },
         "human_hours_est": {
           "value": 0.011250000000000001,
           "unit": "hours_est",
@@ -2899,21 +3617,6 @@
           "sample_unit": "sessions",
           "delta": {
             "previous": 0.0,
-            "pct": null,
-            "suppressed": true
-          }
-        },
-        "ratio": {
-          "value": 34.07407407407407,
-          "unit": "ratio",
-          "rule_id": "M-08",
-          "reason": null,
-          "note": null,
-          "current_n": 1,
-          "previous_n": 0,
-          "sample_unit": "sessions",
-          "delta": {
-            "previous": null,
             "pct": null,
             "suppressed": true
           }
@@ -3087,8 +3790,8 @@
           "value": null,
           "unit": "prs",
           "rule_id": "M-19",
-          "reason": "0 known merged; 2 linked pull requests have no cached merge facts",
-          "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+          "reason": "0 merged so far; not known yet for 2 linked pull requests",
+          "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
           "current_n": null,
           "previous_n": null,
           "sample_unit": "prs",
@@ -3886,9 +4589,14 @@
               }
             ]
           },
-          "parent": null
+          "parent": null,
+          "known_child": false,
+          "child_check": "checked",
+          "sub_sessions_not_shown": null,
+          "sub_sessions_cut_short": null
         }
       ],
+      "lane_sub_sessions": [],
       "lane_start_ms": 1788652800000,
       "lane_end_ms": 1788825600000,
       "lanes_total": 1,
@@ -5044,6 +5752,933 @@
         {
           "key": "environment",
           "reason": "Environment data is unavailable"
+        }
+      ],
+      "human_hours": {
+        "current": {
+          "break_minutes": 60,
+          "start_ms": 1786233600000,
+          "end_ms": 1788825600000,
+          "active_ms": 1200000,
+          "messages": 5,
+          "by_day": [
+            {
+              "date": "2026-08-09",
+              "start_ms": 1786233600000,
+              "end_ms": 1786320000000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-10",
+              "start_ms": 1786320000000,
+              "end_ms": 1786406400000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-11",
+              "start_ms": 1786406400000,
+              "end_ms": 1786492800000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-12",
+              "start_ms": 1786492800000,
+              "end_ms": 1786579200000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-13",
+              "start_ms": 1786579200000,
+              "end_ms": 1786665600000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-14",
+              "start_ms": 1786665600000,
+              "end_ms": 1786752000000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-15",
+              "start_ms": 1786752000000,
+              "end_ms": 1786838400000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-16",
+              "start_ms": 1786838400000,
+              "end_ms": 1786924800000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-17",
+              "start_ms": 1786924800000,
+              "end_ms": 1787011200000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-18",
+              "start_ms": 1787011200000,
+              "end_ms": 1787097600000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-19",
+              "start_ms": 1787097600000,
+              "end_ms": 1787184000000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-20",
+              "start_ms": 1787184000000,
+              "end_ms": 1787270400000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-21",
+              "start_ms": 1787270400000,
+              "end_ms": 1787356800000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-22",
+              "start_ms": 1787356800000,
+              "end_ms": 1787443200000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-23",
+              "start_ms": 1787443200000,
+              "end_ms": 1787529600000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-24",
+              "start_ms": 1787529600000,
+              "end_ms": 1787616000000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-25",
+              "start_ms": 1787616000000,
+              "end_ms": 1787702400000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-26",
+              "start_ms": 1787702400000,
+              "end_ms": 1787788800000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-27",
+              "start_ms": 1787788800000,
+              "end_ms": 1787875200000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-28",
+              "start_ms": 1787875200000,
+              "end_ms": 1787961600000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-29",
+              "start_ms": 1787961600000,
+              "end_ms": 1788048000000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-30",
+              "start_ms": 1788048000000,
+              "end_ms": 1788134400000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-08-31",
+              "start_ms": 1788134400000,
+              "end_ms": 1788220800000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-01",
+              "start_ms": 1788220800000,
+              "end_ms": 1788307200000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-02",
+              "start_ms": 1788307200000,
+              "end_ms": 1788393600000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-03",
+              "start_ms": 1788393600000,
+              "end_ms": 1788480000000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-04",
+              "start_ms": 1788480000000,
+              "end_ms": 1788566400000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-05",
+              "start_ms": 1788566400000,
+              "end_ms": 1788652800000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-06",
+              "start_ms": 1788652800000,
+              "end_ms": 1788739200000,
+              "active_ms": 0,
+              "stretches": []
+            },
+            {
+              "date": "2026-09-07",
+              "start_ms": 1788739200000,
+              "end_ms": 1788825600000,
+              "active_ms": 1200000,
+              "stretches": [
+                {
+                  "start_ms": 1788782400000,
+                  "end_ms": 1788783600000
+                }
+              ]
+            }
+          ]
+        },
+        "previous_active_ms": 0
+      },
+      "leverage": {
+        "agent_ms": 1380000,
+        "previous_agent_ms": 0,
+        "by_day": [
+          {
+            "date": "2026-08-09",
+            "start_ms": 1786233600000,
+            "end_ms": 1786320000000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-10",
+            "start_ms": 1786320000000,
+            "end_ms": 1786406400000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-11",
+            "start_ms": 1786406400000,
+            "end_ms": 1786492800000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-12",
+            "start_ms": 1786492800000,
+            "end_ms": 1786579200000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-13",
+            "start_ms": 1786579200000,
+            "end_ms": 1786665600000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-14",
+            "start_ms": 1786665600000,
+            "end_ms": 1786752000000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-15",
+            "start_ms": 1786752000000,
+            "end_ms": 1786838400000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-16",
+            "start_ms": 1786838400000,
+            "end_ms": 1786924800000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-17",
+            "start_ms": 1786924800000,
+            "end_ms": 1787011200000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-18",
+            "start_ms": 1787011200000,
+            "end_ms": 1787097600000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-19",
+            "start_ms": 1787097600000,
+            "end_ms": 1787184000000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-20",
+            "start_ms": 1787184000000,
+            "end_ms": 1787270400000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-21",
+            "start_ms": 1787270400000,
+            "end_ms": 1787356800000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-22",
+            "start_ms": 1787356800000,
+            "end_ms": 1787443200000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-23",
+            "start_ms": 1787443200000,
+            "end_ms": 1787529600000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-24",
+            "start_ms": 1787529600000,
+            "end_ms": 1787616000000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-25",
+            "start_ms": 1787616000000,
+            "end_ms": 1787702400000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-26",
+            "start_ms": 1787702400000,
+            "end_ms": 1787788800000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-27",
+            "start_ms": 1787788800000,
+            "end_ms": 1787875200000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-28",
+            "start_ms": 1787875200000,
+            "end_ms": 1787961600000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-29",
+            "start_ms": 1787961600000,
+            "end_ms": 1788048000000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-30",
+            "start_ms": 1788048000000,
+            "end_ms": 1788134400000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-08-31",
+            "start_ms": 1788134400000,
+            "end_ms": 1788220800000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-01",
+            "start_ms": 1788220800000,
+            "end_ms": 1788307200000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-02",
+            "start_ms": 1788307200000,
+            "end_ms": 1788393600000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-03",
+            "start_ms": 1788393600000,
+            "end_ms": 1788480000000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-04",
+            "start_ms": 1788480000000,
+            "end_ms": 1788566400000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-05",
+            "start_ms": 1788566400000,
+            "end_ms": 1788652800000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-06",
+            "start_ms": 1788652800000,
+            "end_ms": 1788739200000,
+            "agent_ms": 0,
+            "human_ms": 0,
+            "value": null
+          },
+          {
+            "date": "2026-09-07",
+            "start_ms": 1788739200000,
+            "end_ms": 1788825600000,
+            "agent_ms": 1380000,
+            "human_ms": 1200000,
+            "value": 1.15
+          }
+        ]
+      },
+      "concurrency_by_day": [
+        {
+          "date": "2026-08-09",
+          "start_ms": 1786233600000,
+          "end_ms": 1786320000000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-10",
+          "start_ms": 1786320000000,
+          "end_ms": 1786406400000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-11",
+          "start_ms": 1786406400000,
+          "end_ms": 1786492800000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-12",
+          "start_ms": 1786492800000,
+          "end_ms": 1786579200000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-13",
+          "start_ms": 1786579200000,
+          "end_ms": 1786665600000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-14",
+          "start_ms": 1786665600000,
+          "end_ms": 1786752000000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-15",
+          "start_ms": 1786752000000,
+          "end_ms": 1786838400000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-16",
+          "start_ms": 1786838400000,
+          "end_ms": 1786924800000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-17",
+          "start_ms": 1786924800000,
+          "end_ms": 1787011200000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-18",
+          "start_ms": 1787011200000,
+          "end_ms": 1787097600000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-19",
+          "start_ms": 1787097600000,
+          "end_ms": 1787184000000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-20",
+          "start_ms": 1787184000000,
+          "end_ms": 1787270400000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-21",
+          "start_ms": 1787270400000,
+          "end_ms": 1787356800000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-22",
+          "start_ms": 1787356800000,
+          "end_ms": 1787443200000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-23",
+          "start_ms": 1787443200000,
+          "end_ms": 1787529600000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-24",
+          "start_ms": 1787529600000,
+          "end_ms": 1787616000000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-25",
+          "start_ms": 1787616000000,
+          "end_ms": 1787702400000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-26",
+          "start_ms": 1787702400000,
+          "end_ms": 1787788800000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-27",
+          "start_ms": 1787788800000,
+          "end_ms": 1787875200000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-28",
+          "start_ms": 1787875200000,
+          "end_ms": 1787961600000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-29",
+          "start_ms": 1787961600000,
+          "end_ms": 1788048000000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-30",
+          "start_ms": 1788048000000,
+          "end_ms": 1788134400000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-08-31",
+          "start_ms": 1788134400000,
+          "end_ms": 1788220800000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-01",
+          "start_ms": 1788220800000,
+          "end_ms": 1788307200000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-02",
+          "start_ms": 1788307200000,
+          "end_ms": 1788393600000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-03",
+          "start_ms": 1788393600000,
+          "end_ms": 1788480000000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-04",
+          "start_ms": 1788480000000,
+          "end_ms": 1788566400000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-05",
+          "start_ms": 1788566400000,
+          "end_ms": 1788652800000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-06",
+          "start_ms": 1788652800000,
+          "end_ms": 1788739200000,
+          "max": null,
+          "mean": null
+        },
+        {
+          "date": "2026-09-07",
+          "start_ms": 1788739200000,
+          "end_ms": 1788825600000,
+          "max": 1,
+          "mean": 1.0
+        }
+      ],
+      "hands_off_by_day": [
+        {
+          "date": "2026-08-09",
+          "start_ms": 1786233600000,
+          "end_ms": 1786320000000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-10",
+          "start_ms": 1786320000000,
+          "end_ms": 1786406400000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-11",
+          "start_ms": 1786406400000,
+          "end_ms": 1786492800000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-12",
+          "start_ms": 1786492800000,
+          "end_ms": 1786579200000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-13",
+          "start_ms": 1786579200000,
+          "end_ms": 1786665600000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-14",
+          "start_ms": 1786665600000,
+          "end_ms": 1786752000000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-15",
+          "start_ms": 1786752000000,
+          "end_ms": 1786838400000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-16",
+          "start_ms": 1786838400000,
+          "end_ms": 1786924800000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-17",
+          "start_ms": 1786924800000,
+          "end_ms": 1787011200000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-18",
+          "start_ms": 1787011200000,
+          "end_ms": 1787097600000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-19",
+          "start_ms": 1787097600000,
+          "end_ms": 1787184000000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-20",
+          "start_ms": 1787184000000,
+          "end_ms": 1787270400000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-21",
+          "start_ms": 1787270400000,
+          "end_ms": 1787356800000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-22",
+          "start_ms": 1787356800000,
+          "end_ms": 1787443200000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-23",
+          "start_ms": 1787443200000,
+          "end_ms": 1787529600000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-24",
+          "start_ms": 1787529600000,
+          "end_ms": 1787616000000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-25",
+          "start_ms": 1787616000000,
+          "end_ms": 1787702400000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-26",
+          "start_ms": 1787702400000,
+          "end_ms": 1787788800000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-27",
+          "start_ms": 1787788800000,
+          "end_ms": 1787875200000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-28",
+          "start_ms": 1787875200000,
+          "end_ms": 1787961600000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-29",
+          "start_ms": 1787961600000,
+          "end_ms": 1788048000000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-30",
+          "start_ms": 1788048000000,
+          "end_ms": 1788134400000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-08-31",
+          "start_ms": 1788134400000,
+          "end_ms": 1788220800000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-01",
+          "start_ms": 1788220800000,
+          "end_ms": 1788307200000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-02",
+          "start_ms": 1788307200000,
+          "end_ms": 1788393600000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-03",
+          "start_ms": 1788393600000,
+          "end_ms": 1788480000000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-04",
+          "start_ms": 1788480000000,
+          "end_ms": 1788566400000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-05",
+          "start_ms": 1788566400000,
+          "end_ms": 1788652800000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-06",
+          "start_ms": 1788652800000,
+          "end_ms": 1788739200000,
+          "n": 0,
+          "median_min": null,
+          "p90_min": null
+        },
+        {
+          "date": "2026-09-07",
+          "start_ms": 1788739200000,
+          "end_ms": 1788825600000,
+          "n": 5,
+          "median_min": 3.0,
+          "p90_min": 3.0
         }
       ]
     }
@@ -6340,8 +7975,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 1 linked pull request has no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 1 linked pull request",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -6700,8 +8335,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 1 linked pull request has no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 1 linked pull request",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -7284,8 +8919,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 1 linked pull request has no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 1 linked pull request",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -8856,8 +10491,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 2 linked pull requests have no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 2 linked pull requests",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -9216,8 +10851,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 2 linked pull requests have no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 2 linked pull requests",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -9800,8 +11435,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 2 linked pull requests have no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 2 linked pull requests",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -11378,8 +13013,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 1 linked pull request has no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 1 linked pull request",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -11738,8 +13373,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 1 linked pull request has no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 1 linked pull request",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -12322,8 +13957,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 1 linked pull request has no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 1 linked pull request",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -13894,8 +15529,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 2 linked pull requests have no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 2 linked pull requests",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -14254,8 +15889,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 2 linked pull requests have no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 2 linked pull requests",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -14838,8 +16473,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 2 linked pull requests have no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 2 linked pull requests",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -16416,8 +18051,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 1 linked pull request has no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 1 linked pull request",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -16776,8 +18411,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 1 linked pull request has no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 1 linked pull request",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -17360,8 +18995,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 1 linked pull request has no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 1 linked pull request",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -18938,8 +20573,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 2 linked pull requests have no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 2 linked pull requests",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -19298,8 +20933,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 2 linked pull requests have no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 2 linked pull requests",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -19882,8 +21517,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 2 linked pull requests have no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 2 linked pull requests",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -21466,8 +23101,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 1 linked pull request has no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 1 linked pull request",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -21826,8 +23461,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 1 linked pull request has no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 1 linked pull request",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -22410,8 +24045,8 @@
             "value": null,
             "unit": "prs",
             "rule_id": "M-19",
-            "reason": "0 known merged; 1 linked pull request has no cached merge facts",
-            "note": "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.",
+            "reason": "0 merged so far; not known yet for 1 linked pull request",
+            "note": "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.",
             "current_n": null,
             "previous_n": null,
             "sample_unit": "prs",
@@ -24483,6 +26118,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -24510,7 +26147,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -24564,6 +26202,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -24591,7 +26231,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -24645,6 +26286,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -24672,7 +26315,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -24726,6 +26370,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -24753,7 +26399,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -24807,6 +26454,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -24834,7 +26483,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -24888,6 +26538,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -24915,7 +26567,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -24969,6 +26622,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -24996,7 +26651,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -25050,6 +26706,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -25077,7 +26735,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -25131,6 +26790,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -25158,7 +26819,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -25212,6 +26874,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -25239,7 +26903,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -25293,6 +26958,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -25320,7 +26987,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -25374,6 +27042,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -25401,7 +27071,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -25455,6 +27126,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -25482,7 +27155,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -25500,7 +27174,8 @@
           "clock": "fixture"
         },
         "rows": [],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -25554,6 +27229,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -25581,7 +27258,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -25599,7 +27277,8 @@
           "clock": "fixture"
         },
         "rows": [],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -25653,6 +27332,8 @@
               }
             ],
             "parent": null,
+            "known_child": false,
+            "child_check": "checked",
             "metrics": {
               "state": "indexed",
               "events": 25,
@@ -25680,7 +27361,8 @@
             }
           }
         ],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     },
     {
@@ -25698,7 +27380,8 @@
           "clock": "fixture"
         },
         "rows": [],
-        "next": null
+        "next": null,
+        "referenced_parents": []
       }
     }
   ],

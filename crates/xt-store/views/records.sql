@@ -5,14 +5,15 @@ SELECT r.uuid,r.session_id,r.type,r.ts,r.ts_ms,r.api_message_id,r.request_id,
        h.human_is_eligible,h.human_text_len,h.human_excluded,
        -- Effective M-02 eligibility: a structurally confirmed automated input,
        -- from either confirmation table, a source-proven injected context
-       -- input or a Claude Code task notification, is not a human message.
+       -- input, a Claude Code task notification or a Codex or Cursor input
+       -- the tool itself wrote, is not a human message.
        -- raw_is_human keeps ingestion's classification.
        CASE WHEN a.record_uuid IS NULL AND g.record_uuid IS NULL AND i.record_uuid IS NULL
-                AND n.record_uuid IS NULL
+                AND n.record_uuid IS NULL AND t.record_uuid IS NULL
            THEN r.is_human ELSE 0 END AS is_human,
        r.is_human AS raw_is_human,
        (a.record_uuid IS NOT NULL OR g.record_uuid IS NOT NULL OR i.record_uuid IS NOT NULL
-           OR n.record_uuid IS NOT NULL) AS confirmed_automated_input,
+           OR n.record_uuid IS NOT NULL OR t.record_uuid IS NOT NULL) AS confirmed_automated_input,
        r.is_command,r.is_interrupted,r.is_system_reminder,
        r.parent_uuid,r.agent_id,r.subtype,r.has_conflict,
        s.host,s.source_platform,s.surface,s.source,s.kind,
@@ -29,4 +30,6 @@ LEFT JOIN injected_context_inputs i
     ON i.record_uuid=r.uuid AND i.session_id=r.session_id AND r.is_human=1
 LEFT JOIN task_notification_inputs n
     ON n.record_uuid=r.uuid AND n.session_id=r.session_id AND r.is_human=1
+LEFT JOIN tool_sent_inputs t
+    ON t.record_uuid=r.uuid AND t.session_id=r.session_id AND r.is_human=1
 WHERE r.is_meta=0 AND s.kind='user' AND (r.model IS NULL OR r.model<>'<synthetic>');

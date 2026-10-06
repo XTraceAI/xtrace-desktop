@@ -66,6 +66,7 @@ impl Store {
             None,
             &[],
         )?;
+        crate::child_check::require(&transaction, session_id)?;
         transaction.commit()?;
         Ok(result.stats)
     }

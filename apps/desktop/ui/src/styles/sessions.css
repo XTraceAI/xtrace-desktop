@@ -112,6 +112,19 @@
 .xt-sessions-recent-limit {
   color: var(--warning) !important;
 }
+/* A listed sub-session is indented under the row that opened it; a row that
+   only names a main session with no recent activity says so where the time
+   would be. */
+.xt-sessions-recent-list li[data-depth] .xt-session-title-line {
+  padding-left: calc(var(--depth, 0) * 14px);
+}
+.xt-sessions-recent-quiet {
+  color: var(--meta);
+  font:
+    400 10px 'Geist Mono',
+    Menlo,
+    monospace;
+}
 @container sessions (max-width: 650px) {
   .xt-sessions-recent-list li {
     grid-template-columns: 66px minmax(0, 1fr);
@@ -181,6 +194,22 @@
   flex-direction: column;
   min-width: 0;
   gap: 1px;
+  /* A sub-session listed under its group is indented inside its own cell, so
+     every column beside it keeps its place. */
+  padding-left: calc(var(--depth, 0) * 14px);
+}
+.xt-session-heading .xt-lane-toggle {
+  margin-right: 0;
+}
+/* The words before the name of a main session that is not loaded. */
+.xt-session-group-words {
+  flex: none;
+  padding-right: 4px;
+  color: var(--meta);
+  font:
+    400 10.5px 'Geist Mono',
+    Menlo,
+    monospace;
 }
 .xt-session-name .xt-session-open,
 .xt-session-name .xt-session-meta {

@@ -8,8 +8,8 @@ pub use crate::pr_dto::*;
 pub use crate::pr_effort_dto::*;
 pub use crate::rule_activity_dto::*;
 pub use crate::session_compactions::{
-    CompactionCount, CompactionEvent, CompactionReason, CompactionTrigger, SessionCompaction,
-    SessionCompactions,
+    CompactionCount, CompactionEvent, CompactionReason, CompactionTrigger, InheritedCompactions,
+    SessionCompaction, SessionCompactions,
 };
 pub use crate::session_source_dto::*;
 pub use crate::session_titles::{SessionTitle, SessionTitles};
@@ -257,6 +257,7 @@ pub fn export_types(directory: impl AsRef<std::path::Path>) -> Result<(), ts_rs:
     HookNames::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
     PrList::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
     PrRefreshReport::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
+    PrAutoCheckStatus::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
     PrAnalyticsPage::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
     RuleActivityResult::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
     crate::privacy::ContentRetention::export_all(
@@ -390,8 +391,45 @@ pub struct SessionRow {
     /// filtered out or on another page is not added to the list.
     #[ts(optional = nullable)]
     pub parent: Option<SessionParentLink>,
+    /// Stored positive evidence says another session created this one, read
+    /// in the same snapshot by the same context read as the Dashboard's
+    /// `known_child` and with the same meaning: independent of `parent`, so a
+    /// known child whose parent is unindexed or ambiguous is `true` with a
+    /// `null` parent. `null` only when no context row was found. Display only.
+    #[ts(optional = nullable)]
+    pub known_child: Option<bool>,
+    /// What a list may show of this session, from the same context read
+    /// ([`SessionChildCheck`]). `null` only when no context row was found,
+    /// which a list treats as still checking. Display only: it never changes
+    /// this row's membership, order, cursor or measurements.
+    #[ts(optional = nullable)]
+    pub child_check: Option<SessionChildCheck>,
     pub metrics: MetricSessionWindow,
     pub hands_off: MetricSessionHandsOff,
+}
+
+/// What a list may show of one session. `checking`: the supported checks of
+/// who created it have not finished for what the index holds of it now, so
+/// it is not listed as a session of its own. `checked`: they finished and
+/// found no agent created it — never a claim that a person did. `child`:
+/// stored positive evidence says another session created it, whatever its
+/// checks say; it is listed under a verified parent, or not at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionChildCheck {
+    Checking,
+    Checked,
+    Child,
+}
+
+impl From<xt_store::session_list::ChildCheck> for SessionChildCheck {
+    fn from(value: xt_store::session_list::ChildCheck) -> Self {
+        match value {
+            xt_store::session_list::ChildCheck::Checking => Self::Checking,
+            xt_store::session_list::ChildCheck::Checked => Self::Checked,
+            xt_store::session_list::ChildCheck::Child => Self::Child,
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, TS)]
 pub struct SessionPage {
@@ -399,6 +437,30 @@ pub struct SessionPage {
     pub window: DashboardWindow,
     pub rows: Vec<SessionRow>,
     pub next: Option<String>,
+    /// Context only for each indexed parent this page's rows name in `parent`
+    /// that the page does not list itself, in identifier order, read in the
+    /// same snapshot. At most one per row; no further ancestor is read. An
+    /// entry never makes a row and carries nothing measured. Always sent;
+    /// the generated TypeScript marks the key optional, so a page without it
+    /// reads as naming no parent's context.
+    #[ts(as = "Option<Vec<SessionParentContext>>", optional)]
+    pub referenced_parents: Vec<SessionParentContext>,
+}
+
+/// A parent a listed row names, as much as a display needs to tell whether it
+/// is itself a known sub-session with no verified parent: its exact identity
+/// and host, its stored known-child bit and the parent its own context read
+/// resolved.
+#[derive(Clone, Debug, PartialEq, Serialize, TS)]
+pub struct SessionParentContext {
+    pub session_id: String,
+    pub host: String,
+    pub known_child: bool,
+    #[ts(optional = nullable)]
+    pub parent: Option<SessionParentLink>,
+    /// What a list may show of the parent itself; missing reads as checking.
+    #[ts(optional = nullable)]
+    pub child_check: Option<SessionChildCheck>,
 }
 
 /// The caller's page selection, passed through to the store unchanged.
@@ -419,6 +481,7 @@ fn session_row_from(
     summary: xt_store::session_list::SessionSummary,
     measured: &std::collections::BTreeMap<String, xt_metrics::SessionWindow>,
     hands_off: &std::collections::BTreeMap<String, xt_metrics::SessionHandsOff>,
+    context: Option<&xt_store::session_list::SessionContext>,
 ) -> Result<SessionRow, crate::state::StateError> {
     let metrics = match measured.get(&summary.id) {
         Some(window) => crate::dashboard::convert(window)?,
@@ -458,6 +521,8 @@ fn session_row_from(
         has_conflict: summary.has_conflict,
         pr_links,
         parent: summary.parent.map(Into::into),
+        known_child: context.map(|row| row.known_child),
+        child_check: context.map(|row| row.check.into()),
         metrics,
         hands_off,
     })
@@ -519,7 +584,7 @@ pub(crate) fn filtered_page(
     filter: &xt_store::session_list::SessionFilter<'_>,
     cursor: Option<&xt_store::session_list::SessionCursor>,
 ) -> Result<SessionPage, crate::state::StateError> {
-    let (rows, next, measured, hands_off) = metrics.read_snapshot(|metrics| {
+    let (rows, next, measured, hands_off, mut context) = metrics.read_snapshot(|metrics| {
         let mut rows = metrics.sessions_page_filtered(filter, cursor)?;
         let next = if rows.len() > 50 {
             rows.truncate(50);
@@ -533,14 +598,51 @@ pub(crate) fn filtered_page(
         let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
         let measured = metrics.session_windows(window, &ids)?;
         let hands_off = metrics.session_hands_off(window, &ids)?;
-        Ok((rows, next, measured, hands_off))
+        // The listed rows' own context and that of each direct parent they
+        // name, in one bounded read of this snapshot: at most 50 rows and 50
+        // parents, inside the store's context bound. Only the known-child bit
+        // and a parent's own resolved parent are used; nothing is measured.
+        let mut named = ids.clone();
+        named.extend(
+            rows.iter()
+                .filter_map(|row| row.parent.as_ref())
+                .map(|parent| parent.session_id.as_str()),
+        );
+        let context: std::collections::BTreeMap<String, _> = metrics
+            .session_context(&named)?
+            .into_iter()
+            .map(|row| (row.id.clone(), row))
+            .collect();
+        Ok((rows, next, measured, hands_off, context))
     })?;
+    let listed: std::collections::BTreeSet<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+    let referenced: std::collections::BTreeSet<String> = rows
+        .iter()
+        .filter_map(|row| row.parent.as_ref())
+        .map(|parent| parent.session_id.clone())
+        .filter(|id| !listed.contains(id.as_str()))
+        .collect();
+    let referenced_parents = referenced
+        .iter()
+        .filter_map(|id| context.get(id))
+        .map(|row| SessionParentContext {
+            session_id: row.id.clone(),
+            host: row.host.clone(),
+            known_child: row.known_child,
+            parent: row.parent.clone().map(Into::into),
+            child_check: Some(row.check.into()),
+        })
+        .collect();
     let page = SessionPage {
         window: crate::dashboard::dashboard_window(days, window, &zone, clock),
         next,
+        referenced_parents,
         rows: rows
             .into_iter()
-            .map(|r| session_row_from(r, &measured, &hands_off))
+            .map(|r| {
+                let context = context.remove(&r.id);
+                session_row_from(r, &measured, &hands_off, context.as_ref())
+            })
             .collect::<Result<_, crate::state::StateError>>()?,
     };
     crate::dashboard::checked_value(&page)?;
@@ -561,7 +663,7 @@ pub fn session_row(
     query: &str,
 ) -> Result<Option<SessionRow>, crate::state::StateError> {
     let window = crate::dashboard::selected_window(days, now_ms)?;
-    let Some((summary, measured, hands_off)) = metrics.read_snapshot(|metrics| {
+    let Some((summary, measured, hands_off, context)) = metrics.read_snapshot(|metrics| {
         // Metadata and measurement come from one snapshot, as the list's do:
         // the native index writes on its own connection, so a second read
         // could show a row beside numbers taken after it changed.
@@ -570,12 +672,16 @@ pub fn session_row(
         };
         let measured = metrics.session_windows(window, &[summary.id.as_str()])?;
         let hands_off = metrics.session_hands_off(window, &[summary.id.as_str()])?;
-        Ok(Some((summary, measured, hands_off)))
+        let context = metrics
+            .session_context(&[summary.id.as_str()])?
+            .into_iter()
+            .next();
+        Ok(Some((summary, measured, hands_off, context)))
     })?
     else {
         return Ok(None);
     };
-    let row = session_row_from(summary, &measured, &hands_off)?;
+    let row = session_row_from(summary, &measured, &hands_off, context.as_ref())?;
     crate::dashboard::checked_value(&row)?;
     Ok(Some(row))
 }

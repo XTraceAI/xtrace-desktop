@@ -19,6 +19,10 @@
 //! * an automatic preview where a stored task-notification proof names the
 //!   record and its text has a nonblank `<summary>` ahead of any `<result>`.
 //!
+//! A Codex or Cursor input a stored tool-sent proof names gets neither: it is
+//! not a person's message, and it has no summary of its own to show. A person
+//! preview an earlier read kept for it is withdrawn.
+//!
 //! Rows fill once and are never rewritten by a replay. Readers choose the
 //! record by the current classification first and only then read its preview
 //! (see [`read`]), so a proof that later makes the record ineligible hides it.
@@ -189,6 +193,17 @@ pub(crate) fn apply(
         let Ok(length) = i64::try_from(text.chars().count()) else {
             continue;
         };
+        if batch
+            .tool_sent
+            .get(outcome.input_index)
+            .is_some_and(Option::is_some)
+            && crate::tool_sent::proven(connection, uuid)?
+        {
+            // A proven tool-sent input is never a person's message: a person
+            // preview an earlier read kept for it goes, and none is kept.
+            withdraw_person(connection, uuid)?;
+            continue;
+        }
         let notification = batch
             .task_notifications
             .get(outcome.input_index)

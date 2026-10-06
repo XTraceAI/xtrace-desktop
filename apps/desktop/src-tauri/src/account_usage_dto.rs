@@ -85,18 +85,8 @@ pub struct AccountUsagePoint {
     pub used_percent: f64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum AccountUsagePaceBasis {
-    /// The rise over the last 24 hours of this window's saved readings.
-    Recent,
-    /// The percent used divided by the time since the window started.
-    WindowAverage,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct AccountUsagePace {
-    pub basis: AccountUsagePaceBasis,
     /// Percent used at the reset if use continues at this rate, at most 100.
     pub projected_percent_at_reset: f64,
     /// Percent that would be used by the reading's time if use were spread

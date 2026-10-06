@@ -132,6 +132,9 @@ pub struct StreamEvents {
     /// `Some` only in origin-evidence mode; the inner value is the open
     /// session's evidence bookkeeping.
     origin: Option<Option<OriginSession>>,
+    /// Whether record lines may carry the reader's opt-in automated-input
+    /// evidence ([`super::tool_sent`]).
+    tool_sent: bool,
 }
 
 impl StreamEvents {
@@ -143,7 +146,19 @@ impl StreamEvents {
             skipping: false,
             line: 0,
             origin: None,
+            tool_sent: false,
         }
+    }
+
+    /// A stream read with the reader's opt-in automated-input evidence
+    /// (`--automated-input-evidence`): each record line's claim is judged
+    /// against that line's own record and session, and only a validated
+    /// claim's kind is set on the parsed record. The events are exactly those
+    /// of an ordinary stream: evidence never ends, skips or alters a session
+    /// or record.
+    pub fn with_tool_sent_evidence(mut self) -> Self {
+        self.tool_sent = true;
+        self
     }
 
     /// The opt-in Codex origin-evidence mode: headers may carry the evidence
@@ -224,6 +239,12 @@ impl StreamEvents {
         };
         Ok(match parse_with_context(line, context) {
             Ok(Parsed::Record(mut record)) => {
+                if self.tool_sent
+                    && let super::tool_sent::ToolSentEvidence::Claimed(kind) =
+                        super::tool_sent::judge(line, self.host, native, &record.canonical)
+                {
+                    record.tool_sent = Some(kind);
+                }
                 if self.origin.is_some() {
                     record.human_adjustment = super::human_input::image_evidence(
                         line,

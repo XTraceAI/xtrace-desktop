@@ -52,6 +52,13 @@ pub(crate) struct Event {
     automated: bool,
 }
 
+impl Event {
+    /// The exact native instant: window membership and day order.
+    pub(crate) fn instant(&self) -> &InstantKey {
+        &self.instant
+    }
+}
+
 pub(crate) type SurfaceSessions = BTreeMap<(String, Option<String>), BTreeMap<String, Vec<Event>>>;
 
 /// Every in-window work event of the selected window, once, grouped by raw
@@ -194,6 +201,10 @@ impl<'a> Stretch<'a> {
     /// projections, which is the duration M-09 already measured.
     pub(crate) fn duration_ms(&self) -> u64 {
         self.duration_ms
+    }
+    /// The exact native instant of the human record it starts at.
+    pub(crate) fn start_instant(&self) -> &'a InstantKey {
+        &self.events[0].instant
     }
     /// `(uuid, exact native timestamp)` of the human record it starts at.
     pub(crate) fn start(&self) -> (&'a str, &'a str) {

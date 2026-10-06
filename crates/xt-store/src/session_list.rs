@@ -67,7 +67,8 @@ impl From<crate::creation::CreationEvidence> for ParentEvidence {
         match value {
             crate::creation::CreationEvidence::CodexThreadSpawn => Self::NativeSpawn,
             crate::creation::CreationEvidence::CliArtifactCreate
-            | crate::creation::CreationEvidence::CodexClaudeLaunch => Self::AgentLaunch,
+            | crate::creation::CreationEvidence::CodexClaudeLaunch
+            | crate::creation::CreationEvidence::CodexCliLaunch => Self::AgentLaunch,
         }
     }
 }
@@ -378,8 +379,8 @@ fn listed(
 /// Accepted creation relations of the named children whose parent resolves by exact
 /// host and native identity to an indexed user session. The count beside each
 /// row says how many user sessions hold that identity; only exactly one is a
-/// parent. A relation resting on a Codex agent's Claude CLI launch, of either
-/// kind, named its exact canonical parent as well, and resolves only to that
+/// parent. A relation resting on a Codex agent's CLI launch, of any kind,
+/// named its exact canonical parent as well, and resolves only to that
 /// session. Keyed lookups on the relation's
 /// primary key and the sessions' host/native index. The `IN` list is appended
 /// by [`parents`].
@@ -393,7 +394,7 @@ pub const PARENT_SQL: &str = "SELECT r.child_session_id,r.evidence_kind,p.sessio
      WHERE r.state='accepted' AND c.kind='user' AND c.host=r.child_host
        AND c.native_session_id=r.child_native_session_id
        AND p.kind='user' AND p.session_id<>r.child_session_id
-       AND (r.evidence_kind NOT IN ('cli_artifact_create','codex_claude_launch')
+       AND (r.evidence_kind NOT IN ('cli_artifact_create','codex_claude_launch','codex_cli_launch')
             OR p.session_id=r.parent_session_id)";
 
 /// The exactly resolved parent of each named session that has one, against a
@@ -594,7 +595,25 @@ pub struct SessionContext {
     /// The exactly resolved session that created this one; see
     /// [`SessionParent`].
     pub parent: Option<SessionParent>,
+    /// Stored positive evidence says another session created this one: an
+    /// accepted creation relation, an unconflicted saved Human session origin
+    /// or an accepted child fact ([`crate::child_fact`]), bound to exactly
+    /// this session's canonical ID, host and native ID. The first two are the
+    /// facts the Human input view uses to treat the session's user messages
+    /// as an agent's; a child fact alone does not change that view, so a
+    /// known child is not always one the Human view excludes. Independent of
+    /// `parent`: a known child's parent can still be unindexed, ambiguous or
+    /// unknown. A conflicted, withheld or mismatched fact alone never sets
+    /// it. Display only.
+    pub known_child: bool,
+    /// What a list may show of the session: [`ChildCheck::Child`] exactly
+    /// when `known_child`, else whether its supported checks have finished
+    /// for what the index holds of it now ([`crate::child_check`]). Display
+    /// only; a finished check never says a person created the session.
+    pub check: ChildCheck,
 }
+
+pub use crate::child_check::ChildCheck;
 
 /// Identifiers one context read accepts. A caller names sessions it already
 /// holds, so this bound is a guard on the generated `IN` list, not a page size.
@@ -608,7 +627,11 @@ pub const MAX_CONTEXT: usize = 200;
 /// keyed lookups on `pr_links`' own (session_id, pr_id) primary key, so each
 /// canonical pull request counts once per session and the read is bounded by
 /// the named sessions, not by the number of stored links. The join is the one
-/// the page's link read uses. The `IN` list is appended by [`context`].
+/// the page's link read uses. The known-child bit repeats the creation and
+/// origin join conditions of `v_human_inputs` exactly, as keyed lookups on
+/// each table's own session key, and also reads accepted child facts, which
+/// that view does not. The finished-check bit is one keyed lookup of the
+/// session's own check row. The `IN` list is appended by [`context`].
 pub const CONTEXT_SQL: &str = concat!(
     "SELECT s.session_id,s.host,coalesce(s.repo,s.cwd),s.git_branch,
        nullif(trim(s.title),''),",
@@ -617,7 +640,13 @@ pub const CONTEXT_SQL: &str = concat!(
        (SELECT count(*) FROM pr_links l JOIN pull_requests p ON p.id=l.pr_id
           WHERE l.session_id=s.session_id),
        (SELECT count(*) FROM pr_links l JOIN pull_requests p ON p.id=l.pr_id
-          WHERE l.session_id=s.session_id AND l.confidence='inferred')
+          WHERE l.session_id=s.session_id AND l.confidence='inferred'),
+       ",
+    crate::child_check::known_child_sql!(),
+    ",
+       ",
+    crate::child_check::checked_sql!(),
+    "
      FROM sessions s WHERE s.kind='user'"
 );
 
@@ -661,6 +690,7 @@ pub fn context(connection: &rusqlite::Connection, ids: &[&str]) -> Result<Vec<Se
                 u64::try_from(value)
                     .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(index, value))
             };
+            let known_child: bool = row.get(8)?;
             Ok(SessionContext {
                 id: row.get(0)?,
                 host: row.get(1)?,
@@ -672,6 +702,14 @@ pub fn context(connection: &rusqlite::Connection, ids: &[&str]) -> Result<Vec<Se
                 pr_links: count(6)?,
                 inferred_pr_links: count(7)?,
                 parent: None,
+                known_child,
+                check: if known_child {
+                    ChildCheck::Child
+                } else if row.get(9)? {
+                    ChildCheck::Checked
+                } else {
+                    ChildCheck::Checking
+                },
             })
         })?
         .collect::<std::result::Result<Vec<SessionContext>, _>>()?;
@@ -683,6 +721,64 @@ pub fn context(connection: &rusqlite::Connection, ids: &[&str]) -> Result<Vec<Se
         row.parent = parents.remove(&row.id);
         row.automated_review = reviewers.contains(&row.id);
     }
+    Ok(rows)
+}
+
+// Keep in step with PARENT_SQL and the reviewer read in parents_and_reviewers:
+// a new parent source added there must be added here, or its children are
+// never found under a listed parent.
+/// Sessions that may have been created by one of the named sessions, with
+/// their last recorded time: every user session an accepted creation relation
+/// or an unconflicted native reviewer origin names as created by the named
+/// session's host and native identity. These are candidates only: a caller
+/// keeps a candidate only when [`parents`] resolves its parent to one of the
+/// named sessions, the same verified link every list groups by. The relation
+/// side is a keyed lookup on its parent index; the origin side reads the
+/// reviewer origins, a table of at most one row per session. At most
+/// [`MAX_CONTEXT`] identifiers.
+pub fn child_candidates(
+    connection: &rusqlite::Connection,
+    ids: &[&str],
+) -> Result<Vec<(String, Option<String>)>> {
+    let mut unique: Vec<&str> = ids.to_vec();
+    unique.sort_unstable();
+    unique.dedup();
+    if unique.len() > MAX_CONTEXT {
+        return Err(Error::InvalidInput(
+            "too many sessions requested for one child read",
+        ));
+    }
+    if unique.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut list = String::with_capacity(unique.len() * 5);
+    for index in 0..unique.len() {
+        if index > 0 {
+            list.push(',');
+        }
+        list.push('?');
+        list.push_str(&(index + 1).to_string());
+    }
+    let sql = format!(
+        "SELECT c.session_id,c.last_ts FROM sessions p
+           JOIN session_creation_relations r ON r.parent_host=p.host
+             AND r.parent_native_session_id=p.native_session_id AND r.state='accepted'
+           JOIN sessions c ON c.session_id=r.child_session_id AND c.kind='user'
+           WHERE p.kind='user' AND p.session_id IN ({list})
+         UNION
+         SELECT c.session_id,c.last_ts FROM sessions p
+           JOIN human_session_origins o ON o.parent_host=p.host
+             AND o.parent_native_session_id=p.native_session_id
+             AND o.method='native_reviewer_header' AND o.conflicted=0
+           JOIN sessions c ON c.session_id=o.session_id AND c.kind='user'
+           WHERE p.kind='user' AND p.session_id IN ({list})"
+    );
+    let rows = connection
+        .prepare(&sql)?
+        .query_map(rusqlite::params_from_iter(unique.iter().copied()), |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
 
@@ -785,13 +881,19 @@ mod query_plan_tests {
                 >= 2,
             "{plan:?}"
         );
+        // The known-child bit is one keyed lookup per named session in each
+        // of its tables, and so is the finished-check bit, never a scan.
         assert!(
-            !plan.iter().any(|step| step == "SCAN l"
-                || step.starts_with("SCAN l ")
-                || step == "SCAN s"
-                || step.starts_with("SCAN s ")
-                || step == "SCAN p"
-                || step.starts_with("SCAN p ")),
+            ["c", "o", "f", "k"].iter().all(|alias| plan
+                .iter()
+                .any(|step| step.starts_with(&format!("SEARCH {alias} ")))),
+            "{plan:?}"
+        );
+        assert!(
+            !plan.iter().any(|step| ["l", "s", "p", "c", "o", "f", "k"]
+                .iter()
+                .any(|alias| step == &format!("SCAN {alias}")
+                    || step.starts_with(&format!("SCAN {alias} ")))),
             "{plan:?}"
         );
     }

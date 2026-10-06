@@ -202,7 +202,6 @@ fn m07_typing_estimate_and_ratio_are_unaffected_by_a_leading_confirmed_input() {
         .unwrap();
     // M-05 keeps the all-event timeline: 0 → 11 minutes of activity.
     assert_eq!(report.agent_minutes, 11.0);
-    assert_eq!(report.agent_to_human_ratio, Some(11.0));
 }
 
 #[test]

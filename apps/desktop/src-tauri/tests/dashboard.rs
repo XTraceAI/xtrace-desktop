@@ -24,7 +24,7 @@ mod assembled {
     use jiff::tz::TimeZone;
     use std::path::PathBuf;
     use xt_fixtures::{Fixture, TempDb};
-    use xt_metrics::{MetricsDb, PriceCatalog, TypingRate};
+    use xt_metrics::{BreakLength, MetricsDb, PriceCatalog, TypingRate};
     use xt_store::pr_link::{
         PrConfidence, PrIdentity, PrLinkObservation, PrState, RefreshOutcome, RefreshSuccess,
     };
@@ -60,11 +60,121 @@ mod assembled {
             MetricClock::Fixture,
             &catalog(),
             TypingRate::default(),
+            BreakLength::default(),
         )
         .unwrap()
     }
     fn records(value: &serde_json::Value) -> Vec<CanonicalRecord> {
         serde_json::from_value(value.clone()).unwrap()
+    }
+
+    /// A steady user, every day from Sep 15 for `days` days (UTC, synthetic):
+    /// your messages every 30 minutes from 09:00 to 17:00 (8 of your hours),
+    /// and two sessions whose agents work from 08:00 to 16:00 (16 agent hours).
+    fn steady_user(days: i64) -> TempDb {
+        let mut db = TempDb::empty().unwrap();
+        let at = |day: i64, minutes: i64| {
+            Timestamp::from_millisecond(
+                ms("2026-09-15T00:00:00Z") + day * 86_400_000 + minutes * 60_000,
+            )
+            .unwrap()
+            .to_string()
+        };
+        let event = |id: String, ts: String, human: bool| -> CanonicalRecord {
+            let role = if human { "user" } else { "assistant" };
+            serde_json::from_value(json!({"uuid":id,"type":role,"timestamp":ts,
+                "message":{"role":role,"model":"test-claude",
+                    "content":[{"type":"text","text":"x"}]}}))
+            .unwrap()
+        };
+        for day in 0..days {
+            for session in ["a", "b"] {
+                let mut rows: Vec<_> = (0..=48)
+                    .map(|step| {
+                        event(
+                            format!("{session}-{day}-agent-{step}"),
+                            at(day, 8 * 60 + step * 10),
+                            false,
+                        )
+                    })
+                    .collect();
+                if session == "a" {
+                    rows.extend((0..=16).map(|step| {
+                        event(
+                            format!("a-{day}-you-{step}"),
+                            at(day, 9 * 60 + step * 30),
+                            true,
+                        )
+                    }));
+                }
+                seed(
+                    db.store_mut(),
+                    &format!("{session}-{day}"),
+                    "claude",
+                    Some("cli"),
+                    &rows,
+                );
+            }
+        }
+        db
+    }
+
+    #[test]
+    fn leverage_divides_agent_hours_and_your_hours_over_the_same_whole_days() {
+        // At 08:00 on Oct 5 nothing of that day has happened yet; at 20:00
+        // all of it has.
+        for (now, days) in [("2026-10-05T08:00:00Z", 20), ("2026-10-05T20:00:00Z", 21)] {
+            let db = steady_user(days);
+            let metrics = MetricsDb::open(db.path()).unwrap();
+            let report = assemble(
+                &metrics,
+                7,
+                ms(now),
+                TimeZone::UTC,
+                MetricClock::Fixture,
+                &catalog(),
+                TypingRate::default(),
+                BreakLength::default(),
+            )
+            .unwrap();
+            let human = &report.human_hours.current;
+            assert_eq!(human.by_day.len(), 8, "{now}");
+            // The tile's value is exactly the shown division, and both sides
+            // cover the same whole days.
+            let leverage = &report.tiles.leverage;
+            let agent_h = report.leverage.agent_ms as f64 / 3_600_000.0;
+            let your_h = human.active_ms.unwrap() as f64 / 3_600_000.0;
+            assert_eq!(leverage.value, Some(agent_h / your_h), "{now}");
+            assert_eq!(leverage.value, Some(2.0), "{now}");
+            // The previous whole days are just as steady: no change.
+            assert_eq!(leverage.delta.previous, Some(2.0), "{now}");
+            assert_eq!(leverage.delta.pct, Some(0.0), "{now}");
+            // Each day's own leverage, the first day too, is 2.0; today at
+            // 08:00 has nothing yet on either side, so no point.
+            let days = &report.leverage.by_day;
+            assert_eq!(
+                days.iter().map(|day| day.date.as_str()).collect::<Vec<_>>(),
+                human
+                    .by_day
+                    .iter()
+                    .map(|day| day.date.as_str())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(days[0].value, Some(2.0), "{now}");
+            assert_eq!(days[0].agent_ms, 16 * 3_600_000);
+            for day in &days[..7] {
+                assert_eq!(day.value, Some(2.0), "{now} {}", day.date);
+            }
+            let today = days.last().unwrap();
+            if now.ends_with("08:00:00Z") {
+                assert_eq!(
+                    (today.agent_ms, today.human_ms, today.value),
+                    (0, Some(0), None)
+                );
+            } else {
+                assert_eq!(today.value, Some(2.0));
+            }
+        }
     }
 
     #[test]
@@ -250,7 +360,7 @@ mod assembled {
             assert_eq!((zero.value, zero.reason.as_deref()), (Some(0.0), None));
         }
         for unknown in [
-            &tiles.ratio,
+            &tiles.leverage,
             &tiles.concurrency_max,
             &tiles.concurrency_mean,
             &tiles.hands_off_median,
@@ -675,6 +785,7 @@ mod assembled {
             MetricClock::System,
             &catalog(),
             TypingRate::default(),
+            BreakLength::default(),
         )
         .unwrap();
         assert_eq!(report.days.len(), 8);
@@ -724,7 +835,8 @@ mod assembled {
                     TimeZone::UTC,
                     MetricClock::Fixture,
                     &catalog(),
-                    TypingRate::default()
+                    TypingRate::default(),
+                    BreakLength::default()
                 ),
                 Err(StateError::InvalidMetricWindow)
             ));
@@ -752,7 +864,8 @@ mod assembled {
                 TimeZone::UTC,
                 MetricClock::Fixture,
                 &catalog(),
-                TypingRate::default()
+                TypingRate::default(),
+                BreakLength::default()
             ),
             Err(StateError::CountRange)
         ));
@@ -871,8 +984,11 @@ mod assembled {
             &[
                 response("ctx-repo-a", "2026-09-07T10:00:00Z", "r1", priced(7)),
                 response("ctx-repo-b", "2026-09-07T10:05:00Z", "r2", priced(7)),
-                // Inside the selected range but outside the fixed lane window.
+                // Inside the selected range but outside the fixed lane window,
+                // with no service tier, so it cannot be priced.
                 response("ctx-repo-old", "2026-09-04T10:00:00Z", "r3", counters(100)),
+                // Before the selected range too: still part of the session.
+                response("ctx-repo-older", "2026-08-01T10:00:00Z", "r4", priced(1)),
             ],
         );
         // An indexed session whose history carries neither repository nor
@@ -906,13 +1022,28 @@ mod assembled {
                 Some("feature/lanes")
             )
         );
-        // The lane window only: the older response is not in these 48 hours.
+        // The whole session, not the lane window: the responses before these
+        // 48 hours count, and the unpriced one keeps the total open.
         let cost = repo.cost.as_ref().unwrap();
         assert_eq!(
-            (cost.selected_observations, cost.priced_observations),
-            (2, 2)
+            (
+                cost.selected_observations,
+                cost.priced_observations,
+                cost.unpriced_observations
+            ),
+            (4, 3, 1)
         );
-        assert_eq!(cost.total_usd, Some(0.00016));
+        assert_eq!(cost.total_usd, None);
+        assert!((cost.priced_subtotal_usd - 0.00018).abs() < 1e-12);
+        assert_eq!(
+            cost.unpriced,
+            [DashboardUnpriced {
+                model: Some("test-claude".into()),
+                service_tier: None,
+                reason: MetricUnpricedReason::MissingServiceTier,
+                observations: 1,
+            }]
+        );
         let bare = lane_session(&report, "ctx-bare").unwrap();
         assert_eq!((bare.repo.as_deref(), bare.branch.as_deref()), (None, None));
         // Indexed, but no selected response: nothing to price, never a zero.
@@ -1117,7 +1248,7 @@ mod assembled {
             .collect();
         assert_eq!(named, drawn);
         assert_eq!(report.lane_sessions.len(), LANE_LIMIT);
-        // The measurement still covers the whole window, including the span
+        // The measurement still covers the whole session, including the span
         // the cap left out.
         let cost = lane_session(&report, "capped")
             .unwrap()
@@ -1335,13 +1466,26 @@ mod assembled {
             after.split_once("\n}\n").expect("body").0
         };
         let body = body_of("fn lane_report(");
-        for read in [
-            "db.session_context(",
-            "db.session_costs(",
-            "lane_spans(db, lane_window)",
+        // Context is read three times: for the returned sessions, for the
+        // parents they link that have no span, and for the sub-sessions under
+        // them that have none; cost twice, for the returned sessions and for
+        // those sub-sessions. Every one of these reads is lane_report's.
+        for (read, times) in [
+            ("db.session_context(", 3),
+            ("db.whole_session_costs(", 2),
+            ("db.sub_sessions(", 1),
+            ("lane_spans(db, lane_window)", 1),
         ] {
-            assert_eq!(module.matches(read).count(), 1, "{read} is read elsewhere");
-            assert!(body.contains(read), "{read} is not read by lane_report");
+            assert_eq!(
+                module.matches(read).count(),
+                times,
+                "{read} is read elsewhere"
+            );
+            assert_eq!(
+                body.matches(read).count(),
+                times,
+                "{read} is not read by lane_report"
+            );
         }
         let read = "db.active_spans(lane_window)";
         assert_eq!(module.matches(read).count(), 1, "{read} is read elsewhere");

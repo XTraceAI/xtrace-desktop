@@ -63,6 +63,42 @@ impl Window {
         )
     }
 
+    /// The whole local days this window touches: from local midnight of its
+    /// first day to local midnight after its last day. The days are the same
+    /// dates [`Window::local_days`] reports, none of them clipped.
+    pub fn whole_local_days(self, zone: TimeZone) -> Result<Self> {
+        let first = Timestamp::from_millisecond(self.start_ms)?
+            .to_zoned(zone.clone())
+            .start_of_day()?;
+        let after_last = Timestamp::from_millisecond(self.end_ms - 1)?
+            .to_zoned(zone)
+            .start_of_day()?
+            .tomorrow()?
+            .start_of_day()?;
+        Self::new(
+            first.timestamp().as_millisecond(),
+            after_last.timestamp().as_millisecond(),
+        )
+    }
+
+    /// The same number of local days as this window touches, just before its
+    /// first local midnight; for a whole-day window, the previous period of
+    /// the same number of whole days. Calendar arithmetic keeps DST days whole.
+    pub fn previous_local_days(self, zone: TimeZone) -> Result<Self> {
+        let days = i64::try_from(self.local_days(zone.clone())?.len())
+            .map_err(|_| Error::InvalidWindow)?;
+        let first = Timestamp::from_millisecond(self.start_ms)?
+            .to_zoned(zone)
+            .start_of_day()?;
+        let start = first
+            .checked_sub(jiff::Span::new().days(days))?
+            .start_of_day()?;
+        Self::new(
+            start.timestamp().as_millisecond(),
+            first.timestamp().as_millisecond(),
+        )
+    }
+
     /// Split the selected interval at local calendar boundaries, clipping the
     /// first and final days. Callers supply the zone and now; no implicit clock.
     pub fn local_days(self, zone: TimeZone) -> Result<Vec<DayBucket>> {

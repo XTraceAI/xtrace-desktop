@@ -11,6 +11,7 @@ import type { SessionSourceStatus } from './generated/SessionSourceStatus';
 import type { PrList } from './generated/PrList';
 import type { PrRefreshReport } from './generated/PrRefreshReport';
 import type { PrAnalyticsPage } from './generated/PrAnalyticsPage';
+import type { PrAutoCheckStatus } from './generated/PrAutoCheckStatus';
 import type { DataEvent } from './ipc-names';
 import type { ContentRetention } from './generated/ContentRetention';
 import type { ContentPurge } from './generated/ContentPurge';
@@ -24,6 +25,11 @@ import type { AccountUsage } from './generated/AccountUsage';
 import type { LiveSessionSnapshot } from './generated/LiveSessionSnapshot';
 
 export type Unsubscribe = () => void;
+/** Development builds only: release information without update installation. */
+export interface LocalUpdateControls {
+  /** Opens the fixed public releases page in the system browser, only on a user click. */
+  viewPublicReleases(): Promise<void>;
+}
 /** Exact cached Codex Desktop status for the rows this view displays. */
 export interface LiveSessionControls {
   /** Register an empty lease with ([], null), then read using its native-issued view_id. */
@@ -79,6 +85,17 @@ export interface TypingSpeedControls {
   set(wpm: number): Promise<number>;
   /** Opens the fixed official typing test in the system browser; no URL crosses this seam. */
   openTest(): Promise<void>;
+}
+/**
+ * The saved break length "your hours" read, in whole minutes: two messages
+ * you sent at most this far apart join one stretch. The app database owns the
+ * bounds and the default; nothing is measured here.
+ */
+export interface HumanBreakControls {
+  /** The saved length; 60 when nothing was saved. */
+  read(): Promise<number>;
+  /** A whole number from 5 to 240; resolves with the length read back after commit. */
+  set(minutes: number): Promise<number>;
 }
 /**
  * Host titles for the rows a list is showing, read from the sessions' original
@@ -145,6 +162,16 @@ export interface RuleActivityControls {
   /** Abandon a read; cancelling one that has not begun is not a mistake. */
   cancel(readId: string): Promise<void>;
 }
+/**
+ * The automatic pull-request check. The native side runs it by itself on
+ * window focus and about once an hour, only reading GitHub through the same
+ * bounded batch as the manual refresh; `request` also asks it to look when
+ * the Dashboard is shown. Neither call waits for a check to finish.
+ */
+export interface PrAutoCheckControls {
+  status(): Promise<PrAutoCheckStatus>;
+  request(): Promise<PrAutoCheckStatus>;
+}
 /** The menu-bar popover's own window; present only in that native window. */
 export interface TrayControls {
   /** Whether the popover is on screen now, for a view mounted after a show. */
@@ -157,6 +184,9 @@ export interface TrayControls {
 }
 /** Extend this seam with generated query DTOs when their owning screen lands. */
 export interface DataSource {
+  /** Confirmed native updater mode, selected before exposing update controls. */
+  readonly publicUpdates?: true;
+  readonly localUpdates?: LocalUpdateControls;
   readonly liveSessions?: LiveSessionControls;
   /** Provider-reported account windows, independent of local history ranges. */
   accountUsage(): Promise<AccountUsage>;
@@ -232,8 +262,8 @@ export interface DataSource {
   ): Promise<SessionPage>;
   /**
    * Refresh the selected stored pull requests. Only storage's own identifiers
-   * cross this boundary, and only an explicit call ever starts a refresh:
-   * nothing refreshes on load, on focus or on a timer.
+   * cross this boundary. The native side also checks pull requests on its own
+   * (see {@link PrAutoCheckControls}); this call is the manual one.
    */
   refreshPullRequests(ids: number[]): Promise<PrRefreshReport>;
   /** Ask the running refresh to stop; false when none was running. */
@@ -242,10 +272,14 @@ export interface DataSource {
   subscribe(event: DataEvent, listener: (payload?: unknown) => void): Promise<Unsubscribe>;
   /** Present natively and in a fixture, which answers as its export read. */
   readonly spanDetails?: SpanDetailControls;
+  /** Present only natively, where the app checks pull requests on its own. */
+  readonly prAutoCheck?: PrAutoCheckControls;
   /** Present only where a writable app database owns the policy. */
   readonly retention?: RetentionControls;
   /** Present only where a writable app database owns the setting. */
   readonly typingSpeed?: TypingSpeedControls;
+  /** Present only where a writable app database owns the setting. */
+  readonly humanBreak?: HumanBreakControls;
   /** Present only in the native tray popover window. */
   readonly tray?: TrayControls;
   /** Present only where original local sources can be read. */

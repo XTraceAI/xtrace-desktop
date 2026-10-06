@@ -149,6 +149,8 @@ The inventory currently requires:
 | `conformance_native_import`        | The complete native import through the pinned readers into a disposable index: identity and counts per session, a repeated run adds nothing, source bytes unchanged; see [native import](acceptance/native-import.md).                                                                                                                                                      |
 | `conformance_bundled_readers`      | Both modes verify the pinned bundled scripts and read F18 in place to its expected identities and counts, leaving sources unchanged. Checkout mode additionally compares every scripts file and LICENSE/NOTICE byte with the producer commit and compares the two independent indexes.                                                                                      |
 | `conformance_exact_detail`         | The bundle's exact-detail mode reads F18's JSONL sessions and a synthetic paginated Codex group whole, matches ordinary export record for record, refuses the Cursor store beside a committed write-ahead log, and changes no source or temporary snapshot. Checkout mode additionally runs exact detail through the verified checkout and uses its own pagination fixture. |
+| `conformance_codex_fork_import`    | A Codex conversation forked in Codex Desktop imports as its own session: its own ID and start, only its own records, and the original's counters at the cutoff as its usage baseline. Bundle mode supplies equivalent synthetic history data; checkout mode uses the pinned checkout's fixture.                                                                             |
+| `conformance_tool_sent_import`     | The pinned bundle over a synthetic Codex and Cursor home: with `--automated-input-evidence` the lines differ from the plain export only by the evidence, and a scan into an index an earlier build filled binds one proof to each subagent notification, interrupted-turn note, app page record, Cursor summary and Cursor import banner, changing no record.               |
 
 Record in the PR the pin commit printed by the hook and the `executed N of N`
 line with its test names and the selected source mode. A bundle-mode pass does
@@ -156,7 +158,7 @@ not certify the independent checkout/index comparison, the producer checkout's
 pagination fixture, or notices against upstream Git; run checkout mode for those
 checks. A bundle execution is never reported as an independent checkout.
 Every producer release train that Desktop adopts
-updates `.plugin-pin`, the release workflow's producer `ref`, the reader source
+updates `.plugin-pin`, the reader source
 object IDs, the bundled copy (`sh scripts/vendor-readers.sh`, then the printed
 scripts tree ID in the pin) and, when the reader stream changes on purpose, the fixture goldens
 (`python3 scripts/conformance/test-reader-stream.py --write-golden`, then review
@@ -273,10 +275,11 @@ Actions use pinned commits. Rust, pnpm, Playwright and pinned supply-chain tools
 have caches. Automated dependency-update PRs are deferred until their generated commits and metadata meet
 the sign-off, verification and disclosure requirements; no Dependabot schedule is installed by
 this change. Dependency updates use the normal reviewed PR process. Cache timing and manual combined-result validation need recorded run evidence.
-The release-only workflow checks out the pinned production plugin under an ignored
-private artifact directory and supplies its plugin root to the mandatory native
-conformance hook. Its checkout `ref` must equal the `.plugin-pin` commit; the
-workflow tests enforce that. This adds no PR job.
+The release-only workflow uses the bundled producer under `vendor/agent-plugins`
+and supplies its plugin root to the mandatory native conformance hook. Before the
+first workspace test, native validation builds the bundle verifier and checks the
+bundled producer's identity and file modes against `.plugin-pin`. The workflow
+tests enforce bundle mode and bootstrap order. This adds no PR job.
 The first hosted release dispatch remains pending until release preparation. Live queue evidence
 is required before queue activation, rather than during private manual merging.
 

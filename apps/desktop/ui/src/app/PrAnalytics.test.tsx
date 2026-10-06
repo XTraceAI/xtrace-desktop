@@ -55,8 +55,11 @@ const rowOf = (identity: string) =>
   within(screen.getByRole('table', { name: TABLE }))
     .getAllByRole('row')
     .find((row) => within(row).queryByText(identity, { exact: true }))!;
+/** Each dash's stated reason: its spoken text, which a tile's popover also shows. */
 const unmeasured = (element: HTMLElement) =>
-  [...element.querySelectorAll('.xt-unmeasured')].map((item) => item.getAttribute('title'));
+  [...element.querySelectorAll('.xt-unmeasured .sr-only')].map((item) =>
+    item.textContent!.replace(/^Unmeasured: /, ''),
+  );
 /** The linked-session count's button; the token total opens the same drilldown. */
 const openSessions = (identity: string) =>
   screen.getByRole('button', {

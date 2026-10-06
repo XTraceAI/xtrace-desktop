@@ -775,6 +775,19 @@ it('keeps mixed recent and paged table states exact, including children and miss
     ...page,
     rows: cursor ? rows.slice(2) : rows.slice(0, 2),
     next: cursor ? null : 'second-page',
+    // As the native page does: the context of the parent a row names that no
+    // loaded page lists, an ordinary checked main session.
+    referenced_parents: cursor
+      ? [
+          {
+            session_id: missingParent,
+            host: 'claude',
+            known_child: false,
+            parent: null,
+            child_check: 'checked' as const,
+          },
+        ]
+      : [],
   }));
   const states = new Map([
     ...recentIds.map((id, index) => [id, recentStates[index]] as const),
@@ -825,6 +838,19 @@ it('keeps mixed recent and paged table states exact, including children and miss
   await rowFor(tableIds[1]).findByLabelText('Codex · Idle');
   const firstToken = read.mock.calls.at(-1)![1];
   fireEvent.click(screen.getByRole('button', { name: 'Load more sessions' }));
+  // Each child is collapsed under its group, the loaded parent's or the one
+  // naming a parent that is not loaded, and is not read until opened.
+  const loadedGroup = await within(table).findByRole('button', {
+    name: `1 loaded sub-session of ${tableIds[0]}`,
+  });
+  const absentGroup = within(table).getByRole('button', {
+    name: `1 loaded sub-session of ${missingParent}`,
+  });
+  expect(within(table).queryByRole('link', { name: new RegExp(tableIds[2]) })).toBeNull();
+  expect(within(table).queryByRole('link', { name: new RegExp(tableIds[4]) })).toBeNull();
+  LiveRowsObserver.current.show(tableIds);
+  fireEvent.click(loadedGroup);
+  fireEvent.click(absentGroup);
   await within(table).findByRole('link', { name: `Open session ${tableIds[4]}, ${tableIds[4]}` });
   expect(list).toHaveBeenLastCalledWith(all, 'second-page', 7);
   expect(rowFor(tableIds[2]).getByLabelText('Claude Code · Unknown')).toBeTruthy();
@@ -946,8 +972,8 @@ it('puts an old-start Codex chat with recent activity above the first All sessio
     { host: 'claude', session_id: base.session_id, start_ms: now - 7000, end_ms: now - 6000 },
     { host: 'codex', session_id: old, start_ms: now - 2000, end_ms: now - 1000 },
   ];
-  // Context is ordered by ID, independently of the spans. The child's own
-  // lane stays visible even though the report names its parent.
+  // Context is ordered by ID, independently of the spans. The child is
+  // listed under the parent its context names, collapsed.
   report.lane_sessions = [
     {
       ...base,
@@ -998,11 +1024,12 @@ it('puts an old-start Codex chat with recent activity above the first All sessio
     name: `Open recent Codex session Old-start chat, ${old}`,
   });
   const links = recent().getAllByRole('link');
-  expect(links).toHaveLength(3); // Two spans of the old chat become one session.
+  // Two spans of the old chat become one session; its child is collapsed.
+  expect(links).toHaveLength(2);
   expect(links[0]).toBe(oldLink); // Newest by recorded end, not native start or span order.
-  expect(
-    recent().getByRole('link', { name: `Open recent Codex session Child chat, ${child}` }),
-  ).toBeTruthy();
+  expect(recent().queryByRole('link', { name: new RegExp(child) })).toBeNull();
+  const toggle = recent().getByRole('button', { name: '1 recent sub-session of Old-start chat' });
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
   expect(oldLink.textContent).toContain(old);
   expect(oldLink.closest('li')!.querySelector('time')!.dateTime).toBe(
     new Date(now - 1000).toISOString(),
@@ -1020,7 +1047,19 @@ it('puts an old-start Codex chat with recent activity above the first All sessio
     'Codex desktop runtime · Running',
   );
   expect(read.mock.calls[0]).toEqual([[], null]);
-  expect(read.mock.calls[1]).toEqual([[old, child, base.session_id].sort(), 'native-old-start-1']);
+  // A collapsed sub-session's live state is not read.
+  expect(read.mock.calls[1]).toEqual([[old, base.session_id].sort(), 'native-old-start-1']);
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  const childLink = recent().getByRole('link', {
+    name: `Open recent Codex session Child chat, ${child}`,
+  });
+  // Listed under its parent, before the older ordinary session.
+  expect(recent().getAllByRole('link')).toEqual([oldLink, childLink, expect.anything()]);
+  expect(childLink.closest('li')!.dataset.depth).toBe('1');
+  await waitFor(() =>
+    expect(read.mock.calls.at(-1)![0]).toEqual([old, child, base.session_id].sort()),
+  );
   expect(recent().getByLabelText('Claude Code · Idle')).toBeTruthy();
   expect(recent().getByText('Search and filters affect All sessions only.')).toBeTruthy();
   expect(
@@ -1086,7 +1125,9 @@ it('shows a host title for the eight newest sessions and keeps each full ID visi
   expect(recent().getAllByRole('link')).toHaveLength(8);
   expect(recent().queryByText(ids[8])).toBeNull();
   expect(
-    recent().getByText('8 most recent indexed sessions with activity in the last 48 hours'),
+    recent().getByText(
+      '8 most recent main sessions and groups with activity in the last 48 hours; opening a group also lists its sub-sessions',
+    ),
   ).toBeTruthy();
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   expect(read.mock.calls[0][0]).toEqual(loaded.map((row) => row.id));
@@ -1281,9 +1322,10 @@ it('shows measured output when the range total is not, and a zero that was measu
   expect(tile('Human messages').textContent).toContain('0');
   expect(within(tile('Human messages')).queryByText(/^Unmeasured/)).toBeNull();
   // An unmeasured hour count stays unmeasured: no zero is invented by the
-  // conversion, and the report's own reason is what the tile gives.
+  // conversion, and the report's own reason (one this app has no plain
+  // wording for) is what the tile gives, as a sentence.
   expect(
-    within(tile('Agent minutes')).getByText('Unmeasured: Active spans are unmeasured'),
+    within(tile('Agent minutes')).getByText('Unmeasured: Active spans are unmeasured.'),
   ).toBeTruthy();
   expect(tile('Agent minutes').textContent).not.toContain('0');
 });
@@ -1305,7 +1347,7 @@ it('drops the busiest day when the report carries no buckets', async () => {
   await waitFor(() =>
     expect(
       within(tile('Output tokens')).getByText(
-        'Unmeasured: Output counters are absent or incomplete',
+        'Unmeasured: Output token counts are missing or incomplete',
       ),
     ).toBeTruthy(),
   );
@@ -1481,18 +1523,21 @@ it('does not read absent output counters as an absence of output', async () => {
   const output = () => tile('Output tokens');
   await waitFor(() =>
     expect(
-      within(output()).getByText('Unmeasured: Output counters are absent or incomplete'),
+      within(output()).getByText('Unmeasured: Output token counts are missing or incomplete'),
     ).toBeTruthy(),
   );
-  // The coverage count is complete four-counter coverage, not output coverage,
-  // and the definition says which it is.
+  // The coverage count is complete four-counter coverage, not output coverage:
+  // the definition names the sessions that lack it, not sessions with output.
   output().focus();
   fireEvent.focus(output());
   const definition = await screen.findByRole('tooltip');
-  expect(definition.textContent).toContain('Tokens and cost');
+  expect(definition.textContent).toContain('Tokens used by each model response');
   expect(definition.textContent).not.toMatch(/\b[A-Z]-\d{2}[a-z]?\b/);
   expect(definition.textContent).toContain(
-    '1 of 4 sessions have all four counters and a known model, which is not the same as having measured output',
+    'Output token counts are missing or incomplete. Total tokens unknown because some counts are missing.',
+  );
+  expect(definition.textContent).toContain(
+    '3 of 4 sessions are missing a token count or model name.',
   );
   expect(definition.textContent).not.toContain('sessions measured');
 });

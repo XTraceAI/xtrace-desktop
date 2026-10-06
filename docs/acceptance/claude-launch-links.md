@@ -29,19 +29,43 @@ data (nothing is run):
   unsigned integers;
 - the operation's command is one literal Claude print command, optionally
   led by literal environment assignments (`NAME=value`, a valid unquoted
-  name, a literal value, set aside; any expansion refuses): an installed
-  Claude launcher by absolute path (`~/.local/bin/claude`,
-  `~/.claude/local/claude`, `/opt/homebrew/bin/claude`,
-  `/usr/local/bin/claude`, `~/.npm-global/bin/claude`, `~/.bun/bin/claude`,
-  `~/.volta/bin/claude`, present now as an executable), `-p`/`--print` once,
-  `--session-id` once with a lowercase UUID, `--output-format json`, one
-  literal inline prompt, optionally `--model`, `--effort`,
-  `--permission-mode`, `--tools`, `--allowedTools`, `--safe-mode`,
-  `--dangerously-skip-permissions`, `--disable-slash-commands`,
-  `--strict-mcp-config` and `--mcp-config '{"mcpServers":{}}'`, and
-  optionally one `> /absolute/path` (never opened). `--tools`,
-  `--allowedTools` and `--mcp-config` take exactly one value and are never
-  followed by a plain word;
+  name, a literal value, set aside; any expansion refuses): the bare
+  `claude` program, or an installed Claude launcher by absolute path
+  (`~/.local/bin/claude`, `~/.claude/local/claude`,
+  `/opt/homebrew/bin/claude`, `/usr/local/bin/claude`,
+  `~/.npm-global/bin/claude`, `~/.bun/bin/claude`, `~/.volta/bin/claude`,
+  present now as an executable). Its session is named by `--session-id`
+  once with a lowercase UUID (literal, or loaded from the immediately
+  preceding own cell's one-use printed binding). Its prompt is one literal
+  inline word or one `< /absolute/path` (never opened; then no prompt is
+  compared), never both. Optionally one `> /absolute/path` and one
+  `2> /absolute/path` or `2>&1` (never opened; no `/dev` path);
+- its options are read through the one shared Claude option map
+  (`claude_launch/options.rs`), which the Claude `Bash` launch reader also
+  uses. It lists each known option once with its spellings, how many words
+  it takes and what it means; options may come in any order, and a long
+  option's value may follow `=`. `-p`/`--print` once is required. Neutral
+  options (model, fallback model, effort, permission mode, name/`-n`,
+  system prompt additions, settings, tools, allowed/disallowed tools, added
+  directories and the permission, safe-mode, slash-command, strict-MCP and
+  browser switches), `--max-turns` (positive integer) and `--max-budget-usd`
+  never decide which session is created. Neutral does not mean every value
+  is valid: a launch Claude refuses before starting any session is no
+  launch, so a later valid retry of the same ID is the only one. So
+  `--mcp-config` is read only as the literal empty-server configuration
+  (`{"mcpServers":{}}`, with only JSON whitespace — space, tab, carriage
+  return, line feed — around its tokens, matched byte by byte in place with
+  no JSON decoding; `{}` is refused, and an escaped or duplicate key,
+  another member, a non-empty value, trailing data, a file or any other
+  configuration is never opened and is unsupported);
+  `--max-budget-usd` only as a plain positive decimal (`5`, `0.5`; zero,
+  words, signs and exponents are not read); and `--output-format
+stream-json` with `--print` only together with `--verbose`.
+  `--output-format` `text`, `json` or `stream-json` (with `--verbose`) and
+  `--verbose` otherwise change only what is printed, which this proof never
+  reads. `--tools`, `--allowedTools`, `--disallowedTools`,
+  `--add-dir` and `--mcp-config` take exactly one value here and are never
+  followed by a plain word (the CLI would take it as another value);
 - the host acknowledged that operation: its own first result — at the
   operation's position among the results its cell emitted, in the launch
   call's output or in the output of a `wait` on the cell it announced
@@ -71,12 +95,22 @@ data (nothing is run):
   appears, and a cell it announces running is unusable in that file. Any
   other tool row without a call identifier refuses the history.
 
-Refused: `--resume`/`-r`, `--continue`/`-c`, `--fork-session`, `--help`,
-`--version`, `--input-format`, any other option, `--flag=value`, a prompt from
-standard input, pipes, lists, substitution, background, templates, a bare
-`claude` or any other program path, and an assignment that is quoted,
-expands, is an array or `+=`, or follows the program. A session ID mentioned
-in prose, a quoted script or a tool output relates nothing.
+Refused, as the map reads them: resume (`--resume`/`-r`, `--from-pr`,
+`--teleport`) and `--continue`/`-c` (an existing session), `--fork-session`
+(copied history; not a fresh child), `--bg`/`--background` (alone it returns
+at once; with resume it may continue or copy a session — conditional),
+`--no-session-persistence` (nothing saved), `--help`, `--version` and a
+prompt word that is a CLI subcommand (no session), no `-p` or
+`--input-format stream-json` (no single print turn), streaming output
+without `--verbose`, an invalid MCP configuration or budget (refused by
+Claude before any session); also any option not in
+the map (its arity is unknown, so the prompt cannot be found), a repeated
+option or alias, a malformed value, `--`, a prompt both inline and
+redirected, pipes, lists, substitution, background jobs, templates, any
+other program path or redirection (`>>`, `2>>`, `&>`, `2>/path` without a
+space), and an assignment that is quoted, expands, is an array or `+=`, or
+follows the program. A session ID mentioned in prose, a quoted script or a
+tool output relates nothing.
 
 ## What the child must be
 
@@ -96,6 +130,61 @@ retried once the transcript changes, and the transcript is not read again
 before. Right before the link the transcript must still be the generation its
 first input was read from; a changed one is checked again from its new
 content. A projects listing that fails now is retried, not a rejection.
+
+## Codex sessions started with `codex exec --json`
+
+The same scan also lists a Codex conversation under the Codex conversation
+whose agent started it with a literal fresh `codex exec --json` run. The
+command never names the new conversation: its saved ID is the one
+`thread.started` event the run printed first, read from that launch
+operation's own first process result — in the launch call's output, or in a
+`wait` on its running cell — even while the run goes on. A result that names
+no thread yet, or a run that failed before one started, is no launch; a
+later `write_stdin` poll is never read for one.
+
+The one maintained map of `codex exec` options (`codex_cli.rs`, checked
+against `codex exec --help` of Codex CLI 0.157.0) reads each option's
+spellings and argument count in any order, with Codex's meanings: `-c` is a
+configuration override and `-p` a profile, each taking one value. Only the
+bare program `codex`, `exec` or its alias `e`, `--json` and at most one
+prompt word is a launch; standard input and standard error may be
+redirected (never opened), standard output and leading assignments may not.
+Resume, fork and review (at the top level or under `exec`), `--ephemeral`
+(it saves no conversation), help and version are each their own action and
+never a fresh start; a run without `--json` prints its ID only as text,
+which is never read; an option the map does not describe (`-i`,
+`--thread-source`, a top-level option) or `--` leaves the command
+undecided. An ID mentioned in a prompt, a title or any other output relates
+nothing. Only output lines that start as a JSON object are events, and
+nothing nested inside one is read. The first event must be one complete,
+valid `thread.started`; it names the child. Each later event is read only
+for its top-level `type`: once that type is decoded as anything else, a cut
+or malformed rest of the line (an output cut short) is ignored. A later
+event whose type is `thread.started` (whatever its ID, complete or not), or
+whose type is missing, cut, not text, given twice or after a payload that
+breaks before it, names no thread; so does output without a complete first
+start.
+
+When one cell starts several runs, each launch's own result is found by
+replaying that launch's acknowledgment follower over the saved rows from the
+launch row to its acknowledgment row, as the scan did: the result at that
+operation's own position among everything its cell emitted, whether it came
+in the launch's output or in a `wait`, and only that result.
+
+The child must be exactly one indexed Codex user session whose one recorded
+original rollout, inside the Codex history root, opens with its own header:
+`source` exactly `exec`, opened after the launch, naming no parent, fork,
+history base or inherited rows. Only that opening line is read; the file
+must be the same generation after it, and again right before the write. Its
+first input is the index's own first eligible input, which must be dated at
+or after the launch; until the index holds one the launch waits. The child
+fact (`codex_cli_launch`) needs no parent; the relation follows the same
+store checks as a Claude child (exact canonical parent, no self link, no
+cycle, no reuse, one child per launch, competing anchors withheld). A thread
+whose own launch names itself, and a launch made after the child opened,
+are refused. Claude `Bash` callers of `codex exec`, launcher paths and
+native `exec_command` function calls outside an `exec` cell are not read in
+this version.
 
 ## Which history is the parent's
 
@@ -151,18 +240,23 @@ thread's launches are done, even while another check is under way.
 
 ## Versions
 
-A published validation records the scan's validation version (4). A history
-validated by another version — such as an earlier version that found no
-launch because the job had not exited, or version 3, which refused a whole
-cell holding another tool — is read again once, then not again while
-unchanged. Proofs carry creation evidence version 3, the only one the
-store accepts. A relation an earlier version accepted stays exactly as
-stored: a version 3 proof with the same creation anchor (the same child,
+A published validation records the scan's validation version (9). A
+history validated by another version — such as version 8, which did not look
+for `codex exec --json` launches, or version 6, which refused launches for
+their output format, verbose logging or standard-error routing — is read
+again once, then not again while unchanged. A Codex child's fact and
+relation carry `codex_cli_launch` version 1. New proofs and child
+facts carry creation evidence version 6, the only one the store accepts for
+new writes. A relation or child fact an earlier version accepted stays
+exactly as stored: a proof with the same creation anchor (the same child,
 parent, first input, launch operation, history file and launch row) replays
 it, as does one for a child whose accepted foreground CLI relation names the
 same child, parent, first input and launch operation; the launch is marked
 linked and nothing is rewritten. A genuinely different anchor withholds the
-child as before.
+child as before. Claude `Bash` launch child facts carry version 2 from the
+same map; the `Bash` reader recognizes verbose launches (streaming JSON
+among them) but never reads what they printed as an answer, so they decide
+no child.
 
 ## Bounds
 
@@ -213,6 +307,13 @@ store re-checks the child, its first input, the exact parent, reuse and
 cycles; a second child claimed for one launch, or a different claim on a
 child, by either Claude CLI kind, withholds every contradicting relation.
 
+Schema 20 adds the evidence kind `codex_cli_launch`, with the witness
+`codex_exec_json_thread_started`, to `session_creation_relations` and
+`session_child_facts` (both rebuilt with their rows, row IDs, indexes and
+triggers unchanged): the same identifiers as `codex_claude_launch`, with a
+Codex child. Published and staged launches gain the child's host, `claude`
+for every row stored before.
+
 Like every accepted creation relation, a link makes the Human input view
 count the child's user messages as the agent's, not a person's.
 
@@ -222,6 +323,10 @@ count the child's user messages as the agent's, not a person's.
 - `cargo test -p xt-ingest --lib claude_launch` (includes read accounting,
   injected store failures and a forced hash collision)
 - `cargo test -p xt-ingest --test claude_launch_links`
+- `cargo test -p xt-ingest --test claude_bash_children`
+- `cargo test -p xt-store --test child_facts`
+- `cargo test -p xt-store --test codex_cli_launch_creation`
+- `cargo test -p xt-ingest --test codex_cli_launch_links`
 
 All sources are synthetic. Acceptance on a copied index uses
 `cargo run -p xt-ingest --example claude_launch_links` (see its header); with

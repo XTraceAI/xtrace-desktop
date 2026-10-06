@@ -289,6 +289,11 @@ pub fn write_batch_proven(
         .iter()
         .map(|record| record.task_notification)
         .collect::<Vec<_>>();
+    let tool_sent = request
+        .records
+        .iter()
+        .map(|record| record.tool_sent)
+        .collect::<Vec<_>>();
     let withheld_previews = request
         .records
         .iter()
@@ -300,6 +305,9 @@ pub fn write_batch_proven(
     let mut batch = IngestBatch::new(&session, &records, request.keep_content);
     if task_notifications.contains(&true) {
         batch.task_notifications = &task_notifications;
+    }
+    if tool_sent.iter().any(Option::is_some) {
+        batch.tool_sent = &tool_sent;
     }
     if withheld_previews.contains(&true) {
         batch.withheld_previews = &withheld_previews;

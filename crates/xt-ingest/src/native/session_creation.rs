@@ -4,8 +4,10 @@
 //! Codex writes a spawned thread's parent into the thread's own rollout: its
 //! opening `session_meta` carries the thread in `payload.id`,
 //! `payload.source.subagent.thread_spawn` with the spawning thread's full
-//! `parent_thread_id`, and that same parent in `payload.session_id`. That
-//! line, and nothing else, is the evidence; `session_id` alone never is. A
+//! `parent_thread_id`, and the root of its spawn tree in `payload.session_id`
+//! (the parent itself only when the parent is a root). Current headers repeat
+//! the immediate parent in `payload.parent_thread_id`. That line, and nothing
+//! else, is the evidence; `session_id` never names a parent. A
 //! `guardian`, `review` or other subagent source names no parent; a
 //! `history_base` names the rollout a history continues from, never a
 //! parent; a role, task path, nickname, prompt, time or similarity is never
@@ -18,6 +20,13 @@
 //! opening line is read. Only that complete line is parsed; the rest of the
 //! file is never read, and nothing from the line is kept but the two thread
 //! identities. Host files are opened for reading only.
+//!
+//! That the thread is an agent's child at all is recorded first, apart from
+//! its parent: a verified header whose typed `source` is a well-formed spawn
+//! or exactly a Guardian subagent gives a child fact
+//! ([`Store::record_child_facts`]) even when its parent fields are refused, a
+//! Guardian names no usable parent, or the parent is not indexed. Then the
+//! spawn relation and the Guardian reviewer origin are written as before.
 //!
 //! Two kinds of work share the store's one guarded insertion
 //! ([`Store::record_session_creations`]): every Codex thread a native scan
@@ -39,13 +48,17 @@
 //! it reads, not to every locator the index holds.
 
 use super::claude_launch::{
-    LaunchBacklog, LaunchLimits, LaunchProgress, continue_claude_launches_into,
+    LaunchBacklog, LaunchLimits, LaunchProgress,
+    bash::{BashBacklog, BashProgress, continue_claude_bash_into},
+    check::{CheckBacklog, CheckProgress, continue_checks_into},
+    continue_claude_launches_into,
 };
 use super::readers_cli::CancelToken;
 use super::session_source::{IndexedSource, host_roots};
 use super::session_titles::{
-    Batch, MAX_CODEX_LOCATORS, Segment, TitleLimits, TypedSpawn, Untitled, codex_contained,
-    codex_path, codex_segment, contains, corroborated, full_thread_id, gather, object, typed_spawn,
+    Batch, MAX_CODEX_LOCATORS, Segment, SpawnCheck, TitleLimits, TypedSpawn, Untitled,
+    codex_contained, codex_path, codex_segment, contains, full_thread_id, gather, object,
+    spawn_check, typed_spawn,
 };
 use serde_json::Value;
 use std::{
@@ -55,6 +68,7 @@ use std::{
 };
 use xt_store::{
     Error, Host, SessionSource, Store,
+    child_fact::{ChildEvidence, ChildFact, ChildFactDisposition},
     creation::{
         CODEX_THREAD_SPAWN_VERSION, CreationBootstrap, CreationDisposition, CreationEvidence,
         CreationWitness, LOCATOR_TAIL, MAX_CREATION_PROOFS, SessionCreationProof,
@@ -131,8 +145,13 @@ pub enum SpawnRefusal {
     /// A `thread_spawn` naming the thread itself.
     SelfSpawn,
     /// A well-formed `thread_spawn` whose `payload.session_id` is missing,
-    /// null or anything but the parent it names.
+    /// null, not a full thread identity, or the thread itself: no root of a
+    /// spawn tree.
     UncorroboratedSpawn,
+    /// A well-formed `thread_spawn` whose own header's explicit
+    /// `payload.parent_thread_id` names something else. No parent is read
+    /// from either field.
+    ContradictedSpawn,
 }
 
 impl SpawnRefusal {
@@ -153,6 +172,40 @@ pub struct SpawnProbe {
     /// The one indexed user session that holds this identity, when there is.
     pub child_session_id: Option<String>,
     pub outcome: SpawnOutcome,
+    /// What the thread's own verified header says it is, whatever it says
+    /// about a parent: a typed spawn or Guardian subagent.
+    pub child: Option<ChildEvidence>,
+    /// What a header that is this thread's own and records no spawn says
+    /// for the display check ([`SpawnOutcome::NotSpawned`] only).
+    pub opening: Option<Opening>,
+}
+
+/// A thread's own opening header as the display check reads it
+/// ([`xt_store::child_check`]): never as a creator.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Opening {
+    /// When the thread was opened, if its header is the fresh header a
+    /// `codex exec` run writes ([`super::claude_launch::fresh_exec_opened`]):
+    /// only such a thread can be a `codex exec --json` launch's child.
+    pub fresh_exec: Option<i64>,
+    /// The own-check key of this header: a digest of the thread's identity
+    /// and its whole opening line, which later messages never change.
+    pub key: String,
+}
+
+/// The own-check key of a Codex thread's opening line.
+fn opening_key(native: &str, line: &[u8]) -> String {
+    use sha2::Digest;
+    let mut digest = sha2::Sha256::new();
+    digest.update(native.as_bytes());
+    digest.update([0]);
+    digest.update(line);
+    let hex: String = digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("x1:{hex}")
 }
 
 /// What one call probed and what the store did with each spawn it proved.
@@ -162,12 +215,21 @@ pub struct SpawnRecording {
     /// The store's disposition of each proved spawn, by child native identity,
     /// in probe order.
     pub dispositions: Vec<(String, CreationDisposition)>,
+    /// The store's disposition of each typed child fact, by child native
+    /// identity, in probe order: recorded before any relation.
+    pub child_facts: Vec<(String, ChildFactDisposition)>,
+    /// The decided threads whose own header records no spawn, as their
+    /// indexed session, the display-check attempt it required once the
+    /// header's key was observed, and what the header says.
+    pub openings: Vec<(String, i64, Opening)>,
     /// How many threads, from the first, were decided. The rest were reached
     /// by the budget, deadline or a cancel and are left for a later call.
     pub decided: usize,
     /// Proved spawns that changed what is stored
     /// ([`xt_store::creation::CreationReport::changed`]).
     pub changed: usize,
+    /// Existing display checks whose own inputs were invalidated.
+    pub reopened: usize,
     pub bytes_read: u64,
 }
 
@@ -206,13 +268,19 @@ fn record_within(
     let decided = decided(&probes);
     let Recorded {
         dispositions,
+        child_facts,
+        openings,
         changed,
+        reopened,
     } = record(store, &probes[..decided], recorded_at)?;
     Ok(SpawnRecording {
         probes,
         dispositions,
+        child_facts,
+        openings,
         decided,
         changed,
+        reopened,
         bytes_read: batch.bytes_read(),
     })
 }
@@ -251,6 +319,13 @@ pub struct SpawnBacklog {
     /// Automatic Claude launch links ([`super::claude_launch`]): continued
     /// only by the passes a watcher schedules, never inside a scan.
     pub launches: LaunchBacklog,
+    /// Child facts of Claude sessions a Claude agent launched from its
+    /// `Bash` tool ([`super::claude_launch::bash`]): likewise only in the
+    /// watcher's passes.
+    pub bash: BashBacklog,
+    /// Display checks of sessions still checking
+    /// ([`super::claude_launch::check`]): last in the watcher's passes.
+    pub checks: CheckBacklog,
 }
 
 /// How far a sweep over every indexed Codex root has read.
@@ -266,6 +341,8 @@ impl SpawnBacklog {
         Self {
             sweep: Some(Sweep::default()),
             launches: LaunchBacklog::starting(),
+            bash: BashBacklog::starting(),
+            checks: CheckBacklog::starting(),
             ..Self::default()
         }
     }
@@ -296,6 +373,16 @@ impl SpawnBacklog {
             || !self.bootstrap_complete
             || self.sweeping()
             || self.launches.pending()
+            || self.bash.pending()
+            || self.checks.pending()
+    }
+
+    /// Keep the own headers a pass read for the display checks.
+    fn note_openings(&mut self, openings: &[(String, i64, Opening)]) {
+        for (session, attempt, opening) in openings {
+            self.checks
+                .note_codex(session, *attempt, opening.fresh_exec, &opening.key);
+        }
     }
 }
 
@@ -310,6 +397,8 @@ pub struct SpawnProgress {
     /// or an accepted one first withheld as conflicted. Only such a pass has
     /// anything new to show.
     pub changed: usize,
+    /// Existing display checks reopened by an own-header comparison.
+    pub reopened: usize,
     /// Locators the bootstrap finished.
     pub bootstrapped: usize,
     /// Locators the sweep finished.
@@ -317,9 +406,28 @@ pub struct SpawnProgress {
     pub bytes_read: u64,
     /// The pass over Claude launches, when one ran.
     pub launches: Option<LaunchProgress>,
+    /// The pass over Claude `Bash` launches, when one ran.
+    pub bash: Option<BashProgress>,
+    /// The pass of display checks, when one ran.
+    pub checks: Option<CheckProgress>,
 }
 
 impl SpawnProgress {
+    /// Changes a list shows differently after this pass: changed relations,
+    /// completed checks and checks reopened by background work.
+    pub fn shown_changes(&self) -> usize {
+        self.changed
+            + self.reopened
+            + self
+                .launches
+                .as_ref()
+                .map_or(0, |launches| launches.reopened)
+            + self
+                .checks
+                .as_ref()
+                .map_or(0, |checks| checks.settled + checks.restarted)
+    }
+
     /// Whether the pass moved any work forward. One that did not is retried
     /// later, not at once.
     pub fn advanced(&self) -> bool {
@@ -330,6 +438,10 @@ impl SpawnProgress {
                 .launches
                 .as_ref()
                 .is_some_and(|launches| launches.advanced)
+            || self.bash.as_ref().is_some_and(|bash| bash.advanced)
+            || self.checks.as_ref().is_some_and(|checks| {
+                checks.settled > 0 || checks.own_reads > 0 || checks.restarted > 0
+            })
     }
 }
 
@@ -426,6 +538,7 @@ fn continue_within(
             .collect();
         let natives: Vec<&str> = chunk.iter().map(String::as_str).collect();
         let recording = record_within(store, home, &natives, &mut batch, recorded_at)?;
+        backlog.note_openings(&recording.openings);
         for native in &chunk[..recording.decided] {
             backlog.threads.pop_front();
             backlog.waiting.remove(native);
@@ -433,6 +546,7 @@ fn continue_within(
         progress.decided += recording.decided;
         progress.spawned += recording.dispositions.len();
         progress.changed += recording.changed;
+        progress.reopened += recording.reopened;
         if recording.decided < chunk.len() {
             break;
         }
@@ -441,8 +555,10 @@ fn continue_within(
     if !backlog.bootstrap_complete {
         let mut walk = Walk::default();
         let walked = bootstrap_within(store, home, &mut batch, recorded_at, &mut walk);
+        backlog.note_openings(&walk.openings);
         progress.spawned += walk.spawned;
         progress.changed += walk.changed;
+        progress.reopened += walk.reopened;
         progress.bootstrapped = walk.finished;
         progress.bytes_read = batch.bytes_read();
         backlog.bootstrap_complete = walked?;
@@ -458,8 +574,10 @@ fn continue_within(
             |_, _| Ok(()),
             &mut walk,
         );
+        backlog.note_openings(&walk.openings);
         progress.spawned += walk.spawned;
         progress.changed += walk.changed;
+        progress.reopened += walk.reopened;
         progress.swept = walk.finished;
         progress.bytes_read = batch.bytes_read();
         walked?;
@@ -485,6 +603,54 @@ fn continue_within(
         progress.changed += launches.changed;
         progress.bytes_read += launches.bytes_read;
         progress.launches = Some(launches);
+        result?;
+    }
+    // Claude `Bash` launches last, within what is left again.
+    if sweep && backlog.bash.pending() {
+        let (bytes, time) = batch.remaining();
+        let spent = progress
+            .launches
+            .as_ref()
+            .map_or(0, |launches| launches.bytes_read);
+        let mut bash = BashProgress::default();
+        let result = continue_claude_bash_into(
+            store,
+            home,
+            &mut backlog.bash,
+            &LaunchLimits::remaining(bytes.saturating_sub(spent), time),
+            cancel,
+            recorded_at,
+            &mut bash,
+        );
+        progress.changed += bash.changed;
+        progress.bytes_read += bash.bytes_read;
+        progress.bash = Some(bash);
+        result?;
+    }
+    // Display checks last, within what is left again: they wait on the work
+    // above. A finished check changes what a list shows, as a relation does.
+    if sweep {
+        let (bytes, time) = batch.remaining();
+        let spent = progress
+            .launches
+            .as_ref()
+            .map_or(0, |launches| launches.bytes_read)
+            + progress.bash.as_ref().map_or(0, |bash| bash.bytes_read);
+        let mut checks = CheckProgress::default();
+        let result = continue_checks_into(
+            store,
+            home,
+            &mut backlog.checks,
+            &mut backlog.launches,
+            &mut backlog.bash,
+            &LaunchLimits::remaining(bytes.saturating_sub(spent), time),
+            cancel,
+            &mut checks,
+        );
+        let probes = backlog.checks.take_probes();
+        backlog.add(probes.iter().map(String::as_str));
+        progress.bytes_read += checks.bytes_read;
+        progress.checks = Some(checks);
         result?;
     }
     Ok(())
@@ -568,7 +734,10 @@ struct Walk {
     probed: usize,
     spawned: usize,
     changed: usize,
+    reopened: usize,
     finished: usize,
+    /// The own headers it read, for the display checks.
+    openings: Vec<(String, i64, Opening)>,
 }
 
 /// Read the recorded Codex locators after `after` in key order, a page at a
@@ -625,9 +794,11 @@ fn walk_roots(
         let decided = &probes[..decided(&probes)];
         let halted = decided.len() < probes.len();
         let recorded = record(store, decided, recorded_at)?;
+        walk.openings.extend(recorded.openings);
         walk.probed += decided.len();
         walk.spawned += recorded.dispositions.len();
         walk.changed += recorded.changed;
+        walk.reopened += recorded.reopened;
         // Every key before the first undecided root is finished; that root and
         // everything after it are read again by the next call.
         let mut remaining = decided.len();
@@ -694,9 +865,11 @@ fn probe(
             native_session_id: (*native).to_owned(),
             child_session_id: None,
             outcome: SpawnOutcome::NotSpawned,
+            child: None,
+            opening: None,
         };
-        probe.outcome = match batch.stopped() {
-            Some(why) => SpawnOutcome::Refused(SpawnRefusal::Source(why)),
+        (probe.outcome, probe.child, probe.opening) = match batch.stopped() {
+            Some(why) => (SpawnOutcome::Refused(SpawnRefusal::Source(why)), None, None),
             None => probe_one(store, native, &roots, batch, &mut probe.child_session_id)?,
         };
         probes.push(probe);
@@ -706,6 +879,8 @@ fn probe(
     if batch.cancelled() {
         for probe in &mut probes {
             probe.outcome = SpawnOutcome::Refused(SpawnRefusal::Source(Untitled::Cancelled));
+            probe.child = None;
+            probe.opening = None;
         }
     }
     Ok(probes)
@@ -717,8 +892,8 @@ fn probe_one(
     roots: &[std::path::PathBuf],
     batch: &mut Batch<'_>,
     child: &mut Option<String>,
-) -> xt_store::Result<SpawnOutcome> {
-    let refuse = |why| Ok(SpawnOutcome::Refused(why));
+) -> xt_store::Result<(SpawnOutcome, Option<ChildEvidence>, Option<Opening>)> {
+    let refuse = |why| Ok((SpawnOutcome::Refused(why), None, None));
     if !full_thread_id(native) {
         return refuse(SpawnRefusal::InvalidIdentifier);
     }
@@ -728,6 +903,7 @@ fn probe_one(
         [one] => *child = Some(one.clone()),
         _ => return refuse(SpawnRefusal::AmbiguousSession),
     }
+
     // Only the root rollout opens the thread; a continuation never says how
     // the thread was created, so it is not looked for. Every locator ending
     // in the root's name is found by one indexed seek, so a second recorded
@@ -775,8 +951,8 @@ fn probe_one(
     };
     Ok(
         match batch.opening_line(&candidate, &mut |line| spawn_header(line, native)) {
-            Ok(outcome) => outcome,
-            Err(why) => SpawnOutcome::Refused(SpawnRefusal::Source(why)),
+            Ok(read) => read,
+            Err(why) => (SpawnOutcome::Refused(SpawnRefusal::Source(why)), None, None),
         },
     )
 }
@@ -787,15 +963,25 @@ fn probe_one(
 /// `payload.source` is a spawn only as
 /// `{"subagent": {"thread_spawn": {"parent_thread_id": <thread>}}}` with
 /// nothing beside either key, and a parent that is a full thread identity
-/// other than this one ([`typed_spawn`]). A spawned thread's header, as Codex
-/// writes it, also names that parent in `payload.session_id`; this version
-/// requires it present and exactly that parent, so a missing, null, child or
-/// third thread there relates nothing. `session_id` only corroborates the
-/// typed parent and never supplies one: in a header that is not a spawn it
-/// must name the thread itself, when present. No other field —
-/// `history_base`, depth, role, nickname or task path — is consulted.
-fn spawn_header(line: &[u8], native: &str) -> SpawnOutcome {
-    let refuse = SpawnOutcome::Refused;
+/// other than this one ([`typed_spawn`]). The rest of a spawned thread's
+/// header must fit that parent ([`spawn_check`]): `payload.session_id` names
+/// the root of the spawn tree, present, a full thread and not this one, and
+/// is never read as the parent; an explicit `payload.parent_thread_id`, when
+/// present, must be exactly the typed parent, or nothing is related. In a
+/// header that is not a spawn `session_id` must name the thread itself, when
+/// present. No other field — `history_base`, depth, role, nickname or task
+/// path — is consulted.
+///
+/// Beside that, what the header says the thread is: a well-formed typed
+/// spawn naming a distinct full parent, or exactly a Guardian subagent, is an
+/// agent's child whatever its parent fields say, so a refused or missing
+/// parent never takes that away. A header that is not this thread's, or whose
+/// typed spawn is malformed or names the thread itself, says nothing.
+fn spawn_header(
+    line: &[u8],
+    native: &str,
+) -> (SpawnOutcome, Option<ChildEvidence>, Option<Opening>) {
+    let refuse = |why| (SpawnOutcome::Refused(why), None, None);
     if !contains(line, b"session_meta") {
         return refuse(SpawnRefusal::NoOpeningHeader);
     }
@@ -812,16 +998,21 @@ fn spawn_header(line: &[u8], native: &str) -> SpawnOutcome {
         return refuse(SpawnRefusal::IdentityMismatch);
     }
     if payload.get("source") == Some(&serde_json::json!({"subagent":{"other":"guardian"}})) {
+        let guardian = Some(ChildEvidence::CodexGuardian);
         let Some(parent) = payload
             .get("session_id")
             .and_then(serde_json::Value::as_str)
             .filter(|parent| full_thread_id(parent) && *parent != native)
         else {
-            return SpawnOutcome::NotSpawned;
+            return (SpawnOutcome::NotSpawned, guardian, None);
         };
-        return SpawnOutcome::Reviewer {
-            parent_native_session_id: parent.to_owned(),
-        };
+        return (
+            SpawnOutcome::Reviewer {
+                parent_native_session_id: parent.to_owned(),
+            },
+            guardian,
+            None,
+        );
     }
     match typed_spawn(payload, native) {
         TypedSpawn::None => {
@@ -831,33 +1022,105 @@ fn spawn_header(line: &[u8], native: &str) -> SpawnOutcome {
             {
                 refuse(SpawnRefusal::IdentityMismatch)
             } else {
-                SpawnOutcome::NotSpawned
+                let opening = Opening {
+                    fresh_exec: super::claude_launch::fresh_exec_opened(line, native),
+                    key: opening_key(native, line),
+                };
+                (SpawnOutcome::NotSpawned, None, Some(opening))
             }
         }
         TypedSpawn::Malformed => refuse(SpawnRefusal::MalformedSpawn),
         TypedSpawn::SelfSpawn => refuse(SpawnRefusal::SelfSpawn),
-        TypedSpawn::Parent(parent) if !corroborated(payload, parent) => {
-            refuse(SpawnRefusal::UncorroboratedSpawn)
-        }
-        TypedSpawn::Parent(parent) => SpawnOutcome::Spawned {
-            parent_native_session_id: parent.to_owned(),
-        },
+        TypedSpawn::Parent(parent) => (
+            match spawn_check(payload, native, parent) {
+                SpawnCheck::Corroborated => SpawnOutcome::Spawned {
+                    parent_native_session_id: parent.to_owned(),
+                },
+                SpawnCheck::Unrooted => SpawnOutcome::Refused(SpawnRefusal::UncorroboratedSpawn),
+                SpawnCheck::Contradicted => SpawnOutcome::Refused(SpawnRefusal::ContradictedSpawn),
+            },
+            Some(ChildEvidence::CodexThreadSpawn),
+            None,
+        ),
     }
 }
 
-/// The store's disposition of each proved spawn, and how many changed what
-/// is stored.
+/// The store's disposition of each proved spawn and child fact, the
+/// openings observed, and how many changed what is stored.
 struct Recorded {
     dispositions: Vec<(String, CreationDisposition)>,
+    child_facts: Vec<(String, ChildFactDisposition)>,
+    openings: Vec<(String, i64, Opening)>,
     changed: usize,
+    reopened: usize,
 }
 
-/// Hand every proved spawn to the store's guarded insertion.
+/// Whether a decided refusal cannot preserve a checked own header. A
+/// missing, unreadable or replaced source also withdraws the old result
+/// until a successful read establishes the inputs again.
+fn header_refused(outcome: &SpawnOutcome) -> bool {
+    matches!(
+        outcome,
+        SpawnOutcome::Refused(
+            SpawnRefusal::NoOpeningHeader
+                | SpawnRefusal::IdentityMismatch
+                | SpawnRefusal::MalformedSpawn
+                | SpawnRefusal::SelfSpawn
+                | SpawnRefusal::Source(
+                    Untitled::Missing | Untitled::Unreadable | Untitled::Replaced
+                )
+        )
+    )
+}
+
+/// Hand each opening's own-check key to the session's display check first,
+/// before anything read from the header is published; then every typed
+/// child to the store's child facts, then every proved spawn and reviewer
+/// to the guarded insertions of parents. A header read and refused moves a
+/// session's check on with no key: nothing proves its inputs unchanged.
 fn record(
     store: &mut Store,
     probes: &[SpawnProbe],
     recorded_at: i64,
 ) -> xt_store::Result<Recorded> {
+    let mut openings = Vec::new();
+    let mut reopened = 0;
+    for probe in probes {
+        let Some(session) = probe.child_session_id.as_deref() else {
+            continue;
+        };
+        let before = store.child_check_attempt(session)?;
+        if let Some(opening) = &probe.opening {
+            if let Some(attempt) = store.observe_own_check(session, Some(&opening.key))? {
+                reopened += usize::from(before.is_some_and(|old| old.required < attempt.required));
+                openings.push((session.to_owned(), attempt.required, opening.clone()));
+            }
+        } else if header_refused(&probe.outcome)
+            && let Some(attempt) = store.observe_own_check(session, None)?
+        {
+            reopened += usize::from(before.is_some_and(|old| old.required < attempt.required));
+        }
+    }
+    let (children, facts): (Vec<String>, Vec<ChildFact>) = probes
+        .iter()
+        .filter_map(|probe| {
+            let kind = probe.child?;
+            let child = probe.child_session_id.as_deref()?;
+            Some((
+                probe.native_session_id.clone(),
+                ChildFact::typed(child, &probe.native_session_id, kind),
+            ))
+        })
+        .unzip();
+    let (child_facts, facts_changed) = if facts.is_empty() {
+        (Vec::new(), 0)
+    } else {
+        let report = store.record_child_facts(&facts, recorded_at)?;
+        (
+            children.into_iter().zip(report.dispositions).collect(),
+            report.changed,
+        )
+    };
     let mut natives = Vec::new();
     let mut proofs = Vec::new();
     for probe in probes {
@@ -915,12 +1178,18 @@ fn record(
     if proofs.is_empty() {
         return Ok(Recorded {
             dispositions: Vec::new(),
-            changed: origin_changes,
+            child_facts,
+            openings,
+            changed: origin_changes + facts_changed,
+            reopened,
         });
     }
     let report = store.record_session_creations(&proofs, recorded_at)?;
     Ok(Recorded {
         dispositions: natives.into_iter().zip(report.dispositions).collect(),
-        changed: report.changed + origin_changes,
+        child_facts,
+        openings,
+        changed: report.changed + origin_changes + facts_changed,
+        reopened,
     })
 }

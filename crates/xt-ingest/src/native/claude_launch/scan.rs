@@ -2,18 +2,23 @@
 //! spread over as many passes as its size and each pass's budget need.
 //!
 //! Every complete row is decoded for its structure: its type (no second
-//! `session_meta`), its actual ordinal (consecutive from the header's where
+//! `session_meta` among the thread's own rows; a spawned helper's inherited
+//! context, below its header's verified boundary, starts with the header it
+//! copied), its actual ordinal (consecutive from the header's where
 //! the file carries ordinals, absent where it does not) and the call
 //! identifier of every tool call and output. Every occurrence of a call
 //! identifier is counted — calls and outputs apart, each saturating at "more
 //! than one" — under a keyed hash shared by the whole run, so the thread's
 //! validation can check, across all its files, that each identifier a launch
 //! uses occurs exactly once. Only `exec` calls and rows inside an open
-//! launch's bounded window are decoded whole. A launch operation
-//! ([`super::command`]) in one of the thread's own rows is followed
+//! launch's bounded window are decoded whole. A launch operation — a Claude
+//! `--session-id` launch ([`super::command`]) or a fresh `codex exec --json`
+//! one ([`super::codex_cli`]) — in one of the thread's own rows is followed
 //! ([`super::ack`]) by exact identifiers to its own first process result, and
 //! no further; one not acknowledged by the end is not a launch of this
-//! generation.
+//! generation, only an unfinished start ([`Unfinished`]): a child its run may
+//! still create stays unchecked. A Codex launch's child is the thread that result names; one
+//! whose result names none, or names this thread, is not a launch.
 //!
 //! A running cell belongs to the exec call whose output announced it, until
 //! a `wait` on it sees it complete: every own row's output header is read for
@@ -33,18 +38,19 @@
 
 use super::ack::{Ack, Acknowledged, Broken};
 use super::cell::{self, Tool, Value as Arg};
-use super::command;
 use super::group::Segment;
 use super::rows::{self, CellHeader, Item};
 use super::source::{self, Allowance, Budget, Lines, Reserved, Unread};
+use super::{codex_cli, command};
 use serde_json::Value;
+use sha2::Digest;
 use std::{
     collections::{HashMap, hash_map::RandomState},
     fs::File,
     hash::BuildHasher,
     path::PathBuf,
 };
-use xt_store::claude_launch::SegmentGeneration;
+use xt_store::{Host, claude_launch::SegmentGeneration};
 
 /// The ceilings one member read observes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +92,9 @@ pub(super) struct Found {
     pub launch_call_id: String,
     pub launch_op: u32,
     pub child: String,
+    /// The child's host: Claude for a `--session-id` launch, Codex for a
+    /// `codex exec --json` one.
+    pub host: Host,
     pub acknowledgment_call_id: String,
     /// The process handle, when the result said the process was running.
     pub handle: Option<String>,
@@ -93,6 +102,10 @@ pub(super) struct Found {
     pub acknowledgment_offset: u64,
     pub launch_ordinal: Option<i64>,
     pub acknowledgment_ordinal: Option<i64>,
+    pub binding_call_offset: Option<u64>,
+    pub binding_output_offset: Option<u64>,
+    /// Decoded launch input, time and binding witnesses, never their bodies.
+    pub launch_check_fingerprint: String,
     /// The hashes of every call identifier followed: the launch and each
     /// wait on its cell.
     pub ids: Vec<u64>,
@@ -106,6 +119,26 @@ impl Found {
             + self.acknowledgment_call_id.capacity()
             + self.handle.as_ref().map_or(0, String::capacity)
             + self.ids.capacity() * 8
+            + self.launch_check_fingerprint.capacity()
+    }
+}
+
+/// A launch followed to the end of the file with no acknowledgment yet: it
+/// names no child of this generation, but its run may still have created a
+/// session born after it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Unfinished {
+    /// The Claude session a `--session-id` launch names; empty for a Codex
+    /// launch, whose child only its result names.
+    pub child: String,
+    pub host: Host,
+    /// The launch row's own time.
+    pub launch_ms: i64,
+}
+
+impl Unfinished {
+    pub fn bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.child.capacity()
     }
 }
 
@@ -123,6 +156,9 @@ pub(super) struct MemberFacts {
     /// Every call identifier's occurrence counts, by hash.
     pub counts: HashMap<u64, Counts>,
     pub chains: Vec<Found>,
+    /// Launches still open at the end of the file: at most
+    /// [`ScanBounds::max_open`].
+    pub unfinished: Vec<Unfinished>,
     /// Launches that ended with no acknowledgment, or ran too long.
     pub broken: usize,
     /// The map entries and bytes these facts hold, reserved.
@@ -133,11 +169,12 @@ pub(super) struct MemberFacts {
 impl MemberFacts {
     /// Bytes the facts hold apart from their call-count map (bounded by
     /// entries), at capacity: themselves boxed, their rollout and launches.
-    pub fn held(rollout: &String, chains: &Vec<Found>) -> usize {
+    pub fn held(rollout: &String, chains: &Vec<Found>, unfinished: &[Unfinished]) -> usize {
         std::mem::size_of::<Self>()
             + rollout.capacity()
             + chains.capacity() * std::mem::size_of::<Found>()
             + chains.iter().map(Found::bytes).sum::<usize>()
+            + unfinished.iter().map(Unfinished::bytes).sum::<usize>()
     }
 }
 
@@ -185,12 +222,31 @@ struct Open {
     ack: Ack,
     launch_call_id: String,
     launch_op: u32,
+    /// The Claude session the launch names; empty for a Codex launch, whose
+    /// child its result names.
     child: String,
+    host: Host,
     launch_offset: u64,
     launch_ordinal: Option<i64>,
+    /// The launch row's own time.
+    launch_ms: i64,
+    launch_check_fingerprint: String,
+    binding: Option<(u64, u64, String)>,
     window_bytes: u64,
     window_lines: usize,
     /// Its two strings.
+    _held: Reserved,
+}
+
+#[derive(Debug)]
+struct Binding {
+    call_id: String,
+    key: String,
+    literal: Option<String>,
+    prefix: usize,
+    operations: usize,
+    call_offset: u64,
+    output: Option<(u64, String)>,
     _held: Reserved,
 }
 
@@ -321,6 +377,7 @@ struct Rows {
     cells: Cells,
     open: Vec<Open>,
     found: Vec<Found>,
+    binding: Option<Binding>,
     broken: usize,
     entries: Reserved,
     /// The launches found and the slots of the open ones.
@@ -352,7 +409,12 @@ impl SegmentScan {
         let open: usize = rows
             .open
             .iter()
-            .map(|open| open.launch_call_id.capacity() + open.child.capacity() + open.ack.actual())
+            .map(|open| {
+                open.launch_call_id.capacity()
+                    + open.child.capacity()
+                    + open.binding.as_ref().map_or(0, |(_, _, id)| id.capacity())
+                    + open.ack.actual()
+            })
             .sum();
         let cells = &rows.cells;
         let map = |map: &HashMap<String, Option<String>>| {
@@ -375,6 +437,12 @@ impl SegmentScan {
             + open
             + rows.found.capacity() * std::mem::size_of::<Found>()
             + rows.found.iter().map(Found::bytes).sum::<usize>()
+            + rows.binding.as_ref().map_or(0, |binding| {
+                binding.call_id.capacity()
+                    + binding.key.capacity()
+                    + binding.literal.as_ref().map_or(0, String::capacity)
+                    + binding.output.as_ref().map_or(0, |(_, id)| id.capacity())
+            })
             + map(&cells.running)
             + waits
     }
@@ -422,6 +490,7 @@ impl SegmentScan {
                 },
                 open: Vec::new(),
                 found: Vec::new(),
+                binding: None,
                 broken: 0,
                 entries: entries.reserve(0).map_err(over)?,
                 bytes: allowance.reserve(0).map_err(over)?,
@@ -476,6 +545,20 @@ impl SegmentScan {
         let over = |_| ScanError::OverLimit;
         let found = std::mem::take(&mut self.rows.found);
         let chains = if self.rows.valid { found } else { Vec::new() };
+        // Launches still waiting for their own first result: not launches of
+        // this generation, but kept apart, as names and times only.
+        let unfinished: Vec<Unfinished> = if self.rows.valid {
+            std::mem::take(&mut self.rows.open)
+                .into_iter()
+                .map(|open| Unfinished {
+                    child: open.child,
+                    host: open.host,
+                    launch_ms: open.launch_ms,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let mut bytes = std::mem::replace(
             &mut self.rows.bytes,
             self.allowance.reserve(0).map_err(over)?,
@@ -486,7 +569,7 @@ impl SegmentScan {
             .map_err(over)?;
         let rollout = self.segment.rollout.clone();
         bytes
-            .resize(MemberFacts::held(&rollout, &chains))
+            .resize(MemberFacts::held(&rollout, &chains, &unfinished))
             .map_err(over)?;
         let facts = MemberFacts {
             rollout,
@@ -495,6 +578,7 @@ impl SegmentScan {
             valid: self.rows.valid,
             counts: std::mem::take(&mut self.rows.counts),
             chains,
+            unfinished,
             broken: self.rows.broken,
             entries: std::mem::replace(
                 &mut self.rows.entries,
@@ -540,11 +624,7 @@ impl Rows {
             self.valid = false;
             return Ok(());
         };
-        if row.kind.as_deref() == Some("session_meta") {
-            self.valid = false;
-            return Ok(());
-        }
-        // Actual ordinals, on every row.
+        // Actual ordinals, on every row, inherited or not.
         if self.ordered {
             if row.ordinal != self.expected {
                 self.valid = false;
@@ -559,6 +639,21 @@ impl Rows {
             return Ok(());
         }
         self.first_row = false;
+        // Whether the row is the thread's own, by the inherited-context
+        // boundary its verified header gives; with none, every row is.
+        let own = segment
+            .header
+            .inherited_below
+            .is_none_or(|below| row.ordinal.is_some_and(|o| o >= below));
+        // A second header of the thread's own breaks its history. One below
+        // the boundary is the header of the inherited context it copied: no
+        // call, output or binding, and nothing else is read of it.
+        if row.kind.as_deref() == Some("session_meta") {
+            if own {
+                self.valid = false;
+            }
+            return Ok(());
+        }
         let (is_call, is_output) = (row.is_call(), row.is_output());
         let unpairable = row.unpairable_output();
         if (is_call || is_output) && !unpairable {
@@ -586,10 +681,6 @@ impl Rows {
                 }
             });
         }
-        let own = segment
-            .header
-            .inherited_below
-            .is_none_or(|below| row.ordinal.is_some_and(|o| o >= below));
         // A native output without a call identifier pairs with nothing: it is
         // not counted, owns and releases no cell, and its own identifier,
         // name and body are never taken for a call. A cell it announces
@@ -627,7 +718,12 @@ impl Rows {
             && is_call
             && row.payload_kind() == Some("function_call")
             && row.payload.as_ref().and_then(|p| p.name.as_deref()) == Some("wait");
-        if self.open.is_empty() && !launching && !waiting {
+        let binding_output = own
+            && is_output
+            && self.binding.as_ref().is_some_and(|binding| {
+                binding.output.is_none() && row.call_id() == Some(binding.call_id.as_str())
+            });
+        if self.open.is_empty() && !launching && !waiting && !binding_output {
             return Ok(());
         }
         // The decoded row is a temporary copy: reserved before decoding.
@@ -670,8 +766,12 @@ impl Rows {
             };
             match step {
                 Ok(None) => index += 1,
-                Ok(Some(Acknowledged { call, handle })) => {
-                    let done = self.open.swap_remove(index);
+                Ok(Some(Acknowledged {
+                    call,
+                    handle,
+                    thread: named,
+                })) => {
+                    let mut done = self.open.swap_remove(index);
                     let (true, true) = (
                         call_token(&call),
                         done.ack.own.iter().all(|id| call_token(id)),
@@ -679,6 +779,17 @@ impl Rows {
                         self.broken += 1;
                         continue;
                     };
+                    // A Codex launch's child is the one thread its own result
+                    // named, never the thread that launched it.
+                    if done.host == Host::Codex {
+                        match named {
+                            Some(child) if child != thread => done.child = child,
+                            _ => {
+                                self.broken += 1;
+                                continue;
+                            }
+                        }
+                    }
                     if handle.as_ref().is_some_and(|handle| handle.len() > 32) {
                         self.broken += 1;
                         continue;
@@ -689,20 +800,31 @@ impl Rows {
                             + done.child.capacity()
                             + call.capacity()
                             + handle.as_ref().map_or(0, String::capacity)
-                            + done.ack.own.len() * 8,
+                            + (done.ack.own.len() + usize::from(done.binding.is_some())) * 8
+                            + done.launch_check_fingerprint.capacity(),
                     )?;
                     source::grow_items(&mut self.found, &mut self.bytes)?;
                     let found = Found {
                         launch_call_id: done.launch_call_id,
                         launch_op: done.launch_op,
                         child: done.child,
+                        host: done.host,
                         acknowledgment_call_id: call,
                         handle,
                         launch_offset: done.launch_offset,
                         acknowledgment_offset: offset,
                         launch_ordinal: done.launch_ordinal,
                         acknowledgment_ordinal: row.ordinal,
-                        ids: done.ack.own.iter().map(|id| id_hash(key, id)).collect(),
+                        binding_call_offset: done.binding.as_ref().map(|(call, _, _)| *call),
+                        binding_output_offset: done.binding.as_ref().map(|(_, output, _)| *output),
+                        launch_check_fingerprint: done.launch_check_fingerprint,
+                        ids: done
+                            .ack
+                            .own
+                            .iter()
+                            .map(|id| id_hash(key, id))
+                            .chain(done.binding.iter().map(|(_, _, id)| id_hash(key, id)))
+                            .collect(),
                     };
                     self.found.push(found);
                 }
@@ -714,30 +836,83 @@ impl Rows {
             }
         }
         self.disown();
+        if binding_output {
+            let receipt = match &item {
+                Some(Item::Output { items, .. }) => self.binding.as_ref().and_then(|binding| {
+                    rows::binding_receipt(
+                        items,
+                        binding.prefix,
+                        binding.operations,
+                        binding.literal.as_deref(),
+                    )
+                }),
+                _ => None,
+            };
+            if let Some(value) = receipt {
+                let binding = self.binding.as_mut().expect("paired binding");
+                binding._held.grow(value.len())?;
+                binding.output = Some((offset, value));
+            } else {
+                self.binding = None;
+            }
+        }
         if !launching {
             return Ok(());
         }
+        // The very next own exec consumes this one-use binding even when
+        // that cell later proves unusable (untimed, malformed or unpairable).
+        let prior = self
+            .binding
+            .take()
+            .filter(|binding| binding.output.is_some());
         // A launch: an `exec` cell's `exec_command` operation that is one
-        // literal explicit-session Claude print command. Other operations
-        // only keep their places.
+        // literal explicit-session Claude print command, or one literal fresh
+        // `codex exec --json` command in a cell that loads no binding. Other
+        // operations only keep their places.
         let Some(Item::Call { call_id, input, .. }) = &item else {
             return Ok(());
         };
-        if rows::timestamp(&value).is_none() || !call_token(call_id) {
+        let Some(launch_ms) = rows::timestamp(&value).filter(|_| call_token(call_id)) else {
+            return Ok(());
+        };
+        if let Ok(binding) = cell::parse_binding(input) {
+            let bytes =
+                call_id.len() + binding.key.len() + binding.literal.as_ref().map_or(0, String::len);
+            let held = allowance.reserve(bytes)?;
+            self.binding = Some(Binding {
+                call_id: call_id.clone(),
+                key: binding.key,
+                literal: binding.literal,
+                prefix: binding.prefix,
+                operations: binding.operations,
+                call_offset: offset,
+                output: None,
+                _held: held,
+            });
             return Ok(());
         }
-        let Ok(ops) = cell::parse_operations(input) else {
+        let loaded = prior.as_ref().and_then(|binding| {
+            let (_, value) = binding.output.as_ref()?;
+            cell::parse_loaded(input, &binding.key, value).ok()
+        });
+        let Ok(ops) = loaded
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(|| cell::parse_operations(input))
+        else {
             return Ok(());
         };
         for (op, operation) in ops.iter().enumerate() {
             if operation.tool != Tool::ExecCommand {
                 continue;
             }
-            let Some(launch) = operation
-                .str("cmd")
-                .and_then(|cmd| command::launch(cmd, programs))
-            else {
+            let Some(cmd) = operation.str("cmd") else {
                 continue;
+            };
+            let (child, host) = match command::launch(cmd, programs) {
+                Some(launch) => (launch.child, Host::Claude),
+                None if loaded.is_none() && codex_cli::launch(cmd) => (String::new(), Host::Codex),
+                None => continue,
             };
             if !launch_args_allowed(operation) || self.open.len() >= bounds.max_open.min(64) {
                 self.broken += 1;
@@ -746,15 +921,57 @@ impl Rows {
             let Ok(ack) = Ack::new(call_id, op, ops.len(), allowance) else {
                 return Err(Unread::Memory);
             };
-            let held = allowance.reserve(call_id.len() + launch.child.capacity())?;
+            let ack = if host == Host::Codex {
+                ack.reading_thread()
+            } else {
+                ack
+            };
+            let binding = loaded.as_ref().and(prior.as_ref()).and_then(|binding| {
+                let (output, _) = binding.output.as_ref()?;
+                Some((binding.call_offset, *output, binding.call_id.clone()))
+            });
+            let held = allowance.reserve(
+                call_id.len()
+                    + child.capacity()
+                    + binding.as_ref().map_or(0, |(_, _, id)| id.len())
+                    + 64,
+            )?;
+            let mut digest = sha2::Sha256::new();
+            digest.update(b"launch-check-v1\0");
+            digest.update(launch_ms.to_le_bytes());
+            digest.update((op as u64).to_le_bytes());
+            digest.update((input.len() as u64).to_le_bytes());
+            digest.update(input.as_bytes());
+            if let Some(binding) = &prior {
+                for value in [
+                    binding.key.as_str(),
+                    binding.literal.as_deref().unwrap_or(""),
+                    binding
+                        .output
+                        .as_ref()
+                        .map_or("", |(_, value)| value.as_str()),
+                ] {
+                    digest.update((value.len() as u64).to_le_bytes());
+                    digest.update(value.as_bytes());
+                }
+            }
+            let launch_check_fingerprint: String = digest
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
             source::grow_items(&mut self.open, &mut self.bytes)?;
             self.open.push(Open {
                 ack,
                 launch_call_id: call_id.clone(),
                 launch_op: u32::try_from(op).unwrap_or(u32::MAX),
-                child: launch.child,
+                child,
+                host,
                 launch_offset: offset,
                 launch_ordinal: row.ordinal,
+                launch_ms,
+                launch_check_fingerprint,
+                binding,
                 window_bytes: 0,
                 window_lines: 0,
                 _held: held,

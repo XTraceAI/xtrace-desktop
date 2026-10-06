@@ -2,13 +2,17 @@
 use crate::{dto::*, state::StateError};
 use jiff::tz::TimeZone;
 use serde::{Serialize, de::DeserializeOwned};
-use xt_metrics::{MetricsDb, PriceCatalog, TypingRate, Window};
+use xt_metrics::{BreakLength, MetricsDb, PriceCatalog, TypingRate, Window};
 
 pub const WINDOW_PRESETS: [u32; 3] = [7, 14, 30];
 const DAY_MS: i64 = 86_400_000;
 /// Activity lanes use this fixed recent axis, independent of the selected range.
 pub const LANE_WINDOW_MS: i64 = 2 * DAY_MS;
 pub const LANE_LIMIT: usize = 200;
+/// Sub-sessions with no span in the lane window that one report carries at
+/// most, so a group can list every sub-session its total adds up. The real
+/// largest group seen had 327; any beyond this are counted, never dropped.
+pub const SUB_SESSION_LIMIT: usize = 1_000;
 
 #[derive(Serialize)]
 struct Period {
@@ -169,12 +173,16 @@ pub(crate) fn zone_name(zone: &TimeZone, clock: MetricClock) -> String {
 /// name: its repository, branch, saved title, start (the recorded start, or a
 /// Claude session's earliest message) and recorded
 /// pull-request link counts, read in one bounded statement for every named
-/// session at once.
+/// session at once. Beside them, context only for each parent those rows link
+/// that the spans do not name, read in one more bounded statement; and every
+/// verified sub-session under the named sessions that the spans do not name,
+/// with its context and whole cost.
 struct Lanes {
     spans: Vec<xt_metrics::ActiveSpan>,
     /// Spans in the window before the display cap; never a capped count.
     total: u64,
     sessions: Vec<DashboardLaneSession>,
+    sub_sessions: Vec<DashboardLaneSession>,
 }
 
 // Every session the capped lanes name is priced in one bounded read, so the
@@ -198,6 +206,7 @@ fn unpriced_reason(reason: xt_metrics::UnpricedReason) -> MetricUnpricedReason {
         R::MissingCacheSplit => MetricUnpricedReason::MissingCacheSplit,
         R::InconsistentCacheSplit => MetricUnpricedReason::InconsistentCacheSplit,
         R::MissingRate => MetricUnpricedReason::MissingRate,
+        R::MissingTimestamp => MetricUnpricedReason::MissingTimestamp,
     }
 }
 
@@ -222,12 +231,16 @@ fn lane_spans(
 }
 
 /// Read the lane spans, cap them for display, then read the context and the
-/// cost of exactly the sessions the capped list still names.
+/// cost of exactly the sessions the capped list still names, and of every
+/// verified sub-session under them that it does not name.
 ///
-/// The cost is taken over the whole lane window, so a session whose earlier
-/// spans the cap dropped still reports everything it spent in that window.
-/// Ordering and the cap are unchanged: they decide which spans are drawn, and
-/// no aggregate is derived from them.
+/// The lane window decides which sessions are listed, never how much of a
+/// listed session is counted: like its start and pull-request links, a row's
+/// cost covers the whole session, whenever it spent it, so neither the window
+/// nor the display cap reduces it. A listed session's sub-sessions are carried
+/// whenever they ran, so a group can list, and add up, all of them. Ordering
+/// and the cap are unchanged: they decide which spans are drawn, and no
+/// aggregate is derived from them.
 fn lane_report(
     db: &MetricsDb,
     lane_window: Window,
@@ -243,67 +256,151 @@ fn lane_report(
     for row in db.session_context(&ids)? {
         context.insert(row.id.clone(), row);
     }
-    let costs = db.session_costs(lane_window, &ids, catalog)?;
+    // The direct parents the returned sessions' own context links that the
+    // spans do not name, read once more in this snapshot so a display can
+    // tell whether such a parent is itself a known child with no verified
+    // parent. At most one per returned session, so within the same bound;
+    // these rows' own parents are not followed further.
+    let mut referenced: Vec<&str> = context
+        .values()
+        .filter_map(|row| row.parent.as_ref())
+        .map(|parent| parent.session_id.as_str())
+        .filter(|id| ids.binary_search(id).is_err())
+        .collect();
+    referenced.sort_unstable();
+    referenced.dedup();
+    let referenced = db.session_context(&referenced)?;
+    let costs = db.whole_session_costs(&ids, catalog)?;
+    // Every verified sub-session under the listed sessions that has no span
+    // here, whenever it ran, bounded; those beyond the bound are counted on
+    // the listed session whose walk found them. Read in batches each read
+    // accepts, in this same snapshot.
+    let found = db.sub_sessions(&ids, SUB_SESSION_LIMIT)?;
+    // Emitted in the walk's order, nearer levels first, never the context
+    // read's identifier order, so a parent always precedes its sub-sessions.
+    let mut sub_sessions = Vec::with_capacity(found.sessions.len());
+    for batch in found.sessions.chunks(xt_metrics::MAX_SESSIONS) {
+        let ids: Vec<&str> = batch.iter().map(String::as_str).collect();
+        let sub_costs = db.whole_session_costs(&ids, catalog)?;
+        let read = db.session_context(&ids)?;
+        let mut rows: std::collections::BTreeMap<String, _> =
+            read.into_iter().map(|row| (row.id.clone(), row)).collect();
+        for id in batch {
+            if let Some(row) = rows.remove(id) {
+                let cost = sub_costs.get(id).map(lane_cost);
+                sub_sessions.push(lane_session(row, cost, None, false));
+            }
+        }
+    }
     // One row per distinct returned session, in identifier order, whether or
     // not the metadata read found context for it: a row is always addressable,
     // and an absent fact stays absent instead of being filled in.
-    let sessions = ids
+    let mut sessions: Vec<DashboardLaneSession> = ids
         .iter()
         .map(|id| {
-            let found = context.get(*id);
-            DashboardLaneSession {
-                session_id: (*id).to_owned(),
-                host: match found {
-                    Some(row) => row.host.clone(),
+            let cost = costs.get(*id).map(lane_cost);
+            let not_shown = found.not_shown.get(*id).copied();
+            let cut_short = found.cut_short.contains(*id);
+            match context.remove(*id) {
+                Some(row) => lane_session(row, cost, not_shown, cut_short),
+                None => DashboardLaneSession {
+                    session_id: (*id).to_owned(),
                     // The span itself names the host that recorded it.
-                    None => spans
+                    host: spans
                         .iter()
                         .find(|span| span.session_id == *id)
                         .map(|span| span.host.clone())
                         .unwrap_or_default(),
+                    repo: None,
+                    branch: None,
+                    title: None,
+                    automated_review: false,
+                    started_at_ms: None,
+                    // An absent context is unknown, never a zero.
+                    pr_links: None,
+                    inferred_pr_links: None,
+                    cost,
+                    parent: None,
+                    known_child: None,
+                    child_check: None,
+                    sub_sessions_not_shown: not_shown,
+                    sub_sessions_cut_short: cut_short.then_some(true),
                 },
-                repo: found.and_then(|row| row.repo.clone()),
-                branch: found.and_then(|row| row.branch.clone()),
-                title: found.and_then(|row| row.title.clone()),
-                automated_review: found.is_some_and(|row| row.automated_review),
-                // The recorded start, or a Claude session's earliest message
-                // when it has none; uncapped and unclipped by the lane window.
-                // Another host's absent start stays absent even when spans exist.
-                started_at_ms: found.and_then(|row| row.started_at_ms),
-                // Measured over the stored index for an indexed session; an
-                // absent context is unknown, never a zero.
-                pr_links: found.map(|row| row.pr_links),
-                inferred_pr_links: found.map(|row| row.inferred_pr_links),
-                // Absent only when no indexed user session owns the
-                // identifier: unknown, never a measured zero.
-                cost: costs.get(*id).map(|cost| DashboardLaneCost {
-                    total_usd: cost.total_usd,
-                    priced_subtotal_usd: cost.priced_subtotal_usd,
-                    selected_observations: cost.selected_observations,
-                    priced_observations: cost.priced_observations,
-                    unpriced_observations: cost.unpriced_observations,
-                    assumed_tier_observations: cost.assumed_tier_observations,
-                    unpriced: cost
-                        .unpriced
-                        .iter()
-                        .map(|item| DashboardUnpriced {
-                            model: item.model.clone(),
-                            service_tier: item.service_tier.clone(),
-                            reason: unpriced_reason(item.reason),
-                            observations: item.observations,
-                        })
-                        .collect(),
-                }),
-                // Read with the context, in this snapshot; never a lane of its own.
-                parent: found.and_then(|row| row.parent.clone()).map(Into::into),
             }
         })
         .collect();
+    // A referenced parent carries its stored context and nothing measured: it
+    // has no returned span, so no cost is read for it, and its entry alone
+    // never makes a row.
+    sessions.extend(
+        referenced
+            .into_iter()
+            .map(|row| lane_session(row, None, None, false)),
+    );
+    sessions.sort_by(|a, b| a.session_id.cmp(&b.session_id));
     Ok(Lanes {
         spans,
         total,
         sessions,
+        sub_sessions,
     })
+}
+
+/// A session's whole cost in the report's own shape.
+fn lane_cost(cost: &xt_metrics::CostSummary) -> DashboardLaneCost {
+    DashboardLaneCost {
+        total_usd: cost.total_usd,
+        priced_subtotal_usd: cost.priced_subtotal_usd,
+        selected_observations: cost.selected_observations,
+        priced_observations: cost.priced_observations,
+        unpriced_observations: cost.unpriced_observations,
+        assumed_tier_observations: cost.assumed_tier_observations,
+        unpriced: cost
+            .unpriced
+            .iter()
+            .map(|item| DashboardUnpriced {
+                model: item.model.clone(),
+                service_tier: item.service_tier.clone(),
+                reason: unpriced_reason(item.reason),
+                observations: item.observations,
+            })
+            .collect(),
+    }
+}
+
+/// One entry from a session's stored context, its whole cost when one was
+/// read (absent only when no indexed user session owns the identifier, or on
+/// a referenced parent, which is not measured) and, on a listed session, how
+/// many of its sub-sessions the report left out and whether that count is
+/// only a lower bound.
+fn lane_session(
+    row: xt_store::session_list::SessionContext,
+    cost: Option<DashboardLaneCost>,
+    sub_sessions_not_shown: Option<u64>,
+    cut_short: bool,
+) -> DashboardLaneSession {
+    DashboardLaneSession {
+        session_id: row.id,
+        host: row.host,
+        repo: row.repo,
+        branch: row.branch,
+        title: row.title,
+        automated_review: row.automated_review,
+        // The recorded start, or a Claude session's earliest message when it
+        // has none; uncapped and unclipped by the lane window. Another host's
+        // absent start stays absent even when spans exist.
+        started_at_ms: row.started_at_ms,
+        // Measured over the stored index for an indexed session.
+        pr_links: Some(row.pr_links),
+        inferred_pr_links: Some(row.inferred_pr_links),
+        cost,
+        // Read with the context, in this snapshot; never a lane of its own.
+        parent: row.parent.map(Into::into),
+        known_child: Some(row.known_child),
+        child_check: Some(row.check.into()),
+        sub_sessions_not_shown,
+        sub_sessions_cut_short: cut_short.then_some(true),
+    }
 }
 
 const PR_EFFORT_RULE: &str = "M-19";
@@ -325,18 +422,18 @@ fn merged_prs_tile(
         "prs",
         PR_EFFORT_RULE,
         &format!(
-            "{} known merged; {} linked pull {} no cached merge facts",
+            "{} merged so far; not known yet for {} linked pull {}",
             current.known_merged,
             current.unknown_facts,
             if current.unknown_facts == 1 {
-                "request has"
+                "request"
             } else {
-                "requests have"
+                "requests"
             }
         ),
     )?;
     tile.note = Some(
-        "Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically."
+        "Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI."
             .into(),
     );
     Ok(tile)
@@ -351,10 +448,12 @@ pub fn validate_window(days: u32) -> Result<(), StateError> {
     }
 }
 
-/// The caller supplies one clock/zone/catalog policy and one typing rate.
-/// Native and fixture paths use this same read-only assembler; no
-/// source-history data is sampled here. The one rate is read for both the
-/// current and the previous window, so a delta compares like with like.
+/// The caller supplies one clock/zone/catalog policy, one typing rate and one
+/// break length. Native and fixture paths use this same read-only assembler;
+/// no source-history data is sampled here. The one rate and the one break
+/// length are read for both the current and the previous window, so a delta
+/// compares like with like.
+#[allow(clippy::too_many_arguments)]
 pub fn assemble(
     db: &MetricsDb,
     days: u32,
@@ -363,6 +462,7 @@ pub fn assemble(
     clock: MetricClock,
     catalog: &PriceCatalog,
     typing_rate: TypingRate,
+    break_length: BreakLength,
 ) -> Result<DashboardMetrics, StateError> {
     let window = selected_window(days, now_ms)?;
     let previous = window.previous()?;
@@ -370,29 +470,30 @@ pub fn assemble(
         .checked_sub(LANE_WINDOW_MS)
         .ok_or(StateError::InvalidMetricWindow)?;
     let lane_window = Window::new(lane_start, now_ms)?;
-    let (current, prior, coverage, lanes, untimed, pr_current, pr_prior) =
-        db.read_snapshot(|db| {
-            Ok((
-                Period::read(db, window, zone.clone(), catalog, typing_rate)?,
-                Period::read(db, previous, zone.clone(), catalog, typing_rate)?,
-                db.coverage(window, now_ms, &[])?,
-                // Spans, the context of the sessions they name and those
-                // sessions' cost are read inside this one snapshot, so a row's
-                // repository, identity and number all describe the same committed
-                // state while the native writer keeps appending elsewhere.
-                lane_report(db, lane_window, catalog)?,
-                // Unwindowed on purpose: a record with no timestamp is in no day,
-                // so this counts all indexed history. Reading it in the same
-                // snapshot keeps it describing the state the windows describe.
-                db.untimed_history()?,
-                // M-19 over both equal windows, from cached refresh facts only:
-                // no request is made here. Inferred links are removed before
-                // eligibility and assignment, so the tile and the chart count
-                // exact and SHA links only.
-                db.pr_effort(window, zone.clone(), CONFIRMED_ONLY, catalog)?,
-                db.pr_effort(previous, zone.clone(), CONFIRMED_ONLY, catalog)?,
-            ))
-        })?;
+    let read = db.read_snapshot(|db| {
+        Ok((
+            Period::read(db, window, zone.clone(), catalog, typing_rate)?,
+            Period::read(db, previous, zone.clone(), catalog, typing_rate)?,
+            db.coverage(window, now_ms, &[])?,
+            // Spans, the context of the sessions they name and those
+            // sessions' cost are read inside this one snapshot, so a row's
+            // repository, identity and number all describe the same committed
+            // state while the native writer keeps appending elsewhere.
+            lane_report(db, lane_window, catalog)?,
+            // Unwindowed on purpose: a record with no timestamp is in no day,
+            // so this counts all indexed history. Reading it in the same
+            // snapshot keeps it describing the state the windows describe.
+            db.untimed_history()?,
+            // M-19 over both equal windows, from cached refresh facts only:
+            // no request is made here. Inferred links are removed before
+            // eligibility and assignment, so the tile and the chart count
+            // exact and SHA links only.
+            db.pr_effort(window, zone.clone(), CONFIRMED_ONLY, catalog)?,
+            db.pr_effort(previous, zone.clone(), CONFIRMED_ONLY, catalog)?,
+            Daily::read(db, window, break_length, zone.clone())?,
+        ))
+    })?;
+    let (current, prior, coverage, lanes, untimed, pr_current, pr_prior, daily) = read;
     checked_value(&current)?;
     checked_value(&prior)?;
     let session_n = (
@@ -425,8 +526,14 @@ pub fn assemble(
         current.sessions.days.len(),
         prior.sessions.days.len()
     ));
+    let leverage = leverage_tile(
+        (daily.agent.active_ms, daily.previous_agent_ms),
+        &daily.human,
+        session_n,
+    )?;
     let tiles = DashboardTiles {
         agent_hours_per_day: agent_per_day,
+        leverage,
         agent_hours: tile(
             Some(current.spans.active_ms as f64 / 3_600_000.0),
             Some(prior.spans.active_ms as f64 / 3_600_000.0),
@@ -436,14 +543,6 @@ pub fn assemble(
             "Agent time is unmeasured",
         )?,
         human_hours_est: human,
-        ratio: tile(
-            current.human.agent_to_human_ratio,
-            prior.human.agent_to_human_ratio,
-            session_n,
-            "ratio",
-            "M-08",
-            "Human time is zero or unmeasured",
-        )?,
         concurrency_max: tile(
             current.concurrency.max.map(f64::from),
             prior.concurrency.max.map(f64::from),
@@ -554,8 +653,37 @@ pub fn assemble(
         || series.len() != current.sessions.days.len()
         || series.len() != agent_days.len()
         || series.len() != current.human.by_day.len()
+        || series.len() != daily.human.current.by_day.len()
+        || series.len() != daily.concurrency.len()
+        || series.len() != daily.hands_off.len()
     {
         return Err(StateError::MetricEncoding);
+    }
+    // The daily series must name the same days as the hero's buckets, with
+    // the same bounds; your hours' days are the same dates made whole.
+    for (index, tokens) in series.iter().enumerate() {
+        let day = (tokens.date.as_str(), tokens.start_ms, tokens.end_ms);
+        let human = &daily.human.current.by_day[index];
+        let concurrency = &daily.concurrency[index];
+        let hands_off = &daily.hands_off[index];
+        if tokens.date != human.date
+            || human.start_ms > tokens.start_ms
+            || human.end_ms < tokens.end_ms
+            || day
+                != (
+                    concurrency.date.as_str(),
+                    concurrency.start_ms,
+                    concurrency.end_ms,
+                )
+            || day
+                != (
+                    hands_off.date.as_str(),
+                    hands_off.start_ms,
+                    hands_off.end_ms,
+                )
+        {
+            return Err(StateError::MetricEncoding);
+        }
     }
     let mut days_out = Vec::with_capacity(series.len());
     for ((((tokens, cost), sessions), agent), human_day) in series
@@ -609,6 +737,7 @@ pub fn assemble(
         days: days_out,
         lanes: convert(&lanes.spans)?,
         lane_sessions: lanes.sessions,
+        lane_sub_sessions: lanes.sub_sessions,
         lane_start_ms: lane_start,
         lane_end_ms: now_ms,
         lanes_total: lanes.total,
@@ -646,9 +775,131 @@ pub fn assemble(
             reason: reason.into(),
         })
         .collect(),
+        human_hours: DashboardHumanHours {
+            current: convert(&daily.human.current)?,
+            previous_active_ms: daily.human.previous.active_ms,
+        },
+        leverage: daily.leverage(zone.clone())?,
+        concurrency_by_day: convert(&daily.concurrency)?,
+        hands_off_by_day: convert(&daily.hands_off)?,
     };
     checked_value(&report)?;
     Ok(report)
+}
+
+/// The selected window's day-by-day reads beside the two periods.
+struct Daily {
+    /// Your hours over the whole local days the window touches, and over the
+    /// same number of whole days just before.
+    human: xt_metrics::HumanHoursPeriods,
+    /// Agent hours (M-05) over exactly the whole days of `human.current`, so
+    /// leverage divides two measures of one span.
+    agent: xt_metrics::ActiveSpanReport,
+    /// The whole days of `human.current`, the span `agent` was read over.
+    agent_window: Window,
+    /// Agent hours over exactly the whole days of `human.previous`.
+    previous_agent_ms: u64,
+    concurrency: Vec<xt_metrics::DayConcurrency>,
+    hands_off: Vec<xt_metrics::DayHandsOff>,
+}
+
+impl Daily {
+    /// Called inside the report's one snapshot read.
+    fn read(
+        db: &MetricsDb,
+        window: Window,
+        break_length: BreakLength,
+        zone: TimeZone,
+    ) -> xt_metrics::Result<Self> {
+        let human = db.human_hours(window, break_length, zone.clone())?;
+        let agent_window = Window::new(human.current.start_ms, human.current.end_ms)?;
+        let previous_window = Window::new(human.previous.start_ms, human.previous.end_ms)?;
+        Ok(Self {
+            agent: db.active_spans(agent_window)?,
+            agent_window,
+            previous_agent_ms: db.active_spans(previous_window)?.active_ms,
+            human,
+            concurrency: db.concurrency_by_day(window, zone.clone())?,
+            hands_off: db.hands_off_by_day(window, zone)?,
+        })
+    }
+
+    /// Leverage for each whole local day: that day's agent hours divided by
+    /// its own hours of yours; no value when yours are zero or unknown.
+    fn leverage(&self, zone: TimeZone) -> Result<DashboardLeverage, StateError> {
+        let agent_days = self.agent.by_day(self.agent_window, zone)?;
+        if agent_days.len() != self.human.current.by_day.len() {
+            return Err(StateError::MetricEncoding);
+        }
+        let mut by_day = Vec::with_capacity(agent_days.len());
+        for (agent, human) in agent_days.iter().zip(&self.human.current.by_day) {
+            if (agent.date.as_str(), agent.start_ms, agent.end_ms)
+                != (human.date.as_str(), human.start_ms, human.end_ms)
+            {
+                return Err(StateError::MetricEncoding);
+            }
+            let value = human
+                .active_ms
+                .filter(|ms| *ms > 0)
+                .map(|ms| agent.active_ms as f64 / ms as f64);
+            if value.is_some_and(|v| !v.is_finite()) {
+                return Err(StateError::MetricEncoding);
+            }
+            by_day.push(MetricLeverageDay {
+                date: agent.date.clone(),
+                start_ms: agent.start_ms,
+                end_ms: agent.end_ms,
+                agent_ms: agent.active_ms,
+                human_ms: human.active_ms,
+                value,
+            });
+        }
+        Ok(DashboardLeverage {
+            agent_ms: self.agent.active_ms,
+            previous_agent_ms: self.previous_agent_ms,
+            by_day,
+        })
+    }
+}
+
+/// Leverage (M-08): agent hours (M-05) divided by your hours, both over the
+/// same whole local days, against the same ratio over the previous whole
+/// days. Unknown, never infinite, when your hours are zero or unknown;
+/// sessions are n, as for agent hours.
+pub(crate) fn leverage_tile(
+    (agent_ms, prior_agent_ms): (u64, u64),
+    human: &xt_metrics::HumanHoursPeriods,
+    session_n: (Option<u64>, Option<u64>, &str),
+) -> Result<MetricTile, StateError> {
+    let ratio = |agent: u64, human: Option<u64>| {
+        human
+            .filter(|human| *human > 0)
+            .map(|human| agent as f64 / human as f64)
+    };
+    let current = &human.current;
+    let reason = match (current.active_ms, current.messages) {
+        (None, _) | (_, None) => {
+            "Your hours are unknown: a message's sender is not classified".to_owned()
+        }
+        (Some(_), Some(0)) => "You sent no messages to agents in this range".to_owned(),
+        (Some(_), Some(_)) => format!(
+            "Each message you sent stood alone: no other message came within {} minutes of it, so your hours are zero",
+            current.break_minutes
+        ),
+    };
+    let mut tile = tile(
+        ratio(agent_ms, current.active_ms),
+        ratio(prior_agent_ms, human.previous.active_ms),
+        session_n,
+        "ratio",
+        "M-08",
+        &reason,
+    )?;
+    tile.note = Some(format!(
+        "Agent hours divided by your hours, both over the same whole local days. Your hours run from each message you sent to the next one when they are at most {} minutes apart.",
+        current.break_minutes
+    ));
+    Ok(tile)
 }
 
 /// Recorded host token totals for the selected range: the same core token
@@ -957,8 +1208,10 @@ pub fn fixture_reports(
                 TimeZone::UTC,
                 MetricClock::Fixture,
                 &catalog,
-                // The export describes a fresh database: no saved speed.
+                // The export describes a fresh database: no saved speed
+                // and no saved break length.
                 TypingRate::default(),
+                BreakLength::default(),
             )
         })
         .collect()
@@ -1107,6 +1360,123 @@ mod tests {
                 .into_iter()
                 .all(|days| validate_window(days).is_ok())
         );
+    }
+}
+
+#[cfg(test)]
+mod leverage_tests {
+    use super::*;
+    use xt_metrics::{HumanHours, HumanHoursPeriods};
+
+    const H: u64 = 3_600_000;
+    const SIX: (Option<u64>, Option<u64>, &str) = (Some(6), Some(6), "sessions");
+
+    fn hours(active_ms: Option<u64>, messages: Option<u64>) -> HumanHours {
+        HumanHours {
+            break_minutes: 45,
+            start_ms: 0,
+            end_ms: 86_400_000,
+            active_ms,
+            messages,
+            by_day: Vec::new(),
+        }
+    }
+    fn periods(current: HumanHours, previous: HumanHours) -> HumanHoursPeriods {
+        HumanHoursPeriods { current, previous }
+    }
+
+    #[test]
+    fn leverage_is_agent_hours_divided_by_your_hours_with_its_change() {
+        let tile = leverage_tile(
+            (12 * H, 6 * H),
+            &periods(hours(Some(4 * H), Some(30)), hours(Some(3 * H), Some(20))),
+            SIX,
+        )
+        .unwrap();
+        assert_eq!(tile.value, Some(3.0));
+        assert_eq!(
+            (tile.unit.as_str(), tile.rule_id.as_str()),
+            ("ratio", "M-08")
+        );
+        assert_eq!(tile.reason, None);
+        // 6 agent h ÷ 3 your h = 2 before: +50%.
+        assert_eq!(tile.delta.previous, Some(2.0));
+        assert_eq!(tile.delta.pct, Some(50.0));
+        assert!(!tile.delta.suppressed);
+        assert!(
+            tile.note
+                .as_deref()
+                .unwrap()
+                .contains("at most 45 minutes apart")
+        );
+        assert!(
+            tile.note
+                .as_deref()
+                .unwrap()
+                .contains("same whole local days")
+        );
+    }
+
+    #[test]
+    fn unknown_your_hours_leave_leverage_unknown_and_say_why() {
+        let tile = leverage_tile(
+            (12 * H, 6 * H),
+            &periods(hours(None, None), hours(Some(3 * H), Some(20))),
+            SIX,
+        )
+        .unwrap();
+        assert_eq!(tile.value, None);
+        assert_eq!(
+            tile.reason.as_deref(),
+            Some("Your hours are unknown: a message's sender is not classified")
+        );
+        assert_eq!(tile.delta.previous, Some(2.0));
+    }
+
+    #[test]
+    fn zero_hours_with_no_messages_says_no_messages() {
+        let tile = leverage_tile(
+            (12 * H, 6 * H),
+            &periods(hours(Some(0), Some(0)), hours(Some(0), Some(0))),
+            SIX,
+        )
+        .unwrap();
+        assert_eq!(tile.value, None);
+        assert_eq!(tile.delta.previous, None);
+        assert_eq!(
+            tile.reason.as_deref(),
+            Some("You sent no messages to agents in this range")
+        );
+    }
+
+    #[test]
+    fn zero_hours_with_messages_says_each_message_stood_alone() {
+        let tile = leverage_tile(
+            (12 * H, 6 * H),
+            &periods(hours(Some(0), Some(3)), hours(Some(3 * H), Some(20))),
+            SIX,
+        )
+        .unwrap();
+        assert_eq!(tile.value, None);
+        let reason = tile.reason.unwrap();
+        assert_eq!(
+            reason,
+            "Each message you sent stood alone: no other message came within 45 minutes of it, so your hours are zero"
+        );
+        assert!(!reason.contains("no messages"));
+    }
+
+    #[test]
+    fn a_previous_period_with_zero_hours_has_no_change() {
+        let tile = leverage_tile(
+            (12 * H, 6 * H),
+            &periods(hours(Some(4 * H), Some(30)), hours(Some(0), Some(2))),
+            SIX,
+        )
+        .unwrap();
+        assert_eq!(tile.value, Some(3.0));
+        assert_eq!(tile.delta.previous, None);
+        assert_eq!(tile.delta.pct, None);
     }
 }
 

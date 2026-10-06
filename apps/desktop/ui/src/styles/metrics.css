@@ -55,6 +55,10 @@ button.xt-rule-chip {
   overflow-wrap: anywhere;
   pointer-events: none;
 }
+/* A definition: about 50 characters a line, so it reads at a glance. */
+.xt-rule-popover.xt-rule-definition {
+  max-width: min(340px, calc(100vw - 16px));
+}
 .xt-rule-context {
   display: block;
   margin-top: 8px;
@@ -157,6 +161,12 @@ button.xt-rule-chip {
 }
 .xt-stat-delta[data-tone='bad'] {
   color: var(--warning);
+}
+/* Words in place of a value: inside a metric cell, quieter and smaller than a number. */
+.xt-stat-placeholder {
+  color: var(--body);
+  font-size: 12px;
+  font-weight: 400;
 }
 .xt-stat-aside {
   max-width: 120px;

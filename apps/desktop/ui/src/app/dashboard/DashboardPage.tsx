@@ -1,48 +1,50 @@
-import { useState, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { useData } from '../../data/DataProvider';
 import type { DashboardMetrics } from '../../data/generated/DashboardMetrics';
 import type { MetricTile } from '../../data/generated/MetricTile';
+import { queryKeys } from '../../data/query-client';
 import { Button } from '../../kit/Button';
-import { count } from '../../kit/format';
 import { LoadingMark } from '../../kit/LoadingMark';
 import { MetricCell } from '../../kit/MetricCell';
 import { RulePopover } from '../../kit/RulePopover';
 import { SectionCard } from '../../kit/SectionCard';
-import { StatTile } from '../../kit/StatTile';
 import type { TimeRange } from '../../kit/TopBar';
-import { continuous } from '../metric-format';
 import { sessionParams } from '../session-search';
-import { ActivityLanes, laneDefinition } from './ActivityLanes';
+import { ActivityLanes, laneDefinition, laneSubtitle } from './ActivityLanes';
 import { DashCard } from './DashCard';
 import { DashboardDetailsProvider } from './DashboardDetailsProvider';
 import { CoverageDetail, UsageMeasurements, useDetail } from './DashboardDetails';
 import { DefinitionInfo } from './DefinitionInfo';
 import { EffortByType, EffortMethod, EffortMetricToggle } from './EffortByType';
-import { EnvironmentPanel } from './EnvironmentPanel';
-import { mergedAside, prFreshnessText, type EffortMetric } from './pr-effort';
-import { PrRefresh, PrRefreshStatus } from './PrRefresh';
-import {
-  excludedSurfaceText,
-  favoriteUnknownText,
-  plural,
-  ruleId,
-  tileDelta,
-  tileTip,
-} from './present';
+import { OverviewCard } from './OverviewCard';
+import { type AutoCheck, type EffortMetric } from './pr-effort';
+import { PrRefresh } from './PrRefresh';
+import { SplitHandle } from './SplitHandle';
+import { favoriteUnknownText, plainReason, plural } from './present';
 import { useDashboardReport, useSelectedRange } from './range';
 import '../../styles/dashboard.css';
 
 const TITLE = 'What your agents did';
-/** The Concurrency tile's primary number, which carries no visible unit. */
-const CONCURRENCY_SHOWN = 'Displayed value is mean concurrency; max is the peak overlap.';
-
 export function DashboardPage() {
   const { source } = useData();
   const range = useSelectedRange();
   const report = useDashboardReport(range);
   // Kept while another range loads, like the open measurement detail.
   const [effortMetric, setEffortMetric] = useState<EffortMetric>('agent');
+  const autoCheck = source.prAutoCheck;
+  const auto = useQuery({
+    queryKey: queryKeys.prAutoCheck,
+    queryFn: () =>
+      autoCheck ? autoCheck.status() : Promise.reject(new Error('No automatic check here.')),
+    enabled: autoCheck !== undefined,
+  });
+  // Showing the Dashboard asks the app to check pull requests on GitHub; it
+  // decides for itself whether anything is due, and never makes this wait.
+  useEffect(() => {
+    autoCheck?.request().catch(() => {});
+  }, [autoCheck]);
   let body: ReactNode;
   if (source.kind === 'preview')
     body = <p className="xt-dash-status">Open the desktop app to read local Dashboard metrics.</p>;
@@ -76,6 +78,8 @@ export function DashboardPage() {
         range={range}
         effortMetric={effortMetric}
         onEffortMetric={setEffortMetric}
+        // A source that never checks on its own says so with null.
+        autoCheck={autoCheck === undefined ? null : auto.data}
       />
     );
   return (
@@ -88,29 +92,39 @@ export function DashboardPage() {
 
 /**
  * The primary composition, sized to the window rather than to its data: the
- * heading and the four tiles keep their height, and the two rows under them —
- * effort beside environment, then Sessions — take the rest, each showing at
- * least three rows of its own and more of them in a taller window. The
- * report's agent/human hours and rule fires are not drawn here. Nothing here is a page to scroll: every further row, day, table and
- * explanation opens over the page from the card it belongs to — tokens and
- * cost from Effort's Method, coverage and untimed history from Sessions — or
- * on the full Sessions view. The index's state is the sidebar's and Settings'.
+ * heading and the summary line keep their height, and the two rows under
+ * them — Effort beside Overview, then Sessions — take the rest. By default
+ * Sessions keeps room for eight rows however few it lists and the effort row
+ * takes what is left; each row still shows at least three rows of its own,
+ * and more of them in a taller window. The boundary between the rows and the
+ * one between Effort and Overview can be dragged or moved from the
+ * keyboard (`SplitHandle`); the chosen proportions are kept across restarts,
+ * and a double-click or Enter on a boundary puts its default back. The
+ * report's agent/human hours and rule fires are not drawn here. Nothing here
+ * is a page to scroll: every further row, day, table and explanation opens
+ * over the page from the card it belongs to — tokens and cost from Effort's
+ * Details, coverage and untimed history from Sessions — or on the full
+ * Sessions view. The index's state is the sidebar's and Settings'.
  */
 function DashboardReport({
   report,
   range,
   effortMetric,
   onEffortMetric,
+  autoCheck,
 }: {
   report: DashboardMetrics;
   range: TimeRange;
   effortMetric: EffortMetric;
   onEffortMetric: (metric: EffortMetric) => void;
+  autoCheck: AutoCheck;
 }) {
   const { tiles, favorite } = report;
   const prTile = report.pr_effort.current.tile;
   const favoriteModel = favorite.current.model;
   const method = useDetail('method');
+  const mainRowId = useId();
+  const effortId = useId();
   return (
     <>
       <p className="xt-dash-summary" data-testid="dashboard-summary">
@@ -145,82 +159,9 @@ function DashboardReport({
           No agent activity was recorded in this range. Measured zeros are shown as 0.
         </p>
       )}
-      <div className="xt-dash-tiles">
-        <StatTile
-          label="Agent h/day"
-          icon="clock"
-          ruleId={ruleId(tiles.agent_hours_per_day.rule_id, 'M-05')}
-          value={tiles.agent_hours_per_day.value}
-          format={continuous}
-          unit="h"
-          reason={tiles.agent_hours_per_day.reason ?? undefined}
-          delta={tileDelta(tiles.agent_hours_per_day)}
-          tip={tileTip(tiles.agent_hours_per_day)}
-        />
-        <StatTile
-          label="Concurrency"
-          icon="lanes"
-          ruleId={ruleId(tiles.concurrency_mean.rule_id, 'M-06')}
-          value={tiles.concurrency_mean.value}
-          format={continuous}
-          reason={tiles.concurrency_mean.reason ?? undefined}
-          delta={tileDelta(tiles.concurrency_mean)}
-          aside={
-            tiles.concurrency_max.value === null
-              ? undefined
-              : `max ${count(tiles.concurrency_max.value)}`
-          }
-          // The tile shows no unit, so its definition says which of the two
-          // the primary number is.
-          tip={[CONCURRENCY_SHOWN, tileTip(tiles.concurrency_mean)].filter(Boolean).join(' ')}
-        />
-        <StatTile
-          label="Merged PRs"
-          icon="merge"
-          ruleId={ruleId(tiles.merged_prs.rule_id, 'M-19')}
-          value={tiles.merged_prs.value}
-          format={count}
-          reason={tiles.merged_prs.reason ?? undefined}
-          delta={tileDelta(tiles.merged_prs)}
-          aside={mergedAside(prTile)}
-          tip={[
-            tileTip(tiles.merged_prs),
-            prTile.unresolved_type > 0
-              ? `${plural(prTile.unresolved_type, 'merged pull request')} without a cached type.`
-              : '',
-            prFreshnessText(prTile.freshness, report.window),
-          ]
-            .filter(Boolean)
-            .join(' ')}
-        />
-        <StatTile
-          label="Hands-off median"
-          icon="shield"
-          ruleId={ruleId(tiles.hands_off_median.rule_id, 'M-09')}
-          value={tiles.hands_off_median.value}
-          format={continuous}
-          unit="min"
-          reason={tiles.hands_off_median.reason ?? undefined}
-          delta={tileDelta(tiles.hands_off_median)}
-          aside={
-            tiles.hands_off_p90.value === null
-              ? undefined
-              : `p90 ${continuous(tiles.hands_off_p90.value)}`
-          }
-          tip={[
-            'How long your agents run before they need you.',
-            tileTip(
-              tiles.hands_off_median,
-              report.hands_off_excluded_surfaces.length > 0
-                ? `Excluded for timestamp health: ${report.hands_off_excluded_surfaces.map(excludedSurfaceText).join('; ')}.`
-                : 'No surface is excluded for timestamp health.',
-            ),
-          ].join(' ')}
-        />
-      </div>
-
-      <div className="xt-dash-row xt-dash-main-row">
+      <div id={mainRowId} className="xt-dash-row xt-dash-main-row">
         <DashCard
+          id={effortId}
           title="Effort"
           rule="M-19"
           context={EFFORT_CONTEXT}
@@ -232,18 +173,32 @@ function DashboardReport({
               <EffortMethod report={report} metric={effortMetric} {...method}>
                 <UsageMeasurements report={report} />
               </EffortMethod>
-              <PrRefresh window={report.window} />
+              <PrRefresh window={report.window} tile={prTile} auto={autoCheck} />
             </>
           }
         >
           <EffortByType report={report} metric={effortMetric} />
-          <PrRefreshStatus freshness={prTile.freshness} window={report.window} />
         </DashCard>
-        <EnvironmentPanel range={range} />
+        {/* Must sit directly between Effort and Overview: it resizes its siblings. */}
+        <SplitHandle
+          axis="columns"
+          label="Resize Effort and Overview"
+          names={['Effort', 'Overview']}
+          controls={effortId}
+        />
+        <OverviewCard report={report} range={range} autoCheck={autoCheck} />
       </div>
+      {/* Must sit directly between the effort row and Sessions: it resizes its siblings. */}
+      <SplitHandle
+        axis="rows"
+        label="Resize Effort and Overview against Sessions"
+        names={['Effort and Overview', 'Sessions']}
+        controls={mainRowId}
+      />
 
       <SectionCard
         title="Sessions"
+        meta={laneSubtitle(report)}
         right={
           <span className="xt-dash-card-actions">
             <CoverageDetail report={report} />
@@ -262,14 +217,17 @@ function DashboardReport({
   );
 }
 
-/** What the Effort card itself shows, read after the M-19 rule in its definition. */
-const EFFORT_CONTEXT =
-  'This card shows the total for every session in the range, one bar per day, and does not split it by work type. Each session’s hours count toward the model it used most.';
+/**
+ * What the Effort card itself shows, read after the rule's summary: its bars
+ * cover every session with work in the range, linked to a pull request or not.
+ */
+export const EFFORT_CONTEXT =
+  'This card covers every session in the range, one bar per day, split by model, whether or not it is linked to a PR.';
 
 function SummaryCount({ tile, one }: { tile: MetricTile; one: string }) {
   return tile.value === null ? (
     <span>
-      <MetricCell value={null} reason={tile.reason ?? undefined} /> {one}s
+      <MetricCell value={null} reason={tile.reason ? plainReason(tile.reason) : undefined} /> {one}s
     </span>
   ) : (
     <span>{plural(tile.value, one)}</span>

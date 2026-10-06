@@ -535,7 +535,7 @@ fn relations_are_immutable_and_hold_no_content() {
     let connection = sql(&directory);
     for statement in [
         "UPDATE session_creation_relations SET parent_native_session_id='x'",
-        "UPDATE session_creation_relations SET state='conflicted',evidence_version=2",
+        "UPDATE session_creation_relations SET state='conflicted',evidence_version=evidence_version+1",
         "DELETE FROM session_creation_relations",
     ] {
         assert!(connection.execute(statement, []).is_err(), "{statement}");
@@ -845,7 +845,7 @@ fn upgrading_an_existing_index_adds_an_empty_relation_store() {
         .execute_batch(
             "DELETE FROM schema_version WHERE version>=11;
              DROP TABLE guardian_turn_inputs;
-             DROP TABLE injected_context_inputs; DROP TABLE IF EXISTS task_notification_inputs; DROP TABLE IF EXISTS record_previews; DROP TABLE IF EXISTS human_input_adjustments; DROP TABLE IF EXISTS human_session_origins;
+             DROP TABLE injected_context_inputs; DROP TABLE IF EXISTS tool_sent_inputs; DROP TABLE IF EXISTS task_notification_inputs; DROP TABLE IF EXISTS record_previews; DROP TABLE IF EXISTS session_child_checks; DROP TABLE IF EXISTS session_child_facts; DROP TABLE IF EXISTS human_input_adjustments; DROP TABLE IF EXISTS human_session_origins;
              DROP TABLE session_creation_relations;
              DROP TABLE session_creation_bootstrap; DROP TABLE cli_artifact_launch_owners; DROP TABLE claude_launch_groups; DROP TABLE claude_launch_group_members; DROP TABLE claude_launch_candidates; DROP TABLE claude_launch_staged_candidates;
              DROP INDEX sessions_host_native;
@@ -864,7 +864,7 @@ fn upgrading_an_existing_index_adds_an_empty_relation_store() {
     let before = sessions(&connection);
     for _ in 0..2 {
         let store = open(&directory);
-        assert_eq!(store.schema_version().unwrap(), 17);
+        assert_eq!(store.schema_version().unwrap(), 22);
         assert_eq!(sessions(&connection), before);
         assert!(store.session_creation(&id(CHILD)).unwrap().is_none());
         assert_eq!(

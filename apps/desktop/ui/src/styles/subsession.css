@@ -42,3 +42,47 @@
     display: none;
   }
 }
+/* A group's disclosure leads its name: a chevron and the count of the
+   sub-sessions under it, sized inside a 22px row. Shared by the Dashboard's
+   lanes and both Sessions lists. The cell clips, so its focus ring
+   is drawn just inside it, as the name's own is. */
+.xt-lane-toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  align-self: center;
+  gap: 3px;
+  height: 18px;
+  margin-right: 6px;
+  padding: 0 5px 0 3px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--subtle);
+  color: var(--secondary);
+  font:
+    500 10px/1 'Geist Mono',
+    Menlo,
+    monospace;
+  cursor: pointer;
+}
+.xt-lane-toggle:hover {
+  color: var(--ink);
+}
+.xt-lane-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.xt-lane-chevron {
+  display: inline-block;
+  width: 7px;
+  text-align: center;
+  transition: transform 120ms ease;
+}
+.xt-lane-toggle[aria-expanded='true'] .xt-lane-chevron {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .xt-lane-chevron {
+    transition: none;
+  }
+}

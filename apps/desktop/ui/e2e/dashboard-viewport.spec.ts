@@ -1,10 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import fixture from '../fixtures/F1.json' with { type: 'json' };
-import {
-  shapedEnvironment,
-  syntheticEnvironment,
-} from '../src/app/dashboard/environment.synthetic';
+import { syntheticOverview } from '../src/app/dashboard/overview.synthetic';
 import { withPrEffort, type SectionSpec } from '../src/app/dashboard/pr-effort.synthetic';
 import type { DashboardMetrics } from '../src/data/generated/DashboardMetrics';
 import type { FixtureExport } from '../src/data/generated/FixtureExport';
@@ -17,10 +14,11 @@ import { freshnessText, phaseText } from '../src/app/native-index-text';
  * The Dashboard fits the window: nothing primary is below the fold, and no
  * document, outlet or page scroll exists to reach anything. Every primary
  * panel and control sits inside the viewport, the two flexible rows show at
- * least three rows each, the four tiles share one row, and every secondary
+ * least three rows each, Sessions keeps room for eight by default, the
+ * Overview card holds its four tiles two by two, and every secondary
  * detail opens over the page without moving it. Effort and
- * Environment are layered as Sessions is — the title row on the canvas, the
- * body in the kit's inset surface panel — while the tiles stay flat. Agent /
+ * Overview are layered as Sessions is — the title row on the canvas, the
+ * body in the kit's inset surface panel. Agent /
  * human hours and Caught by your rules are not drawn, and no row is kept for
  * them.
  *
@@ -28,8 +26,8 @@ import { freshnessText, phaseText } from '../src/app/native-index-text';
  * default (1440×900), in both schemes, over the generated F1 export and over
  * synthetic data (not real history, not a design sample) that makes every
  * part of the page as long and as full as it gets at once: dense tiles with
- * comparisons, a long favorite model, a week of effort from eight assignments with a partly priced day, eleven environment identities with unresolved and
- * untimed observations, fourteen truncated lane sessions with long
+ * comparisons, a long favorite model, a week of effort from eight assignments with a partly priced day, a full week of your hours and daily
+ * Overview lines, fourteen truncated lane sessions with long
  * repositories, four-figure partial costs, a priced total with unpriced tiers,
  * partial coverage rows, hands-off exclusions and untimed history.
  */
@@ -39,6 +37,8 @@ const SIZES = [
   [1440, 900],
 ] as const;
 const SCHEMES = ['light', 'dark'] as const;
+/** The Sessions card at its default: 50px of header and panel, the table's 24px header and eight 23px rows. */
+const SESSIONS_EIGHT_ROWS = 50 + 24 + 8 * 23 - 1;
 const base = fixture as FixtureExport;
 
 const measured = (tile: MetricTile, value: number, pct: number | null): MetricTile => ({
@@ -100,8 +100,7 @@ function stressReport(report: DashboardMetrics): DashboardMetrics {
   tiles.tool_calls = measured(tiles.tool_calls, 123_456, -3.4);
   tiles.agent_hours = measured(tiles.agent_hours, 123.4, 12.3);
   tiles.human_hours_est = measured(tiles.human_hours_est, 45.6, -5.2);
-  tiles.ratio = measured(tiles.ratio, 2.7, null);
-  tiles.agent_hours_per_day = measured(tiles.agent_hours_per_day, 12.4, 8.5);
+  tiles.leverage = measured(tiles.leverage, 12.4, 8.5);
   tiles.concurrency_mean = measured(tiles.concurrency_mean, 1.8, -12.3);
   tiles.concurrency_max = measured(tiles.concurrency_max, 8, null);
   tiles.hands_off_median = measured(tiles.hands_off_median, 3.2, -4.1);
@@ -245,12 +244,11 @@ function partialReport(report: DashboardMetrics): DashboardMetrics {
   const out = structuredClone(report);
   const unknown = (tile: MetricTile, reason: string) => ({ ...tile, value: null, reason });
   const { tiles } = out;
-  tiles.agent_hours_per_day = unknown(tiles.agent_hours_per_day, 'No active spans');
+  tiles.leverage = unknown(tiles.leverage, 'No active spans');
   tiles.concurrency_mean = unknown(tiles.concurrency_mean, 'No overlapping spans');
   tiles.concurrency_max = unknown(tiles.concurrency_max, 'No overlapping spans');
   tiles.hands_off_median = unknown(tiles.hands_off_median, 'No hands-off stretches');
   tiles.hands_off_p90 = unknown(tiles.hands_off_p90, 'No hands-off stretches');
-  tiles.ratio = unknown(tiles.ratio, 'No human-in-the-loop time');
   tiles.human_hours_est = unknown(tiles.human_hours_est, 'No human messages');
   tiles.cost = unknown(tiles.cost, 'Selected usage is absent or unpriced');
   out.tokens.counters.total_tokens = null;
@@ -270,20 +268,11 @@ function exportFor(shape: Shape): FixtureExport {
     partial: partialReport,
   }[shape];
   if (edit) out.dashboards = out.dashboards.map(edit);
-  if (shape === 'stress') out.environments = out.environments.map(syntheticEnvironment);
-  if (shape === 'empty')
-    out.environments = out.environments.map((report) => ({
-      ...report,
-      identities: [],
-      selected: { ...report.selected, observed: [], unresolved: [] },
-      totals: {
-        ...report.totals,
-        selected_calls: 0,
-        strip_calls: 0,
-        selected_unresolved_calls: 0,
-        identities: 0,
-      },
-    }));
+  // A full timeline of your hours and full daily lines, beside the stress report's own values.
+  if (shape === 'stress')
+    out.dashboards = out.dashboards.map((report) =>
+      syntheticOverview(report, { effort: false, tiles: false }),
+    );
   return out;
 }
 
@@ -307,12 +296,17 @@ async function open(
   await page.emulateMedia({ colorScheme: scheme });
   await page.goto('/dashboard');
   await expect(page.getByTestId('dashboard-summary')).toBeVisible();
-  await expect(page.getByTestId(/^environment-(columns|empty)$/)).toBeVisible();
+  await expect(page.getByTestId('overview-grid')).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
 }
 
 /** The effort chart plots the chosen measure; the card has no cohort line above it. */
-async function expectMeasure(page: Page, measure: 'agent h' | 'cost') {
+async function expectMeasure(page: Page, measure: 'agent h' | 'human h' | 'cost') {
+  if (measure === 'human h') {
+    await expect(page.getByTestId('human-timeline')).toBeVisible();
+    await expect(page.getByTestId('effort-chart')).toHaveCount(0);
+    return;
+  }
   await expect(page.getByTestId('effort-chart')).toHaveAttribute(
     'aria-label',
     measure === 'cost' ? /daily dollars, one bar per day/ : /daily hours, one bar per day/,
@@ -355,8 +349,8 @@ type Geometry = {
   lines: number;
   /** Anything drawn of Agent / human hours or Caught by your rules; the page has none. */
   hidden: string[];
-  /** From the block above the tiles to the tiles: the page's gap, with no row reserved. */
-  tilesGap: number;
+  /** From the summary to the effort row: the page's gap, with no row reserved. */
+  mainGap: number;
   /** Under the Sessions rows to the bottom of its panel: no blank interior. */
   sessionsBlank: number | null;
   tiles: Box[];
@@ -376,12 +370,15 @@ type Geometry = {
     ticks: number;
     markers: number;
   } | null;
+  /** The human h timeline, when it is shown: its rows wholly in view and in all. */
+  human: { visible: number; total: number } | null;
   clipped: string[];
   layers: {
     canvas: string;
     effort: Layer | null;
-    environment: Layer | null;
+    overview: Layer | null;
     sessions: Layer | null;
+    /** The Overview tiles' own backgrounds: none, inside the card's panel. */
     tiles: string[];
   };
 };
@@ -423,7 +420,7 @@ function geometry(): Geometry {
   };
   // Rows that scroll inside their own region are reachable by scrolling it;
   // every other control must sit in the viewport as drawn.
-  const scrollers = '.xt-table-scroll, .xt-env-list';
+  const scrollers = '.xt-table-scroll, .xt-human-body';
   const controlsOutside = [...dash.querySelectorAll<HTMLElement>('button, a[href], [tabindex="0"]')]
     .filter((element) => !element.closest(scrollers) && element.getClientRects().length > 0)
     .filter((element) => !inside(box(element)!, view))
@@ -437,14 +434,10 @@ function geometry(): Geometry {
     return [...region.querySelectorAll(selector)].filter((row) => inside(box(row)!, frame)).length;
   };
   const lanes = document.querySelector('.xt-lanes .xt-table-scroll');
-  const env = document.querySelector('.xt-env-list[data-compact]');
   const effortChart = document.querySelector<HTMLElement>('.xt-effort-chart');
-  const compact =
-    '.xt-env-list[data-compact] .xt-env-name, .xt-env-list[data-compact] .xt-kind, .xt-env-list[data-compact] .xt-env-host';
   const clipped = [...document.querySelectorAll<HTMLElement>('.xt-dashboard *')]
     .filter((element) => {
       if (element.closest('.xt-dash-table-scroll, .xt-table-scroll, .sr-only')) return false;
-      if (element.matches(compact)) return false;
       const style = getComputedStyle(element);
       const clips = style.overflow !== 'visible' || style.textOverflow === 'ellipsis';
       return clips && element.scrollWidth > element.clientWidth + 1;
@@ -499,9 +492,8 @@ function geometry(): Geometry {
     primary: {
       heading: box(document.querySelector('.xt-dashboard h1')),
       summary: box(document.querySelector('[data-testid="dashboard-summary"]')),
-      tiles: box(document.querySelector('.xt-dash-tiles')),
       effort: section('Effort'),
-      environment: section('Environment'),
+      overview: section('Overview'),
       sessions: section('Sessions'),
     },
     lines: document.querySelectorAll('.xt-dash-foot, [data-testid="dashboard-index"]').length,
@@ -515,11 +507,11 @@ function geometry(): Geometry {
         ),
       ].map((element) => element.className),
     ],
-    tilesGap: (() => {
-      const tiles = document.querySelector('.xt-dash-tiles');
-      const above = tiles?.previousElementSibling;
-      if (!tiles || !above) return Number.NaN;
-      return tiles.getBoundingClientRect().top - above.getBoundingClientRect().bottom;
+    mainGap: (() => {
+      const main = document.querySelector('.xt-dash-main-row');
+      const above = main?.previousElementSibling;
+      if (!main || !above) return Number.NaN;
+      return main.getBoundingClientRect().top - above.getBoundingClientRect().bottom;
     })(),
     sessionsBlank: (() => {
       // The lane table (or its empty message) is the panel's last content: no
@@ -530,13 +522,13 @@ function geometry(): Geometry {
         return null;
       return panel.getBoundingClientRect().bottom - table.getBoundingClientRect().bottom;
     })(),
-    tiles: [...document.querySelectorAll('.xt-dash-tiles .xt-stat-tile')].map((tile) => box(tile)!),
+    tiles: [...document.querySelectorAll('[data-testid="overview-tile"]')].map((tile) =>
+      box(tile)!,
+    ),
     controlsOutside,
     rows: {
       lanes: visibleRows(lanes, '.xt-data-row'),
       lanesTotal: lanes ? lanes.querySelectorAll('.xt-data-row').length : -1,
-      environment: visibleRows(env, '.xt-env-row'),
-      environmentTotal: env ? env.querySelectorAll('.xt-env-row').length : -1,
     },
     effort: effortChart
       ? {
@@ -560,13 +552,21 @@ function geometry(): Geometry {
           markers: effortChart.querySelectorAll('.xt-effort-marker').length,
         }
       : null,
+    human: (() => {
+      const body = document.querySelector('[data-testid="human-timeline-body"]');
+      if (!body) return null;
+      return {
+        visible: visibleRows(body, '.xt-human-row'),
+        total: body.querySelectorAll('.xt-human-row').length,
+      };
+    })(),
     clipped,
     layers: {
       canvas: getComputedStyle(document.body).backgroundColor,
       effort: layer('Effort'),
-      environment: layer('Environment'),
+      overview: layer('Overview'),
       sessions: layer('Sessions'),
-      tiles: [...document.querySelectorAll('.xt-dash-tiles .xt-stat-tile')].map(
+      tiles: [...document.querySelectorAll('[data-testid="overview-tile"]')].map(
         (tile) => getComputedStyle(tile).backgroundColor,
       ),
     },
@@ -587,12 +587,12 @@ function expectFits(g: Geometry, width: number, height: number) {
   expect(g.scroll.tops).toEqual([0, 0, 0]);
   // Sessions is the last block: no measurement or index line follows it.
   expect(g.lines).toBe(0);
-  // Agent / human hours and Caught by your rules are not drawn, and the tiles
-  // follow the block above them at the page's 5px gap: no row is kept for them.
+  // Agent / human hours and Caught by your rules are not drawn, nor the old
+  // row of tiles: the effort row follows the summary at the page's 5px gap.
   expect(g.hidden).toEqual([]);
-  expect(g.tilesGap).toBeCloseTo(5, 0);
-  const order = ['heading', 'summary', 'tiles', 'effort', 'sessions'] as const;
-  for (const name of [...order, 'environment'] as const) {
+  expect(g.mainGap).toBeCloseTo(5, 0);
+  const order = ['heading', 'summary', 'effort', 'sessions'] as const;
+  for (const name of [...order, 'overview'] as const) {
     const part = g.primary[name];
     expect(part, name).not.toBeNull();
     expect(part!.top, `${name} top`).toBeGreaterThanOrEqual(g.outlet.top - 0.5);
@@ -607,24 +607,41 @@ function expectFits(g: Geometry, width: number, height: number) {
       g.primary[order[index]]!.top,
       `${order[index]} below ${order[index - 1]}`,
     ).toBeGreaterThanOrEqual(g.primary[order[index - 1]]!.bottom - 0.5);
-  // Sessions ends under its rows, whatever its row count: its panel's 2px
-  // padding and 1px border, never a blank interior. A short list leaves the
-  // spare height to effort and environment; a long one scrolls inside.
-  expect(g.sessionsBlank, 'blank under the Sessions rows').not.toBeNull();
+  // The lane table fills the Sessions panel to its 2px padding and 1px
+  // border, with no caption under it. By default the card keeps room for
+  // eight rows however few it lists — the spare rows blank inside the table
+  // rather than handed to effort and overview — and a longer list scrolls
+  // inside it.
+  expect(g.sessionsBlank, 'blank under the Sessions table').not.toBeNull();
   expect(g.sessionsBlank!).toBeLessThanOrEqual(3.5);
+  expect(g.primary.sessions!.height, 'Sessions keeps eight rows').toBeGreaterThanOrEqual(
+    SESSIONS_EIGHT_ROWS - 0.5,
+  );
   // The paired cards share their row.
-  expect(g.primary.environment!.top).toBeCloseTo(g.primary.effort!.top, 0);
-  expect(g.primary.environment!.height).toBeCloseTo(g.primary.effort!.height, 0);
-  expect(g.primary.environment!.left).toBeGreaterThanOrEqual(g.primary.effort!.right);
-  expect(g.primary.effort!.width / g.primary.environment!.width).toBeCloseTo(1.6, 1);
-  // Four tiles on one row.
+  expect(g.primary.overview!.top).toBeCloseTo(g.primary.effort!.top, 0);
+  expect(g.primary.overview!.height).toBeCloseTo(g.primary.effort!.height, 0);
+  expect(g.primary.overview!.left).toBeGreaterThanOrEqual(g.primary.effort!.right);
+  expect(g.primary.effort!.width / g.primary.overview!.width).toBeCloseTo(1.6, 1);
+  // Four tiles, two by two, inside the Overview card.
   expect(g.tiles).toHaveLength(4);
-  expect(new Set(g.tiles.map((tile) => Math.round(tile.top))).size).toBe(1);
-  for (let index = 1; index < 4; index += 1)
-    expect(g.tiles[index].left).toBeGreaterThanOrEqual(g.tiles[index - 1].right);
+  expect(new Set(g.tiles.map((tile) => Math.round(tile.top))).size).toBe(2);
+  expect(new Set(g.tiles.map((tile) => Math.round(tile.left))).size).toBe(2);
+  for (const tile of g.tiles) {
+    expect(tile.top).toBeGreaterThanOrEqual(g.primary.overview!.top - 0.5);
+    expect(tile.bottom).toBeLessThanOrEqual(g.primary.overview!.bottom + 0.5);
+  }
   // At least three rows of each list are wholly in view, or all of them when fewer.
   expect(g.rows.lanes).toBeGreaterThanOrEqual(Math.min(3, g.rows.lanesTotal));
-  expect(g.rows.environment).toBeGreaterThanOrEqual(Math.min(3, g.rows.environmentTotal));
+  // The human h view draws your hours instead of the chart: at least three
+  // of its days are wholly in view, all of them when fewer.
+  if (g.human) {
+    expect(g.effort, 'no effort chart beside the timeline').toBeNull();
+    expect(g.human.visible).toBeGreaterThanOrEqual(Math.min(3, g.human.total));
+    expect(g.controlsOutside).toEqual([]);
+    expect(g.clipped).toEqual([]);
+    expectLayers(g);
+    return;
+  }
   // Effort states the range's total above one column per day, over a plot of
   // at least its 50px floor with a scale down to zero and a labelled date
   // axis; with no work only the marker axis remains.
@@ -659,10 +676,10 @@ const marginUnder = (g: Geometry) =>
   Math.round((g.outlet.bottom - g.primary.sessions!.bottom) * 100) / 100;
 
 /**
- * Effort and Environment are layered as Sessions is: the title row on
+ * Effort and Overview are layered as Sessions is: the title row on
  * the page's canvas, in the kit header's ink and weight, and the body in the
  * kit's inset surface panel with the same border, radius and lift, 6px inside
- * the card under a 36px band. The four tiles stay flat surface cards. Every colour is read from the page in whichever scheme
+ * the card under a 36px band. The four tiles draw no surface of their own. Every colour is read from the page in whichever scheme
  * is on and compared with Sessions' own, never with a literal.
  */
 function expectLayers(g: Geometry) {
@@ -673,7 +690,7 @@ function expectLayers(g: Geometry) {
   expect(canvas).not.toBe(surface);
   expect(sessions!.background).toBe(canvas);
   expect(reference.inset).toEqual({ top: 37, left: 7, right: 7, bottom: 7 });
-  for (const name of ['effort', 'environment'] as const) {
+  for (const name of ['effort', 'overview'] as const) {
     const card = g.layers[name];
     expect(card, name).not.toBeNull();
     expect(card!.background, `${name} card`).toBe(canvas);
@@ -689,7 +706,7 @@ function expectLayers(g: Geometry) {
     expect(card!.title, `${name} title`).toEqual(sessions!.title);
   }
   expect(tiles).toHaveLength(4);
-  for (const tile of tiles) expect(tile).toBe(surface);
+  for (const tile of tiles) expect(tile).toBe('rgba(0, 0, 0, 0)');
 }
 
 /** Neither the wheel nor the keyboard can move the page. */
@@ -734,24 +751,18 @@ for (const shape of ['plain', 'stress'] as const)
           // Every list holds more than it shows at the minimum, and shows it all
           // only by scrolling inside itself.
           expect(g.rows.lanesTotal).toBe(14);
-          expect(g.rows.environmentTotal).toBe(8);
           expect(g.effort).toMatchObject({ days: 7, bars: 5, markers: 3 });
           expect(g.effort!.headline).toBe('18 agent hlast 7 days');
-          // Qualifications stay in view beside their measurements: the
-          // unresolved counts as their panels' header triangles. Effort draws
-          // no work type, so it has none.
+          // Effort draws no work type, so it has no unresolved triangle.
           await expect(page.getByTestId('effort-unresolved')).toHaveCount(0);
-          await expect(page.getByTestId('environment-unresolved')).toHaveAccessibleName(
-            'Unresolved attribution: 38 unresolved observations, including untimed',
-          );
           // The lanes are capped, but no caption under the rows says so.
           await expect(page.getByTestId('lanes-disclosure')).toHaveCount(0);
           await expect(page.getByTestId('coverage')).toHaveAccessibleName(
             /^Coverage: .*2,318 untimed records$/,
           );
-          await expect(page.getByRole('button', { name: /^Merged PRs/ })).toContainText(
-            '5 + 1 unknown',
-          );
+          const merged = page.getByTestId('overview-tile').filter({ hasText: 'Merged PRs' });
+          await expect(merged.getByTestId('overview-value')).toHaveText('5');
+          await expect(merged.locator('.xt-overview-sub')).toHaveText('1 not checked yet');
         }
         await expectPageStill(page);
         expect(errors).toEqual([]);
@@ -770,27 +781,12 @@ for (const shape of ['empty', 'partial'] as const)
     await expectPageStill(page);
   });
 
-test('a failed report and a failed environment read keep the page in the window', async ({
-  page,
-}) => {
-  // The fixture serves no 14-day environment report and no 14-day Dashboard
-  // report, so selecting that range fails each read in turn.
-  const broken = exportFor('stress');
-  broken.environments = broken.environments.filter((report) => report.window.days !== 14);
-  await open(page, broken, 1120, 720, 'light');
-  await page.getByRole('radio', { name: '14d' }).click();
-  const environment = page.locator('section.xt-dash-card').filter({
-    has: page.getByRole('heading', { level: 2, name: 'Environment', exact: true }),
-  });
-  await expect(environment.getByRole('alert')).toContainText(
-    'Environment usage could not be loaded.',
-  );
-  await expect(environment.getByRole('button', { name: 'Retry environment usage' })).toBeVisible();
-  expectFits(await page.evaluate(geometry), 1120, 720);
-  await page.unrouteAll();
+test('a failed report keeps the page in the window', async ({ page }) => {
+  // The fixture serves no 14-day Dashboard report, so selecting that range fails the read.
   const failing = exportFor('stress');
   failing.dashboards = failing.dashboards.filter((report) => report.window.days !== 14);
   await serve(page, failing);
+  await page.setViewportSize({ width: 1120, height: 720 });
   await page.goto('/dashboard');
   await expect(page.getByTestId('dashboard-summary')).toBeVisible();
   await page.getByRole('radio', { name: '14d' }).click();
@@ -808,18 +804,16 @@ test('a failed report and a failed environment read keep the page in the window'
 
 /**
  * The secondary details, each one keyboard step from the page, from the card
- * it belongs to: tokens and cost are sections of Method, coverage and untimed
- * history open from the Sessions header, and each panel's unresolved data from
- * the triangle at its header's end.
+ * it belongs to: tokens and cost are sections of Details, coverage and untimed
+ * history open from the Sessions header, each panel's unresolved data from
+ * the triangle at its header's end, and the pull-request refresh from the
+ * Effort card's red ! (the stress report has a linked pull request that this
+ * source never checks on its own, so the red ! is there).
  */
 const OVERLAYS = [
   { name: /^Coverage/, dialog: 'Coverage' },
-  { name: 'Method', dialog: 'How effort is counted · daily values' },
-  { name: 'Refresh PR facts…', dialog: 'Refresh pull-request facts' },
-  { name: '14 days · activity strips, fixed 14 local days', dialog: 'Activity strips' },
-  { name: /^Unresolved attribution: /, dialog: 'Unresolved attribution' },
-  { name: 'Observed identities · 11', dialog: 'Observed identities · last 7d' },
-  { name: 'Configured components · 14', dialog: 'Configured components' },
+  { name: /^Details$/, dialog: 'How effort is counted · daily values' },
+  { name: 'Pull-request checks need your attention', dialog: 'Refresh pull-request facts' },
 ] as const;
 
 const within = async (dialog: Locator, width: number, height: number) => {
@@ -876,7 +870,7 @@ for (const [width, height, scheme] of [
     await page.getByRole('radio', { name: '30d' }).click();
     await expect(page.locator('.xt-effort-column')).toHaveCount(30);
     expectFits(await page.evaluate(geometry), width, height);
-    await page.getByRole('button', { name: 'Method', exact: true }).click();
+    await page.getByRole('button', { name: 'Details', exact: true }).click();
     const tokens = page.getByRole('dialog', { name: 'How effort is counted · daily values' });
     await expect(
       tokens.getByRole('group', { name: 'Output tokens per day' }).getByRole('img'),
@@ -927,7 +921,7 @@ test('the daily tables inside the dialogs scroll from the keyboard at 1120x720',
     expect((await page.evaluate(geometry)).primary).toEqual(before.primary);
   };
 
-  // Method: from Close, one Tab reaches the region; the day, both measures
+  // Details: from Close, one Tab reaches the region; the day, both measures
   // and the merged numbers fit its width in dollars mode.
   await page.getByRole('radio', { name: 'cost' }).click();
   await expectMeasure(page, 'cost');
@@ -935,7 +929,9 @@ test('the daily tables inside the dialogs scroll from the keyboard at 1120x720',
   // the page as it is now.
   const before = await page.evaluate(geometry);
   expectFits(before, 1120, 720);
-  const method = page.locator('.xt-dashboard').getByRole('button', { name: 'Method' });
+  const method = page
+    .locator('.xt-dashboard')
+    .getByRole('button', { name: 'Details', exact: true });
   await method.focus();
   await page.keyboard.press('Enter');
   const methodDialog = page.getByRole('dialog', {
@@ -952,7 +948,7 @@ test('the daily tables inside the dialogs scroll from the keyboard at 1120x720',
   );
   await escape(methodDialog, method, before);
 
-  // Tokens per day, Method's usage section: the daily token values open inside
+  // Tokens per day, Details' usage section: the daily token values open inside
   // it first, then one Tab from their summary reaches the region.
   await method.focus();
   await page.keyboard.press('Enter');
@@ -970,12 +966,12 @@ test('the daily tables inside the dialogs scroll from the keyboard at 1120x720',
 test('the lists scroll inside themselves from the keyboard at 1120x720', async ({ page }) => {
   await open(page, exportFor('stress'), 1120, 720, 'light');
   const before = await page.evaluate(geometry);
-  // The lanes always overflow here. The identity list shows at most eight rows,
-  // which can all fit at this size; then it has nothing to scroll, and every
-  // row must sit wholly inside it.
+  // The lanes always overflow here; the 30-day timeline of your hours too.
+  await page.getByRole('radio', { name: '30d' }).click();
+  await page.getByRole('radio', { name: 'human h' }).click();
   for (const [region, last, mustScroll] of [
     [page.getByRole('region', { name: 'Session lanes scroll area' }), '.xt-data-row', true],
-    [page.getByRole('list', { name: /^Most-called identities/ }), '.xt-env-row', false],
+    [page.getByRole('list', { name: /^Your hours by day/ }), '.xt-human-row', true],
   ] as const) {
     await region.focus();
     await expect(region).toBeFocused();
@@ -1000,8 +996,10 @@ test('the lists scroll inside themselves from the keyboard at 1120x720', async (
     // WebKit's animated keyboard scroll can settle a pixel short of the top.
     await expect.poll(() => region.evaluate((node) => node.scrollTop)).toBeLessThanOrEqual(1);
   }
-  // The effort days are tab stops in order, and each opens its card over the
-  // page without moving it.
+  // Back to the week's agent hours: the effort days are tab stops in order,
+  // and each opens its card over the page without moving it.
+  await page.getByRole('radio', { name: '7d' }).click();
+  await page.getByRole('radio', { name: 'agent h' }).click();
   const days = page.getByTestId('effort-day');
   await expect(days).toHaveCount(7);
   await days.first().focus();
@@ -1125,7 +1123,6 @@ test('a window too short for the page scrolls the outlet and keeps three rows in
   const [scrollHeight, clientHeight] = g.scroll.outlet;
   expect(scrollHeight).toBeGreaterThan(clientHeight);
   expect(g.effort!.plot).toBeGreaterThanOrEqual(50);
-  expect(g.rows.environment).toBeGreaterThanOrEqual(3);
   expect(g.rows.lanes).toBeGreaterThanOrEqual(3);
   expectLayers(g);
   const sessions = page.getByRole('link', { name: 'View sessions' });
@@ -1134,21 +1131,11 @@ test('a window too short for the page scrolls the outlet and keeps three rows in
 });
 
 /**
- * Environment reports shaped like the counts a real local index produced —
- * 13,558 observed calls, 48 identities, 4,913 unresolved observations
- * including untimed ones, which root saw wrap the card's summary at 1120×720
- * and push the page's last block out of the window — and a larger shape, so
- * the fix is not tuned to one numeral. Synthetic throughout: the rows are the
- * template identities repeated with computed shares (`shapedEnvironment`);
- * nothing is copied from a real index. Six index statuses, three of them with
- * the long diagnostic reasons (a system error, a path, a locked database) that
- * once added a footer line and scrolled the page: the Dashboard states none of
- * them, and Settings states each whole.
+ * Six index statuses, three of them with the long diagnostic reasons (a
+ * system error, a path, a locked database) that once added a footer line and
+ * scrolled the page: the Dashboard states none of them, and Settings states
+ * each whole.
  */
-const SHAPES = {
-  observed: { calls: 13_558, identities: 48, unresolved: 4_913 },
-  larger: { calls: 123_456, identities: 120, unresolved: 12_345 },
-} as const;
 const host = (name: string, state: NativeHostState) => ({
   host: name,
   state,
@@ -1213,68 +1200,53 @@ const INDEX: Record<string, { status: NativeIndexStatus }> = {
     },
   },
 };
-function shapedExport(shape: keyof typeof SHAPES, index: NativeIndexStatus): FixtureExport {
+function indexedExport(index: NativeIndexStatus): FixtureExport {
   const out = exportFor('stress');
-  out.environments = out.environments.map((report) => shapedEnvironment(report, SHAPES[shape]));
   out.native_index = index;
   return out;
 }
-for (const shape of ['observed', 'larger'] as const)
-  for (const scheme of SCHEMES)
-    test(`the ${shape} real-shaped Environment fits 1120x720 ${scheme} in every range, measure and index state`, async ({
-      page,
-    }, info) => {
-      const { identities, unresolved } = SHAPES[shape];
-      const count = (value: number) => value.toLocaleString('en-US');
-      const margins: Record<string, number> = {};
-      for (const [state, index] of Object.entries(INDEX)) {
-        await page.unrouteAll();
-        await open(page, shapedExport(shape, index.status), 1120, 720, scheme);
-        // The index's state is the sidebar's and Settings'; the Dashboard adds no line for it
-        // and carries none of its reasons.
-        await expect(page.getByTestId('dashboard-index')).toHaveCount(0);
-        const reasons = [index.status.phase, index.status.freshness]
-          .map((part) => ('reason' in part ? part.reason : ''))
-          .filter(Boolean);
-        for (const reason of reasons)
-          await expect(page.locator('.xt-dashboard')).not.toContainText(reason);
-        for (const range of ['7d', '30d'] as const) {
-          if (range !== '7d') await page.getByRole('radio', { name: range }).click();
-          await expect(page.getByTestId('environment-columns')).toContainText(`last ${range}`);
-          // The card shows no summary line of call and identity totals.
-          await expect(page.getByTestId('environment-summary')).toHaveCount(0);
-          for (const measure of ['agent h', 'cost'] as const) {
-            await page.getByRole('radio', { name: measure }).click();
-            await expectMeasure(page, measure);
-            const g = await page.evaluate(geometry);
-            await info.attach(`geometry-${state}-${range}-${measure}`, {
-              body: JSON.stringify(g, null, 2),
-            });
-            expectFits(g, 1120, 720);
-            expectInsideMargin(g);
-            margins[`${state} ${range} ${measure}`] = marginUnder(g);
-            await expect(page.getByTestId('environment-unresolved')).toHaveAccessibleName(
-              `Unresolved attribution: ${count(unresolved)} unresolved observations, including untimed`,
-            );
-            await expect(
-              page.getByRole('list', { name: `Most-called identities, top 8 of ${identities}` }),
-            ).toBeVisible();
-            await expect(
-              page.getByRole('button', { name: `Observed identities · ${identities}` }),
-            ).toBeVisible();
-          }
+for (const scheme of SCHEMES)
+  test(`the Dashboard fits 1120x720 ${scheme} in every range, measure and index state`, async ({
+    page,
+  }, info) => {
+    const margins: Record<string, number> = {};
+    for (const [state, index] of Object.entries(INDEX)) {
+      await page.unrouteAll();
+      await open(page, indexedExport(index.status), 1120, 720, scheme);
+      // The index's state is the sidebar's and Settings'; the Dashboard adds no line for it
+      // and carries none of its reasons.
+      await expect(page.getByTestId('dashboard-index')).toHaveCount(0);
+      const reasons = [index.status.phase, index.status.freshness]
+        .map((part) => ('reason' in part ? part.reason : ''))
+        .filter(Boolean);
+      for (const reason of reasons)
+        await expect(page.locator('.xt-dashboard')).not.toContainText(reason);
+      for (const range of ['7d', '30d'] as const) {
+        if (range !== '7d') await page.getByRole('radio', { name: range }).click();
+        await expect(page.getByTestId('report-period')).toBeVisible();
+        for (const measure of ['agent h', 'human h', 'cost'] as const) {
+          await page.getByRole('radio', { name: measure }).click();
+          await expectMeasure(page, measure);
+          const g = await page.evaluate(geometry);
+          await info.attach(`geometry-${state}-${range}-${measure}`, {
+            body: JSON.stringify(g, null, 2),
+          });
+          expectFits(g, 1120, 720);
+          expectInsideMargin(g);
+          margins[`${state} ${range} ${measure}`] = marginUnder(g);
         }
-        await expectPageStill(page);
-        if (state === 'live')
-          await page.screenshot({ path: info.outputPath(`shaped-${shape}-${scheme}.png`) });
-        // The full reason is on Settings, as the app's own sentences state it.
-        await page.getByRole('button', { name: 'Settings', exact: true }).click();
-        const settings = page.getByRole('region', { name: 'Native index' });
-        await expect(settings).toContainText(phaseText(index.status));
-        await expect(settings).toContainText(freshnessText(index.status));
       }
-      await info.attach('margins under Sessions', { body: JSON.stringify(margins, null, 2) });
-    });
+      await expectPageStill(page);
+      if (state === 'live')
+        await page.screenshot({ path: info.outputPath(`indexed-${scheme}.png`) });
+      // The full reason is on Settings, as the app's own sentences state it.
+      await page.getByRole('button', { name: 'Settings', exact: true }).click();
+      const settings = page.getByRole('region', { name: 'Native index' });
+      await expect(settings).toContainText(phaseText(index.status));
+      await expect(settings).toContainText(freshnessText(index.status));
+    }
+    await info.attach('margins under Sessions', { body: JSON.stringify(margins, null, 2) });
+  });
 
 /**
  * At 30d, in both measures, the page still fits — nothing scrolls, every
@@ -1284,11 +1256,11 @@ for (const shape of ['observed', 'larger'] as const)
  */
 for (const scheme of SCHEMES)
   test(`the 30d state fits 1120x720 ${scheme}`, async ({ page }, info) => {
-    await open(page, shapedExport('observed', live), 1120, 720, scheme);
+    await open(page, indexedExport(live), 1120, 720, scheme);
     await page.getByRole('radio', { name: '30d' }).click();
-    await expect(page.getByTestId('environment-columns')).toContainText('last 30d');
+    await expect(page.getByTestId('report-period')).toContainText('Aug 9');
     const margins: Record<string, number> = {};
-    for (const measure of ['agent h', 'cost'] as const) {
+    for (const measure of ['agent h', 'human h', 'cost'] as const) {
       await page.getByRole('radio', { name: measure }).click();
       await expectMeasure(page, measure);
       const g = await page.evaluate(geometry);

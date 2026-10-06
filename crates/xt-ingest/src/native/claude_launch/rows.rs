@@ -385,6 +385,58 @@ pub(super) fn timestamp(value: &Value) -> Option<i64> {
 /// Stands in for an output item that is not text: no reader accepts it.
 pub(super) const NON_TEXT: &str = "\u{0}non-text";
 
+/// The fixed completed-cell layout for `store(key,id);text({session_id:id})`:
+/// header, optional literal patch result, UUID receipt, then exactly the
+/// parsed tool operation results. `store` itself emits no result.
+pub(super) fn binding_receipt(
+    items: &[String],
+    prefix: usize,
+    operations: usize,
+    literal: Option<&str>,
+) -> Option<String> {
+    if prefix > 1
+        || items.len() != operations.checked_add(prefix)?.checked_add(2)?
+        || cell_header(items.first()?) != CellHeader::Completed
+        || (prefix == 1 && items.get(1)?.as_str() != "{}")
+    {
+        return None;
+    }
+    let value: Value = serde_json::from_str(items.get(1 + prefix)?).ok()?;
+    let object = value.as_object()?;
+    if object.len() != 1 {
+        return None;
+    }
+    let id = object.get("session_id")?.as_str()?;
+    (items.get(1 + prefix)? == &format!("{{\"session_id\":\"{id}\"}}")
+        && super::command::uuid(id)
+        && literal.is_none_or(|literal| literal == id))
+    .then(|| id.to_owned())
+}
+
+#[cfg(test)]
+mod binding_receipt_tests {
+    use super::*;
+    #[test]
+    fn only_the_fixed_own_output_slot_is_a_receipt() {
+        let id = "7fd904e4-b007-4f55-a1d1-40066c96457b";
+        let items = vec![
+            "Script completed\nOutput:\n".into(),
+            "{}".into(),
+            format!("{{\"session_id\":\"{id}\"}}"),
+            "git result".into(),
+        ];
+        assert_eq!(binding_receipt(&items, 1, 1, None).as_deref(), Some(id));
+        assert!(binding_receipt(&items, 0, 1, None).is_none());
+        assert!(
+            binding_receipt(&items, 1, 1, Some("00000000-0000-4000-8000-000000000000")).is_none()
+        );
+        let mut wrong = items;
+        wrong[2] = "{}".into();
+        wrong[3] = format!("{{\"session_id\":\"{id}\"}}");
+        assert!(binding_receipt(&wrong, 1, 1, None).is_none());
+    }
+}
+
 /// One tool call or tool output row, whole.
 #[derive(Clone, Debug)]
 pub(super) enum Item {

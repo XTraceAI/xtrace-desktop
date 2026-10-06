@@ -10,8 +10,11 @@ import type { FixtureExport } from '../../data/generated/FixtureExport';
 import type { MetricTile } from '../../data/generated/MetricTile';
 import type { MetricTokenSummary } from '../../data/generated/MetricTokenSummary';
 import { events, type DataEvent } from '../../data/ipc-names';
+import { ruleSummary } from '../../kit/rules';
 import { ThemeProvider } from '../../theme/ThemeProvider';
 import { AppRoutes } from '../AppRoutes';
+import { CONCURRENCY_DEFINITION, OVERVIEW_DEFINITION } from './overview';
+import { MERGED_PRS_DEFINITION } from './pr-effort';
 
 /** Pull-request refresh is not exercised by this test. */
 const unavailable = async (): Promise<never> => {
@@ -36,10 +39,38 @@ const laneRows = () =>
 const laneSpans = (row: HTMLElement) => [...row.querySelectorAll<HTMLElement>('.xt-lane-span')];
 
 type Edit = (report: DashboardMetrics) => void;
-/** Synthetic reports: the generated F1 export with the named fields replaced. */
-const synthetic = (edit: Edit, days = 7) => {
+/**
+ * Synthetic reports: the generated F1 export with the named fields replaced.
+ * As the native report does, every listed lane has a context whose display
+ * check finished; a test about a lane without one says `missing`.
+ */
+const synthetic = (edit: Edit, days = 7, missing: readonly string[] = []) => {
   const report = f1(days);
   edit(report);
+  for (const session of report.lane_sessions)
+    if (!('child_check' in session)) session.child_check = 'checked';
+  for (const lane of report.lanes)
+    if (
+      !missing.includes(lane.session_id) &&
+      !report.lane_sessions.some(
+        (session) => session.session_id === lane.session_id && session.host === lane.host,
+      )
+    )
+      report.lane_sessions.push({
+        session_id: lane.session_id,
+        host: lane.host,
+        repo: null,
+        branch: null,
+        title: null,
+        automated_review: false,
+        started_at_ms: null,
+        pr_links: null,
+        inferred_pr_links: null,
+        cost: null,
+        parent: null,
+        known_child: false,
+        child_check: 'checked',
+      });
   return report;
 };
 /** A lane session's cost: every response priced, unless the patch says otherwise. */
@@ -143,8 +174,17 @@ function mount(source: DataSource) {
 const loaded = () => screen.findByTestId('dashboard-summary');
 const card = (title: string) =>
   screen.getByRole('heading', { level: 2, name: title }).closest('section')!;
+/** One of the Overview card's four tiles. */
 const tileNamed = (label: string) =>
-  screen.getAllByRole('button').find((button) => button.textContent?.startsWith(label))!;
+  screen.getAllByTestId('overview-tile').find((tile) => tile.dataset.label === label)!;
+/** A tile's number, unit and change, as one string. */
+const tileValue = (label: string) =>
+  tileNamed(label).querySelector('[data-testid="overview-value"]')!.textContent;
+/** The line under a tile's number. */
+const tileSub = (label: string) => tileNamed(label).querySelector('.xt-overview-sub')!.textContent;
+/** A tile's definition control, beside its label. */
+const tileInfo = (label: string) =>
+  within(tileNamed(label)).getByRole('button', { name: `${label} definition` });
 const METHOD = 'How effort is counted · daily values';
 /** The report period each preset selects over the generated F1 export. */
 const PERIOD = {
@@ -171,18 +211,18 @@ function expectHiddenPanels() {
 }
 /**
  * The control that opens a supplementary measurement from the card it belongs
- * to: tokens and cost are sections of Effort's Method, coverage (with untimed
+ * to: tokens and cost are sections of Effort's Details, coverage (with untimed
  * history) opens from the Sessions header.
  */
 const detailTrigger = (title: string) =>
   title === 'Coverage'
     ? within(card('Sessions')).getByRole('button', { name: /^Coverage/ })
-    : within(card('Effort')).getByRole('button', { name: 'Method' });
+    : within(card('Effort')).getByRole('button', { name: 'Details' });
 const usageSection: Record<string, string> = {
   'Tokens per day': 'usage-tokens',
   'API-equivalent cost': 'usage-cost',
 };
-/** Opens one measurement and returns it: the Coverage dialog, or its titled section of Method. */
+/** Opens one measurement and returns it: the Coverage dialog, or its titled section of Details. */
 async function detail(title: string) {
   fireEvent.click(detailTrigger(title));
   if (title === 'Coverage') return screen.findByRole('dialog', { name: title });
@@ -218,23 +258,36 @@ it('renders the generated F1 report with honest unknowns and the shared sidebar 
   expect(source.dashboard).toHaveBeenCalledWith(7);
   expect(source.tokensByHost).toHaveBeenCalledWith(7);
   expectHiddenPanels();
-  // Tiles keep full labels; merged PRs is unknown with its reason, never zero.
-  expect(tileNamed('Agent h/day').textContent).toContain('0.1h');
-  expect(tileNamed('Concurrency').textContent).toContain('max 1');
-  // F1's confirmed links have never been refreshed: the count is unknown, and
-  // the known subtotal is named as a subtotal, not as the answer.
-  expect(tileNamed('Merged PRs').textContent).toContain(
-    'Unmeasured: 0 known merged; 2 linked pull requests have no cached merge facts',
+  // The Overview's four tiles; merged PRs is unknown with its reason, never zero.
+  expect(screen.getAllByTestId('overview-tile').map((tile) => tile.dataset.label)).toEqual([
+    'Leverage',
+    'Concurrency',
+    'Merged PRs',
+    'Hands-off median',
+  ]);
+  expect(document.querySelector('.xt-dash-tiles')).toBeNull();
+  expect(tileSub('Concurrency')).toBe('max 1');
+  // F1's confirmed links have never been checked: the tile says so in words
+  // instead of a number, never as a zero, and shows no dash to explain.
+  expect(tileValue('Merged PRs')).toBe('2 PRs not checked yet');
+  expect(tileNamed('Merged PRs').querySelector('.xt-unmeasured')).toBeNull();
+  // Its definition is the tile's own plain words and how fresh the facts
+  // are, not the rule's full text or the refresh report.
+  fireEvent.focus(tileInfo('Merged PRs'));
+  const mergedTip = await screen.findByRole('tooltip');
+  // This source never checks GitHub on its own, so the two unchecked pull
+  // requests need the user: the tip points to the Effort card's red !.
+  expect(mergedTip.textContent).toBe(
+    `${MERGED_PRS_DEFINITION}2 PRs not checked yet. Click the red ! on the Effort card to check them.`,
   );
-  expect(tileNamed('Merged PRs').textContent).toContain('0 + 2 unknown');
-  expect(tileNamed('Hands-off median').textContent).toContain('p90 3');
+  expect(within(card('Effort')).getByTestId('pr-attention').dataset.state).toBe('attention');
+  fireEvent.blur(tileInfo('Merged PRs'));
+  await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+  expect(tileSub('Hands-off median')).toBe('p90 3 min');
   expect(card('Effort').textContent).not.toContain('unavailable');
-  // Environment reads its own observed usage instead of the report's unavailable entry.
-  expect(
-    (await within(card('Environment')).findByTestId('environment-empty')).textContent,
-  ).toContain('No non-built-in tool calls were observed in the last 7d');
-  expect(within(card('Environment')).queryByTestId('environment-summary')).toBeNull();
-  expect(card('Environment').textContent).not.toContain('Environment data is unavailable');
+  // The Environment card is not on the Dashboard, and nothing reads its report.
+  expect(screen.queryByRole('heading', { level: 2, name: 'Environment' })).toBeNull();
+  expect(source.environment).not.toHaveBeenCalled();
   // F1 is legitimately unpriced: no total, no subtotal masquerading as one.
   const costDialog = await detail('API-equivalent cost');
   const cost = within(costDialog);
@@ -308,16 +361,15 @@ it('shows F2 concurrency and overlapping lanes on the fixed recent axis', async 
   );
   await loaded();
   // The primary number is the mean with no visible unit; its definition says
-  // so, from focus as from hover, and the max stays beside it.
-  expect(tileNamed('Concurrency').textContent).toBe('Concurrency1.8max 3');
-  fireEvent.focus(tileNamed('Concurrency'));
+  // so, from focus as from hover, and the max stays under it.
+  expect(tileValue('Concurrency')).toBe('1.8');
+  expect(tileSub('Concurrency')).toBe('max 3');
+  fireEvent.focus(tileInfo('Concurrency'));
   const tip = await screen.findByRole('tooltip');
-  expect(tip.textContent).toMatch(
-    /^Concurrency\..*Displayed value is mean concurrency; max is the peak overlap\./,
-  );
+  expect(tip.textContent).toContain(CONCURRENCY_DEFINITION);
   expect(tip.textContent).not.toMatch(/\b[A-Z]-\d{2}[a-z]?\b/);
-  expect(tileNamed('Concurrency').getAttribute('aria-describedby')).toBe(tip.id);
-  fireEvent.blur(tileNamed('Concurrency'));
+  expect(tileInfo('Concurrency').getAttribute('aria-describedby')).toBe(tip.id);
+  fireEvent.blur(tileInfo('Concurrency'));
   const rows = laneRows();
   expect(rows).toHaveLength(3);
   const spans = rows.map((row) => laneSpans(row)[0].style);
@@ -408,7 +460,8 @@ it('converts F11 percentage-point deltas exactly once and hides suppressed ones'
   mount(
     nativeSource(() =>
       synthetic((report) => {
-        report.tiles.agent_hours_per_day = tile(1.5, {
+        report.tiles.leverage = tile(1.5, {
+          rule_id: 'M-08',
           delta: { previous: 0.75, pct: 100, suppressed: false },
         });
         report.tiles.hands_off_median = tile(3, {
@@ -425,9 +478,10 @@ it('converts F11 percentage-point deltas exactly once and hides suppressed ones'
     ),
   );
   await loaded();
-  expect(tileNamed('Agent h/day').querySelector('.xt-stat-delta')!.textContent).toBe('▲100%');
-  expect(tileNamed('Hands-off median').querySelector('.xt-stat-delta')!.textContent).toBe('▼25%');
-  expect(tileNamed('Concurrency').querySelector('.xt-stat-delta')).toBeNull();
+  const change = (label: string) => tileNamed(label).querySelector('.xt-overview-delta');
+  expect(change('Leverage')!.textContent).toBe('▲100%');
+  expect(change('Hands-off median')!.textContent).toBe('▼25%');
+  expect(change('Concurrency')).toBeNull();
   expect(document.body.textContent).not.toContain('5,000%');
 });
 
@@ -564,7 +618,7 @@ it('shows a complete total, measured zeros and hands-off exclusions', async () =
   await closeDialog(costDialog);
   expect(screen.getByTestId('dashboard-summary').textContent).toContain('0 sessions');
   expect(screen.getByText(/No agent activity was recorded in this range/)).toBeTruthy();
-  expect(tileNamed('Hands-off median').textContent).toContain(
+  expect(tileValue('Hands-off median')).toContain(
     'Unmeasured: No hands-off stretches after exclusions',
   );
   // A complete inventory, every session's tokens measured, no failed gate and no untimed
@@ -846,17 +900,15 @@ it('names a lane by its indexed repository, branch and identity, and prices it',
   expect(costCell(zero).textContent).toBe('$0.00');
   expect(
     within(bare).getByText(
-      'Unmeasured: No selected responses in this window, so there is nothing to price',
+      'Unmeasured: No responses recorded for this session, so there is nothing to price',
     ),
   ).toBeTruthy();
   // The row's own description carries the context and the measurement.
   expect(repo.textContent).toContain(
     'claude session ctx-repo, repository /Users/dev/code/acme-api, branch feature/lanes: 1 active span',
   );
-  expect(repo.textContent).toContain(
-    'Over the whole 48 hours: $12.40 API-equivalent cost of 3 responses.',
-  );
-  expect(bare.textContent).toContain('Over the whole 48 hours: no selected responses to price.');
+  expect(repo.textContent).toContain('Whole session: $12.40 API-equivalent cost of 3 responses.');
+  expect(bare.textContent).toContain('Whole session: no responses to price.');
 });
 
 it('aligns lane columns to session, Compactions, PRs, started, activity and cost', async () => {
@@ -876,46 +928,50 @@ it('aligns lane columns to session, Compactions, PRs, started, activity and cost
   };
   mount(
     nativeSource(() =>
-      synthetic((report) => {
-        report.lanes = [
-          lane('titled', 90),
-          lane('untitled', 60),
-          lane('unlinked', 30),
-          lane('orphan', 10),
-        ];
-        report.lanes_total = 4;
-        report.lane_sessions = [
-          {
-            ...context,
-            session_id: 'titled',
-            title: 'Saved title',
-            // Months before the 48-hour axis: shown as the recorded start.
-            automated_review: false,
-            started_at_ms: Date.UTC(2026, 5, 1, 8, 30),
-            pr_links: 3,
-            inferred_pr_links: 1,
-          },
-          {
-            ...context,
-            session_id: 'untitled',
-            title: null,
-            // Valid spans, but no start is known.
-            automated_review: false,
-            started_at_ms: null,
-            pr_links: 2,
-            inferred_pr_links: 0,
-          },
-          {
-            ...context,
-            session_id: 'unlinked',
-            title: null,
-            automated_review: false,
-            started_at_ms: start,
-            pr_links: 0,
-            inferred_pr_links: 0,
-          },
-        ];
-      }),
+      synthetic(
+        (report) => {
+          report.lanes = [
+            lane('titled', 90),
+            lane('untitled', 60),
+            lane('unlinked', 30),
+            lane('orphan', 10),
+          ];
+          report.lanes_total = 4;
+          report.lane_sessions = [
+            {
+              ...context,
+              session_id: 'titled',
+              title: 'Saved title',
+              // Months before the 48-hour axis: shown as the recorded start.
+              automated_review: false,
+              started_at_ms: Date.UTC(2026, 5, 1, 8, 30),
+              pr_links: 3,
+              inferred_pr_links: 1,
+            },
+            {
+              ...context,
+              session_id: 'untitled',
+              title: null,
+              // Valid spans, but no start is known.
+              automated_review: false,
+              started_at_ms: null,
+              pr_links: 2,
+              inferred_pr_links: 0,
+            },
+            {
+              ...context,
+              session_id: 'unlinked',
+              title: null,
+              automated_review: false,
+              started_at_ms: start,
+              pr_links: 0,
+              inferred_pr_links: 0,
+            },
+          ];
+        },
+        7,
+        ['orphan'],
+      ),
     ),
   );
   await loaded();
@@ -932,14 +988,17 @@ it('aligns lane columns to session, Compactions, PRs, started, activity and cost
   expect(headers[5]).not.toContain('48h');
   expect(headers[6]).toBe('cost');
   expect(headers.join(' ')).not.toMatch(/first seen|spans$/);
-  const [titled, untitled, unlinked, orphan] = laneRows();
+  // A lane with no context row is not known to be shown: it is left out.
+  const [titled, untitled, unlinked, ...rest] = laneRows();
+  expect(rest).toHaveLength(0);
+  expect(table.innerHTML).not.toContain('orphan');
   // A saved title names the row; the identity stays in the link's name.
   const link = within(titled).getByRole('link', { name: 'Open session Saved title, titled' });
   expect(link.textContent).toBe('Saved title');
   expect(link.getAttribute('href')).toBe('/sessions/titled?q=titled&host=claude&range=7d');
   expect(untitled.querySelector('.xt-lane-find')!.textContent).toBe('Session untitled');
   // Recorded links, inferred evidence marked and spoken; zero for an indexed
-  // session with no link; unknown only when no context row exists.
+  // session with no link.
   const prs = titled.querySelector('.xt-lane-prs')!;
   expect(prs.getAttribute('data-inferred')).toBe('true');
   expect(prs.querySelector('.xt-evidence')).toBeTruthy();
@@ -953,11 +1012,6 @@ it('aligns lane columns to session, Compactions, PRs, started, activity and cost
   expect(unlinked.querySelector('.xt-lane-prs')!.textContent).toContain(
     'no recorded pull request link',
   );
-  expect(orphan.querySelector('.xt-lane-prs')).toBeNull();
-  // PRs, started and cost each say so.
-  expect(
-    within(orphan).getAllByText('Unmeasured: No indexed context was read for this session'),
-  ).toHaveLength(3);
   // The recorded start in the report zone, with year and zone in its title,
   // however far before the axis it is.
   const started = titled.querySelector('time')!;
@@ -966,11 +1020,7 @@ it('aligns lane columns to session, Compactions, PRs, started, activity and cost
   expect(started.getAttribute('dateTime')).toBe('2026-06-01T08:30:00.000Z');
   // Unknown start stays unknown, never the first span.
   expect(untitled.querySelector('time')).toBeNull();
-  expect(
-    within(untitled).getByText(
-      'Unmeasured: No start is known for this session; its first active span is not its start',
-    ),
-  ).toBeTruthy();
+  expect(within(untitled).getByText('Unmeasured: Start unknown for this session')).toBeTruthy();
   // The span count moved into the row's description.
   expect(titled.textContent).toContain('1 active span in the last 48 hours');
   expect(titled.textContent).toContain('started Jun 1, 2026, 08:30 (UTC)');
@@ -986,30 +1036,42 @@ it('explains the PRs column from the keyboard as recorded links', async () => {
   act(() => header.focus());
   const tip = await screen.findByRole('tooltip');
   expect(tip.textContent).not.toMatch(/\b[A-Z]-\d{2}[a-z]?\b/);
-  expect(tip.textContent).toContain(
-    'every evidence level (exact, commit, inferred), all indexed time, not merge status',
+  expect(tip.textContent).toContain(ruleSummary('M-13'));
+  expect(tip.querySelector('.xt-rule-context')!.textContent).toBe(
+    'Linked PRs, merged or not. 0 means no link was found; a grey dot means the count includes guesses.',
   );
-  expect(tip.textContent).toContain('Zero means no link is recorded');
 });
 
-it('gives the lane cost column its own definition and window', async () => {
+it('says which sessions the card lists, and that every number in a row is the whole session', async () => {
   mount(nativeSource(() => f1()));
   await loaded();
-  const header = screen.getByRole('button', {
-    name: 'Cost over the last 48 hours, definition',
-  });
+  const card = screen.getByRole('region', { name: 'Sessions' });
+  expect(card.querySelector('.xt-section-meta')!.textContent).toBe('Active in the last 48 hours');
+  act(() => within(card).getByRole('button', { name: 'Sessions definition' }).focus());
+  const tip = await screen.findByRole('tooltip');
+  // The card's meta already says which sessions are listed; the note says
+  // only what the meta does not: whose numbers the row shows.
+  expect(tip.querySelector('.xt-rule-context')!.textContent).toBe(
+    "Each row's numbers cover the whole session; only the Activity bars stop at 48 hours.",
+  );
+  // The card's own words, after the rule, use none of the report's terms.
+  expect(tip.querySelector('.xt-rule-context')!.textContent).not.toMatch(
+    /returned|span|measurement|verified/,
+  );
+});
+
+it('gives the lane cost column its own definition: the whole session', async () => {
+  mount(nativeSource(() => f1()));
+  await loaded();
+  const header = screen.getByRole('button', { name: 'Whole-session cost, definition' });
   expect(header.textContent).toBe('cost');
   // The definition is reachable by keyboard, not only by pointer.
   act(() => header.focus());
   const tip = await screen.findByRole('tooltip');
   expect(tip.textContent).not.toMatch(/\b[A-Z]-\d{2}[a-z]?\b/);
-  expect(tip.textContent).toContain(
-    "API-equivalent cost of every token each session used over the whole 48-hour window, including active spans this table does not draw, at each model's public rate.",
-  );
-  expect(tip.textContent).toContain('"+" means some responses have no published price');
-  expect(tip.textContent).toContain('"—" means nothing could be priced');
-  expect(tip.textContent).toContain(
-    "Codex responses with no service tier recorded are priced at OpenAI's default (standard) tier.",
+  expect(tip.textContent).toContain(ruleSummary('M-04'));
+  expect(tip.querySelector('.xt-rule-context')!.textContent).toBe(
+    'Cost of the whole session, not just the last 48 hours. Σ is the session plus its sub-sessions; + means part is unpriced.',
   );
 });
 
@@ -1093,10 +1155,10 @@ it('marks a partial lane cost, an unpriced one, and keeps small and large amount
     [...row.querySelectorAll('[role="cell"]')].at(-1)!.querySelector('.xt-metric-cell')!;
   expect(costCell(partial).textContent).toBe('$12.40+');
   expect(costCell(partial).getAttribute('title')).toBe(
-    'At least $12.40: 3 of 5 responses priced; 2 codex-auto-review have no published price; the unpriced ones are not included.',
+    'At least $12.40: 2 of 5 responses have no price.',
   );
   expect(partial.textContent).toContain(
-    'Over the whole 48 hours: at least $12.40 API-equivalent cost: 3 of 5 responses priced; 2 codex-auto-review have no published price.',
+    'Whole session: at least $12.40 API-equivalent cost: 3 of 5 responses priced; 2 codex-auto-review have no published price.',
   );
   expect(
     within(unpriced).getByText(
@@ -1109,13 +1171,9 @@ it('marks a partial lane cost, an unpriced one, and keeps small and large amount
   expect(costCell(tiny).textContent).toBe('<$0.01');
   expect(costCell(large).textContent).toBe('$1,234');
   expect(costCell(large).getAttribute('title')).toBe(
-    "$1,234.40 API-equivalent, 1 response priced. 1 Codex response recorded no service tier and is priced at OpenAI's default (standard) tier.",
+    '$1,234.40 at public API prices. 1 Codex response priced at the standard tier.',
   );
-  expect(
-    within(missing).getByText(
-      'Unmeasured: No indexed session owns this identifier, so nothing was priced',
-    ),
-  ).toBeTruthy();
+  expect(within(missing).getByText('Unmeasured: Cost unknown for this session')).toBeTruthy();
 });
 
 it('keeps a truncated lane row’s cost covering the whole window', async () => {
@@ -1157,42 +1215,41 @@ it('keeps a truncated lane row’s cost covering the whole window', async () => 
   expect(within(row).getByText('$42.00')).toBeTruthy();
 });
 
-it('keeps a lane honest when the report carries no context row for it', async () => {
+it('leaves out a lane the report carries no context row for, borrowing nothing', async () => {
   const start = f1().lane_start_ms;
   mount(
     nativeSource(() =>
-      synthetic((report) => {
-        report.lanes = [
-          { session_id: 'orphan', host: 'claude', start_ms: start, end_ms: start + 60_000 },
-        ];
-        report.lanes_total = 1;
-        report.lane_sessions = [
-          {
-            session_id: 'other',
-            title: null,
-            automated_review: false,
-            started_at_ms: null,
-            pr_links: 0,
-            inferred_pr_links: 0,
-            host: 'claude',
-            repo: '/Users/dev/code/acme-api',
-            branch: 'main',
-            cost: laneCost(9),
-          },
-        ];
-      }),
+      synthetic(
+        (report) => {
+          report.lanes = [
+            { session_id: 'orphan', host: 'claude', start_ms: start, end_ms: start + 60_000 },
+          ];
+          report.lanes_total = 1;
+          report.lane_sessions = [
+            {
+              session_id: 'other',
+              title: null,
+              automated_review: false,
+              started_at_ms: null,
+              pr_links: 0,
+              inferred_pr_links: 0,
+              host: 'claude',
+              repo: '/Users/dev/code/acme-api',
+              branch: 'main',
+              cost: laneCost(9),
+            },
+          ];
+        },
+        7,
+        ['orphan'],
+      ),
     ),
   );
   await loaded();
-  const [row] = laneRows();
-  // Another session's repository is never borrowed for this row.
-  expect(row.textContent).not.toContain('acme-api');
-  expect(row.querySelector('.xt-lane-repo')!.textContent).toBe('Unknown repository');
-  expect(row.querySelector('.xt-lane-find')!.textContent).toBe('Session orphan');
-  expect(
-    within(row).getAllByText('Unmeasured: No indexed context was read for this session'),
-  ).toHaveLength(3);
-  expect(row.textContent).toContain('cost unknown: no indexed context');
+  // Not known to be shown: no row of its own, and another session's
+  // repository is never borrowed for it.
+  expect(screen.queryByRole('link', { name: /Open session .*orphan$/ })).toBeNull();
+  expect(document.body.innerHTML).not.toContain('acme-api');
 });
 
 it('captions token measurement with usage coverage sessions, including ones without usage', async () => {
@@ -1243,16 +1300,25 @@ it('follows the design composition and keeps supplementary measurements in colla
   mount(nativeSource((days) => f1(days)));
   await loaded();
   const order = [...document.querySelectorAll('.xt-dashboard h2')].map((h) => h.textContent);
-  expect(order).toEqual(['Effort', 'Environment', 'Sessions']);
+  expect(order).toEqual(['Effort', 'Overview', 'Sessions']);
   expectHiddenPanels();
-  // The tiles follow the summary directly: no row is kept for the hidden panels.
-  const tiles = document.querySelector('.xt-dash-tiles')!;
-  expect(tiles.previousElementSibling).toBe(screen.getByTestId('dashboard-summary'));
+  // The effort row follows the summary directly: no row of tiles, and no row
+  // is kept for the hidden panels.
+  expect(document.querySelector('.xt-dash-tiles')).toBeNull();
   expect(document.querySelector('.xt-dash-hero-row')).toBeNull();
   const main = card('Effort').parentElement!;
   expect(main.className).toContain('xt-dash-main-row');
-  expect(tiles.nextElementSibling).toBe(main);
-  expect(main.nextElementSibling).toBe(card('Sessions'));
+  expect(main.previousElementSibling).toBe(screen.getByTestId('dashboard-summary'));
+  // Only the two boundaries sit between the panes: Effort | Overview, and
+  // the row above Sessions.
+  const columns = screen.getByRole('separator', { name: 'Resize Effort and Overview' });
+  expect(card('Effort').nextElementSibling).toBe(columns);
+  expect(columns.nextElementSibling).toBe(card('Overview'));
+  const rows = screen.getByRole('separator', {
+    name: 'Resize Effort and Overview against Sessions',
+  });
+  expect(main.nextElementSibling).toBe(rows);
+  expect(rows.nextElementSibling).toBe(card('Sessions'));
   // Sessions is the last block: no measurement line follows it. Each
   // supplementary measurement opens over the page from the card it belongs
   // to; none is open.
@@ -1271,7 +1337,7 @@ it('follows the design composition and keeps supplementary measurements in colla
     await closeDialog(section);
     expect(detailTrigger(title)).toBe(document.activeElement);
   }
-  // Method's own daily values come first; the usage sections follow them.
+  // Details' own daily values come first; the usage sections follow them.
   fireEvent.click(detailTrigger('Tokens per day'));
   const method = await screen.findByRole('dialog', { name: METHOD });
   expect([...method.querySelectorAll('h2, h3')].map((heading) => heading.textContent)).toEqual([
@@ -1280,12 +1346,12 @@ it('follows the design composition and keeps supplementary measurements in colla
     'API-equivalent cost',
   ]);
   await closeDialog(method);
-  // The hands-off definition leads with the design copy, then the real rule context.
-  fireEvent.focus(tileNamed('Hands-off median'));
+  // The hands-off definition is the tile's plain words; with no surface left
+  // out, it names none.
+  fireEvent.focus(tileInfo('Hands-off median'));
   const tip = await screen.findByRole('tooltip');
-  expect(tip.textContent).toMatch(
-    /How long your agents run before they need you\. .*No surface is excluded/,
-  );
+  expect(tip.textContent).toMatch(/^The median time an agent worked on its own/);
+  expect(tip.textContent).not.toContain('timestamps are too coarse');
 });
 
 it('hides the TopBar period off windowed routes and while a range is loading', async () => {
@@ -1312,55 +1378,50 @@ it('hides the TopBar period off windowed routes and while a range is loading', a
 });
 
 /**
- * Every continuous measurement on the page set to one value: the two means,
- * and the hands-off median with its p90 aside. Each tile keeps its own rule so
- * the definitions it offers are the real ones.
+ * Every continuous measurement on the page set to one value: leverage, mean
+ * concurrency, and the hands-off median with its p90. Each tile keeps its own
+ * rule so the definitions it offers are the real ones.
  */
 const continuousTiles = (value: number | null) => (report: DashboardMetrics) => {
-  for (const key of [
-    'agent_hours_per_day',
-    'concurrency_mean',
-    'hands_off_median',
-    'hands_off_p90',
-  ] as const)
+  for (const key of ['leverage', 'concurrency_mean', 'hands_off_median', 'hands_off_p90'] as const)
     report.tiles[key] = tile(value, { rule_id: report.tiles[key].rule_id });
 };
 const continuousText = async (value: number | null) => {
   mount(nativeSource(() => synthetic(continuousTiles(value))));
   await loaded();
   return {
-    perDay: tileNamed('Agent h/day').textContent,
-    concurrency: tileNamed('Concurrency').textContent,
-    handsOff: tileNamed('Hands-off median').textContent,
+    leverage: tileValue('Leverage'),
+    concurrency: `${tileValue('Concurrency')}|${tileSub('Concurrency')}`,
+    handsOff: `${tileValue('Hands-off median')}|${tileSub('Hands-off median')}`,
   };
 };
 
 it('reads a small positive Dashboard measurement as below the scale, not as a measured zero', async () => {
-  // 0.03 hours, h/day, lanes and minutes are all real work that the shared
+  // 0.03 of a ratio, of lanes and of minutes are all real work that the shared
   // one-decimal scale would otherwise print as the 0 this page keeps for a
-  // measured zero — including the hands-off p90 aside.
+  // measured zero — including the hands-off p90.
   expect(await continuousText(0.03)).toEqual({
-    perDay: 'Agent h/day<0.1h',
-    concurrency: 'Concurrency<0.1max 1',
-    handsOff: 'Hands-off median<0.1minp90 <0.1',
+    leverage: '<0.1×',
+    concurrency: '<0.1|max 1',
+    handsOff: '<0.1min|p90 <0.1 min',
   });
   cleanup();
   // A measured zero keeps saying zero: it is the one thing "0" means here.
   expect(await continuousText(0)).toEqual({
-    perDay: 'Agent h/day0h',
-    concurrency: 'Concurrency0max 1',
-    handsOff: 'Hands-off median0minp90 0',
+    leverage: '0×',
+    concurrency: '0|max 1',
+    handsOff: '0min|p90 0 min',
   });
   cleanup();
   // A value the scale can show is shown by the scale, unchanged.
   expect(await continuousText(1.24)).toEqual({
-    perDay: 'Agent h/day1.2h',
-    concurrency: 'Concurrency1.2max 1',
-    handsOff: 'Hands-off median1.2minp90 1.2',
+    leverage: '1.2×',
+    concurrency: '1.2|max 1',
+    handsOff: '1.2min|p90 1.2 min',
   });
   cleanup();
   // An unmeasured value never reaches a formatter: it still states its reason,
-  // and the p90 aside is dropped rather than made up.
+  // and the p90 is dropped rather than made up.
   const unknown = await continuousText(null);
   for (const text of Object.values(unknown)) {
     expect(text).toContain('Unmeasured: Synthetic unknown reason');
@@ -1374,7 +1435,7 @@ it('draws a below-scale value in the same cell at the same size, in light and in
   // decides about the string's width: the cell it is drawn in, which clips
   // rather than wraps, and that cell's size. Both must match an ordinary
   // value's and must not differ between themes, so the one extra character of
-  // `<0.1` cannot displace the unit or the aside beside it.
+  // `<0.1` cannot displace the unit beside it.
   const seen = [];
   for (const [theme, value] of [
     ['dark', 1.24],
@@ -1385,11 +1446,11 @@ it('draws a below-scale value in the same cell at the same size, in light and in
     mount(nativeSource(() => synthetic(continuousTiles(value))));
     await loaded();
     expect(document.documentElement.dataset.theme).toBe(theme);
-    const cells = ['Agent h/day', 'Concurrency', 'Hands-off median'].map((label) =>
+    const cells = ['Leverage', 'Concurrency', 'Hands-off median'].map((label) =>
       tileNamed(label).querySelector<HTMLElement>('.xt-metric-cell')!,
     );
     seen.push({
-      handsOff: tileNamed('Hands-off median').textContent,
+      handsOff: tileValue('Hands-off median'),
       cells: cells.map(
         (cell) => `${cell.className} ${cell.style.fontSize} ${cell.style.textAlign}`,
       ),
@@ -1399,19 +1460,27 @@ it('draws a below-scale value in the same cell at the same size, in light and in
   const [ordinary, dark, light] = seen;
   expect(dark).toEqual(light);
   expect(dark.cells).toEqual(ordinary.cells);
-  expect(ordinary.handsOff).toBe('Hands-off median1.2minp90 1.2');
-  expect(dark.handsOff).toBe('Hands-off median<0.1minp90 <0.1');
+  expect(ordinary.handsOff).toBe('1.2min');
+  expect(dark.handsOff).toBe('<0.1min');
 });
 
-it('shows the generated report at 14 days as below the scale rather than as zero', async () => {
-  // The bug in the generated data itself: F1's 0.38 agent hours spread over 14
-  // days is 0.027 per day, which the scale alone printed as "0" for a range
-  // that recorded 0.4 hours of agent time.
+it('shows the generated report leverage with a point for each day of every range', async () => {
+  // F1's five messages within 23 minutes are its 0.3 hours of yours; the same
+  // 0.4 agent hours over them is its leverage at every range.
   mount(nativeSource((days) => f1(days)));
   await loaded();
-  expect(tileNamed('Agent h/day').textContent).toContain('0.1h');
+  const leverage = () =>
+    within(tileNamed('Leverage')).getByRole('img', { name: /^Leverage by day/ });
+  expect(tileValue('Leverage')).toMatch(/^\d+\.\d×/);
+  expect(tileSub('Leverage')).toMatch(/agent h ÷ .* your h$/);
+  const first = tileValue('Leverage');
+  expect(leverage().getAttribute('aria-label')!.split(', ').length).toBeGreaterThan(7);
   fireEvent.click(screen.getByRole('radio', { name: '14d' }));
-  await waitFor(() => expect(tileNamed('Agent h/day').textContent).toContain('<0.1h'));
+  await waitFor(() => expect(period()).toMatch(PERIOD['14d']));
+  await waitFor(() =>
+    expect(leverage().getAttribute('aria-label')).toMatch(/^Leverage by day, Aug 25 to Sep 7:/),
+  );
+  expect(tileValue('Leverage')).toBe(first);
 });
 
 it('keeps Agent / human hours and Caught by your rules hidden at every range preset', async () => {
@@ -1423,7 +1492,7 @@ it('keeps Agent / human hours and Caught by your rules hidden at every range pre
     await loaded();
     expectHiddenPanels();
     const order = [...document.querySelectorAll('.xt-dashboard h2')].map((h) => h.textContent);
-    expect(order).toEqual(['Effort', 'Environment', 'Sessions']);
+    expect(order).toEqual(['Effort', 'Overview', 'Sessions']);
   }
 });
 
@@ -1480,7 +1549,7 @@ it('discloses untimed indexed history with coverage, whatever range is selected'
   expect(document.querySelector('.xt-dashboard .xt-untimed')).toBeNull();
 });
 
-it('keeps an open Method or Coverage open while another range loads', async () => {
+it('keeps an open Details or Coverage open while another range loads', async () => {
   mount(nativeSource((days) => synthetic(() => {}, days)));
   await loaded();
   for (const [title, name] of [
@@ -1536,15 +1605,15 @@ it('explains each card from a compact info control, with no rule ID in the chrom
     await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
   };
   for (const [title, expected] of [
-    ['Effort', 'distinct session IDs'],
-    ['Environment', 'Environment usage'],
-    ['Sessions', 'Active spans'],
+    ['Effort', ruleSummary('M-19')],
+    ['Overview', OVERVIEW_DEFINITION],
+    ['Sessions', ruleSummary('M-05')],
   ] as const)
     await definition(card(title), title, expected);
   for (const [title, expected] of [
-    ['Tokens per day', 'Tokens and cost'],
-    ['API-equivalent cost', 'Tokens and cost'],
-    ['Coverage', 'Surface capture coverage'],
+    ['Tokens per day', ruleSummary('M-04')],
+    ['API-equivalent cost', ruleSummary('M-04')],
+    ['Coverage', ruleSummary('M-18')],
   ] as const) {
     const dialog = await detail(title);
     await definition(dialog, title, expected);

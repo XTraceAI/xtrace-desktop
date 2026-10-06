@@ -646,8 +646,8 @@ fn a_process_that_ran_and_failed_is_one_execution_failure() {
             "printf 'gh: Could not resolve to a PullRequest\\n' 1>&2\nexit 1",
         ),
         (
-            "exit-4",
-            "printf 'gh: authentication required\\n' 1>&2\nexit 4",
+            "exit-2",
+            "printf 'gh: authentication required\\n' 1>&2\nexit 2",
         ),
         (
             "rate-limited",
@@ -676,6 +676,38 @@ fn a_process_that_ran_and_failed_is_one_execution_failure() {
             assert!(!reported.contains(leak), "{name} leaked {leak}");
         }
     }
+}
+
+/// gh documents exit code 4 as "authentication required" (`gh help
+/// exit-codes`); that exit status, and nothing it writes, is unauthorized.
+/// Any other nonzero exit stays one execution failure, whatever it says.
+#[test]
+fn exit_code_four_is_unauthorized_and_any_other_failure_is_not() {
+    let directory = TempDir::new().unwrap();
+    let signed_out = fixture(
+        directory.path(),
+        "gh-signed-out",
+        "printf 'To get started with GitHub CLI, please run:  gh auth login\\n' 1>&2\nexit 4",
+    );
+    let outcome = run(&signed_out, short(10_000));
+    assert_eq!(code(&outcome), PrRefreshError::Unauthorized);
+    assert!(!format!("{outcome:?}").contains("gh auth login"));
+    // Exit 4 decides it, not the words: silence still is unauthorized.
+    let silent = fixture(directory.path(), "gh-exit-4-silent", "exit 4");
+    assert_eq!(
+        code(&run(&silent, short(10_000))),
+        PrRefreshError::Unauthorized
+    );
+    // The same words with another exit code are not.
+    let other = fixture(
+        directory.path(),
+        "gh-exit-1-auth-words",
+        "printf 'please run: gh auth login\\n' 1>&2\nexit 1",
+    );
+    assert_eq!(
+        code(&run(&other, short(10_000))),
+        PrRefreshError::ExecutionFailed
+    );
 }
 
 #[test]

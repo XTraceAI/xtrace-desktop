@@ -1,4 +1,4 @@
-"""Synthetic two-rollout fixture equivalent to the pinned checkout's history fixture.
+"""Synthetic rollout fixtures equivalent to the pinned checkout's history data.
 
 The first rollout contains a shared prefix and abandoned work; the continuation
 inherits only the prefix and adds a retry. Readers must count six unique records.
@@ -9,6 +9,7 @@ import os
 
 SID = "11111111-2222-3333-4444-555555555555"
 RID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+FORK = "0f0f0f0f-1111-4222-8333-444444444444"
 STAMP = "2026-01-01T00:00:00.123456789012Z"
 
 
@@ -49,3 +50,17 @@ def fixture(home):
                   message(6, "assistant", "retry reply"), tokens(7, 17, 4)]
     child = write_jsonl(folder / f"rollout-2026-01-02T00-00-00-{SID}_{RID}.jsonl", child_rows)
     return parent, child, parent_rows, child_rows
+
+
+def fork_fixture(home, base_path, base_rows, cutoff_rows):
+    cutoff = sum(map(len, base_path.read_bytes().splitlines(keepends=True)[:cutoff_rows]))
+    start = base_rows[cutoff_rows - 1]["ordinal"] + 1
+    meta = {"id": FORK, "timestamp": "2026-01-05T00:00:00Z", "cwd": "/synthetic/project",
+            "originator": "codex_cli", "history_mode": "paginated",
+            "forked_from_id": SID, "forked_from_ordinal_exclusive": start,
+            "history_base": {"thread_id": SID, "end_ordinal_exclusive": start,
+                             "end_byte_offset": cutoff}}
+    rows = [row(start, "session_meta", meta), message(start + 1, "user", "fork ask"),
+            message(start + 2, "assistant", "fork reply"), tokens(start + 3, 25, 6)]
+    path = write_jsonl(home / f".codex/sessions/2026/01/05/rollout-2026-01-05T00-00-00-{FORK}.jsonl", rows)
+    return path, rows

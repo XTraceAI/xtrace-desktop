@@ -59,6 +59,9 @@ export function outputText(summary: TodaySummary) {
   }
 }
 
+/** What the visible cost line leaves unsaid: the basis of the estimate, in plain words. */
+const COST_NOTE = 'Estimated at public API prices; subscriptions and tool fees are not included.';
+
 export function costText(summary: TodaySummary) {
   const { cost } = summary;
   const coverage = `${cost.priced_observations} of ${plural(cost.selected_observations, 'response')} priced`;
@@ -167,10 +170,8 @@ function Today() {
         <section className="xt-tray-card xt-tray-tile" aria-label="Today’s output tokens">
           <span className="xt-tray-label">Today · output</span>
           <span className="xt-tray-value">{output.value}</span>
-          <span className="xt-tray-meta" title={output.meta}>
-            {output.meta}
-          </span>
-          <span className="xt-tray-meta" title={`${costText(data)}. ${data.cost.basis}`}>
+          <span className="xt-tray-meta">{output.meta}</span>
+          <span className="xt-tray-meta" title={COST_NOTE}>
             {costText(data)}
           </span>
         </section>
@@ -180,9 +181,7 @@ function Today() {
             {agent.value}
             <span className="xt-tray-unit">h</span>
           </span>
-          <span className="xt-tray-meta" title={agent.meta}>
-            {agent.meta}
-          </span>
+          <span className="xt-tray-meta">{agent.meta}</span>
         </section>
       </div>
       <section className="xt-tray-card xt-tray-section" aria-label="Active now">

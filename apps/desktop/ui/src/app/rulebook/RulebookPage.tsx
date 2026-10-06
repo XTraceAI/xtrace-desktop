@@ -106,7 +106,7 @@ function RecordedActivity({ view }: { view: 'overview' | 'fires' }) {
           value={loaded && bounded(recordedFires(loaded.counts.window_modes), loaded)}
           reason={loaded ? undefined : state.lead}
           aside={loaded ? `14d · ${exact ? 'exact' : 'lower bound'}` : state.pill}
-          tip="Rows recorded with mode advise or gate in the 14-day window of this source snapshot. A recorded mode is not an outcome."
+          tip="Fires recorded in the last 14 days. They show how a rule was sent, not what the agent did."
         />
         <StatTile
           label="Blocked"
@@ -115,7 +115,7 @@ function RecordedActivity({ view }: { view: 'overview' | 'fires' }) {
           value={null}
           reason={NOT_READ}
           aside={UNAVAILABLE}
-          tip="A gate row records how a rule was delivered, not whether an agent was stopped; no outcome is read."
+          tip="The app records how a rule was sent, not whether the agent was stopped."
         />
         <StatTile
           label="Adherence"
@@ -124,7 +124,7 @@ function RecordedActivity({ view }: { view: 'overview' | 'fires' }) {
           value={null}
           reason={NOT_READ}
           aside={UNAVAILABLE}
-          tip="Needs every opportunity a rule had to fire, which is not recorded; a count of fires alone cannot give it."
+          tip="It needs every chance a rule had to fire, and those aren't recorded."
         />
         <StatTile
           label="Judge overhead"
@@ -133,7 +133,7 @@ function RecordedActivity({ view }: { view: 'overview' | 'fires' }) {
           value={null}
           reason={NOT_READ}
           aside={UNAVAILABLE}
-          tip="No judge calls are run or recorded by this app."
+          tip="This app doesn't use a reviewing model on rule fires, so there is nothing to count."
         />
       </div>
       {note}

@@ -7,7 +7,9 @@ import {
   ageLabel,
   limitingWindow,
   dayValueLabel,
+  paceFill,
   paceGapLabel,
+  paceLabel,
   readingsSpanVisible,
   remainingLabel,
   resetLabel,
@@ -136,58 +138,67 @@ const usage: AccountUsage = {
 it('puts the exhausted all-model week above an unused session and keeps model limits separate', () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-10-01T19:00:00Z'));
-  render(
-    <AccountUsageWidget usage={usage} failed={false} refreshing={false} onRefresh={vi.fn()} />,
-  );
-  const claude = screen.getByLabelText(
-    'Claude account usage: 0% remaining · Weekly · limit reached',
-  );
-  expect(claude.textContent).toContain('Limit reached');
-  expect(
-    (claude.querySelector('.xt-account-summary-track > span') as HTMLElement).style.width,
-  ).toBe('0%');
-  expect(claude.textContent).toContain('resets');
-  expect(claude.textContent).toContain('days ago');
-  expect(claude.textContent).not.toContain('Last read');
-  const codex = screen.getByLabelText('Codex account usage: 74% remaining · Weekly');
-  expect(codex.textContent).toContain('Weekly');
-  expect((codex.querySelector('.xt-account-summary-track > span') as HTMLElement).style.width).toBe(
-    '74%',
-  );
-  fireEvent.click(claude);
-  // Claude's details do not list its session or model-specific limits.
-  const claudeDetail = claude.closest('details')!.querySelector<HTMLElement>('.xt-account-detail')!;
-  expect(within(claudeDetail).queryByText('Session')).toBeNull();
-  expect(within(claudeDetail).queryByText('Example model · Weekly')).toBeNull();
-  expect(claudeDetail.querySelectorAll('.xt-account-window-head')).toHaveLength(0);
-  cleanup();
-  // Codex lists the same kinds of windows as rows.
-  render(
-    <AccountUsageWidget
-      usage={{
-        ...usage,
-        codex: { ...usage.claude, windows: usage.claude.windows.map(toCodex) },
-      }}
-      failed={false}
-      refreshing={false}
-      onRefresh={vi.fn()}
-    />,
-  );
-  const codexSummary = screen.getByLabelText(
-    'Codex account usage: 0% remaining · Weekly · limit reached',
-  );
-  fireEvent.click(codexSummary);
-  const detail = codexSummary.closest('details')!;
-  expect(within(detail).getByText('Session')).toBeTruthy();
-  expect(within(detail).getByText('Example model · Weekly')).toBeTruthy();
-  expect(within(detail).getByText('100% remaining')).toBeTruthy();
-  expect(within(detail).getByText('32% remaining')).toBeTruthy();
-  const session = within(detail).getByText('Session').closest('.xt-account-window')!;
-  expect((session.querySelector('.xt-account-track > span') as HTMLElement).style.width).toBe(
-    '100%',
-  );
-  const model = within(detail).getByText('Example model · Weekly').closest('.xt-account-window')!;
-  expect((model.querySelector('.xt-account-track > span') as HTMLElement).style.width).toBe('32%');
+  try {
+    render(
+      <AccountUsageWidget usage={usage} failed={false} refreshing={false} onRefresh={vi.fn()} />,
+    );
+    const claude = screen.getByLabelText(
+      'Claude account usage: 0% remaining · Weekly · limit reached',
+    );
+    expect(claude.textContent).toContain('Limit reached');
+    expect(
+      (claude.querySelector('.xt-account-summary-track > span') as HTMLElement).style.width,
+    ).toBe('0%');
+    expect(claude.textContent).toContain('resets');
+    expect(claude.textContent).toContain('days ago');
+    expect(claude.textContent).not.toContain('Last read');
+    const codex = screen.getByLabelText('Codex account usage: 74% remaining · Weekly');
+    expect(codex.textContent).toContain('Weekly');
+    expect(
+      (codex.querySelector('.xt-account-summary-track > span') as HTMLElement).style.width,
+    ).toBe('74%');
+    fireEvent.click(claude);
+    // Claude's details do not list its session or model-specific limits.
+    const claudeDetail = claude
+      .closest('details')!
+      .querySelector<HTMLElement>('.xt-account-detail')!;
+    expect(within(claudeDetail).queryByText('Session')).toBeNull();
+    expect(within(claudeDetail).queryByText('Example model · Weekly')).toBeNull();
+    expect(claudeDetail.querySelectorAll('.xt-account-window-head')).toHaveLength(0);
+    cleanup();
+    // Codex lists the same kinds of windows as rows.
+    render(
+      <AccountUsageWidget
+        usage={{
+          ...usage,
+          codex: { ...usage.claude, windows: usage.claude.windows.map(toCodex) },
+        }}
+        failed={false}
+        refreshing={false}
+        onRefresh={vi.fn()}
+      />,
+    );
+    const codexSummary = screen.getByLabelText(
+      'Codex account usage: 0% remaining · Weekly · limit reached',
+    );
+    fireEvent.click(codexSummary);
+    const detail = codexSummary.closest('details')!;
+    expect(within(detail).getByText('Session')).toBeTruthy();
+    expect(within(detail).getByText('Example model · Weekly')).toBeTruthy();
+    expect(within(detail).getByText('100% remaining')).toBeTruthy();
+    expect(within(detail).getByText('32% remaining')).toBeTruthy();
+    const session = within(detail).getByText('Session').closest('.xt-account-window')!;
+    expect((session.querySelector('.xt-account-track > span') as HTMLElement).style.width).toBe(
+      '100%',
+    );
+    const model = within(detail).getByText('Example model · Weekly').closest('.xt-account-window')!;
+    expect((model.querySelector('.xt-account-track > span') as HTMLElement).style.width).toBe(
+      '32%',
+    );
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
 });
 
 /** The same window as Codex reports it. */
@@ -591,7 +602,7 @@ it('names Refresh in a tooltip on hover and on focus', async () => {
 const forecastText = [
   'How the forecast works',
   'Usage is read every 10 minutes for Claude, and every 5 minutes for Codex while this window is open. Readings stay on this Mac.',
-  "Your speed is how fast usage rose over the last 24 hours. Until there's enough history, it's your average since the week started.",
+  'Your speed is your average since the week started.',
   "That speed is extended to the reset. If it reaches 100% first, you see when you'd run out.",
   "The tick on the bar marks where you'd be with even use through the week.",
   "It assumes a steady pace, so nights and weekends aren't taken into account.",
@@ -757,7 +768,6 @@ it('shows a short one-line reset and an on-pace line for the week', () => {
   renderClaude([
     claudeWeek({
       pace: {
-        basis: 'window_average',
         projected_percent_at_reset: 67.6,
         expected_percent: 38.1,
         run_out_at: null,
@@ -767,8 +777,10 @@ it('shows a short one-line reset and an on-pace line for the week', () => {
   const summary = screen.getByLabelText('Claude account usage: 68% remaining · Week');
   const sub = summary.querySelector('.xt-account-sub')!;
   expect(sub.firstChild!.textContent).toBe('Week · resets Mon 8 PM');
-  const pace = sub.querySelector('.xt-account-pace')!;
-  expect(pace.textContent).toBe('On pace · ~68% used by reset');
+  // The on-pace line shows only in the open details, not in the header.
+  expect(sub.querySelector('.xt-account-pace')).toBeNull();
+  const pace = summary.closest('details')!.querySelector('.xt-account-detail > .xt-account-pace')!;
+  expect(pace.textContent).toBe('Behind pace · ~68% used by reset');
   expect(pace.classList.contains('is-warning')).toBe(false);
   // Screen readers hear the reset, the pace and how far use is from even
   // use (the even-use mark's text) as the row's description.
@@ -777,7 +789,7 @@ it('shows a short one-line reset and an on-pace line for the week', () => {
     .split(' ')
     .map((id) => document.getElementById(id)!.textContent);
   expect(description).toEqual([
-    'Week · resets Mon 8 PM' + 'On pace · ~68% used by reset',
+    'Week · resets Mon 8 PM' + 'Behind pace · ~68% used by reset',
     '6% behind pace',
   ]);
   expect(summary.textContent).not.toContain('Last read');
@@ -801,7 +813,6 @@ it('warns when the week runs out before its reset, and names the week under a fu
   const week = claudeWeek({
     used_percent: 70,
     pace: {
-      basis: 'recent',
       projected_percent_at_reset: 100,
       expected_percent: 38.1,
       run_out_at: runOut,
@@ -824,7 +835,6 @@ it('warns when the week runs out before its reset, and names the week under a fu
     duration_minutes: null,
     resets_at: at('2026-10-01T20:10:00Z'),
     pace: {
-      basis: 'window_average',
       projected_percent_at_reset: 100,
       expected_percent: 38.1,
       run_out_at: at('2026-10-01T19:40:00Z'),
@@ -916,8 +926,9 @@ it('does not repeat the main week row in the details, and keeps the other window
   expect(detail.querySelectorAll('.xt-account-window-head')).toHaveLength(2);
   expect(within(detail).getByText('Session')).toBeTruthy();
   expect(within(detail).getByText('Spark · Week')).toBeTruthy();
-  // The week's charts stay, first, above the other windows.
-  const charts = detail.firstElementChild!;
+  // The week's pace line, then its charts, above the other windows.
+  expect(detail.firstElementChild!.classList.contains('xt-account-pace')).toBe(true);
+  const charts = detail.children[1];
   expect(charts.querySelector('.xt-account-burndown')).not.toBeNull();
   expect(charts.querySelector('.xt-account-daily')).not.toBeNull();
   expect(charts.querySelector('.xt-account-window-head')).toBeNull();
@@ -933,7 +944,6 @@ it('says nothing about running out once a stale projection has passed', () => {
       claudeWeek({
         used_percent: 70,
         pace: {
-          basis: 'recent',
           projected_percent_at_reset: 100,
           expected_percent: 38.1,
           run_out_at: Date.now() / 1000 - 600,
@@ -1062,7 +1072,6 @@ function pacedWeek(used: number, overrides: Partial<AccountUsageWindow> = {}): A
   return claudeWeek({
     used_percent: used,
     pace: {
-      basis: 'window_average',
       projected_percent_at_reset: Math.min(100, (used / 64) * 168),
       expected_percent: evenNow,
       run_out_at: null,
@@ -1074,8 +1083,9 @@ function pacedWeek(used: number, overrides: Partial<AccountUsageWindow> = {}): A
 it.each([
   [44, '6% ahead of pace'],
   [35, '3% behind pace'],
-  [38.6, 'On pace'],
-  [37.2, 'On pace'],
+  [38.6, '<1% ahead of pace'],
+  [37.2, '<1% behind pace'],
+  [38.1, 'On pace'],
 ])('marks even use on the week bar (used %s): "%s" on hover and on focus', async (used, text) => {
   // Real clocks: the tooltip opens on its own timers. The week resets in
   // three days; the mark's place comes from the app, not from the clock.
@@ -1115,7 +1125,6 @@ it('shows the even-use mark only while the pace line is shown, and only on the w
     [
       pacedWeek(70, {
         pace: {
-          basis: 'recent',
           projected_percent_at_reset: 100,
           expected_percent: evenNow,
           run_out_at: Date.now() / 1000 - 600,
@@ -1140,11 +1149,13 @@ it('shows the even-use mark only while the pace line is shown, and only on the w
     resets_at: at('2026-10-01T20:10:00Z'),
   };
   renderClaude([session, pacedWeek(44)]);
-  expect(document.querySelector('.xt-account-sub .xt-account-pace')!.textContent).toContain('Week');
+  expect(document.querySelector('.xt-account-detail > .xt-account-pace')!.textContent).toContain(
+    'Week',
+  );
   expect(tick()).toBeNull();
   // Without the mark, the row's description has no gap text either.
   expect(document.querySelector('summary')!.getAttribute('aria-describedby')).not.toContain(' ');
-  expect(document.querySelector('summary .sr-only')).toBeNull();
+  expect(document.querySelector('summary > .sr-only')).toBeNull();
 });
 
 it('does not open or close the row when the mark is clicked or pressed', () => {
@@ -1183,7 +1194,6 @@ describe('the week burndown', () => {
       pacedWeek(44, {
         daily: [{ date: '2026-09-28', used_points: 4, partial: false }],
         pace: {
-          basis: 'recent',
           projected_percent_at_reset: 100,
           expected_percent: evenNow,
           run_out_at: runOut,
@@ -1253,7 +1263,6 @@ describe('the week burndown', () => {
     renderClaude([
       pacedWeek(88, {
         pace: {
-          basis: 'window_average',
           projected_percent_at_reset: 100,
           expected_percent: evenNow,
           run_out_at: runOut,
@@ -1337,13 +1346,12 @@ describe('the week burndown', () => {
   });
 });
 
-it('counts a gap of exactly one point, and calls anything smaller on pace', () => {
+it('rounds a gap of a point or more, and calls anything smaller <1%', () => {
   const gap = (used: number) =>
     paceGapLabel(
       claudeWeek({
         used_percent: used,
         pace: {
-          basis: 'window_average',
           projected_percent_at_reset: 90,
           expected_percent: 40,
           run_out_at: null,
@@ -1352,8 +1360,8 @@ it('counts a gap of exactly one point, and calls anything smaller on pace', () =
     );
   expect(gap(41)).toBe('1% ahead of pace');
   expect(gap(39)).toBe('1% behind pace');
-  expect(gap(40.99)).toBe('On pace');
-  expect(gap(39.01)).toBe('On pace');
+  expect(gap(40.99)).toBe('<1% ahead of pace');
+  expect(gap(39.01)).toBe('<1% behind pace');
   expect(gap(40)).toBe('On pace');
   // Ahead means using faster than even.
   expect(gap(46.6)).toBe('7% ahead of pace');
@@ -1482,7 +1490,6 @@ it('lists no session or model rows under a Claude week, but keeps its charts and
     duration_minutes: null,
     resets_at: at('2026-10-02T01:30:00Z'),
     pace: {
-      basis: 'recent',
       projected_percent_at_reset: 100,
       expected_percent: 50,
       run_out_at: at('2026-10-02T01:23:00Z'),
@@ -1503,7 +1510,7 @@ it('lists no session or model rows under a Claude week, but keeps its charts and
   expect(summary.querySelector('.xt-account-sub')!.firstChild!.textContent).toBe(
     'Week · resets Mon 8 PM',
   );
-  expect(summary.querySelector('.xt-account-pace')).not.toBeNull();
+  expect(summary.querySelector('.xt-account-pace')).toBeNull();
   expect(summary.querySelector('.xt-account-summary-track')).not.toBeNull();
   fireEvent.click(summary);
   const detail = summary.closest('details')!.querySelector<HTMLElement>('.xt-account-detail')!;
@@ -1570,17 +1577,16 @@ it('keeps a Codex session main row listed when it has its own pace', () => {
   vi.setSystemTime(new Date(nowIso));
   renderCodex(
     codexSessionAndWeek({
-      basis: 'window_average',
       projected_percent_at_reset: 100,
       expected_percent: 38.1,
       run_out_at: at('2026-10-01T19:40:00Z'),
     }),
   );
   const summary = screen.getByLabelText('Codex account usage: 20% remaining · Session');
-  // The header's pace line is the week's, so the session keeps its own row.
-  expect(summary.querySelector('.xt-account-pace')!.textContent).toMatch(/^Week /);
+  // The pace line is the week's, so the session keeps its own row.
   fireEvent.click(summary);
   const detail = summary.closest('details')!.querySelector<HTMLElement>('.xt-account-detail')!;
+  expect(detail.querySelector(':scope > .xt-account-pace')!.textContent).toMatch(/^Week /);
   const sessionRow = within(detail).getByText('Session').closest('.xt-account-window')!;
   expect(sessionRow.querySelector('.xt-account-pace')!.textContent).toBe(
     'Runs out ~today 12:40 PM',
@@ -1646,7 +1652,6 @@ it('keeps the latest reading label off the pace line early in the week', () => {
       claudeWeek({
         used_percent: used,
         pace: {
-          basis: 'window_average',
           projected_percent_at_reset: 100,
           expected_percent: 4.8,
           run_out_at: at('2026-10-01T19:00:00Z'),
@@ -1676,4 +1681,32 @@ it('keeps the latest reading label off the pace line early in the week', () => {
   const below = label(3);
   expect(below.anchor).toBe('end');
   expect(below.dx).toBeLessThan(0);
+});
+
+it('colors the summary bar against the even-use mark', () => {
+  // 30% left, even use would leave 50%: the bar stops short of the mark.
+  expect(paceFill(70, 50)).toEqual({ className: 'is-behind-pace' });
+  // 80% left, even use would leave 40%: green from halfway along the fill.
+  expect(paceFill(20, 60)).toEqual({ className: 'is-ahead-of-pace', split: '50%' });
+  expect(paceFill(40, 40)).toEqual({});
+  // Any gap counts, as it does for the run-out warning.
+  expect(paceFill(40.5, 40)).toEqual({ className: 'is-behind-pace' });
+  expect(paceFill(40, undefined)).toEqual({});
+});
+
+it('words the pace line with the same comparison as the tick and the bar', () => {
+  const line = (used: number, runOut: number | null = null) =>
+    paceLabel(
+      pacedWeek(used, {
+        resets_at: Date.now() / 1000 + 3 * 86_400,
+        pace: {
+          projected_percent_at_reset: 66,
+          expected_percent: evenNow,
+          run_out_at: runOut,
+        },
+      }),
+    );
+  expect(line(31)).toEqual({ text: 'Behind pace · ~66% used by reset', warning: false });
+  expect(line(evenNow)).toEqual({ text: 'On pace · ~66% used by reset', warning: false });
+  expect(paceGapLabel(pacedWeek(31))).toMatch(/behind pace$/);
 });

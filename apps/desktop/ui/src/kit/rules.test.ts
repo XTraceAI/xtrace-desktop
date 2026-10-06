@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { expect, it } from 'vitest';
 import report from '../../../../../docs/acceptance/metrics/rule-coverage.json';
-import { displayRuleText, rules, ruleText, type RuleId } from './rules';
+import { rules, ruleSummaries, ruleSummary, ruleText, SUMMARY_MAX, type RuleId } from './rules';
 
 it('covers all current metric IDs, PR variants, and referenced privacy/capture definitions', () => {
   const expected = [
@@ -51,10 +51,28 @@ it('states confirmed automated inputs as neutral without proving unmatched input
   expect(rules['M-09']).toContain('It still counts as a user record for timestamp health');
 });
 
-it('explains nested rule references without exposing contract codes', () => {
-  for (const id of Object.keys(rules) as RuleId[])
-    expect(displayRuleText(id)).not.toMatch(/\b(?:[A-Z]-\d{2}[a-z]?|F\d{2})\b/);
-  expect(displayRuleText('M-08')).toContain('agent time minutes ÷ estimated human time minutes');
-  expect(displayRuleText('M-18')).toContain('it is not complete measurement verification');
-  expect(displayRuleText('M-18')).toContain('partial and complete measurement coverage');
+it('defines leverage as agent hours divided by your hours, not typing time', () => {
+  expect(rules['M-08']).toContain('Leverage = agent hours (M-05) ÷ your hours');
+  expect(rules['M-08']).toContain(
+    'Agent hours and your hours both cover the same whole local days',
+  );
+  expect(rules['M-08']).not.toContain('M-07');
+  expect(ruleSummary('M-08')).toContain('Agent hours divided by your hours');
+});
+
+it('gives every rule one short plain-language summary without contract codes or jargon', () => {
+  expect(Object.keys(ruleSummaries).sort()).toEqual(Object.keys(rules).sort());
+  for (const id of Object.keys(rules) as RuleId[]) {
+    const summary = ruleSummary(id);
+    expect(summary.length, id).toBeGreaterThan(0);
+    expect(summary.length, id).toBeLessThanOrEqual(SUMMARY_MAX);
+    expect(summary, id).not.toMatch(/\b(?:[A-Z]-\d{2}[a-z]?|F\d{2})\b/);
+    expect(summary, id).not.toMatch(
+      /\b(?:disjoint|union|SHA|event window|gh pr view|enrichment|denominator|canonical)\b/i,
+    );
+  }
+  expect(ruleSummary('M-19')).toBe(
+    'Linked pull requests merged in this range, and their effort. A session linked to several PRs is counted once.',
+  );
+  expect(ruleSummary('toString' as RuleId)).toBe('Definition unavailable');
 });

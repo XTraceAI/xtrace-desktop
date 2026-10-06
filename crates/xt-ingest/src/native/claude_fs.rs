@@ -489,6 +489,14 @@ pub fn import_file(
             // The file name still identifies the session: a transcript that
             // vanished or became unreadable since enumeration is a known session
             // whose read failure the caller diagnoses.
+            if !file.sidechain
+                && let Err(failure) = store.observe_own_check(&file.session_id, None)
+            {
+                return Ok(skipped(
+                    file,
+                    format!("display check could not be withdrawn: {failure}"),
+                ));
+            }
             if let Err(skipped) = SessionWriter::begin(
                 store,
                 Host::Claude,
@@ -533,6 +541,37 @@ pub fn import_file(
                 records_enriched: 0,
             },
         });
+    }
+    // A session's own transcript read whole again (replaced, truncated,
+    // rewritten, or with no checkpoint) may open differently: its display
+    // check observes the inputs it rests on before any row of this read
+    // commits. A read behind a proven checkpoint leaves them as they were.
+    if !file.sidechain && !matches!(resume.basis, ResumeBasis::Appended) {
+        let existing = match store.child_check_attempt(&file.session_id) {
+            Ok(existing) => existing,
+            Err(error) => {
+                return Ok(skipped(
+                    file,
+                    format!("display check could not be read: {error}"),
+                ));
+            }
+        };
+        if existing.is_some() {
+            let Some(key) =
+                super::claude_launch::check::claude_own_key_at(&file.path, &file.session_id)
+            else {
+                return Ok(skipped(
+                    file,
+                    "display check inputs could not be read before this import".into(),
+                ));
+            };
+            if let Err(error) = store.observe_own_check(&file.session_id, key.as_deref()) {
+                return Ok(skipped(
+                    file,
+                    format!("display check could not be recorded: {error}"),
+                ));
+            }
+        }
     }
     let mut writer = match SessionWriter::begin(
         store,

@@ -42,7 +42,7 @@ export function useDetail(key: DetailKey) {
 
 /**
  * The range's recorded tokens and their API-equivalent cost, as two titled
- * sections of the Effort card's Method detail: output is one of the card's
+ * sections of the Effort card's Details dialog: output is one of the card's
  * measures, and both are the same selected usage. Each keeps its definition
  * and its scope beside its title, and the cost is never read as a total when
  * part of the usage could not be priced.

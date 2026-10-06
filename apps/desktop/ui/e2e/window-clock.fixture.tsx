@@ -23,8 +23,12 @@ const exported = fixture as FixtureExport;
 const source = new FixtureDataSource(exported);
 // Three synthetic pages exercise the mounted list's loaded-page replay and
 // scroll position; the normal F1 fixture keeps its original one-page data.
+// With `groups`, five first-page sessions are sub-sessions of the last
+// session on the third page, so their group's parent arrives late.
 if (new URLSearchParams(location.search).get('pages') === '3') {
   const held = new URLSearchParams(location.search).get('hold');
+  const groups = new URLSearchParams(location.search).has('groups');
+  const PARENT = 'clock-session-2-49';
   const first = exported.sessions.find((entry) => entry.window.days === 7)!;
   const row = first.rows[0];
   let pageReads = 0;
@@ -41,12 +45,33 @@ if (new URLSearchParams(location.search).get('pages') === '3') {
         });
       }
       const page = after === null ? 0 : Number(after);
-      const rows = Array.from({ length: 50 }, (_, index) => ({
-        ...row,
-        id: `clock-session-${page}-${String(index).padStart(2, '0')}`,
-      }));
+      const parent = {
+        session_id: PARENT,
+        host: row.host,
+        title: 'Clock parent',
+        evidence: 'native_spawn' as const,
+      };
+      const rows = Array.from({ length: 50 }, (_, index) => {
+        const id = `clock-session-${page}-${String(index).padStart(2, '0')}`;
+        const child = groups && page === 0 && index >= 10 && index < 15;
+        return {
+          ...row,
+          id,
+          title: groups && id === PARENT ? 'Clock parent' : row.title,
+          parent: child ? parent : null,
+          known_child: child,
+        };
+      });
       if (pageReads > 3 && page === 2) rows.reverse();
-      return { window: first.window, rows, next: page < 2 ? String(page + 1) : null };
+      return {
+        window: first.window,
+        rows,
+        next: page < 2 ? String(page + 1) : null,
+        referenced_parents:
+          groups && page === 0
+            ? [{ session_id: PARENT, host: row.host, known_child: false, parent: null }]
+            : [],
+      };
     },
   });
 }

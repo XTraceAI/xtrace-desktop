@@ -707,7 +707,9 @@ pub fn spawn_reader(
 /// [`spawn_reader`] for Codex with the full export's opt-in origin evidence
 /// (`--origin-evidence`): the same sessions and records, a marker on each
 /// header the reader examined and a claim on each record it proves Codex
-/// injected. Only Codex is ever asked for it.
+/// injected. Only Codex is ever asked for it. The same run carries the
+/// image-wrapper length evidence and the automated-input evidence
+/// (`--automated-input-evidence`, see [`super::tool_sent`]).
 pub fn spawn_codex_reader_with_origin_evidence(
     python: &OsStr,
     producer: &PinnedProducer,
@@ -717,6 +719,22 @@ pub fn spawn_codex_reader_with_origin_evidence(
     let mut command = reader_command(python, producer, Host::Codex, home);
     command.arg("--origin-evidence");
     command.arg("--human-input-adjustments");
+    command.arg("--automated-input-evidence");
+    spawn_export(command, cancel)
+}
+
+/// [`spawn_reader`] for Cursor with the full export's opt-in automated-input
+/// evidence (`--automated-input-evidence`): the same sessions and records, and
+/// a claim on each record the reader proves Cursor, or the reader itself,
+/// wrote (see [`super::tool_sent`]).
+pub fn spawn_cursor_reader_with_tool_sent_evidence(
+    python: &OsStr,
+    producer: &PinnedProducer,
+    home: &Path,
+    cancel: Option<&CancelToken>,
+) -> Result<(std::io::BufReader<std::process::ChildStdout>, ReaderHandle), ReaderError> {
+    let mut command = reader_command(python, producer, Host::Cursor, home);
+    command.arg("--automated-input-evidence");
     spawn_export(command, cancel)
 }
 

@@ -141,7 +141,9 @@ const measure = (page: Page) =>
         id: row.querySelector<HTMLElement>('[data-visible-id]')?.dataset.visibleId ?? null,
         height: box.height,
         cells: cells.map((cell) => Math.round(cell.getBoundingClientRect().width)),
-        blank: cells.slice(2).every((cell) => cell.textContent === ''),
+        // Blank but for its cost: no lane, link count, start or compactions.
+        blank: cells.slice(2, -1).every((cell) => cell.textContent === ''),
+        cost: cells.at(-1)!.textContent,
         // The context's drawn width, and the name link's: the absent parent's
         // name ends in an ellipsis inside its cell rather than past it.
         context: row.querySelector('.xt-lane-repo')?.getBoundingClientRect().width ?? null,
@@ -178,8 +180,7 @@ const measure = (page: Page) =>
       // No caption follows the rows, and the panel ends under them.
       caption: document.querySelectorAll('[data-testid="lanes-disclosure"]').length,
       blank: panel.bottom - area.bottom,
-      // From the card's bottom to the window's: the page's 8px padding, or the
-      // spare height a short list leaves to effort and environment above it.
+      // From the card's bottom to the window's: the page's 8px padding.
       below: outlet.getBoundingClientRect().bottom - card.bottom,
       card: card.height,
       page: {
@@ -209,7 +210,7 @@ function expectFits(g: Geometry) {
     if (row.toggle) expect(row.toggle.inside, row.name!).toBe(true);
     expect(row.nameInside, row.name!).toBe(true);
     // A parent keeps a readable share of its context beside its disclosure.
-    // (A listed sub-session gives its context up to its parent marker, as it
+    // (A sub-session gives its context up to its parent marker, as it
     // does ungrouped.)
     if (row.toggle && row.context !== null) expect(row.context, row.name!).toBeGreaterThan(30);
   }
@@ -227,10 +228,10 @@ for (const [width, height] of [
       await open(page, width, height, scheme);
       const table = page.getByRole('table', { name: 'Session lanes' });
       const absent = page.getByRole('button', {
-        name: '2 returned sub-sessions of Session 01a0eeee',
+        name: '2 sub-sessions of Session 01a0eeee',
       });
       const present = page.getByRole('button', {
-        name: `3 returned sub-sessions of ${PARENT_TITLE}`,
+        name: `3 sub-sessions of ${PARENT_TITLE}`,
       });
       await expect(absent).toHaveAttribute('aria-expanded', 'false');
       await expect(present).toHaveAttribute('aria-expanded', 'false');
@@ -252,16 +253,20 @@ for (const [width, height] of [
       ]);
       expect(closed.rows[0].name).toBe('›2Sub-sessions of Session 01a0eeee');
       expect(closed.rows[0].blank).toBe(true);
+      // Collapsed groups show the sum of the rows opening them lists: the two
+      // sub-sessions' $1 and $6, and the parent's $3 with its $4, $7 and $8.
+      expect(closed.rows[0].cost).toBe('Σ $7.00');
+      expect(closed.rows[2].cost).toBe('Σ $22.00');
       expect(closed.rows.filter((row) => row.blank)).toHaveLength(1);
       for (const child of [KID_A, KID_B, CHILD_1, CHILD_2, CHILD_3])
         await expect(table.locator(`a[href*="${child}"]`)).toHaveCount(0);
       // The unknown parent stays an ordinary row, with no disclosure.
-      await expect(table.getByRole('button', { name: /returned sub-session/ })).toHaveCount(2);
+      await expect(table.getByRole('button', { name: /sub-session/ })).toHaveCount(2);
 
       // Keyboard: from the last header control, Tab reaches the first group's
       // disclosure with a visible ring; Enter opens it, and Tab walks into the
       // children it listed, each by its own link and its parent marker.
-      await table.getByRole('button', { name: /^Cost over the last/ }).focus();
+      await table.getByRole('button', { name: /^Whole-session cost/ }).focus();
       await page.keyboard.press('Tab');
       await expect(absent).toBeFocused();
       const ring = await absent.evaluate((element) => {
@@ -289,7 +294,7 @@ for (const [width, height] of [
         // links out of the Tab order — every lane link, grouped or not — so
         // Tab moves to the next disclosure, and each listed link still takes
         // focus.
-        expect(tabs).toEqual([`3 returned sub-sessions of ${PARENT_TITLE}`]);
+        expect(tabs).toEqual([`3 sub-sessions of ${PARENT_TITLE}`]);
         for (const [index, name] of listed.entries()) {
           const link = table.getByRole('link', { name }).nth(index === 4 ? 1 : 0);
           await link.focus();
@@ -374,10 +379,11 @@ for (const [width, height] of [
     });
 
 /**
- * A short list: six rows, two of them collapsed groups. The card ends under
- * its rows and the window's spare height goes to effort and environment,
- * not to a blank Sessions interior or a gap under it; opening a group grows
- * the card by that group's rows and closing it shrinks it back, focus kept.
+ * A short list: six rows, two of them collapsed groups. The card keeps room
+ * for eight rows, so the two it does not list stay blank inside the table
+ * rather than going to effort and environment, and no gap opens under the
+ * card; opening a group to nine rows grows the card by the one row past the
+ * eight it keeps, and closing it shrinks it back, focus kept.
  */
 for (const [width, height] of [
   [1120, 720],
@@ -389,13 +395,15 @@ for (const [width, height] of [
     }) => {
       await open(page, width, height, scheme, false, 3);
       const present = page.getByRole('button', {
-        name: `3 returned sub-sessions of ${PARENT_TITLE}`,
+        name: `3 sub-sessions of ${PARENT_TITLE}`,
       });
       await expect(present).toHaveAttribute('aria-expanded', 'false');
       const closed = await measure(page);
       expectFits(closed);
       expect(closed.rows).toHaveLength(6);
       expect(closed.table.scrollHeight).toBeLessThanOrEqual(closed.table.clientHeight + 1);
+      // The table's 24px header and eight 23px rows, six of them listed.
+      expect(closed.table.height).toBeCloseTo(24 + 8 * 23 - 1, 0);
       expect(closed.below).toBeLessThanOrEqual(8.5);
 
       await present.focus();
@@ -405,12 +413,12 @@ for (const [width, height] of [
       const opened = await measure(page);
       expectFits(opened);
       expect(opened.rows).toHaveLength(9);
-      // The card grows by the group's three rows, or, where that passes its
-      // share of the window (1120x720), up to the
-      // share, and the rows beyond it scroll inside the table.
+      // The card grows by the one row past the eight it keeps, or, where
+      // that passes its share of the window, up to the share, and the rows
+      // beyond it scroll inside the table.
       const grown = opened.table.height - closed.table.height;
       if (opened.table.scrollHeight <= opened.table.clientHeight + 1)
-        expect(grown).toBeCloseTo(3 * 23, 0);
+        expect(grown).toBeCloseTo(23, 0);
       else expect(grown).toBeGreaterThan(0);
       expect(opened.card - closed.card).toBeCloseTo(grown, 0);
       expect(opened.below).toBeLessThanOrEqual(8.5);
@@ -427,9 +435,21 @@ for (const [width, height] of [
 test('an opened child shows its own cost, not its parent’s', async ({ page }) => {
   await open(page, 1120, 720, 'light');
   const table = page.getByRole('table', { name: 'Session lanes' });
-  await table.getByRole('button', { name: `3 returned sub-sessions of ${PARENT_TITLE}` }).click();
   const row = (id: string) =>
     table.getByRole('row').filter({ has: page.locator(`[data-visible-id="${id}"]`) });
+  // Collapsed, each group's row carries its Σ total: the parent's $3 with
+  // its $4, $7 and $8, and the named parent's two sub-sessions' $1 and $6.
+  await expect(row(PARENT).getByRole('cell').last()).toHaveText('Σ $22.00');
+  const named = table.getByRole('row').filter({ hasText: 'Sub-sessions of Session 01a0eeee' });
+  await expect(named.getByRole('cell').last()).toHaveText('Σ $7.00');
+  await table.getByRole('button', { name: `3 sub-sessions of ${PARENT_TITLE}` }).click();
+  await table.getByRole('button', { name: '2 sub-sessions of Session 01a0eeee' }).click();
+  // Open, the named parent has no cost of its own and every row shows its
+  // own, so the cells add up to the totals they replaced.
+  await expect(named.getByRole('cell').last()).toHaveText('');
+  await expect(row(KID_A).getByRole('cell').last()).toHaveText('$1.00');
+  await expect(row(KID_B).getByRole('cell').last()).toHaveText('$6.00');
+  await expect(row(CHILD_3).getByRole('cell').last()).toHaveText('$8.00');
   // Each row's cost is the report's own for that session: index + 1 dollars.
   await expect(row(CHILD_2).getByRole('cell').last()).toHaveText('$7.00');
   await expect(row(CHILD_1).getByRole('cell').last()).toHaveText('$4.00');
@@ -449,7 +469,7 @@ test('a verified automated reviewer keeps its own row and opens its own detail',
 }) => {
   await open(page, 1120, 720, 'light', true);
   const table = page.getByRole('table', { name: 'Session lanes' });
-  const group = table.getByRole('button', { name: '2 returned sub-sessions of Session 01a0eeee' });
+  const group = table.getByRole('button', { name: '2 sub-sessions of Session 01a0eeee' });
   await group.click();
   const reviewer = table.getByRole('link', { name: `Open session Automated review, ${KID_A}` });
   await expect(reviewer).toBeVisible();

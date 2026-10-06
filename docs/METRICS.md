@@ -41,6 +41,8 @@ Formatters use `en-US`, accept numeric inputs only, and return an em dash for nu
 
 [The reviewed definition catalog](../design/rule-contract.json) contains 30 technical definitions. `rules.ts` imports it directly and exposes typed IDs. These definitions specify product behavior; displaying them does not implement or verify the metric, privacy, or capture behavior they describe.
 
+M-08 is Leverage: agent hours divided by your hours (the time between messages you sent agents at most the break length apart), both over the same whole local days. It replaced the earlier ratio of agent time to estimated typing time (M-07) on 2026-10-05; M-07 itself is unchanged.
+
 The [coverage report](acceptance/metrics/rule-coverage.json) records the approved-source comparison using only IDs and SHA-256 hashes. Ordinary tests check the expected ID set, important amended clauses, and catalog/report parity. The report records a completed comparison; it is not an independent approval mechanism. Definition changes require source review and an updated report.
 
 Hover or keyboard focus opens the exact definition and optional context. The trigger is explicitly tabbable, and the popup has `role="tooltip"` with a matching `aria-describedby` association. Escape dismisses while retaining trigger focus; Tab leaves normally. The popup contains passive text and does not intercept pointer clicks or move keyboard focus. Body portals preserve the nearest `ThemeScope` and escape ancestor clipping.

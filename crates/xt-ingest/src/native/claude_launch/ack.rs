@@ -13,6 +13,14 @@
 //! is not one, and neither is another operation's result or another call's
 //! output.
 //!
+//! A follower of a `codex exec --json` launch ([`Ack::reading_thread`]) also
+//! reads the new thread from that same result: its `output`, as far as the
+//! process had printed it, must name exactly one thread by its first
+//! `thread.started` event ([`super::codex_cli::thread_started`]). A result
+//! that names none — the run failed before a thread started, or had printed
+//! nothing yet — is no acknowledgment of a creation; later polls of the
+//! process are never read for one.
+//!
 //! The follower stops at that result, even while its cell still runs: it
 //! never waits for the rest of the cell, a later poll, the process's exit or
 //! anything else, and nothing after the result can undo it. Before it, a
@@ -60,12 +68,14 @@ enum Step {
 }
 
 /// The acknowledgment: the call whose output held the launch operation's
-/// own result (the launch call, or a `wait` on its cell), and the process
-/// handle when the result says the process is running.
+/// own result (the launch call, or a `wait` on its cell), the process
+/// handle when the result says the process is running, and the thread the
+/// result named when the follower reads one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Acknowledged {
     pub call: String,
     pub handle: Option<String>,
+    pub thread: Option<String>,
 }
 
 /// One launch operation's follower.
@@ -77,6 +87,8 @@ pub(super) struct Ack {
     /// Results the launch's cell emitted so far.
     emitted: usize,
     step: Step,
+    /// Whether the result must name the thread it started.
+    thread: bool,
     /// Every call identifier the follower used: the launch and its waits.
     pub own: HashSet<String>,
     answered: HashSet<String>,
@@ -115,6 +127,7 @@ impl Ack {
             ops,
             emitted: 0,
             step: Step::Cell,
+            thread: false,
             own,
             answered: HashSet::new(),
             ids,
@@ -122,6 +135,13 @@ impl Ack {
         };
         ack.fit()?;
         Ok(ack)
+    }
+
+    /// A follower whose result must also name, by its printed
+    /// `thread.started`, the one thread a `codex exec --json` run started.
+    pub fn reading_thread(mut self) -> Self {
+        self.thread = true;
+        self
     }
 
     /// Bytes the follower keeps now, at actual capacity.
@@ -269,11 +289,12 @@ impl Ack {
             return Err(Broken::Output);
         }
         if (before..self.emitted).contains(&self.op) {
-            let handle = self.settle(&results[self.op - before])?;
+            let (handle, thread) = self.settle(&results[self.op - before])?;
             self.step = Step::Done;
             return Ok(Some(Acknowledged {
                 call: call.to_owned(),
                 handle,
+                thread,
             }));
         }
         // The result is still to come: only while the cell runs.
@@ -284,8 +305,9 @@ impl Ack {
     }
 
     /// The launch operation's own result: a process result, with its handle
-    /// when the process is running.
-    fn settle(&self, text: &str) -> Result<Option<String>, Broken> {
+    /// when the process is running and, for a follower reading one, the
+    /// thread its output names.
+    fn settle(&self, text: &str) -> Result<(Option<String>, Option<String>), Broken> {
         let result: Value = {
             let _decoding = self
                 .reserved
@@ -294,9 +316,9 @@ impl Ack {
                 .map_err(|_| Broken::Memory)?;
             serde_json::from_str(text).map_err(|_| Broken::Output)?
         };
-        if !result.get("output").is_some_and(Value::is_string) {
+        let Some(output) = result.get("output").and_then(Value::as_str) else {
             return Err(Broken::Output);
-        }
+        };
         let handle = match result.get("session_id") {
             None | Some(Value::Null) => None,
             Some(value) => Some(value.as_u64().ok_or(Broken::Output)?.to_string()),
@@ -308,12 +330,24 @@ impl Ack {
                 true
             }
         };
-        match (exited, handle) {
-            (true, None) => Ok(None),
-            (false, Some(handle)) => Ok(Some(handle)),
+        let handle = match (exited, handle) {
+            (true, None) => None,
+            (false, Some(handle)) => Some(handle),
             // Neither, or both: not a process result this version knows.
-            _ => Err(Broken::Output),
-        }
+            _ => return Err(Broken::Output),
+        };
+        let thread = if self.thread {
+            // Each event's type and thread are copied while it is read.
+            let _events = self
+                .reserved
+                .allowance()
+                .reserve(output.len())
+                .map_err(|_| Broken::Memory)?;
+            Some(super::codex_cli::thread_started(output).map_err(|()| Broken::Output)?)
+        } else {
+            None
+        };
+        Ok((handle, thread))
     }
 }
 
@@ -372,6 +406,7 @@ mod tests {
         Some(Acknowledged {
             call: call.into(),
             handle: handle.map(str::to_owned),
+            thread: None,
         })
     }
 
@@ -556,6 +591,68 @@ mod tests {
                 }
             }
             assert_eq!(result, Err(Broken::Output), "{op}/{ops} {items:?}");
+        }
+    }
+
+    /// A `codex exec --json` launch's own first result names its thread,
+    /// whether the process still runs or exited, and whether the result came
+    /// in the launch's output or a wait's. Another operation's result, or a
+    /// result naming no thread, does not.
+    #[test]
+    fn a_thread_reading_follower_takes_the_thread_from_its_own_result() {
+        const THREAD: &str = "01a00000-0000-7000-8000-0000000000c1";
+        let printed = format!(
+            "Reading additional input from stdin...\n\
+             {{\"type\":\"thread.started\",\"thread_id\":\"{THREAD}\"}}\n{{\"type\":\"turn.started\"}}\n"
+        );
+        let alive = |output: &str| json!({"chunk_id": "a", "session_id": 69773, "output": output});
+        let exited = |code: i64, output: &str| json!({"exit_code": code, "output": output});
+        let thread = |call: &str, handle: Option<&str>| {
+            Some(Acknowledged {
+                call: call.into(),
+                handle: handle.map(str::to_owned),
+                thread: Some(THREAD.into()),
+            })
+        };
+        let mut ack = Ack::new("launch", 0, 1, &allowance())
+            .unwrap()
+            .reading_thread();
+        assert_eq!(
+            ack.feed(&output("launch", &[alive(&printed)])),
+            Ok(thread("launch", Some("69773")))
+        );
+        // An exit, even a failing one, after the thread started.
+        let mut ack = Ack::new("launch", 0, 1, &allowance())
+            .unwrap()
+            .reading_thread();
+        assert_eq!(
+            ack.feed(&output("launch", &[exited(1, &printed)])),
+            Ok(thread("launch", None))
+        );
+        // The result arrives in a wait on the launch's running cell.
+        let mut ack = Ack::new("launch", 1, 2, &allowance())
+            .unwrap()
+            .reading_thread();
+        assert_eq!(ack.feed(&running("launch", "4", &[exit(0)])), Ok(None));
+        assert_eq!(ack.feed(&wait("w", "4")), Ok(None));
+        assert_eq!(
+            ack.feed(&output("w", &[alive(&printed)])),
+            Ok(thread("w", Some("69773")))
+        );
+        // No thread yet, a run that failed before one, another operation's.
+        for (op, results) in [
+            (0, vec![alive("Reading additional input from stdin...\n")]),
+            (0, vec![exited(2, "error: unexpected argument\n")]),
+            (1, vec![alive(&printed), alive("")]),
+        ] {
+            let mut ack = Ack::new("launch", op, results.len(), &allowance())
+                .unwrap()
+                .reading_thread();
+            assert_eq!(
+                ack.feed(&output("launch", &results)),
+                Err(Broken::Output),
+                "{op} {results:?}"
+            );
         }
     }
 

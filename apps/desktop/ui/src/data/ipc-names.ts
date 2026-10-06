@@ -29,6 +29,8 @@ export const commands = {
   pullRequestSessions: 'prs_sessions',
   refreshPullRequests: 'prs_refresh',
   cancelPullRequestRefresh: 'prs_refresh_cancel',
+  prAutoCheckStatus: 'prs_auto_check_status',
+  prAutoCheck: 'prs_auto_check',
   today: 'today_summary',
   trayHide: 'tray_hide',
   trayOpenMain: 'tray_open_main',
@@ -39,6 +41,9 @@ export const commands = {
   typingSpeed: 'typing_speed',
   setTypingSpeed: 'set_typing_speed',
   openTypingTest: 'open_typing_test',
+  openPublicReleases: 'open_public_releases',
+  humanBreak: 'human_break',
+  setHumanBreak: 'set_human_break',
 } as const;
 export const events = {
   importReceived: 'ingest://import-received',
@@ -47,6 +52,7 @@ export const events = {
   turnCompleted: 'ingest://turn-completed',
   fireReceived: 'rulebook://fire-received',
   prsRefreshed: 'prs://refreshed',
+  prsAutoCheck: 'prs://auto-check',
   nativeIndexStatus: 'native-index://status',
   sessionCreationsChanged: 'sessions://creations-changed',
   contentPurged: 'store://content-purged',

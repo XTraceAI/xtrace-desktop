@@ -8,9 +8,12 @@
 //! The connection is private so consumers cannot bypass the canonical writer.
 
 pub mod batch;
+pub mod child_check;
+pub mod child_fact;
 pub mod claude_launch;
 pub mod confirmation;
 pub mod creation;
+pub mod human_break;
 pub mod human_input;
 pub mod identity_reader;
 pub mod ingest;
@@ -28,6 +31,7 @@ mod server_settings;
 pub mod session_list;
 mod task_notification;
 pub mod timestamp;
+pub mod tool_sent;
 pub mod tool_use;
 pub mod typing_speed;
 mod write;

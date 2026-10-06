@@ -25,8 +25,9 @@
 //! and are read only to find where the call ends. `exec_command` and
 //! `write_stdin` numbers stay unsigned integers.
 //!
-//! Everything else is refused: other statements, calls, member access,
-//! arithmetic, substitutions, comments and other regular expressions.
+//! A separate fixed prefix accepts one generated or literal UUID printed by
+//! its own cell and a matching leading `load` in the next cell. Neither form
+//! evaluates JavaScript. Everything outside these grammars is refused.
 
 use std::collections::BTreeMap;
 
@@ -44,7 +45,9 @@ enum Tok {
     OpaqueNum,
 }
 
-const PUNCTS: [&str; 12] = ["{", "}", "(", ")", "[", "]", ",", ";", ":", "+", "=", "."];
+const PUNCTS: [&str; 18] = [
+    "===", "=>", "{", "}", "(", ")", "[", "]", ",", ";", ":", "+", "=", ".", "?", "&", "|", "*",
+];
 
 fn tokenize(source: &str) -> Result<Vec<Tok>, ()> {
     let chars: Vec<char> = source.chars().collect();
@@ -56,10 +59,12 @@ fn tokenize(source: &str) -> Result<Vec<Tok>, ()> {
             index += 1;
             continue;
         }
-        if c.is_ascii_alphabetic() || c == '_' {
+        if c.is_ascii_alphabetic() || c == '_' || c == '$' {
             let start = index;
             while index < chars.len()
-                && (chars[index].is_ascii_alphanumeric() || chars[index] == '_')
+                && (chars[index].is_ascii_alphanumeric()
+                    || chars[index] == '_'
+                    || chars[index] == '$')
             {
                 index += 1;
             }
@@ -84,25 +89,46 @@ fn tokenize(source: &str) -> Result<Vec<Tok>, ()> {
             continue;
         }
         if c == '/' {
-            // Only `/'/g`, and only where an argument starts.
+            // Only the two reviewed replacement patterns, and only where
+            // an argument starts.
             if !matches!(tokens.last(), Some(Tok::Punct("("))) {
                 return Err(());
             }
-            let regex: String = chars[index..(index + 4).min(chars.len())].iter().collect();
-            if regex != "/'/g"
+            let starts_with = |prefix: &str| {
+                chars[index..]
+                    .iter()
+                    .copied()
+                    .take(prefix.len())
+                    .eq(prefix.chars())
+            };
+            let regex = if starts_with("/[xy]/g") {
+                "/[xy]/g"
+            } else {
+                "/'/g"
+            };
+            if !starts_with(regex)
                 || chars
-                    .get(index + 4)
+                    .get(index + regex.len())
                     .is_some_and(char::is_ascii_alphanumeric)
             {
                 return Err(());
             }
-            tokens.push(Tok::Regex(regex));
-            index += 4;
+            tokens.push(Tok::Regex(regex.to_owned()));
+            index += regex.len();
             continue;
         }
-        let punct = PUNCTS.iter().find(|punct| punct.starts_with(c)).ok_or(())?;
+        let punct = PUNCTS
+            .iter()
+            .find(|punct| {
+                chars[index..]
+                    .iter()
+                    .copied()
+                    .take(punct.len())
+                    .eq(punct.chars())
+            })
+            .ok_or(())?;
         tokens.push(Tok::Punct(punct));
-        index += 1;
+        index += punct.len();
     }
     Ok(tokens)
 }
@@ -318,6 +344,10 @@ pub(super) fn parse_operations(source: &str) -> Result<Vec<Cell>, ()> {
         strings: BTreeMap::new(),
         results: Vec::new(),
     };
+    operations(&mut parser)
+}
+
+fn operations(parser: &mut Parser) -> Result<Vec<Cell>, ()> {
     let mut cells = Vec::new();
     while parser.at < parser.tokens.len() {
         if parser.is_keyword("text") {
@@ -358,7 +388,246 @@ pub(super) fn parse_operations(source: &str) -> Result<Vec<Cell>, ()> {
     Ok(cells)
 }
 
+/// A one-cell, one-use binding receipt. The generated UUID is read only from
+/// the cell's own fixed output slot; a literal UUID must match that slot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Binding {
+    pub key: String,
+    pub literal: Option<String>,
+    pub prefix: usize,
+    pub operations: usize,
+}
+
+/// The exact self-contained UUID recipe (or a UUID literal), its store and
+/// text calls, followed only by ordinary safe tool operations.
+pub(super) fn parse_binding(source: &str) -> Result<Binding, ()> {
+    let mut p = Parser {
+        tokens: tokenize(source)?,
+        at: 0,
+        strings: BTreeMap::new(),
+        results: Vec::new(),
+    };
+    let prefix = usize::from(p.literal_patch()?);
+    p.keyword("const")?;
+    let id = p.binding()?;
+    p.expect("=")?;
+    let first = p.string()?;
+    let literal = if p.eat(".") {
+        if first != "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx" {
+            return Err(());
+        }
+        p.keyword("replace")?;
+        p.expect("(")?;
+        if p.peek() != Some(&Tok::Regex("/[xy]/g".into())) {
+            return Err(());
+        }
+        p.at += 1;
+        p.expect(",")?;
+        let letter = p.ident()?;
+        p.expect("=>")?;
+        p.expect("{")?;
+        p.keyword("const")?;
+        let random = p.binding()?;
+        p.expect("=")?;
+        p.keyword("Math")?;
+        p.expect(".")?;
+        p.keyword("floor")?;
+        p.expect("(")?;
+        p.keyword("Math")?;
+        p.expect(".")?;
+        p.keyword("random")?;
+        p.expect("(")?;
+        p.expect(")")?;
+        p.expect("*")?;
+        p.number("16")?;
+        p.expect(")")?;
+        p.expect(";")?;
+        p.keyword("return")?;
+        p.expect("(")?;
+        p.keyword(&letter)?;
+        p.expect("===")?;
+        if p.string()? != "x" {
+            return Err(());
+        }
+        p.expect("?")?;
+        p.keyword(&random)?;
+        p.expect(":")?;
+        p.expect("(")?;
+        p.keyword(&random)?;
+        p.expect("&")?;
+        p.number("3")?;
+        p.expect(")")?;
+        p.expect("|")?;
+        p.number("8")?;
+        p.expect(")")?;
+        p.expect(".")?;
+        p.keyword("toString")?;
+        p.expect("(")?;
+        p.number("16")?;
+        p.expect(")")?;
+        p.expect("}")?;
+        p.expect(")")?;
+        None
+    } else {
+        if !super::command::uuid(&first) {
+            return Err(());
+        }
+        Some(first)
+    };
+    p.expect(";")?;
+    p.keyword("store")?;
+    p.expect("(")?;
+    let key = p.string()?;
+    if key.is_empty() || key.len() > 256 {
+        return Err(());
+    }
+    p.expect(",")?;
+    p.keyword(&id)?;
+    p.expect(")")?;
+    p.expect(";")?;
+    p.keyword("text")?;
+    p.expect("(")?;
+    p.expect("{")?;
+    p.keyword("session_id")?;
+    p.expect(":")?;
+    p.keyword(&id)?;
+    p.expect("}")?;
+    p.expect(")")?;
+    p.expect(";")?;
+    let operations = operations(&mut p)?.len();
+    Ok(Binding {
+        key,
+        literal,
+        prefix,
+        operations,
+    })
+}
+
+/// Only a leading load of the matching literal key supplies one string to
+/// the existing expression reader. No other statement may precede it.
+pub(super) fn parse_loaded(source: &str, key: &str, value: &str) -> Result<Vec<Cell>, ()> {
+    let mut p = Parser {
+        tokens: tokenize(source)?,
+        at: 0,
+        strings: BTreeMap::new(),
+        results: Vec::new(),
+    };
+    let prefix = p.literal_patch()?;
+    p.keyword("const")?;
+    let name = p.binding()?;
+    p.expect("=")?;
+    p.keyword("load")?;
+    p.expect("(")?;
+    if p.string()? != key {
+        return Err(());
+    }
+    p.expect(")")?;
+    p.expect(";")?;
+    p.strings.insert(name, value.to_owned());
+    let mut cells = if prefix {
+        vec![Cell {
+            tool: Tool::Opaque,
+            args: BTreeMap::new(),
+        }]
+    } else {
+        Vec::new()
+    };
+    cells.extend(operations(&mut p)?);
+    (cells.len() <= MAX_OPERATIONS).then_some(cells).ok_or(())
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+    const ID: &str = "7fd904e4-b007-4f55-a1d1-40066c96457b";
+
+    fn source() -> String {
+        r#"text(await tools.apply_patch("literal patch"));
+const id="xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{const n=Math.floor(Math.random()*16);return(c==="x"?n:(n&3)|8).toString(16)});store("arbitrary key",id);text({session_id:id});
+text(await tools.exec_command({cmd:"git status --short"}));"#.to_owned()
+    }
+
+    #[test]
+    fn reads_only_the_fixed_binding_and_next_cell_slots() {
+        let binding = parse_binding(&source()).unwrap();
+        assert_eq!(
+            (binding.key.as_str(), binding.prefix, binding.operations),
+            ("arbitrary key", 1, 1)
+        );
+        let next = r#"text(await tools.apply_patch("literal patch"));
+const child=load("arbitrary key");
+text(await tools.exec_command({cmd:"python3 -c 'print(1)'"}));
+text(await tools.exec_command({cmd:"claude --session-id "+child+" --output-format json -p < /tmp/brief"}));"#;
+        let ops = parse_loaded(next, "arbitrary key", ID).unwrap();
+        assert_eq!(ops.len(), 3);
+        assert_eq!(ops[0].tool, Tool::Opaque);
+        assert_eq!(ops[1].str("cmd"), Some("python3 -c 'print(1)'"));
+        assert_eq!(
+            ops[2].str("cmd"),
+            Some(format!("claude --session-id {ID} --output-format json -p < /tmp/brief").as_str())
+        );
+        for bad in [
+            next.replace("arbitrary key", "other key"),
+            next.replace("const child=load", "let child=load"),
+            next.replace("+child+", "+missing+"),
+            format!("const x=1;{next}"),
+        ] {
+            assert!(parse_loaded(&bad, "arbitrary key", ID).is_err(), "{bad}");
+        }
+        for bad in [
+            source().replace("Math.random()", "Math.random(1)"),
+            source().replace(
+                "store(\"arbitrary key\",id)",
+                "store(\"arbitrary key\",other)",
+            ),
+            source().replace("text({session_id:id})", "text({session_id:other})"),
+        ] {
+            assert!(parse_binding(&bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_literal_uuid_uses_the_same_fixed_receipt_contract() {
+        let source = format!(
+            "const ticket=\"{ID}\";store(\"key with spaces\",ticket);text({{session_id:ticket}});text(await tools.exec_command({{cmd:\"true\"}}));"
+        );
+        let binding = parse_binding(&source).unwrap();
+        assert_eq!(binding.literal.as_deref(), Some(ID));
+        assert_eq!(binding.key, "key with spaces");
+        assert_eq!(binding.prefix, 0);
+        assert_eq!(binding.operations, 1);
+    }
+}
+
 impl Parser {
+    /// The one harmless leading operation this form admits. Its argument is
+    /// a literal patch string; its reply keeps its actual emitted slot.
+    fn literal_patch(&mut self) -> Result<bool, ()> {
+        if !self.is_keyword("text") {
+            return Ok(false);
+        }
+        self.keyword("text")?;
+        self.expect("(")?;
+        self.keyword("await")?;
+        self.keyword("tools")?;
+        self.expect(".")?;
+        self.keyword("apply_patch")?;
+        self.expect("(")?;
+        self.string()?;
+        self.expect(")")?;
+        self.expect(")")?;
+        self.expect(";")?;
+        Ok(true)
+    }
+    fn number(&mut self, expected: &str) -> Result<(), ()> {
+        match self.peek() {
+            Some(Tok::Num(value)) if value == expected => {
+                self.at += 1;
+                Ok(())
+            }
+            _ => Err(()),
+        }
+    }
     fn peek(&self) -> Option<&Tok> {
         self.tokens.get(self.at)
     }
@@ -571,6 +840,44 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_punctuation_and_regex_prefixes_use_bounded_lookahead() {
+        let punctuation = "(".repeat(50_000);
+        assert!(tokenize(&(punctuation.clone() + "@" + &"é".repeat(50_000))).is_err());
+        let regexes = "(/'/g)/[xy]/g";
+        assert!(tokenize(regexes).is_err()); // regex requires an opening argument
+        let tokens = tokenize(&("(/'/g)".repeat(20_000) + "====>=")).unwrap();
+        assert_eq!(
+            &tokens[tokens.len() - 3..],
+            &[Tok::Punct("==="), Tok::Punct("=>"), Tok::Punct("=")]
+        );
+        for prefix in [
+            "(/'/gi",
+            "(/[xy]/g1",
+            "(/[xy]/gi",
+            "(/'/",
+            "(/[xy]/",
+            "(/'/gé",
+        ] {
+            assert!(tokenize(&(prefix.to_owned() + &punctuation)).is_err());
+        }
+        // The existing token grammar allows an identifier after this regex;
+        // the operation grammar then refuses it. Keep that distinction.
+        assert!(tokenize("(/'/g_").is_ok());
+        assert!(
+            parse_cell(
+                "const p=\"x\";text(await tools.exec_command({cmd:p.replace(/'/g_,\"b\")}))"
+            )
+            .is_err()
+        );
+        assert_eq!(
+            parse_cell("text(await tools.exec_command({cmd:\"é😀\"}))")
+                .unwrap()
+                .str("cmd"),
+            Some("é😀")
+        );
+    }
 
     #[test]
     fn reads_the_inline_and_bound_launch_forms() {

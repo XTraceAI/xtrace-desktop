@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-from readers import codex_origin, codex_witness, reader_for, validate_canonical
+from readers import codex_history, codex_origin, codex_witness, reader_for, validate_canonical
 from readers.strict_json import loads as load_json
 from readers.jsonl import readline_bytes
 
@@ -884,7 +884,7 @@ def detail_acquirer(budget: DetailBudget):
 
 
 def read_detail(reader, path: Path, revision, host: str, budget: DetailBudget, group,
-                witness=None, origin=None):
+                witness=None, origin=None, references=()):
     """Normalize one session from bytes this process holds.
 
     The converters are the ordinary export's. The global Codex title index is
@@ -897,6 +897,8 @@ def read_detail(reader, path: Path, revision, host: str, budget: DetailBudget, g
     guard = budget.hold_records
     members = ([(segment, segment_revision) for _, segment, segment_revision, _, _ in group]
                if group is not None else [(path, revision)])
+    # A fork's referenced rollouts are acquired too, and are charged the same.
+    members += [(source, held) for _, source, held, _ in references]
     if host == "cursor" and path.name == "store.db":
         raise DetailUnsupported("a Cursor store is not a JSONL source")
     reserve_selected(budget, members)
@@ -905,7 +907,8 @@ def read_detail(reader, path: Path, revision, host: str, budget: DetailBudget, g
             raise WitnessNotFlat("a paginated session is never witnessed")
         from readers import codex_history
         options = {"origin": origin} if origin is not None else {}
-        return codex_history.read(group, acquire, title_index={}, record_guard=guard, **options)
+        return codex_history.read(group, acquire, title_index={}, record_guard=guard,
+                                  references=references, **options)
     with acquire(path, host, revision) as data:
         budget.check()
         if host == "codex":
@@ -1148,15 +1151,18 @@ def origin_members(path: Path, sid: str, group) -> None:
 
     A flat source is this session's unsuffixed rollout. A paginated group's
     members are its rollouts too, each named exactly -- the root (the one
-    member with no history reference) unsuffixed, each continuation by the
+    member with no history reference, or a fork's first rollout, whose
+    reference names another session's rollout that is never a member)
+    unsuffixed, each continuation by the
     rollout ID the group keys it under -- so the rollout ID a claim states is
     the session UUID for the root and that file's own suffix otherwise.
     """
     members = ([(None, path, None)] if group is None
                else [(rid, segment, base) for rid, segment, _, _, base in group])
-    for rid, segment, base in members:
+    for n, (rid, segment, base) in enumerate(members):
         names = codex_witness.rollout_name(Path(segment).name)
-        suffix = None if base is None else rid
+        # The root -- original, or a fork's first rollout -- is unsuffixed.
+        suffix = None if base is None or n == 0 else rid
         if names != (sid, suffix) or (
                 group is not None and rid != (suffix or sid)):
             raise OriginUnowned("an origin source is not named as this session's rollout")
@@ -1219,7 +1225,15 @@ def main(argv=None) -> int:
                              "from an injected skill item")
     parser.add_argument("--human-input-adjustments", action="store_true",
                         help="With the full Codex export: add metadata-only image wrapper lengths")
+    parser.add_argument("--automated-input-evidence", action="store_true",
+                        help="With the full Codex or Cursor export: add metadata-only evidence "
+                             "to each user record the host or this reader wrote itself")
     args = parser.parse_args(argv)
+    if args.automated_input_evidence and (args.exact_detail or args.session is not None
+            or args.since is not None or args.metadata_only):
+        # Like the other export evidence: every session, with its records,
+        # once discovery and every header have been counted.
+        parser.error("--automated-input-evidence requires the full export")
     if args.human_input_adjustments and (args.host != "codex" or args.exact_detail
             or args.session is not None or args.since is not None or args.metadata_only):
         parser.error("--human-input-adjustments requires the full Codex export")
@@ -1244,7 +1258,7 @@ def main(argv=None) -> int:
     # every header have been counted, and are withheld per session instead.
     exact_origin = args.origin_evidence and args.exact_detail
     bulk_origin = args.origin_evidence and not args.exact_detail
-    bulk_evidence = bulk_origin or args.human_input_adjustments
+    bulk_evidence = bulk_origin or args.human_input_adjustments or args.automated_input_evidence
     if args.exact_detail:
         if args.metadata_only or args.since is not None:
             parser.error("--exact-detail reads one identified session's records; "
@@ -1488,6 +1502,8 @@ def main(argv=None) -> int:
     prepared = []
     codex_headers = {}
     history_groups = {}
+    history_references = {}
+    rollout_index = {}
     counts = Counter()
     # Bulk origin evidence, from the same pass that counts identities. A
     # candidate whose header this run never read -- a walk that was not
@@ -1582,6 +1598,11 @@ def main(argv=None) -> int:
                 sid = native_text(source_header.get("payload", {}).get("id"), required=True)
                 if explicit_basis is not None and sid != args.session:
                     raise ValueError("paginated filename and native identity disagree")
+                # Every identified rollout, whichever session it names: a fork
+                # finds the rollout its history references here.
+                facts = codex_history.reference_facts(path, source_header)
+                if facts is not None:
+                    rollout_index.setdefault(facts[0], []).append((path, revision, facts[1]))
                 if budget is None:
                     codex_headers[path] = source_header
                 native = None
@@ -1636,7 +1657,6 @@ def main(argv=None) -> int:
     if explicit_basis is not None and incomplete:
         return 2
     if args.host == "codex":
-        from readers import codex_history
         grouped = {}
         for item in prepared:
             grouped.setdefault(item[2]["conversation_id"], []).append(item)
@@ -1658,7 +1678,14 @@ def main(argv=None) -> int:
                 if len(items) != counts[conversation]:
                     raise ValueError("a group member was unreadable")
                 path, revision, header, group = codex_history.plan(items, codex_headers)
+                # A fork's referenced rollouts belong to another session. They
+                # are read only for its usage baseline, and a change to them
+                # is a change to this read.
+                references = codex_history.references(group, codex_headers, rollout_index)
+                revision += tuple(entry for _, _, held, _ in references for entry in held)
                 history_groups[path] = group
+                if references:
+                    history_references[path] = references
                 if latest in {item[0] for item in items}:
                     latest = path
                 selected.append((path, revision, header))
@@ -1670,7 +1697,9 @@ def main(argv=None) -> int:
 
     def current_revision(path):
         if path in history_groups:
-            return tuple(entry for _, segment, _, _, _ in history_groups[path]
+            members = [segment for _, segment, _, _, _ in history_groups[path]]
+            members += [source for _, source, _, _ in history_references.get(path, ())]
+            return tuple(entry for segment in members
                          for entry in source_revision(segment, args.host))
         return source_revision(path, args.host)
 
@@ -1715,6 +1744,7 @@ def main(argv=None) -> int:
                 continue
             records = []
             used_title = []
+            automated_claimed = None
             if not args.metadata_only:
                 def fallback_title(sid):
                     observation = titles.get(sid)
@@ -1728,7 +1758,15 @@ def main(argv=None) -> int:
                     # the file facts bracket the bytes the records came from.
                     segments = witness_segments(path, revision, history_groups.get(path))
                     described = options["witness"] = {}
-                if bulk_evidence:
+                if bulk_evidence and args.host == "cursor":
+                    # A Cursor session's records are identified by its own
+                    # directory or file name; a session another source also
+                    # claims was refused above, and a run that could not
+                    # count every source claims nothing.
+                    claimed = human_claimed = None
+                    if args.automated_input_evidence and not origin_blind:
+                        automated_claimed = options["automated"] = codex_origin.Withholding()
+                elif bulk_evidence:
                     # The export never refuses over evidence: a session it
                     # cannot vouch for is read exactly as without the flag.
                     claimed = human_claimed = None
@@ -1741,6 +1779,9 @@ def main(argv=None) -> int:
                                 claimed = options["origin"] = codex_origin.Withholding()
                             if args.human_input_adjustments:
                                 human_claimed = options["human"] = codex_origin.Withholding()
+                            if args.automated_input_evidence:
+                                automated_claimed = options["automated"] = (
+                                    codex_origin.Withholding())
                         except OriginUnowned:
                             pass
                 elif args.origin_evidence:
@@ -1748,10 +1789,14 @@ def main(argv=None) -> int:
                     claimed = options["origin"] = {}
                 if budget is not None:
                     records, native = read_detail(reader, path, revision, args.host,
-                                                  budget, history_groups.get(path), **options)
+                                                  budget, history_groups.get(path),
+                                                  references=history_references.get(path, ()),
+                                                  **options)
                     budget.hold_records(len(records))
                 elif path in history_groups:
-                    records, native = codex_history.read(history_groups[path], source_snapshot, **options)
+                    records, native = codex_history.read(
+                        history_groups[path], source_snapshot,
+                        references=history_references.get(path, ()), **options)
                 else:
                     with source_snapshot(path, args.host, revision) as snapshot:
                         records, native = reader.to_canonical(snapshot, strict=True, **options)
@@ -1807,9 +1852,22 @@ def main(argv=None) -> int:
                     origin_blind = True
                 except ValueError:
                     pass
+            automated_claims = None
+            if automated_claimed is not None and not automated_claimed.failed:
+                try:
+                    if args.host == "codex":
+                        witness_root_held(reader, anchors)
+                    automated_claims = origin_claims(records, automated_claimed)
+                except WitnessUnowned:
+                    origin_blind = True
+                except ValueError:
+                    pass
             if human_claims is not None:
                 records = [record if claim is None else {**record, "human_input_adjustment": claim}
                            for record, claim in zip(records, human_claims)]
+            if automated_claims is not None:
+                records = [record if claim is None else {**record, "automated_input": claim}
+                           for record, claim in zip(records, automated_claims)]
             if args.source_witness:
                 if witness_segments(path, revision, history_groups.get(path)) != segments:
                     raise SourceChanged("a witnessed segment changed during the read")

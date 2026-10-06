@@ -72,8 +72,13 @@ pub enum StateError {
     /// Refused before storage is touched.
     #[error("typing speed must be a whole number from 1 to 300 words per minute")]
     InvalidTypingSpeed,
+    /// Refused before storage is touched.
+    #[error("break length must be a whole number from 5 to 240 minutes")]
+    InvalidHumanBreak,
     #[error("the typing test could not be opened in the browser")]
     TypingTestUnavailable,
+    #[error("public releases could not be opened in the browser")]
+    PublicReleasesUnavailable,
     /// A linked-session request named something no report could have shown:
     /// the detail names the part, never the value.
     #[error("invalid pull-request session request: {0}")]
@@ -776,7 +781,7 @@ impl AppState {
         cancel: &xt_ingest::native::readers_cli::CancelToken,
     ) -> Result<crate::dto::SessionCompactions, StateError> {
         use xt_ingest::native::session_compactions::{
-            Counted, MAX_SESSIONS, Outcome, Reason, Target, sources,
+            Counted, MAX_SESSIONS, Reason, Target, sources,
         };
         let distinct: std::collections::BTreeSet<&str> =
             session_ids.iter().map(String::as_str).collect();
@@ -787,13 +792,7 @@ impl AppState {
         let (mut outcomes, positions, targets) = {
             let guard = self.admit()?;
             let store = &guard.as_ref().ok_or(StateError::Closed)?.store;
-            let mut outcomes = vec![
-                Counted {
-                    outcome: Outcome::unknown(Reason::NotIndexed),
-                    events: Vec::new(),
-                };
-                session_ids.len()
-            ];
+            let mut outcomes = vec![Counted::unknown(Reason::NotIndexed); session_ids.len()];
             let mut positions = Vec::new();
             let mut targets = Vec::new();
             for (position, id) in session_ids.iter().enumerate() {
@@ -805,10 +804,7 @@ impl AppState {
                 };
                 let host = session.meta.host;
                 if host == xt_store::Host::Other {
-                    outcomes[position] = Counted {
-                        outcome: Outcome::unknown(Reason::Unsupported),
-                        events: Vec::new(),
-                    };
+                    outcomes[position] = Counted::unknown(Reason::Unsupported);
                     continue;
                 }
                 positions.push(position);
@@ -832,10 +828,7 @@ impl AppState {
             }
         }
         if cancel.is_cancelled() {
-            outcomes.fill(Counted {
-                outcome: Outcome::unknown(Reason::Cancelled),
-                events: Vec::new(),
-            });
+            outcomes.fill(Counted::unknown(Reason::Cancelled));
         }
         Ok(crate::dto::SessionCompactions {
             counts: session_ids
@@ -1093,11 +1086,16 @@ impl AppState {
         window_days: u32,
     ) -> Result<crate::dto::DashboardMetrics, StateError> {
         crate::dashboard::validate_window(window_days)?;
-        // One saved speed for both the current and the previous window, read
-        // under the lock from the app's own store.
+        // One saved speed and one saved break length for both the current and
+        // the previous window, read under the lock from the app's own store.
         self.with_prepared_metrics(
-            |store| crate::typing_speed::typing_rate(store.typing_speed()?),
-            |metrics, inputs, typing_rate| {
+            |store| {
+                Ok((
+                    crate::typing_speed::typing_rate(store.typing_speed()?)?,
+                    crate::human_break::break_length(store.human_break()?)?,
+                ))
+            },
+            |metrics, inputs, (typing_rate, break_length)| {
                 let bundled;
                 let catalog = match inputs.catalog {
                     Some(catalog) => catalog,
@@ -1114,6 +1112,7 @@ impl AppState {
                     inputs.clock,
                     catalog,
                     typing_rate,
+                    break_length,
                 )
             },
         )
@@ -1248,6 +1247,21 @@ impl AppState {
         ids: &[i64],
     ) -> Result<Vec<crate::pr_refresh::PrTarget>, StateError> {
         pr_refresh_targets(&self.pull_request_snapshot()?, ids).map_err(StateError::PrEncoding)
+    }
+
+    /// What an automatic check should look at next, from one snapshot; see
+    /// [`crate::pr_refresh::auto_selection`]. The lock is held for the read
+    /// only.
+    pub fn pr_auto_selection(
+        &self,
+        now_ms: i64,
+        tried: &std::collections::HashSet<i64>,
+    ) -> Result<crate::pr_refresh::AutoSelection, StateError> {
+        Ok(crate::pr_refresh::auto_selection(
+            &self.pull_request_snapshot()?,
+            now_ms,
+            tried,
+        ))
     }
 
     /// Persist one refresh result. The lock is reacquired for this write only,

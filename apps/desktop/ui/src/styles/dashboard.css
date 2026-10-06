@@ -1,10 +1,14 @@
 /*
  * The Dashboard fits the window. The outlet is its viewport, and the page is a
- * column of fixed blocks (heading, summary, tiles) around two rows that flex —
- * effort beside environment, then Sessions. Each flexible row is as tall as its
- * own three-row minimum and takes an equal share of any taller window, so a
- * bigger window shows more rows, never more page — except that Sessions stops
- * at its own rows, leaving the rest to effort and environment.
+ * column of fixed blocks (heading, summary) around two rows that flex —
+ * Effort beside Overview, then Sessions. By default Sessions keeps room for
+ * eight lane rows, however few it lists, and the effort row takes the rest;
+ * a longer list shares any further height equally with the effort row, so a
+ * bigger window shows more rows, never more page.
+ * The boundary between the two rows and the one between Effort and
+ * Overview can be dragged (`SplitHandle`): the chosen share replaces the
+ * default and is kept, as a proportion, across window sizes and restarts.
+ * Every pane keeps its minimum either way.
  * Nothing is clipped to fit: every further row scrolls inside its own list, and
  * every further detail opens over the page. Each row's minimum is its content
  * with its lists at three rows, so when a window is too short for that the
@@ -25,7 +29,8 @@
   min-height: 0;
   padding: 8px 16px;
 }
-/* Fixed blocks keep their height; the two rows take the rest. */
+/* Fixed blocks keep their height; the two rows take the rest. Sessions'
+   own eight-row basis is set with its card, below. */
 .xt-dashboard > * {
   flex: 0 0 auto;
 }
@@ -95,23 +100,127 @@
   gap: 8px;
   align-items: stretch;
 }
+/* Effort, the column boundary's own 8px track, then Overview: 1.6 to 1 by
+   default, or the dragged share. Each keeps a minimum width that holds its
+   header on one line and a usable chart or two tiles side by side. */
 .xt-dash-main-row {
-  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  --effort-min: 480px;
+  --overview-min: 300px;
+  grid-template-columns:
+    minmax(var(--effort-min), 1.6fr) 8px
+    minmax(var(--overview-min), 1fr);
+  column-gap: 0;
 }
-/* Four across at every supported window width; the row halves only where the
-   paired cards stack too. */
-.xt-dash-tiles {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+.xt-dash-main-row[data-split-columns] {
+  grid-template-columns:
+    minmax(var(--effort-min), var(--columns-first)) 8px
+    minmax(var(--overview-min), var(--columns-second));
 }
 @container dashboard (max-width: 720px) {
-  .xt-dash-tiles {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  /* Stacked, Effort over Overview: there is no column boundary to drag. */
   .xt-dash-row,
-  .xt-dash-main-row {
+  .xt-dash-main-row,
+  .xt-dash-main-row[data-split-columns] {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .xt-split[data-axis='columns'] {
+    display: none;
+  }
+}
+
+/* A dragged row share: both rows flex from zero in its proportion, so a
+   resized window keeps it, and neither shrinks past its own minimum. */
+.xt-dashboard[data-split-rows] > .xt-dash-main-row {
+  flex: var(--rows-first) 1 0px;
+}
+.xt-dashboard[data-split-rows] > .xt-section-card {
+  flex: var(--rows-second) 1 0px;
+  max-height: none;
+}
+
+/* The boundaries. Each is a window splitter between its two panes: the row
+   boundary sits in the page's 5px gap, the column boundary in its own 8px
+   track, and each reaches a little into its panes so it is easy to grab. It
+   draws nothing until hovered, focused or dragged, then an accent line. */
+.xt-split {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  touch-action: none;
+  outline: none;
+}
+.xt-split[data-axis='rows'] {
+  height: 9px;
+  margin-block: -7px;
+  cursor: row-resize;
+}
+.xt-split[data-axis='columns'] {
+  margin-inline: -2px;
+  cursor: col-resize;
+}
+/* A short grip, always faintly drawn in the gap, so the boundary can be
+   found before it is hovered. */
+.xt-split::before {
+  position: absolute;
+  border-radius: 1.5px;
+  background: var(--meta);
+  content: '';
+  opacity: 0.35;
+}
+.xt-split[data-axis='rows']::before {
+  top: 3px;
+  left: calc(50% - 14px);
+  width: 28px;
+  height: 3px;
+}
+.xt-split[data-axis='columns']::before {
+  top: calc(50% - 14px);
+  left: 4.5px;
+  width: 3px;
+  height: 28px;
+}
+.xt-split::after {
+  position: absolute;
+  border-radius: 1px;
+  background: var(--accent);
+  content: '';
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.xt-split[data-axis='rows']::after {
+  top: 3.5px;
+  right: 12px;
+  left: 12px;
+  height: 2px;
+}
+.xt-split[data-axis='columns']::after {
+  top: 12px;
+  bottom: 12px;
+  left: 5px;
+  width: 2px;
+}
+.xt-split:hover::after {
+  opacity: 0.45;
+  transition-delay: 150ms;
+}
+.xt-split:focus-visible::after,
+.xt-split[data-dragging]::after {
+  opacity: 1;
+  transition-delay: 0s;
+}
+:root[data-xt-resizing='rows'],
+:root[data-xt-resizing='rows'] * {
+  cursor: row-resize !important;
+  user-select: none;
+}
+:root[data-xt-resizing='columns'],
+:root[data-xt-resizing='columns'] * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .xt-split::after {
+    transition: none;
   }
 }
 
@@ -388,7 +497,7 @@
 
 /* Effort: the range's total, then the chart — a gutter for the scale and
    the marker count beside the plot of daily bars, and the merge markers with
-   their date ticks — then the refresh status. Only the plot flexes. */
+   their date ticks. Nothing follows the chart. Only the plot flexes. */
 .xt-effort {
   display: flex;
   flex: 1 1 auto;
@@ -694,11 +803,46 @@
   top: 0;
   transform: translateX(-50%);
 }
-/* Both classes: `.xt-dash-note` sets a 10px top margin later in this file, and
-   the line's spacing is the panel's gap. */
-.xt-dash-note.xt-pr-refresh-line {
+/* The Effort header's red ! (`PrRefresh`): drawn only when the pull-request
+   checks need the user, the size of the definition beside the title, so the
+   header keeps its height. While a batch runs it is quiet and turns. */
+/* The slot is always in the header but draws nothing of its own. */
+.xt-pr-attention-slot {
+  display: contents;
+}
+.xt-pr-attention {
+  display: inline-grid;
+  place-items: center;
   flex: 0 0 auto;
-  margin: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+}
+.xt-pr-attention[data-state='running'],
+.xt-pr-attention[data-state='open'] {
+  color: var(--meta);
+}
+.xt-pr-attention[data-state='running'] svg {
+  animation: xt-pr-attention-turn 1.2s linear infinite;
+}
+.xt-pr-attention:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@keyframes xt-pr-attention-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .xt-pr-attention[data-state='running'] svg {
+    animation: none;
+  }
 }
 .xt-pr-refresh-list {
   display: grid;
@@ -860,7 +1004,7 @@
   display: grid;
   gap: 16px;
 }
-/* A further measurement inside a detail (tokens and cost in Effort's Method):
+/* A further measurement inside a detail (tokens and cost in Effort's Details):
    its own title, definition and scope on one line over its body, ruled off
    from what precedes it. */
 .xt-dash-measure {
@@ -1018,15 +1162,23 @@
 }
 
 /* Sessions: the card and its panel pass their height down to the lane table,
-   whose rows scroll inside it. The card starts from three rows and grows with
-   the other flexible row, but never past its own content: a short list ends
-   under its rows, an opened group grows it, and beyond its share of the window
-   its rows scroll. A list shorter than that start is its own minimum. The
-   start is the 36px header, the card's and the panel's 1px borders, the
-   panel's 2px padding and 6px margin (50px), and the table's header and three
-   rows. */
+   whose rows scroll inside it. By default the card starts from eight rows
+   however few it lists, the spare rows blank inside its panel; a longer list
+   grows it with the other flexible row, never past its own content, and
+   beyond its share of the window its rows scroll. In a short window it gives
+   way down to its header and three rows before the page scrolls. A dragged
+   share replaces the eight-row start (above); the three-row minimum holds
+   either way.
+   The eight rows are the flex basis. The three rows are the card's height:
+   a flex item's automatic minimum is never more than its height, so the
+   card can shrink to three rows, and no min-height is set, which would stop
+   WebKit growing the card to its content. Each height is the 36px header,
+   the card's and the panel's 1px borders, the panel's 2px padding and 6px
+   margin (50px), and the table's header and rows. */
 .xt-dashboard > .xt-section-card {
   --lanes-head: 24px;
+  --lanes-reserved: 8;
+  flex: 1 1 calc(50px + var(--lanes-head) + var(--lanes-reserved) * 23px - 1px);
   height: calc(50px + var(--lanes-head) + 3 * 23px - 1px);
   max-height: max-content;
   overflow: visible;
@@ -1046,19 +1198,32 @@
   flex: 1 1 auto;
   grid-template-rows: minmax(
     calc(var(--lanes-head) + var(--rows) * 23px - 1px),
-    calc(var(--lanes-head) + var(--count) * 23px - 1px)
+    calc(var(--lanes-head) + max(var(--count), var(--lanes-reserved)) * 23px - 1px)
   );
   align-content: start;
   min-height: 0;
 }
-/* At least `--rows` 22px rows, each but the last followed by its 1px rule,
-   under the 24px header; more when the card has room, and never more than the
-   `--count` rows it holds, which is also the card's own content height. */
+/* At least `--rows` (three) 22px rows, each but the last followed by its 1px
+   rule, under the 24px header, however few it lists; more when the card has
+   room, up to the `--count`
+   rows it holds or the eight it reserves, whichever is more — which is also
+   the card's own content height. */
 .xt-lanes .xt-table-scroll {
   min-height: 0;
 }
 .xt-lanes[data-empty] {
-  grid-template-rows: auto;
+  min-height: calc(var(--lanes-head) + var(--rows) * 23px - 1px);
+  grid-template-rows: minmax(
+    min-content,
+    calc(var(--lanes-head) + var(--lanes-reserved) * 23px - 1px)
+  );
+}
+/* A dragged share fills whatever height the card is given. */
+.xt-dashboard[data-split-rows] .xt-lanes {
+  grid-template-rows: minmax(calc(var(--lanes-head) + var(--rows) * 23px - 1px), 1fr);
+}
+.xt-dashboard[data-split-rows] .xt-lanes[data-empty] {
+  grid-template-rows: minmax(min-content, 1fr);
 }
 /* The same 24px band; the activity column's visible name and its tick row
    share one line inside it. */
@@ -1207,49 +1372,6 @@
 .xt-lane-name {
   padding-left: calc(var(--depth, 0) * 14px);
 }
-/* A group's disclosure leads its name: a chevron and the count of returned
-   sub-sessions, sized inside the 22px row. The cell clips, so its focus ring
-   is drawn just inside it, as the name's own is. */
-.xt-lane-toggle {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  align-self: center;
-  gap: 3px;
-  height: 18px;
-  margin-right: 6px;
-  padding: 0 5px 0 3px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--subtle);
-  color: var(--secondary);
-  font:
-    500 10px/1 'Geist Mono',
-    Menlo,
-    monospace;
-  cursor: pointer;
-}
-.xt-lane-toggle:hover {
-  color: var(--ink);
-}
-.xt-lane-toggle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
-}
-.xt-lane-chevron {
-  display: inline-block;
-  width: 7px;
-  text-align: center;
-  transition: transform 120ms ease;
-}
-.xt-lane-toggle[aria-expanded='true'] .xt-lane-chevron {
-  transform: rotate(90deg);
-}
-@media (prefers-reduced-motion: reduce) {
-  .xt-lane-chevron {
-    transition: none;
-  }
-}
 /* Beside a disclosure the name gives up the disclosure's width, so the
    context keeps the share it has on any other row. */
 .xt-lane-toggle + .xt-lane-find {
@@ -1342,36 +1464,6 @@
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
-/*
- * Every tile has the same two rows, whatever its values: the icon and the full label on the
- * first, the value with its unit, change and aside on the second, across the tile's whole
- * width and ending at its right edge. A short value no longer sits beside its label while a
- * dense one wraps under it, so the four values share one baseline. The rows are fixed, so the
- * tile is as tall as a wrapped one always was (28 + 3 + 20 + 2 × 5 + 2 × 1 = 63px).
- */
-.xt-dash-tiles .xt-stat-tile {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: 28px 20px;
-  row-gap: 3px;
-  align-content: center;
-  height: auto;
-  padding: 5px 12px;
-}
-.xt-dash-tiles .xt-stat-row {
-  justify-self: end;
-  height: 20px;
-  max-width: 100%;
-}
-/* The value is the tallest thing on its row, so its text sets the baseline the
-   unit, change and aside sit on — the same in every tile, measured or not.
-   `clip` still ends a value that could not fit in an ellipsis, but, unlike
-   `hidden`, keeps the value's own text as its baseline rather than its box's
-   bottom edge, which would lift a row by whatever its smaller words descend. */
-.xt-dash-tiles .xt-stat-row .xt-metric-cell {
-  overflow: clip;
-}
-
 /* Environment (M-17): observed identities in report order, configured facts behind a dialog.
    The summary and the unresolved line keep their height; the identity table (its column header
    over the list) flexes; the dialog controls sit at the bottom. */

@@ -1,19 +1,28 @@
 //! The one launch form this version proves: a literal create-mode Claude
 //! print command that names its new session with `--session-id` and submits
-//! one literal inline prompt.
+//! either one literal inline prompt or a prompt read from one redirected file.
 //!
 //! The command is read by the reviewed restricted shell reader: literal
 //! words, possibly led by literal environment assignments of any valid name
 //! (set aside: neither the program nor the prompt), at most one
-//! standard-output redirection to an absolute path (never opened) and
-//! nothing else. Its program must be one of the known installed Claude
-//! launchers, present now as an executable file. Its options are a closed
-//! set with fixed arity; `--tools`, `--allowedTools` and `--mcp-config` may
-//! take several values in the Claude CLI, so the word after their one value
-//! must be another option or the end, and the prompt is never read as one of
-//! their values. Resume, continue, fork, help, version, structured input and
-//! every other option refuse the command.
+//! standard-input and one standard-output redirection to an absolute path and
+//! one standard-error redirection to an absolute path or standard output
+//! (never opened) and nothing else. Its program is `claude` as the shell
+//! finds it — taken on the recorded command's word, since no record says
+//! which program that name ran — or one of the known installed Claude
+//! launchers, present now as an executable file. Its options are read by the
+//! shared option map ([`super::options`]), which both Claude launch readers
+//! use: any known option in any order, and only a fresh print session
+//! ([`Action::Create`]) is a launch. Its output format (text, JSON or
+//! streaming JSON) and verbose logging change only what is printed, which
+//! this proof never reads; the child is bound by its `--session-id`. A
+//! command with a redirected standard input submits that file as its prompt
+//! and must name no inline prompt; the file is never opened, so such a
+//! launch has no prompt to compare. Resume, continue, fork, background, no
+//! saved session, help, version, subcommands, structured input and every
+//! unknown option refuse the command.
 
+use super::options::{self, Action};
 use super::shell;
 use std::path::{Path, PathBuf};
 
@@ -22,8 +31,9 @@ use std::path::{Path, PathBuf};
 pub(super) struct Launch {
     /// The session it names, and so creates.
     pub child: String,
-    /// The literal prompt word, compared in memory and never kept.
-    pub prompt: String,
+    /// The literal prompt word, compared in memory and never kept; `None`
+    /// for a prompt read from a redirected file, which is never opened.
+    pub prompt: Option<String>,
 }
 
 /// The installed Claude launchers a command may name, relative to the home
@@ -68,23 +78,6 @@ pub(super) fn uuid(value: &str) -> bool {
         })
 }
 
-/// Options that take exactly one value.
-const VALUED: [&str; 4] = [
-    "--model",
-    "--effort",
-    "--permission-mode",
-    "--output-format",
-];
-/// Options that take none, other than `-p`.
-const SWITCHES: [&str; 4] = [
-    "--dangerously-skip-permissions",
-    "--safe-mode",
-    "--disable-slash-commands",
-    "--strict-mcp-config",
-];
-/// The one MCP configuration accepted: no servers.
-const EMPTY_MCP: &str = r#"{"mcpServers":{}}"#;
-
 /// The launch a literal command submits, or `None` for anything else.
 pub(super) fn launch(command: &str, programs: &[PathBuf]) -> Option<Launch> {
     let shell::Command {
@@ -92,71 +85,29 @@ pub(super) fn launch(command: &str, programs: &[PathBuf]) -> Option<Launch> {
         words,
         stdin,
         stdout: _,
+        stderr: _,
     } = shell::command(command).ok()?;
-    // The prompt is the one literal word; standard input is never read.
-    if stdin.is_some() {
-        return None;
-    }
     let (program, args) = words.split_first()?;
-    if !programs
-        .iter()
-        .any(|verified| verified.as_os_str() == program.as_str())
+    if program != "claude"
+        && !programs
+            .iter()
+            .any(|verified| verified.as_os_str() == program.as_str())
     {
         return None;
     }
-    let mut print = 0;
-    let mut json = false;
-    let mut child: Option<&String> = None;
-    let mut prompt: Option<&String> = None;
-    let mut seen: Vec<&str> = Vec::new();
-    let mut after_list = false;
-    let mut args = args.iter();
-    while let Some(arg) = args.next() {
-        let list_before = std::mem::take(&mut after_list);
-        if !arg.starts_with('-') {
-            // A plain word right after a list option's value would be read
-            // as another value of it.
-            if list_before || prompt.replace(arg).is_some() {
-                return None;
-            }
-            continue;
-        }
-        let flag = arg.as_str();
-        if flag == "-p" || flag == "--print" {
-            print += 1;
-            continue;
-        }
-        if seen.contains(&flag) {
-            return None;
-        }
-        seen.push(flag);
-        if SWITCHES.contains(&flag) {
-            continue;
-        }
-        let value = args.next()?;
-        match flag {
-            "--session-id" if uuid(value) => child = Some(value),
-            "--output-format" if value == "json" => json = true,
-            "--mcp-config" if value == EMPTY_MCP => after_list = true,
-            "--tools" | "--allowedTools" if !value.starts_with('-') => after_list = true,
-            _ if VALUED.contains(&flag)
-                && flag != "--output-format"
-                && !value.is_empty()
-                && !value.starts_with('-') => {}
-            // `--tools`, `--allowedTools` and `--mcp-config` take several
-            // values in the CLI: here exactly one, never followed by a plain
-            // word. Resume, continue, fork, help, version, structured input,
-            // `--`, `--flag=value` and every other option refuse.
-            _ => return None,
-        }
-    }
-    let prompt = prompt.filter(|prompt| !prompt.is_empty())?;
-    if print != 1 || !json {
+    let read = options::read(args)?;
+    if read.action != Action::Create {
         return None;
     }
+    // The prompt is the one literal word, or the redirected file, never both.
+    let prompt = match (read.prompt, stdin) {
+        (Some(prompt), None) if !prompt.is_empty() => Some(prompt),
+        (None, Some(_)) => None,
+        _ => return None,
+    };
     Some(Launch {
-        child: child?.clone(),
-        prompt: prompt.clone(),
+        child: read.session_id?,
+        prompt,
     })
 }
 
@@ -166,6 +117,7 @@ mod tests {
 
     const CLAUDE: &str = "/opt/synthetic/bin/claude";
     const CHILD: &str = "0c000000-0000-4000-8000-0000000000c1";
+    const EMPTY_MCP: &str = r#"{"mcpServers":{}}"#;
 
     fn programs() -> Vec<PathBuf> {
         vec![PathBuf::from(CLAUDE)]
@@ -188,7 +140,7 @@ mod tests {
             launch(&full(), &programs()),
             Some(Launch {
                 child: CHILD.into(),
-                prompt: "Synthetic prompt, it's literal".into(),
+                prompt: Some("Synthetic prompt, it's literal".into()),
             })
         );
         assert_eq!(
@@ -198,7 +150,7 @@ mod tests {
             ),
             Some(Launch {
                 child: CHILD.into(),
-                prompt: "p".into()
+                prompt: Some("p".into())
             })
         );
     }
@@ -215,48 +167,83 @@ mod tests {
             ),
             format!("{CLAUDE} -p --session-id 8170544c --output-format json 'x'"),
             format!("{base} --session-id {CHILD} 'x'"),
-            format!("{CLAUDE} -p --session-id={CHILD} --output-format json 'x'"),
-            // Resume, continue, fork, help, version, structured input.
+            format!("{base} --session-id={CHILD} 'x'"),
+            format!("{CLAUDE} -p --session-id= --output-format json 'x'"),
+            // Resume, continue, fork, background, no saved session, help,
+            // version, a subcommand, structured input.
             format!("{base} --resume {CHILD} 'x'"),
             format!("{CLAUDE} -p --resume {CHILD} --output-format json 'x'"),
             format!("{base} -r {CHILD} 'x'"),
             format!("{base} --continue 'x'"),
             format!("{base} -c 'x'"),
             format!("{base} --fork-session 'x'"),
+            format!("{base} --bg 'x'"),
+            format!("{base} --background 'x'"),
+            format!("{base} --no-session-persistence 'x'"),
             format!("{base} --help"),
             format!("{base} --version"),
+            format!("{base} -v"),
+            format!("{base} doctor"),
             format!("{base} --input-format stream-json 'x'"),
             format!("{base} -- 'x'"),
-            // Output not JSON, print missing or repeated, no or two prompts.
-            format!("{CLAUDE} -p --session-id {CHILD} --output-format text 'x'"),
+            // An unknown output format, print missing or repeated, no or two
+            // prompts.
+            format!("{CLAUDE} -p --session-id {CHILD} --output-format yaml 'x'"),
+            format!("{CLAUDE} -p --session-id {CHILD} --output-format 'x'"),
+            // Values and prerequisites the CLI refuses before any session.
+            format!("{CLAUDE} -p --session-id {CHILD} --output-format stream-json 'x'"),
+            format!("{base} --max-budget-usd nope 'x'"),
+            format!("{base} --max-budget-usd 0 'x'"),
             format!("{CLAUDE} --session-id {CHILD} --output-format json 'x'"),
             format!("{base} -p 'x'"),
             base.clone(),
             format!("{base} ''"),
             format!("{base} 'x' 'y'"),
-            // Standard-input prompt, pipes, lists, substitution, background.
-            format!("{base} < /w/brief.md"),
+            // An inline prompt and a redirected one; pipes, lists,
+            // substitution, background.
             format!("{base} 'x' < /w/brief.md"),
+            format!("{base} < brief.md"),
+            format!("{base} < /dev/stdin"),
             format!("{base} 'x' | tee /w/o"),
             format!("{base} 'x'; true"),
             format!("{base} 'x' && true"),
             format!("{base} \"$(cat /w/brief)\""),
             format!("{base} 'x' &"),
-            format!("{base} 'x' 2> /w/e"),
+            format!("{base} 'x' 2>> /w/e"),
+            format!("{base} 'x' 2> /dev/null"),
+            format!("{base} 'x' &> /w/e"),
             // Unknown or repeated options, values that look like options.
             format!("{base} --agent a 'x'"),
+            format!("{base} --debug 'x'"),
+            format!("{base} --verbose --verbose 'x'"),
+            format!("{base} --name a -n b 'x'"),
             format!("{base} --model m --model n 'x'"),
             format!("{base} --model -x 'x'"),
             format!("{base} --safe-mode --safe-mode 'x'"),
+            // A prompt that a list option would take as its second value.
             format!("{base} --mcp-config /w/mcp.json 'x'"),
             format!("{base} --mcp-config '{{\"mcpServers\":{{\"s\":{{}}}}}}' 'x'"),
-            // A prompt that a list option would take as its second value.
+            format!("{base} --mcp-config '{{}}' 'x'"),
+            // An MCP configuration other than the empty-server one.
+            format!("{base} --mcp-config '{{}}' --safe-mode 'x'"),
+            format!("{base} --mcp-config /w/mcp.json --safe-mode 'x'"),
+            format!("{base} --mcp-config '{{\"mcpServers\":{{\"s\":{{}}}}}}' --safe-mode 'x'"),
             format!("{base} --tools Read 'x'"),
             format!("{base} --allowedTools Read 'x'"),
             format!("{base} --mcp-config '{EMPTY_MCP}' 'x'"),
-            // Programs that are not a verified launcher.
-            format!("claude -p --session-id {CHILD} --output-format json 'x'"),
+            // Programs that are not a known launcher or the bare name.
             format!("/tmp/claude -p --session-id {CHILD} --output-format json 'x'"),
+            format!("./claude -p --session-id {CHILD} --output-format json 'x'"),
+            format!("Claude -p --session-id {CHILD} --output-format json 'x'"),
+            // A name or browser option of the wrong arity.
+            format!("{base} --name 'x'"),
+            format!("{base} --name --no-chrome 'x'"),
+            format!("{base} --no-chrome x 'y'"),
+            format!("{base} --no-chrome --no-chrome 'x'"),
+            // Resume, continue or fork beside a redirected prompt.
+            format!("{CLAUDE} -p --resume {CHILD} --output-format json < /w/brief.md"),
+            format!("{base} --continue < /w/brief.md"),
+            format!("{base} --fork-session < /w/brief.md"),
             // Assignments that are not literal, or not leading, or not ones.
             format!("'FOO'=bar {base} 'x'"),
             format!("FOO'='bar {base} 'x'"),
@@ -291,7 +278,7 @@ mod tests {
         let base = format!("{CLAUDE} -p --session-id {CHILD} --output-format json");
         let expected = Some(Launch {
             child: CHILD.into(),
-            prompt: "x".into(),
+            prompt: Some("x".into()),
         });
         for prefix in [
             "FOO=bar",
@@ -308,14 +295,123 @@ mod tests {
             launch(&format!("{base} 'A=b'"), &programs()),
             Some(Launch {
                 child: CHILD.into(),
-                prompt: "A=b".into()
+                prompt: Some("A=b".into())
             })
         );
         assert_eq!(
             launch(&format!("{base} A=b"), &programs()).map(|launch| launch.prompt),
-            Some("A=b".into())
+            Some(Some("A=b".into()))
         );
         assert_eq!(launch(&format!("{base} 'x' A=b"), &programs()), None);
+    }
+
+    /// The coordinator's own job form: the bare program, a session title, no
+    /// browser, a prompt read from a file that is never opened, and the JSON
+    /// result redirected. No prompt is read from it.
+    #[test]
+    fn reads_the_bare_named_launch_with_a_redirected_prompt() {
+        let stdin = Some(Launch {
+            child: CHILD.into(),
+            prompt: None,
+        });
+        for command in [
+            format!(
+                "claude -p --session-id {CHILD} --name 'Fix active session names' --no-chrome \
+                 --model claude-opus-5-5 --effort high --permission-mode bypassPermissions \
+                 --output-format json < /w/brief.md > /w/job.json"
+            ),
+            format!(
+                "claude --name \"Hide unlinked sub-sessions\" --no-chrome -p --session-id {CHILD} \
+                 --output-format json < /w/brief.md"
+            ),
+            format!("{CLAUDE} -p --output-format json --session-id {CHILD} < /w/brief.md"),
+        ] {
+            assert_eq!(launch(&command, &programs()), stdin, "{command}");
+        }
+        // The bare program with an inline prompt keeps that prompt.
+        assert_eq!(
+            launch(
+                &format!("claude -p --session-id {CHILD} --output-format json --no-chrome 'x'"),
+                &[]
+            ),
+            Some(Launch {
+                child: CHILD.into(),
+                prompt: Some("x".into()),
+            })
+        );
+        // A redirected prompt with no session named, or a session named
+        // with resume, is no create launch.
+        for command in [
+            "claude -p --output-format json --name n < /w/brief.md".to_owned(),
+            format!("claude -p -r {CHILD} --output-format json < /w/brief.md"),
+        ] {
+            assert_eq!(launch(&command, &programs()), None, "{command}");
+        }
+    }
+
+    /// The coordinator job shape version 6 refused: the empty-server MCP
+    /// configuration, every option ahead of `--print`, verbose logging,
+    /// streaming JSON output and standard error redirected to its own file.
+    /// Only the session it names and its redirected prompt matter. The same
+    /// launch with the MCP configuration `{}`, which Claude refuses before
+    /// saving any session, is no launch.
+    #[test]
+    fn reads_the_streaming_verbose_launch_with_its_errors_redirected() {
+        let command = format!(
+            "claude --safe-mode --no-chrome --model claude-opus-5-5 --effort high \
+             --name 'Synthetic task title' --session-id {CHILD} --permission-mode acceptEdits \
+             --tools 'Bash,Read,Edit,Write,Glob,Grep' --allowedTools 'Bash,Read,Edit,Write,Glob,Grep' \
+             --strict-mcp-config --mcp-config '{EMPTY_MCP}' --print --verbose --output-format stream-json \
+             < /w/prompt.txt > /w/job.jsonl 2> /w/job.stderr"
+        );
+        assert_eq!(
+            launch(&command, &[]),
+            Some(Launch {
+                child: CHILD.into(),
+                prompt: None,
+            })
+        );
+        let rejected = command.replace(EMPTY_MCP, "{}");
+        assert_ne!(rejected, command);
+        assert_eq!(launch(&rejected, &[]), None);
+    }
+
+    /// The output format, verbose logging, standard-error routing and the
+    /// `=` spelling of a value change nothing about which session a launch
+    /// names or its prompt.
+    #[test]
+    fn output_format_logging_and_routing_are_not_creation_evidence() {
+        let expected = Some(Launch {
+            child: CHILD.into(),
+            prompt: Some("x".into()),
+        });
+        for tail in [
+            "",
+            "--output-format text",
+            "--output-format json",
+            "--output-format stream-json --verbose",
+            "--verbose",
+            "--verbose --output-format=json",
+            "--output-format=stream-json --verbose",
+        ] {
+            for routing in [
+                "",
+                " > /w/o",
+                " 2> /w/e",
+                " 2>&1",
+                " > /w/o 2>&1",
+                " > /w/o 2> /w/e",
+            ] {
+                for session in [
+                    format!("--session-id {CHILD}"),
+                    format!("--session-id={CHILD}"),
+                ] {
+                    let command =
+                        format!("{CLAUDE} -p {session} {tail} 'x'{routing}").replace("  ", " ");
+                    assert_eq!(launch(&command, &programs()), expected, "{command}");
+                }
+            }
+        }
     }
 
     #[test]

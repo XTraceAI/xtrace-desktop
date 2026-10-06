@@ -14,7 +14,7 @@ import { MetricCell } from '../../kit/MetricCell';
 import { RulePopover } from '../../kit/RulePopover';
 import type { TimeRange } from '../../kit/TopBar';
 import { contextLead, contextTitle, displayTitle, shortId } from '../session-context';
-import { ParentMarker, parentName, verifiedParent } from '../session-parent';
+import { GroupToggle, ParentMarker, parentName, verifiedParent } from '../session-parent';
 import { listAddress, sessionHref } from '../session-search';
 import { useSessionTitles, useVisibleIds } from '../session-titles';
 import {
@@ -32,22 +32,33 @@ import {
 import '../../styles/live-session-status.css';
 import { LaneSpan } from './LaneSpan';
 import { clockTime, plural, recordedTime, unpricedText, usd } from './present';
-import { groupSessionLanes, laneRows, type LaneRow, type SessionLane } from './lanes';
+import {
+  groupSessionLanes,
+  laneRows,
+  listedLanes,
+  notListed,
+  sessionKey,
+  type LaneParent,
+  type LaneRow,
+  type SessionLane,
+} from './lanes';
 
 type Row = LaneRow<SessionParentLink>;
 
 const HOUR = 3_600_000;
 /** Said of a row no indexed session owns, so nothing was priced. */
-const NO_SESSION = 'No indexed session owns this identifier, so nothing was priced';
-/** Said of an indexed session with no selected response in the window. */
-const NO_RESPONSES = 'No selected responses in this window, so there is nothing to price';
+const NO_SESSION = 'Cost unknown for this session';
+/** Said of an indexed session with no selected response at all. */
+const NO_RESPONSES = 'No responses recorded for this session, so there is nothing to price';
+/** Said of a collapsed group none of whose sessions recorded a response. */
+const NO_GROUP_RESPONSES = 'No responses recorded for these sessions, so there is nothing to price';
 /** Said of a row the report carries no context row for. */
-const NO_CONTEXT = 'No indexed context was read for this session';
+const NO_CONTEXT = "This session hasn't been read yet";
 /** Said of an indexed session with no known start. */
-const NO_START = 'No start is known for this session; its first active span is not its start';
+const NO_START = 'Start unknown for this session';
 /** What the PRs column counts, wherever it is explained. */
 export const PR_MEANING =
-  'Recorded session → pull request links: every evidence level (exact, commit, inferred), all indexed time, not merge status. Zero means no link is recorded, not that no pull request exists; a grey dot marks a count that includes inferred links.';
+  'Linked PRs, merged or not. 0 means no link was found; a grey dot means the count includes guesses.';
 
 /**
  * Rows the lane table always shows. The table takes the Sessions card's share
@@ -59,11 +70,13 @@ export const MIN_LANE_ROWS = 3;
 export const laneHours = (report: DashboardMetrics) =>
   Math.round(Math.max(1, report.lane_end_ms - report.lane_start_ms) / HOUR);
 
+/** Which sessions the card lists, said where the card is named. */
+export const laneSubtitle = (report: DashboardMetrics) =>
+  `Active in the last ${laneHours(report)} hours`;
+
 /** What the rows are and are not, read from the card's definition. */
-export const laneDefinition = (report: DashboardMetrics) => {
-  const hours = laneHours(report);
-  return `Session rows are active spans on the fixed recent ${hours}-hour axis, whatever range is selected: a session row is that window only, never a whole session. Metrics include every span, drawn or not, and cost covers each listed session across the whole ${hours} hours, including spans the table does not draw. Started is when the session began, whenever that was: the start its host recorded, or for Claude Code, which records none, its earliest message; PRs counts recorded links, not merged pull requests. A verified sub-session is listed under the session that created it, collapsed; a group sits where its newest returned member does. A parent with no span returned in this report is only named, on a row of its own that has no activity lane, measurement or start, with the count of its returned sub-sessions; sub-sessions outside the returned spans are not counted.`;
-};
+export const laneDefinition = (report: DashboardMetrics) =>
+  `Each row's numbers cover the whole session; only the Activity bars stop at ${laneHours(report)} hours.`;
 
 /**
  * Ticks at the quarters of the fixed recent axis, on one line after the
@@ -89,19 +102,21 @@ function Axis({ start, span, window }: { start: number; span: number; window: Da
 }
 
 /**
- * Returned active spans on the report's fixed recent axis, independent of the
- * selected range.
+ * The sessions active in the report's fixed recent window, independent of the
+ * selected range, with their returned active spans on that window's axis.
  *
- * One row per session, carrying every span the report returned for it. A row
- * is never a whole session: the axis covers only the recent window, and the
- * report caps how many spans it returns.
+ * One row per session, carrying every span the report returned for it. The
+ * window decides which sessions are listed and where their bars fall; every
+ * number in a row describes the whole session.
  *
  * A session with a verified parent is listed under that parent, collapsed
  * behind a disclosure on the parent's row — or, when the report returned no
  * span for the parent, on a row that only names it and counts its returned
  * sub-sessions, with no measurement of its own. Opening a group lists each
- * child's own row as it would read ungrouped. This is the compact Dashboard's
- * arrangement only: every child is still its own session on Sessions.
+ * child's own row as it would read ungrouped. A session the report marks as a
+ * known sub-session whose creator is not verified is not listed at all, nor
+ * is any returned session under it, and nothing is read for them. The
+ * Sessions page arranges its lists the same way.
  *
  * A row names its session by its host's own title — read from the original
  * source for the rows in view, never stored — or a title the index saved, else
@@ -113,15 +128,83 @@ function Axis({ start, span, window }: { start: number; span: number; window: Da
  * the count of recorded pull-request links at every evidence level. An unknown
  * fact is said to be unknown; a measured zero stays zero.
  *
- * The cost column is the one measurement here, and it is taken over the
- * whole fixed window rather than over the drawn spans, so the display cap
- * never reduces a number. The column's own definition says so.
+ * The cost column is the one measurement here, and it is the whole session's,
+ * whenever it was spent, so neither the window nor the display cap reduces
+ * it. A collapsed group shows the sum of the rows opening it would list — its
+ * own session, if it has a row, and every listed session under it — so the
+ * cost cells in view add up to the same amount whether a group is open or
+ * not. The column's own definition says so.
  */
 export function ActivityLanes({ report, range }: { report: DashboardMetrics; range: TimeRange }) {
   const { lanes, lane_start_ms: start, lane_end_ms: end, window } = report;
   const span = Math.max(1, end - start);
   const hours = laneHours(report);
-  const sessions = groupSessionLanes(lanes);
+  // Context is addressed by identity, not by position: the report orders it by
+  // identifier while the rows keep the order the spans were returned in. It
+  // also holds context-only entries for parents with no span here, which
+  // never make a row by themselves, and the sub-sessions with no span here.
+  // Keyed by exact host and identity, as the grouping is: one session's
+  // context is never another host's.
+  const context = new Map<string, DashboardLaneSession>(
+    [...report.lane_sessions, ...report.lane_sub_sessions].map((session) => [
+      sessionKey(session.host, session.session_id),
+      session,
+    ]),
+  );
+  // A session the report named no context row for keeps an honest unknown
+  // rather than borrowing another row's repository.
+  const found = (lane: SessionLane) => context.get(sessionKey(lane.host, lane.sessionId)) ?? null;
+  const linkOf = (lane: SessionLane) =>
+    verifiedParent({ id: lane.sessionId, parent: found(lane)?.parent });
+  // A session still being checked, or a known sub-session whose creator is
+  // not verified, is not listed here at all, nor anything returned under it;
+  // nor does the Sessions page. A report with no context for a session, or
+  // without its display check, leaves it out: it is not known to be shown.
+  const unresolved = ({ session_id, host }: LaneParent) => {
+    const session = context.get(sessionKey(host, session_id));
+    return notListed(
+      session,
+      host,
+      verifiedParent({ id: session_id, parent: session?.parent }) !== null,
+    );
+  };
+  const returned = groupSessionLanes(lanes);
+  // The listed sessions' sub-sessions with no span here, whenever they ran,
+  // so a group lists every sub-session its total adds up. Each is placed only
+  // under its verified parent — a returned session or another of these — so
+  // none becomes a row of its own, and it has no span to draw. They follow the
+  // returned sessions, so a group still sits where its newest returned member
+  // does. Placement does not depend on the report's order: passes repeat
+  // until no more can be placed, and only one whose parent never appears is
+  // left out.
+  const placed = new Set(returned.map((lane) => lane.key));
+  const older: SessionLane[] = [];
+  let waiting = report.lane_sub_sessions;
+  for (let progress = true; progress && waiting.length > 0;) {
+    progress = false;
+    const next: typeof waiting = [];
+    for (const session of waiting) {
+      const key = sessionKey(session.host, session.session_id);
+      const parent = verifiedParent({ id: session.session_id, parent: session.parent });
+      if (!parent || placed.has(key)) continue;
+      if (!placed.has(sessionKey(parent.host, parent.session_id))) {
+        next.push(session);
+        continue;
+      }
+      placed.add(key);
+      progress = true;
+      older.push({
+        key,
+        sessionId: session.session_id,
+        host: session.host,
+        spans: [],
+        firstMs: 0,
+        lastMs: 0,
+      });
+    }
+    waiting = next;
+  }
+  const sessions = listedLanes([...returned, ...older], linkOf, unresolved);
   // Which groups are open: collapsed until asked, and kept by key while the
   // report refreshes, so a group open before a live update stays open after.
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
@@ -132,14 +215,6 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
       return next;
     });
   const position = (ms: number) => (Math.min(end, Math.max(start, ms)) - start) / span;
-  // Context is addressed by identity, not by position: the report orders it by
-  // identifier while the rows keep the order the spans were returned in.
-  const context = new Map<string, DashboardLaneSession>(
-    report.lane_sessions.map((session) => [session.session_id, session]),
-  );
-  // A session the report named no context row for keeps an honest unknown
-  // rather than borrowing another row's repository.
-  const found = (lane: SessionLane) => context.get(lane.sessionId) ?? null;
   // Host titles are read only for the rows inside the table's own scroll area,
   // and again for a row whose latest span has moved, which keeps its last
   // title until that read answers; scrolling brings more rows into view, and
@@ -168,14 +243,12 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
   // row reads now; a parent with no lane in this report keeps the name the
   // report sent, and no title is read for it. It never gains a lane.
   const rowsById = new Map(sessions.map((lane) => [lane.sessionId, lane]));
-  const linkOf = (lane: SessionLane) =>
-    verifiedParent({ id: lane.sessionId, parent: found(lane)?.parent });
   const compaction = useSessionCompactions(
     JSON.stringify(['dashboard', range]),
     sessions
       .filter((lane) => visible.has(lane.sessionId) && !linkOf(lane))
       .map((lane) => lane.sessionId),
-    { keepResolved: true, retryTransient: true },
+    { retryTransient: true },
   );
   const parentOf = (lane: SessionLane) => {
     const parent = linkOf(lane);
@@ -196,20 +269,14 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
           }`,
       )
       .join(', ');
-  const costText = (lane: SessionLane) => {
-    const session = found(lane);
-    if (!session) return 'cost unknown: no indexed context';
-    const { cost } = session;
-    if (!cost) return 'cost unknown: no indexed session';
-    if (cost.selected_observations === 0) return 'no selected responses to price';
-    if (cost.priced_observations === 0) return `cost unknown: ${unpricedNames(cost)}`;
-    if (cost.total_usd !== null)
-      return `${usd(cost.total_usd)} API-equivalent cost of ${plural(cost.selected_observations, 'response')}`;
-    return `at least ${usd(cost.priced_subtotal_usd)} API-equivalent cost: ${partialText(cost)}`;
-  };
+  const costText = (lane: SessionLane) => shownCostText(shownCost([found(lane)]));
+  const activityText = (lane: SessionLane) =>
+    lane.spans.length === 0
+      ? `no activity in the last ${hours} hours`
+      : `${plural(lane.spans.length, 'active span')} in the last ${hours} hours — ${spanText(lane)}`;
   const startedText = (lane: SessionLane) => {
     const session = found(lane);
-    if (!session) return 'start unknown: no indexed context';
+    if (!session) return "start unknown: this session hasn't been read yet";
     return session.started_at_ms === null
       ? 'start unknown'
       : `started ${recordedTime(session.started_at_ms, window)}`;
@@ -232,26 +299,56 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
       session?.repo ?? 'unknown'
     }, branch ${session?.branch ?? 'unknown'}${title ? `, titled ${title}` : ''}${
       created ? `, sub-session of ${created.name} (${created.parent.session_id})` : ''
-    }: ${plural(lane.spans.length, 'active span')} in the last ${hours} hours — ${spanText(
+    }: ${activityText(lane)}. ${startedText(lane)}; ${prText(lane)}. Whole session: ${costText(
       lane,
-    )}. ${startedText(lane)}; ${prText(lane)}. Over the whole ${hours} hours: ${costText(lane)}.`;
+    )}.`;
   };
 
-  // Only the returned sessions are placed, each once: under its parent's row,
-  // else under a row that names an absent parent. The table draws the rows
+  // Every listed session is placed once: under its parent's row, else under
+  // a row that names an absent parent. The table draws the rows
   // this union holds, so a collapsed child is unmounted, not hidden.
   const { rows } = laneRows(sessions, linkOf, open);
   const nameOf = (lane: SessionLane) => titleOf(lane) ?? `Session ${shortId(lane.sessionId)}`;
-  const groupText = (row: Row) =>
-    row.children === 0
-      ? ''
-      : ` ${plural(row.children, 'returned sub-session')} ${
-          row.expanded ? 'listed below' : 'collapsed under this row'
-        }.`;
+  /**
+   * The cost a row shows: its own, or a collapsed group's total of every row
+   * opening it lists, with any sub-sessions the report left out counted.
+   */
+  const rowCost = (row: Row): ShownCost | null => {
+    if (row.children > 0 && !row.expanded) {
+      const group = [...(row.kind === 'session' ? [row.lane] : []), ...row.members].map(found);
+      const notShown = group.reduce(
+        (sum, session) => sum + (session?.sub_sessions_not_shown ?? 0),
+        0,
+      );
+      const cutShort = group.some((session) => session?.sub_sessions_cut_short === true);
+      return shownCost(group, { total: true, notShown, cutShort });
+    }
+    return row.kind === 'session' ? shownCost([found(row.lane)]) : null;
+  };
+  /**
+   * Sub-sessions the report left out under a row that shows no total of
+   * them — one with none listed, or an open group — said beside its own cost.
+   */
+  const leftOutNote = (row: Row) => {
+    if (row.kind !== 'session' || (row.children > 0 && !row.expanded)) return '';
+    const session = found(row.lane);
+    return hiddenNote(
+      session?.sub_sessions_not_shown ?? 0,
+      session?.sub_sessions_cut_short === true,
+    );
+  };
+  const groupText = (row: Row) => {
+    if (row.children === 0) return '';
+    if (row.expanded) return ` ${plural(row.children, 'sub-session')} listed below.`;
+    const cost = rowCost(row);
+    return ` ${plural(row.children, 'sub-session')} collapsed under this row. Total${
+      row.kind === 'session' ? ' with its sub-sessions' : ''
+    }: ${cost ? shownCostText(cost) : 'cost unknown'}.`;
+  };
   const absentText = (row: Extract<Row, { kind: 'absent' }>) =>
-    `Sub-sessions of ${row.parent.host} session ${row.parent.session_id}, which has no span returned in this report: it is only named here, with no measurement of its own.${groupText(
+    `Sub-sessions of ${row.parent.host} session ${row.parent.session_id}, which is not listed here: it is only named, with no numbers of its own. Its sub-sessions active in the last ${hours} hours are listed, with their own sub-sessions.${groupText(
       row,
-    )} Only sub-sessions with returned spans are counted.`;
+    )}`;
   /** A cell that belongs to a returned session; an absent parent's is blank. */
   const onLane =
     (render: (lane: SessionLane) => ReactNode) =>
@@ -294,7 +391,7 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
           const name = parentName(row.parent);
           return (
             <span className="xt-lane-name" data-group="absent">
-              <GroupToggle row={row} name={name} onToggle={toggle} />
+              <GroupToggle row={row} name={name} noun="sub-session" onToggle={toggle} />
               <span className="xt-lane-group-words" aria-hidden="true">
                 Sub-sessions of{' '}
               </span>
@@ -325,7 +422,9 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
             data-subsession={created ? '' : undefined}
             style={row.depth > 0 ? ({ '--depth': row.depth } as CSSProperties) : undefined}
           >
-            {row.children > 0 && <GroupToggle row={row} name={nameOf(lane)} onToggle={toggle} />}
+            {row.children > 0 && (
+              <GroupToggle row={row} name={nameOf(lane)} noun="sub-session" onToggle={toggle} />
+            )}
             <Link
               className="xt-lane-find"
               to={sessionHref(lane.sessionId, listAddress(lane, range))}
@@ -367,7 +466,9 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
             >
               {contextLead(session?.repo ?? null, session?.branch ?? null)}
             </span>
-            <span className="sr-only">{` — ${rowText(lane)}${groupText(row)}`}</span>
+            <span className="sr-only">{` — ${rowText(lane)}${groupText(row)}${
+              leftOutNote(row) ? ` ${leftOutNote(row)}` : ''
+            }`}</span>
           </span>
         );
       },
@@ -377,7 +478,12 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
       header: <span title={COMPACTION_MEANING}>Compactions</span>,
       width: '92px',
       render: onLane((lane) =>
-        linkOf(lane) ? null : <CompactionBadge outcome={compaction(lane.sessionId)} />,
+        linkOf(lane) ? null : (
+          <CompactionBadge
+            outcome={compaction(lane.sessionId)}
+            reading={compaction.reading(lane.sessionId)}
+          />
+        ),
       ),
     },
     {
@@ -405,7 +511,7 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
             className="xt-lane-prs"
             data-inferred={inferred > 0 || undefined}
             data-empty={session.pr_links === 0 || undefined}
-            title={`${prText(lane)} · all evidence levels, all indexed time, not merge status`}
+            title={`${prText(lane)} · whole session, merged or not`}
           >
             {inferred > 0 && (
               <span aria-hidden="true">
@@ -421,11 +527,7 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
     },
     {
       key: 'started',
-      header: (
-        <span title="When the session began, whenever that was: the start its host recorded, or for Claude Code its earliest message">
-          started
-        </span>
-      ),
+      header: <span title="When the session began, even if before this range.">started</span>,
       width: '98px',
       render: onLane((lane) => {
         const session = found(lane);
@@ -488,23 +590,28 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
     {
       key: 'cost',
       // The measured column carries its own definition, and says in the same
-      // place what window it covers, so the number is never read as a total of
-      // the spans drawn beside it.
+      // place that it covers the whole session, so the number is never read as
+      // a total of the spans drawn beside it.
       header: (
         <RulePopover ruleId="M-04" context={laneCostDefinition(hours)}>
           <button
             type="button"
             className="xt-table-metric-header"
-            aria-label={`Cost over the last ${hours} hours, definition`}
+            aria-label="Whole-session cost, definition"
           >
             cost
           </button>
         </RulePopover>
       ),
-      // Wide enough for "$1,234+" and "$999.99+" without an ellipsis.
-      width: '72px',
+      // Wide enough for "Σ $12,345+" and "Σ $999.99+" without an ellipsis.
+      width: '80px',
       align: 'right',
-      render: onLane((lane) => <LaneCost session={found(lane)} />),
+      // Every row, an absent parent's included: collapsed, it shows its
+      // sub-sessions' total; open, it is blank, as it has no cost.
+      render: (row) => {
+        const cost = rowCost(row);
+        return cost && <LaneCost shown={cost} note={leftOutNote(row)} />;
+      },
     },
   ];
 
@@ -514,9 +621,10 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
       data-empty={sessions.length === 0 || undefined}
       style={
         {
-          // From the rows drawn, so opening a group grows the table up to the
-          // card's share and scrolls inside it beyond that.
-          '--rows': Math.min(rows.length, MIN_LANE_ROWS),
+          // The table's minimum is three rows however few it lists; its most
+          // is from the rows drawn, so opening a group grows the table up to
+          // the card's share and scrolls inside it beyond that.
+          '--rows': MIN_LANE_ROWS,
           '--count': rows.length,
         } as CSSProperties
       }
@@ -529,51 +637,17 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
         rowHeight={22}
         hover="track"
         stickyHeader
-        emptyMessage={`No active span in the last ${hours} hours (${clockTime(start, window)} – ${clockTime(end, window)}).`}
+        emptyMessage={`${
+          returned.length > 0 ? 'No session to list' : 'No active span'
+        } in the last ${hours} hours (${clockTime(start, window)} – ${clockTime(end, window)}).`}
       />
     </div>
   );
 }
 
-/**
- * The disclosure for a group: a real button in the name cell, so the row keeps
- * its columns and its 22px height. Its name says whose sub-sessions and how
- * many were returned; `aria-expanded` says whether they are listed. It controls
- * no single element — the children are rows of the same table, mounted only
- * while open — so it names none with `aria-controls`.
- */
-function GroupToggle({
-  row,
-  name,
-  onToggle,
-}: {
-  row: Row;
-  name: string;
-  onToggle: (key: string) => void;
-}) {
-  const label = `${plural(row.children, 'returned sub-session')} of ${name}`;
-  return (
-    <button
-      type="button"
-      className="xt-lane-toggle"
-      // WebKit leaves a button out of the Tab order unless it is named here.
-      tabIndex={0}
-      aria-expanded={row.expanded}
-      aria-label={label}
-      title={`${row.expanded ? 'Hide' : 'Show'} ${label}`}
-      onClick={() => onToggle(row.key)}
-    >
-      <span className="xt-lane-chevron" aria-hidden="true">
-        ›
-      </span>
-      <span aria-hidden="true">{row.children.toLocaleString('en-US')}</span>
-    </button>
-  );
-}
-
 /** The cost column's definition, in plain words. */
 export const laneCostDefinition = (hours: number) =>
-  `API-equivalent cost of every token each session used over the whole ${hours}-hour window, including active spans this table does not draw, at each model's public rate. "+" means some responses have no published price, so the amount is a floor. "—" means nothing could be priced. Codex responses with no service tier recorded are priced at OpenAI's default (standard) tier. A measured zero is shown as $0.00.`;
+  `Cost of the whole session, not just the last ${hours} hours. Σ is the session plus its sub-sessions; + means part is unpriced.`;
 
 /**
  * A lane amount: cents below $1,000, whole dollars from there, so the
@@ -639,7 +713,7 @@ const unpricedGap = (gap: UnpricedGap, counted: boolean) => {
 };
 export const unpricedNames = (cost: DashboardLaneCost) =>
   cost.unpriced.length === 0
-    ? `none of ${plural(cost.selected_observations, 'selected response')} could be priced`
+    ? `none of ${plural(cost.selected_observations, 'response')} could be priced`
     : mergeUnpriced(cost.unpriced)
         .map((gap) => unpricedGap(gap, false))
         .join('; ');
@@ -653,42 +727,166 @@ export const partialText = (cost: DashboardLaneCost) =>
           .join('; ')
   }`;
 
-/** One lane session's cost over the lane window. */
-function LaneCost({ session }: { session: DashboardLaneSession | null | undefined }) {
+/**
+ * The cost one row shows: a session's own, or a collapsed group's total of
+ * every row opening it lists. `unknown` counts sessions in it whose cost is
+ * unknown, and `notShown` sub-sessions the report left out; neither is in the
+ * amount, which is then a floor.
+ */
+export interface ShownCost {
+  cost: DashboardLaneCost | null;
+  /** A collapsed group's total, marked Σ. */
+  total: boolean;
+  /** How many sessions the amount covers. */
+  sessions: number;
+  unknown: number;
+  notShown: number;
+  /** The report's walk for some of these stopped early: `notShown` is a floor. */
+  cutShort: boolean;
+}
+
+/**
+ * Sessions' whole costs added up, in the report's own shape: counts and
+ * priced subtotals add, unpriced responses keep their model and reason, and
+ * the total is known only when every session's is and none is left out. A
+ * session with no response adds nothing and leaves the total known.
+ */
+export const shownCost = (
+  sessions: readonly (DashboardLaneSession | null | undefined)[],
+  {
+    total = false,
+    notShown = 0,
+    cutShort = false,
+  }: { total?: boolean; notShown?: number; cutShort?: boolean } = {},
+): ShownCost => {
+  const costs = sessions.flatMap((session) => (session?.cost ? [session.cost] : []));
+  const unknown = sessions.length - costs.length;
+  const add = (pick: (cost: DashboardLaneCost) => number) =>
+    costs.reduce((sum, cost) => sum + pick(cost), 0);
+  const subtotal = add((cost) => cost.priced_subtotal_usd);
+  const selected = add((cost) => cost.selected_observations);
+  return {
+    cost:
+      costs.length === 0
+        ? null
+        : {
+            total_usd:
+              unknown === 0 &&
+              notShown === 0 &&
+              !cutShort &&
+              selected > 0 &&
+              costs.every((cost) => cost.selected_observations === 0 || cost.total_usd !== null)
+                ? subtotal
+                : null,
+            priced_subtotal_usd: subtotal,
+            selected_observations: selected,
+            priced_observations: add((cost) => cost.priced_observations),
+            unpriced_observations: add((cost) => cost.unpriced_observations),
+            assumed_tier_observations: add((cost) => cost.assumed_tier_observations),
+            unpriced: costs.flatMap((cost) => cost.unpriced),
+          },
+    total,
+    sessions: sessions.length,
+    unknown,
+    notShown,
+    cutShort,
+  };
+};
+
+/** Sub-sessions left out, e.g. "3 more sub-sessions not shown"; "at least" when the count is a floor. */
+const notShownText = (count: number, cutShort: boolean) =>
+  cutShort && count === 0
+    ? 'more sub-sessions may not be shown'
+    : `${cutShort ? 'at least ' : ''}${plural(count, 'more sub-session')} not shown`;
+
+/** The same, said of one session's own row, which shows no total of them. */
+export const hiddenNote = (count: number, cutShort: boolean) =>
+  count === 0 && !cutShort
+    ? ''
+    : cutShort && count === 0
+      ? 'More sub-sessions under this session may not be shown or counted.'
+      : `${cutShort ? 'At least ' : ''}${plural(count, 'more sub-session')} under this session ${
+          count === 1 && !cutShort ? 'is' : 'are'
+        } not shown or counted.`;
+
+/** What a total leaves out, e.g. "2 sessions' cost unknown, not included". */
+const leftOut = ({ unknown, notShown, cutShort }: ShownCost) => {
+  const parts = [
+    unknown > 0
+      ? `${unknown === 1 ? "1 session's" : `${unknown.toLocaleString('en-US')} sessions'`} cost unknown`
+      : '',
+    notShown > 0 || cutShort ? notShownText(notShown, cutShort) : '',
+  ].filter(Boolean);
+  return parts.length === 0 ? '' : `${parts.join(' and ')}, not included`;
+};
+const andLeftOut = (shown: ShownCost) => (leftOut(shown) ? `; ${leftOut(shown)}` : '');
+
+/** Why an amount is only a floor: what could not be priced, then what is left out. */
+const floorText = (cost: DashboardLaneCost, shown: ShownCost) =>
+  `${
+    cost.unpriced_observations > 0
+      ? partialText(cost)
+      : `all ${plural(cost.selected_observations, 'response')} priced`
+  }${andLeftOut(shown)}`;
+
+/** A shown cost in words, for a row's spoken description. */
+export const shownCostText = (shown: ShownCost) => {
+  const { cost } = shown;
+  if (!cost) return 'cost unknown';
+  if (cost.selected_observations === 0)
+    return leftOut(shown) ? `no responses to price; ${leftOut(shown)}` : 'no responses to price';
+  if (cost.priced_observations === 0)
+    return `cost unknown: ${unpricedNames(cost)}${andLeftOut(shown)}`;
+  if (cost.total_usd !== null)
+    return `${usd(cost.total_usd)} API-equivalent cost of ${plural(cost.selected_observations, 'response')}`;
+  return `at least ${usd(cost.priced_subtotal_usd)} API-equivalent cost: ${floorText(cost, shown)}`;
+};
+
+/** One row's whole-session cost: a session's own, or a collapsed group's Σ total. */
+function LaneCost({ shown, note = '' }: { shown: ShownCost; note?: string }) {
+  // Sub-sessions left out under a row that shows no total of them.
+  const aside = note ? ` ${note}` : '';
   const unknown = (reason: string) => (
-    <MetricCell value={null} align="right" size={10.5} reason={reason} />
+    <MetricCell value={null} align="right" size={10.5} reason={`${reason}${aside}`} />
   );
-  if (!session) return unknown(NO_CONTEXT);
-  const { cost } = session;
-  if (!cost) return unknown(NO_SESSION);
-  if (cost.selected_observations === 0) return unknown(NO_RESPONSES);
+  const { cost, total } = shown;
+  if (!cost) return unknown(total ? 'Cost unknown for these sessions' : NO_SESSION);
+  if (cost.selected_observations === 0)
+    return unknown(
+      leftOut(shown)
+        ? `No responses to price; ${leftOut(shown)}`
+        : total
+          ? NO_GROUP_RESPONSES
+          : NO_RESPONSES,
+    );
   // A model name keeps its own spelling, so the reason is not capitalised.
-  if (cost.priced_observations === 0) return unknown(unpricedNames(cost));
+  if (cost.priced_observations === 0) return unknown(`${unpricedNames(cost)}${andLeftOut(shown)}`);
+  const mark = total ? 'Σ ' : '';
+  const scope = total ? `Total for these ${plural(shown.sessions, 'session')}: ` : '';
+  // Kept short: the row's spoken description carries the full breakdown.
   const assumed =
     cost.assumed_tier_observations > 0
-      ? ` ${plural(cost.assumed_tier_observations, 'Codex response')} recorded no service tier and ${
-          cost.assumed_tier_observations === 1 ? 'is' : 'are'
-        } priced at OpenAI's default (standard) tier.`
+      ? ` ${plural(cost.assumed_tier_observations, 'Codex response')} priced at the standard tier.`
       : '';
   if (cost.total_usd !== null)
     return (
       <MetricCell
-        value={laneUsd(cost.total_usd)}
+        value={`${mark}${laneUsd(cost.total_usd)}`}
         align="right"
         size={10.5}
-        title={`${usd(cost.total_usd)} API-equivalent, ${
-          cost.selected_observations === 1
-            ? '1 response priced'
-            : `all ${plural(cost.selected_observations, 'response')} priced`
-        }.${assumed}`}
+        title={`${scope}${usd(cost.total_usd)} at public API prices.${assumed}${aside}`}
       />
     );
   return (
     <MetricCell
-      value={`${laneUsd(cost.priced_subtotal_usd)}+`}
+      value={`${mark}${laneUsd(cost.priced_subtotal_usd)}+`}
       align="right"
       size={10.5}
-      title={`At least ${usd(cost.priced_subtotal_usd)}: ${partialText(cost)}; the unpriced ones are not included.${assumed}`}
+      title={`${scope ? `${scope}at least` : 'At least'} ${usd(cost.priced_subtotal_usd)}: ${
+        cost.unpriced_observations > 0
+          ? `${cost.unpriced_observations.toLocaleString('en-US')} of ${plural(cost.selected_observations, 'response')} ${cost.unpriced_observations === 1 ? 'has' : 'have'} no price${andLeftOut(shown)}`
+          : leftOut(shown) || 'some responses have no price'
+      }.${assumed}${aside}`}
     />
   );
 }

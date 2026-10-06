@@ -7,8 +7,8 @@
 //! scope, name, percent used, reset time, window length and the reading's own
 //! read time. No login, token, email or account identifier is written.
 use crate::account_usage_dto::{
-    AccountProviderUsage, AccountUsageDay, AccountUsagePace, AccountUsagePaceBasis,
-    AccountUsagePoint, AccountUsageScope, AccountUsageState, AccountUsageWindow,
+    AccountProviderUsage, AccountUsageDay, AccountUsagePace, AccountUsagePoint, AccountUsageScope,
+    AccountUsageState, AccountUsageWindow,
 };
 use jiff::{Timestamp, civil::Date, tz::TimeZone};
 use serde::{Deserialize, Serialize};
@@ -37,10 +37,6 @@ const SAME_RESET_SECS: i64 = 60 * 60;
 
 /// Pace is hidden until this share of the window has passed.
 const MIN_ELAPSED_FRACTION: f64 = 0.03;
-/// The recent rate looks back this far...
-const RECENT_SECS: i64 = 24 * 3600;
-/// ...and needs readings spanning at least this long.
-const RECENT_MIN_SPAN_SECS: i64 = 2 * 3600;
 const SESSION_MINUTES: u32 = 300;
 /// The week's series is thinned to at most this many points.
 const MAX_SERIES_POINTS: usize = 200;
@@ -329,15 +325,14 @@ fn window_points(
     points
 }
 
-/// Where the window is heading. `as_of` is the reading's own read time; `now`
-/// only decides whether the reset has passed.
-pub(super) fn pace(
-    window: &AccountUsageWindow,
-    provider: Provider,
-    history: &[Sample],
-    as_of: i64,
-    now: i64,
-) -> Option<AccountUsagePace> {
+/// Where the window is heading, by one rule: use is compared with even use
+/// over the whole window so far. Above even use, the rate since the window
+/// started runs out before the reset and its time is given; at or below it,
+/// none is. `expected_percent` is sent unrounded, so the widget's tick and bar
+/// color compare the same numbers and always agree with the warning.
+/// `as_of` is the reading's own read time; `now` only decides whether the
+/// reset has passed.
+pub(super) fn pace(window: &AccountUsageWindow, as_of: i64, now: i64) -> Option<AccountUsagePace> {
     let used = window.used_percent;
     if !used.is_finite() || used <= 0.0 || used >= 100.0 {
         return None;
@@ -352,25 +347,16 @@ pub(super) fn pace(
     if elapsed <= 0 || (elapsed as f64) < MIN_ELAPSED_FRACTION * length as f64 {
         return None;
     }
+    let expected = elapsed as f64 / length as f64 * 100.0;
     // Per second, in percentage points.
-    let recent = window_points(history, provider, window, start, as_of)
-        .into_iter()
-        .find(|(at, _)| as_of - at <= RECENT_SECS)
-        .filter(|(at, earlier)| as_of - at >= RECENT_MIN_SPAN_SECS && used >= *earlier)
-        .map(|(at, earlier)| (used - earlier) / (as_of - at) as f64);
-    let (basis, rate) = match recent {
-        Some(rate) => (AccountUsagePaceBasis::Recent, rate),
-        None => (AccountUsagePaceBasis::WindowAverage, used / elapsed as f64),
-    };
-    let left = (reset - as_of) as f64;
-    let projected = used + rate * left;
-    let run_out_at = (projected >= 100.0 && rate > 0.0)
+    let rate = used / elapsed as f64;
+    let projected = used + rate * (reset - as_of) as f64;
+    let run_out_at = (used > expected)
         .then(|| as_of + ((100.0 - used) / rate).round() as i64)
         .map(|at| at.min(reset));
     Some(AccountUsagePace {
-        basis,
         projected_percent_at_reset: round1(projected.min(100.0)),
-        expected_percent: round1(elapsed as f64 / length as f64 * 100.0),
+        expected_percent: expected,
         run_out_at,
     })
 }
@@ -505,7 +491,7 @@ pub(super) fn annotate(
     }
     let as_of = usage.checked_at.unwrap_or(now).min(now);
     for window in &mut usage.windows {
-        window.pace = pace(window, provider, history, as_of, now);
+        window.pace = pace(window, as_of, now);
         window.daily = daily(window, provider, history, as_of, zone);
         window.series = series(window, provider, history, as_of);
     }
@@ -777,50 +763,37 @@ mod tests {
         let start = reset - 7 * DAY;
         // 3% of a week is about 5 hours.
         let early = start + 5 * HOUR;
-        assert_eq!(
-            pace(&week(5.0, reset), Provider::Claude, &[], early, early),
-            None
-        );
+        assert_eq!(pace(&week(5.0, reset), early, early), None);
         let later = start + 6 * HOUR;
-        assert!(pace(&week(5.0, reset), Provider::Claude, &[], later, later).is_some());
+        assert!(pace(&week(5.0, reset), later, later).is_some());
         let mid = start + 3 * DAY;
-        assert_eq!(
-            pace(&week(0.0, reset), Provider::Claude, &[], mid, mid),
-            None
-        );
-        assert_eq!(
-            pace(&week(100.0, reset), Provider::Claude, &[], mid, mid),
-            None
-        );
+        assert_eq!(pace(&week(0.0, reset), mid, mid), None);
+        assert_eq!(pace(&week(100.0, reset), mid, mid), None);
         // The reset passed (a stale reading looked at later).
-        assert_eq!(
-            pace(&week(40.0, reset), Provider::Claude, &[], mid, reset + 60),
-            None
-        );
+        assert_eq!(pace(&week(40.0, reset), mid, reset + 60), None);
         // No reset time, or no known length.
         let mut unknown = week(40.0, reset);
         unknown.resets_at = None;
-        assert_eq!(pace(&unknown, Provider::Claude, &[], mid, mid), None);
+        assert_eq!(pace(&unknown, mid, mid), None);
         let mut other = week(40.0, reset);
         other.duration_minutes = None;
         other.window = "Other".into();
-        assert_eq!(pace(&other, Provider::Claude, &[], mid, mid), None);
+        assert_eq!(pace(&other, mid, mid), None);
     }
 
     #[test]
-    fn pace_uses_the_window_average_without_history() {
+    fn pace_uses_the_average_since_the_window_started() {
         let reset = ts("2026-10-05T03:00:00Z");
         let start = reset - 7 * DAY;
         // 30% used after 3 of 7 days: 70% by the reset.
         let as_of = start + 3 * DAY;
-        let on_pace = pace(&week(30.0, reset), Provider::Claude, &[], as_of, as_of).unwrap();
-        assert_eq!(on_pace.basis, AccountUsagePaceBasis::WindowAverage);
+        let on_pace = pace(&week(30.0, reset), as_of, as_of).unwrap();
         assert_eq!(on_pace.projected_percent_at_reset, 70.0);
         assert_eq!(on_pace.run_out_at, None);
         // Three of seven days have passed: even use would be at 42.9%.
-        assert_eq!(on_pace.expected_percent, 42.9);
+        assert_eq!(round1(on_pace.expected_percent), 42.9);
         // 60% after 3 days: 20% a day, so the last 40% lasts two more days.
-        let fast = pace(&week(60.0, reset), Provider::Claude, &[], as_of, as_of).unwrap();
+        let fast = pace(&week(60.0, reset), as_of, as_of).unwrap();
         assert_eq!(fast.projected_percent_at_reset, 100.0);
         assert_eq!(fast.run_out_at, Some(as_of + 2 * DAY));
         // A session with no stated length is five hours long.
@@ -831,60 +804,38 @@ mod tests {
             duration_minutes: None,
             ..week(50.0, as_of + 2 * HOUR)
         };
-        let session_pace = pace(&session, Provider::Claude, &[], as_of, as_of).unwrap();
+        let session_pace = pace(&session, as_of, as_of).unwrap();
         // 50% in 3 hours: the rest takes 3 more hours, after the reset.
         assert_eq!(session_pace.projected_percent_at_reset, 83.3);
         assert_eq!(session_pace.run_out_at, None);
         // Three of five hours.
-        assert_eq!(session_pace.expected_percent, 60.0);
+        assert_eq!(round1(session_pace.expected_percent), 60.0);
     }
 
     #[test]
-    fn pace_prefers_the_recent_rate_from_history() {
-        let reset = ts("2026-10-05T03:00:00Z");
-        let start = reset - 7 * DAY;
-        let as_of = start + 4 * DAY;
-        let history = [
-            // Before the last 24 hours: ignored for the recent rate.
-            sample(as_of - 30 * HOUR, 10.0, reset),
-            sample(as_of - 20 * HOUR, 20.0, reset),
-            sample(as_of - 10 * HOUR, 30.0, reset),
-            // From another provider: ignored.
-            Sample {
-                provider: Provider::Codex,
-                ..sample(as_of - 23 * HOUR, 0.0, reset)
-            },
-        ];
-        // 40% now, 20% twenty hours ago: 1 point an hour, 72 hours left.
-        let recent = pace(&week(40.0, reset), Provider::Claude, &history, as_of, as_of).unwrap();
-        assert_eq!(recent.basis, AccountUsagePaceBasis::Recent);
-        assert_eq!(recent.run_out_at, Some(as_of + 60 * HOUR));
-        assert_eq!(recent.projected_percent_at_reset, 100.0);
-        // The even-use point depends only on time, not on the basis.
-        assert_eq!(recent.expected_percent, round1(4.0 / 7.0 * 100.0));
-        // Flat over the last day: stays where it is.
-        let flat_history = [sample(as_of - 20 * HOUR, 40.0, reset)];
-        let flat = pace(
-            &week(40.0, reset),
-            Provider::Claude,
-            &flat_history,
-            as_of,
-            as_of,
-        )
-        .unwrap();
-        assert_eq!(flat.basis, AccountUsagePaceBasis::Recent);
-        assert_eq!(flat.projected_percent_at_reset, 40.0);
-        // Readings spanning under two hours, a drop, or a previous window:
-        // the window average.
-        for history in [
-            vec![sample(as_of - HOUR, 30.0, reset)],
-            vec![sample(as_of - 5 * HOUR, 45.0, reset)],
-            vec![sample(as_of - 5 * HOUR, 5.0, reset - 7 * DAY)],
-        ] {
-            let average =
-                pace(&week(40.0, reset), Provider::Claude, &history, as_of, as_of).unwrap();
-            assert_eq!(average.basis, AccountUsagePaceBasis::WindowAverage);
-            assert_eq!(average.projected_percent_at_reset, 70.0);
+    fn run_out_warning_shows_exactly_when_use_is_above_even_use() {
+        // Codex on Mon Oct 5, 9:49 PM: 31% used, 47% of the week passed.
+        // A busy last day must not warn while use is below even use.
+        let reset = ts("2026-10-09T21:21:00Z");
+        let as_of = ts("2026-10-06T04:49:00Z");
+        let below = pace(&week(31.0, reset), as_of, as_of).unwrap();
+        assert!(below.expected_percent > 31.0);
+        assert_eq!(below.run_out_at, None);
+        assert!(below.projected_percent_at_reset < 100.0);
+        // Every tenth of a percent: the warning appears exactly when use is
+        // above the even-use mark the bar and tick use, and always before the
+        // reset.
+        for tenths in 1..1000 {
+            let used = f64::from(tenths) / 10.0;
+            let pace = pace(&week(used, reset), as_of, as_of).unwrap();
+            assert_eq!(
+                pace.run_out_at.is_some(),
+                used > pace.expected_percent,
+                "{used}% used"
+            );
+            if let Some(at) = pace.run_out_at {
+                assert!(at > as_of && at < reset, "{used}% used");
+            }
         }
     }
 

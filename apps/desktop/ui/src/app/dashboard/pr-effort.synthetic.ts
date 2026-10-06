@@ -194,11 +194,11 @@ export function mergedTile(current: MetricMergedPrs, previous: MetricMergedPrs):
     rule_id: 'M-19',
     reason:
       current.merged === null
-        ? `${current.known_merged} known merged; ${current.unknown_facts} linked pull ${
-            current.unknown_facts === 1 ? 'request has' : 'requests have'
-          } no cached merge facts`
+        ? `${current.known_merged} merged so far; not known yet for ${current.unknown_facts} linked pull ${
+            current.unknown_facts === 1 ? 'request' : 'requests'
+          }`
         : null,
-    note: 'Confirmed links only: exact and SHA links count, inferred links are removed first. Cached gh pr view facts; nothing refreshes automatically.',
+    note: 'Counts pull requests your sessions are linked to by an exact or commit link; guessed links are left out. Merge facts are read from GitHub with the gh CLI.',
     current_n: current.merged,
     previous_n: previous.merged,
     sample_unit: 'prs',

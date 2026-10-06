@@ -15,6 +15,7 @@ import fixture from '../../fixtures/F1.json';
 import { DataProvider } from '../data/DataProvider';
 import { FixtureDataSource } from '../data/FixtureDataSource';
 import type { FixtureExport } from '../data/generated/FixtureExport';
+import type { CompactionCount } from '../data/generated/CompactionCount';
 import type { SessionCompactions } from '../data/generated/SessionCompactions';
 import { events } from '../data/ipc-names';
 import { ThemeProvider } from '../theme/ThemeProvider';
@@ -62,7 +63,101 @@ it('keeps zero, unknown and values above five distinct; focus explains the cauti
   fireEvent.focus(red);
   expect(await screen.findByRole('tooltip')).toHaveProperty(
     'textContent',
-    expect.stringContaining('Repeated summarization is a caution'),
+    expect.stringContaining('not a quality score'),
+  );
+});
+it('shows a fork as its own count plus the count before the fork, in plain words', async () => {
+  render(
+    <ThemeProvider>
+      <CompactionBadge
+        outcome={{ state: 'count', count: 3, events: [], inherited: { state: 'count', count: 2 } }}
+      />
+      <CompactionBadge
+        outcome={{ state: 'count', count: 3, events: [], inherited: { state: 'count', count: 0 } }}
+      />
+      <CompactionBadge
+        outcome={{
+          state: 'count',
+          count: 3,
+          events: [],
+          inherited: { state: 'unknown', reason: 'missing' },
+        }}
+      />
+      <CompactionBadge outcome={{ state: 'count', count: 4, events: [] }} />
+    </ThemeProvider>,
+  );
+  const words = (from: string) => `Recorded compactions: 3 + ${from}`;
+  const both = screen.getByLabelText(words('2'));
+  expect(both.textContent).toBe('↺ 3 + 2');
+  // The colour follows everything this conversation's context went through.
+  expect(both.getAttribute('data-step')).toBe('5');
+  const zero = screen.getByLabelText(words('0'));
+  expect(zero.textContent).toBe('↺ 3 + 0');
+  expect(zero.getAttribute('data-step')).toBe('3');
+  const unknown = screen.getByLabelText(words('unknown'));
+  expect(unknown.textContent).toBe('↺ 3 + ?');
+  // A session that is not a fork keeps one number.
+  expect(screen.getByLabelText('Recorded compactions: 4').textContent).toBe('↺ 4');
+  fireEvent.focus(zero);
+  expect(await screen.findByRole('tooltip')).toHaveProperty(
+    'textContent',
+    expect.stringContaining(
+      '3 in this conversation + 0 in the conversation it was forked from, before the fork.',
+    ),
+  );
+  fireEvent.blur(zero);
+  fireEvent.focus(unknown);
+  await waitFor(() =>
+    expect(screen.getByRole('tooltip').textContent).toContain(
+      '3 in this conversation + an unknown number in the conversation it was forked from, before the fork. The saved conversation it was forked from could not be found.',
+    ),
+  );
+});
+it('says in plain words why a reviewer snapshot or an unsplit copy has no count', async () => {
+  render(
+    <ThemeProvider>
+      <CompactionBadge outcome={{ state: 'unknown', reason: 'snapshot' }} />
+      <CompactionBadge outcome={{ state: 'unknown', reason: 'copied_history' }} />
+    </ThemeProvider>,
+  );
+  const [snapshot, copied] = screen.getAllByLabelText('Recorded compactions: unknown');
+  expect(snapshot.textContent).toContain('—');
+  fireEvent.focus(snapshot);
+  expect(await screen.findByRole('tooltip')).toHaveProperty(
+    'textContent',
+    expect.stringContaining(
+      'This approval reviewer saved only part of the conversation it reviewed, with earlier compactions left out, so they can’t be counted.',
+    ),
+  );
+  fireEvent.blur(snapshot);
+  fireEvent.focus(copied);
+  await waitFor(() =>
+    expect(screen.getByRole('tooltip').textContent).toContain(
+      'This conversation was copied from another one, and its own compactions can’t be told apart from the copied ones.',
+    ),
+  );
+});
+it('shows a copied-history fork as its own count plus the copied count', async () => {
+  render(
+    <ThemeProvider>
+      <CompactionBadge
+        outcome={{
+          state: 'count',
+          count: 95,
+          events: [],
+          inherited: { state: 'count', count: 49, copied: true },
+        }}
+      />
+    </ThemeProvider>,
+  );
+  const badge = screen.getByLabelText('Recorded compactions: 95 + 49');
+  expect(badge.textContent).toBe('↺ 95 + 49');
+  fireEvent.focus(badge);
+  expect(await screen.findByRole('tooltip')).toHaveProperty(
+    'textContent',
+    expect.stringContaining(
+      '95 in this conversation + 49 copied from the conversation it was forked from.',
+    ),
   );
 });
 it('deduplicates requested IDs, reads at most fifty per command and catches compaction-only events', async () => {
@@ -207,6 +302,7 @@ it('keeps count and Running together in All sessions and recent activity, hides 
       cost: null,
       pr_links: 0,
       inferred_pr_links: 0,
+      child_check: 'checked' as const,
     }));
     return report;
   };
@@ -232,6 +328,11 @@ it('keeps count and Running together in All sessions and recent activity, hides 
     </ThemeProvider>,
   );
   await waitFor(() => expect(screen.getAllByLabelText('Recorded compactions: 7')).toHaveLength(2));
+  // Each child is collapsed under its main session in both lists; opened, it
+  // reads its live state as its own row.
+  await waitFor(() => expect(screen.getAllByText('Running', { exact: true })).toHaveLength(2));
+  fireEvent.click(screen.getByRole('button', { name: '1 loaded sub-session of Main' }));
+  fireEvent.click(screen.getByRole('button', { name: '1 recent sub-session of Main' }));
   await waitFor(() => expect(screen.getAllByText('Running', { exact: true })).toHaveLength(4));
   for (const count of screen.getAllByLabelText('Recorded compactions: 7')) {
     const row = count.closest('[role="row"]') ?? count.closest('li');
@@ -254,4 +355,249 @@ it('keeps count and Running together in All sessions and recent activity, hides 
     ),
   ).toHaveLength(1);
   for (const [ids] of data.compactions.read.mock.calls) expect(ids).toEqual(['main']);
+});
+it('shows a spinner only while a row with no count yet is being read', async () => {
+  render(
+    <ThemeProvider>
+      <CompactionBadge reading />
+      <CompactionBadge reading outcome={{ state: 'count', count: 3, events: [] }} />
+      <CompactionBadge outcome={{ state: 'unknown', reason: 'missing' }} />
+    </ThemeProvider>,
+  );
+  const spinning = screen.getByLabelText('Recorded compactions: reading');
+  expect(spinning.querySelector('.xt-compaction-spinner')).not.toBeNull();
+  expect(spinning.textContent).not.toContain('—');
+  // A known count stays on screen during a re-read; a settled unknown is a dash.
+  expect(
+    screen.getByLabelText('Recorded compactions: 3').querySelector('.xt-compaction-spinner'),
+  ).toBeNull();
+  expect(screen.getByLabelText('Recorded compactions: unknown').textContent).toContain('—');
+});
+it('reports reading for a requested row until its answer arrives, not after or during a refresh', async () => {
+  const data = source();
+  let outcome: SessionCompactions['counts'][number]['outcome'] = {
+    state: 'unknown',
+    reason: 'missing',
+  };
+  const pending: Array<() => void> = [];
+  data.compactions.read.mockImplementation(
+    (ids) =>
+      new Promise((resolve) => {
+        pending.push(() => resolve({ counts: ids.map((id) => ({ id, outcome })) }));
+      }),
+  );
+  const answer = async () => {
+    await act(async () => {
+      for (const resolve of pending.splice(0)) resolve();
+    });
+  };
+  const { result } = renderHook(() => useSessionCompactions('list', ['main']), {
+    wrapper: wrapper(data),
+  });
+  await waitFor(() => expect(pending.length).toBeGreaterThan(0));
+  expect(result.current.reading('main')).toBe(true);
+  // A row this view did not ask for is never reading.
+  expect(result.current.reading('other')).toBe(false);
+  // Answer every read, including any follow-up the app queued at start.
+  await waitFor(async () => {
+    await answer();
+    expect(result.current.reading('main')).toBe(false);
+  });
+  // Settled unknown: a dash, not a spinner.
+  expect(result.current('main')).toEqual(outcome);
+  outcome = { state: 'count', count: 1, events: [] };
+  act(() => void window.dispatchEvent(new Event('focus')));
+  await waitFor(() => expect(pending.length).toBeGreaterThan(0));
+  // A refresh keeps the last answer on screen, so no spinner either.
+  expect(result.current('main')).toEqual({ state: 'unknown', reason: 'missing' });
+  expect(result.current.reading('main')).toBe(false);
+  await answer();
+  await waitFor(() => expect(result.current('main')).toEqual(outcome));
+});
+it('keeps known counts with no spinner when more rows load, the filters change or the page changes', async () => {
+  const data = source();
+  const pending: Array<{ ids: readonly string[]; resolve: (answer: SessionCompactions) => void }> =
+    [];
+  data.compactions.read.mockImplementation(
+    (ids) => new Promise((resolve) => pending.push({ ids, resolve })),
+  );
+  const answer = async (count: number) => {
+    await act(async () => {
+      for (const { ids, resolve } of pending.splice(0))
+        resolve({
+          counts: ids.map((id) => ({ id, outcome: { state: 'count', count, events: [] } })),
+        });
+    });
+  };
+  const three = { state: 'count', count: 3, events: [] };
+  const { result, rerender, unmount } = renderHook(
+    ({ scope, ids }) => useSessionCompactions(scope, ids),
+    { initialProps: { scope: 'sessions:7', ids: ['a'] }, wrapper: wrapper(data) },
+  );
+  await waitFor(() => expect(pending.length).toBeGreaterThan(0));
+  await answer(3);
+  await waitFor(() => expect(result.current('a')).toEqual(three));
+  // More rows load: the known row keeps its number, only the new one spins.
+  rerender({ scope: 'sessions:7', ids: ['a', 'b'] });
+  await waitFor(() => expect(pending.length).toBeGreaterThan(0));
+  expect(result.current('a')).toEqual(three);
+  expect(result.current.reading('a')).toBe(false);
+  expect(result.current.reading('b')).toBe(true);
+  await answer(3);
+  await waitFor(() => expect(result.current('b')).toEqual(three));
+  // Another filter: counts do not depend on it.
+  rerender({ scope: 'sessions:30', ids: ['b', 'a'] });
+  await waitFor(() => expect(pending.length).toBeGreaterThan(0));
+  expect(result.current('a')).toEqual(three);
+  expect(result.current.reading('a')).toBe(false);
+  await answer(4);
+  await waitFor(() => expect(result.current('a')).toEqual({ ...three, count: 4 }));
+  unmount();
+  // Another page reading from the same source starts from the known counts.
+  const other = renderHook(() => useSessionCompactions('dashboard', ['a', 'b']), {
+    wrapper: wrapper(data),
+  });
+  await waitFor(() => expect(other.result.current).toBeTypeOf('function'));
+  expect(other.result.current('a')).toEqual({ ...three, count: 4 });
+  expect(other.result.current.reading('a')).toBe(false);
+});
+it('starts a new source with nothing known', async () => {
+  const first = source();
+  first.compactions.read.mockImplementation(async (ids) => ({
+    counts: ids.map((id) => ({ id, outcome: { state: 'count', count: 5, events: [] } })),
+  }));
+  const before = renderHook(() => useSessionCompactions('list', ['a']), {
+    wrapper: wrapper(first),
+  });
+  await waitFor(() =>
+    expect(before.result.current('a')).toEqual({ state: 'count', count: 5, events: [] }),
+  );
+  before.unmount();
+  const second = source();
+  second.compactions.read.mockImplementation(() => new Promise(() => {}));
+  const after = renderHook(() => useSessionCompactions('list', ['a']), {
+    wrapper: wrapper(second),
+  });
+  await waitFor(() => expect(after.result.current.reading('a')).toBe(true));
+  expect(after.result.current('a')).toBeUndefined();
+});
+/** A source whose reads answer `auto` until `manual` is set, then wait to be answered. */
+function ordered(auto: (id: string) => CompactionCount | undefined) {
+  const data = source();
+  const state = { manual: false };
+  const calls: Array<{
+    ids: readonly string[];
+    resolve: (answer: SessionCompactions) => void;
+    reject: (error: Error) => void;
+  }> = [];
+  data.compactions.read.mockImplementation((ids) =>
+    state.manual
+      ? new Promise((resolve, reject) => calls.push({ ids, resolve, reject }))
+      : Promise.resolve({
+          counts: ids.flatMap((id) => {
+            const outcome = auto(id);
+            return outcome ? [{ id, outcome }] : [];
+          }),
+        }),
+  );
+  // The next unanswered read of exactly these rows.
+  const call = async (ids: readonly string[]) => {
+    let found: (typeof calls)[number] | undefined;
+    await waitFor(() => {
+      found = calls.find((c) => JSON.stringify(c.ids) === JSON.stringify(ids));
+      expect(found).toBeDefined();
+    });
+    calls.splice(calls.indexOf(found!), 1);
+    return found!;
+  };
+  const reply = (target: (typeof calls)[number], outcomes: Record<string, CompactionCount>) =>
+    act(async () =>
+      target.resolve({
+        counts: Object.entries(outcomes).map(([id, outcome]) => ({ id, outcome })),
+      }),
+    );
+  return { data, state, call, reply };
+}
+it.each(['transport', 'replaced'] as const)(
+  'does not let a Dashboard fork retry ending in %s bring back an older own count',
+  async (failure) => {
+    const base: CompactionCount = { state: 'count', count: 1, events: [] };
+    const { data, state, call, reply } = ordered(() => base);
+    const dashboard = renderHook(
+      ({ scope }) => useSessionCompactions(scope, ['fork'], { retryTransient: true }),
+      { initialProps: { scope: 'dashboard:0' }, wrapper: wrapper(data) },
+    );
+    const sessions = renderHook(({ scope }) => useSessionCompactions(scope, ['fork', 'other']), {
+      initialProps: { scope: 'sessions:0' },
+      wrapper: wrapper(data),
+    });
+    await waitFor(() => expect(sessions.result.current('other')).toEqual(base));
+    state.manual = true;
+    // The Dashboard's read starts first, then the Sessions page's.
+    dashboard.rerender({ scope: 'dashboard:1' });
+    const first = await call(['fork']);
+    sessions.rerender({ scope: 'sessions:1' });
+    const later = await call(['fork', 'other']);
+    const partial: CompactionCount = {
+      state: 'count',
+      count: 3,
+      events: [{ at_ms: 3, trigger: 'auto' }],
+      inherited: { state: 'unknown', reason: 'replaced' },
+    };
+    const whole: CompactionCount = {
+      state: 'count',
+      count: 4,
+      events: [{ at_ms: 4, trigger: 'manual' }],
+      inherited: { state: 'count', count: 2 },
+    };
+    await reply(first, { fork: partial });
+    await reply(later, { fork: whole, other: base });
+    await waitFor(() => expect(sessions.result.current('fork')).toEqual(whole));
+    // The Dashboard's retry, 250 ms later, finds nothing new.
+    const retry = await call(['fork']);
+    if (failure === 'transport') await act(async () => retry.reject(new Error('refused')));
+    else await reply(retry, { fork: { state: 'unknown', reason: 'replaced' } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(dashboard.result.current('fork')).toEqual(whole);
+    expect(sessions.result.current('fork')).toEqual(whole);
+  },
+);
+it('keeps the answer of the read that started last when two views answer out of order', async () => {
+  const base: CompactionCount = { state: 'count', count: 1, events: [] };
+  const { data, state, call, reply } = ordered((id) => (id === 'y' ? undefined : base));
+  const one = renderHook(({ scope }) => useSessionCompactions(scope, ['x', 'y']), {
+    initialProps: { scope: 'one:0' },
+    wrapper: wrapper(data),
+  });
+  const two = renderHook(({ scope }) => useSessionCompactions(scope, ['x', 'y', 'z']), {
+    initialProps: { scope: 'two:0' },
+    wrapper: wrapper(data),
+  });
+  await waitFor(() => expect(two.result.current('z')).toEqual(base));
+  state.manual = true;
+  const count = (n: number): CompactionCount => ({ state: 'count', count: n, events: [] });
+  const limit: CompactionCount = { state: 'unknown', reason: 'limit' };
+  one.rerender({ scope: 'one:1' });
+  const older = await call(['x', 'y']);
+  two.rerender({ scope: 'two:1' });
+  const newer = await call(['x', 'y', 'z']);
+  await reply(newer, { x: count(5), y: limit, z: base });
+  await waitFor(() => expect(one.result.current('x')).toEqual(count(5)));
+  expect(one.result.current('y')).toEqual(limit);
+  // The older read answers last: its count for x is stale, but y had only a
+  // temporary unknown, which an older real count still replaces.
+  await reply(older, { x: count(4), y: count(7) });
+  await waitFor(() => expect(two.result.current('y')).toEqual(count(7)));
+  expect(two.result.current('x')).toEqual(count(5));
+  expect(one.result.current('x')).toEqual(count(5));
+  // A newer read that only kept the last value does not block an older
+  // read's newer count.
+  one.rerender({ scope: 'one:2' });
+  const third = await call(['x', 'y']);
+  two.rerender({ scope: 'two:2' });
+  const fourth = await call(['x', 'y', 'z']);
+  await reply(fourth, { x: limit, y: count(7), z: base });
+  expect(one.result.current('x')).toEqual(count(5));
+  await reply(third, { x: count(6), y: count(7) });
+  await waitFor(() => expect(two.result.current('x')).toEqual(count(6)));
 });

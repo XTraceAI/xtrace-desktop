@@ -10,7 +10,7 @@ const sizes = [
   { width: 1440, height: 900 },
   { width: 1120, height: 720 },
 ] as const;
-const labels = ['Agent h/day', 'Concurrency', 'Merged PRs', 'Hands-off median'];
+const labels = ['Leverage', 'Concurrency', 'Merged PRs', 'Hands-off median'];
 
 async function open(page: Page, width: number, height: number, scheme: 'light' | 'dark') {
   await page.setViewportSize({ width, height });
@@ -33,8 +33,10 @@ async function measure(page: Page) {
         return clips && element.scrollWidth > element.clientWidth + 1;
       })
       .map((element) => `${element.className}: ${element.textContent}`);
-    const tiles = [...document.querySelectorAll('.xt-stat-tile')].map((tile) => {
-      const label = tile.querySelector<HTMLElement>('.xt-stat-label')!;
+    const tiles = [...document.querySelectorAll('[data-testid="overview-tile"]')].map((tile) => {
+      const label = tile.querySelector<HTMLElement>(
+        '.xt-overview-label > span:not(.xt-metric-icon)',
+      )!;
       return {
         text: label.textContent,
         fits: label.scrollWidth <= label.clientWidth,
@@ -95,9 +97,9 @@ for (const { width, height } of sizes)
           headings: [...document.querySelectorAll('.xt-dashboard h2')].map((h) => h.textContent),
           summary: box(document.querySelector('[data-testid="dashboard-summary"]')),
           gap: parseFloat(getComputedStyle(document.querySelector('.xt-dashboard')!).rowGap),
-          tiles: box(document.querySelector('.xt-dash-tiles')),
+          tileRow: document.querySelector('.xt-dash-tiles') !== null,
           effort: box(heading('Effort')),
-          environment: box(heading('Environment')),
+          overview: box(heading('Overview')),
           sessions: box(heading('Sessions')),
           foot: document.querySelector('.xt-dash-foot, [data-testid="dashboard-index"]') !== null,
           details: document.querySelectorAll('.xt-dashboard details').length,
@@ -107,13 +109,13 @@ for (const { width, height } of sizes)
       expect(layout.periodBeforeRange).toBe(true);
       expect(layout.periodRowMatches).toBe(true);
       // Agent / human hours and Caught by your rules are not drawn, and no row
-      // is kept for them: the tiles follow the summary at the page's own gap,
-      // then effort/environment and sessions.
-      expect(layout.headings).toEqual(['Effort', 'Environment', 'Sessions']);
-      expect(layout.tiles.top - layout.summary.bottom).toBeCloseTo(layout.gap, 0);
-      expect(layout.effort.top).toBeGreaterThan(layout.tiles.bottom);
-      expect(layout.environment.top).toBe(layout.effort.top);
-      expect(layout.effort.width / layout.environment.width).toBeCloseTo(1.6, 1);
+      // is kept for them, nor for the old row of tiles: Effort and Overview
+      // follow the summary at the page's own gap, then Sessions.
+      expect(layout.headings).toEqual(['Effort', 'Overview', 'Sessions']);
+      expect(layout.tileRow).toBe(false);
+      expect(layout.effort.top - layout.summary.bottom).toBeCloseTo(layout.gap, 0);
+      expect(layout.overview.top).toBe(layout.effort.top);
+      expect(layout.effort.width / layout.overview.width).toBeCloseTo(1.6, 1);
       expect(layout.sessions.top).toBeGreaterThan(layout.effort.bottom);
       // Sessions is the last block: no measurement or index line follows it.
       expect(layout.foot).toBe(false);
@@ -137,9 +139,10 @@ for (const { width, height } of sizes)
       expect(result.collidedTicks).toBe(0);
       expect(result.tiles.map((tile) => tile.text)).toEqual(labels);
       for (const tile of result.tiles) expect(tile.fits, tile.text!).toBe(true);
-      // Four across at both supported widths.
+      // Two by two at both supported widths.
       const rows = new Set(result.tiles.map((tile) => Math.round(tile.tile.y))).size;
-      expect(rows).toBe(1);
+      const columns = new Set(result.tiles.map((tile) => Math.round(tile.tile.x))).size;
+      expect([rows, columns]).toEqual([2, 2]);
       await info.attach('measurements', { body: JSON.stringify(result, null, 2) });
       await page.screenshot({ path: info.outputPath(`dashboard-${width}-${scheme}.png`) });
       await page.screenshot({
@@ -155,8 +158,8 @@ for (const { width, height } of sizes)
       // belongs to, with real data readable and nothing clipped, and the page
       // under it keeps its geometry.
       for (const [card, trigger, title, probe] of [
-        ['Effort', /^Method$/, METHOD, page.getByRole('group', { name: 'Output tokens per day' })],
-        ['Effort', /^Method$/, METHOD, page.getByTestId('cost-total')],
+        ['Effort', /^Details$/, METHOD, page.getByRole('group', { name: 'Output tokens per day' })],
+        ['Effort', /^Details$/, METHOD, page.getByTestId('cost-total')],
         ['Sessions', /^Coverage/, 'Coverage', page.getByTestId('usage-coverage')],
       ] as const) {
         await page
@@ -205,8 +208,8 @@ test('range presets update the Dashboard while account usage stays separate', as
     await range.getByRole('radio', { name: `${days}d` }).click();
     await expect(range.getByRole('radio', { name: `${days}d` })).toBeChecked();
     await expect(usage).toContainText('Usage source unavailable');
-    // The daily chart is in Effort's Method, one dialog away, and follows the range.
-    await page.getByRole('button', { name: 'Method', exact: true }).click();
+    // The daily chart is in Effort's Details, one dialog away, and follows the range.
+    await page.getByRole('button', { name: 'Details', exact: true }).click();
     await expect(bars).toHaveCount(reports[days].days.length);
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -277,16 +280,18 @@ for (const scheme of ['light', 'dark'] as const)
       await range.getByRole('radio', { name: `${days}d` }).click();
       await expect(page.getByTestId('report-period')).toBeVisible();
       const order = await dashboardTabOrder(page);
-      // The favorite model leads, then the four tiles; nothing of the hidden
-      // pair is a tab stop before, between or after them.
+      // The favorite model leads; each Overview tile's definition is a tab
+      // stop, in reading order; nothing of the hidden pair is one.
       expect(order[0]).toBe('fixture-model-v1');
       expect(
-        order.slice(1, 5).map((name) => labels.find((label) => name.startsWith(label))),
+        order
+          .filter((name) => labels.some((label) => name === `${label} definition`))
+          .map((name) => name.replace(/ definition$/, '')),
       ).toEqual(labels);
       for (const name of [
         'Effort definition',
-        'Method',
-        'Environment definition',
+        'Details',
+        'Overview definition',
         'Sessions definition',
       ])
         expect(order).toContain(name);
@@ -299,12 +304,11 @@ for (const scheme of ['light', 'dark'] as const)
 
 test('keyboard focus opens tile definitions and reaches the Sessions link', async ({ page }) => {
   await open(page, 1120, 720, 'dark');
-  const tile = page.locator('.xt-stat-tile').filter({ hasText: 'Hands-off median' });
+  const tile = page.getByRole('button', { name: 'Hands-off median definition' });
   await tile.focus();
   const tip = page.getByRole('tooltip');
-  await expect(tip).toContainText('M-09');
-  await expect(tip).toContainText('How long your agents run before they need you.');
-  await expect(tip).toContainText('No surface is excluded for timestamp health.');
+  await expect(tip).toContainText('The median time an agent worked on its own');
+  await expect(tip).not.toContainText('M-09');
   await page.keyboard.press('Escape');
   const link = page.getByRole('link', { name: 'View sessions' });
   await link.focus();

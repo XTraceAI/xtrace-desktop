@@ -404,10 +404,7 @@ it('narrows a full status to the facts the sidebar shows', () => {
         sessions_imported: 4,
         sessions_partial: 1,
         sessions_skipped: 2,
-        skipped_conversations: [
-          { conversation_id: null, reason: 'unknown' },
-          { conversation_id: null, reason: 'unknown' },
-        ],
+        skipped_conversations: [],
         skipped_conversations_omitted: 0,
         records_new: 9,
         records_enriched: 3,

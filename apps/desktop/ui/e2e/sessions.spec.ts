@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import type { FixtureExport } from '../src/data/generated/FixtureExport';
 import fixture from '../fixtures/F1.json' with { type: 'json' };
+import { ruleSummary } from '../src/kit/rules';
 for (const colorScheme of ['light', 'dark'] as const) {
   test(`indexed Sessions design columns, filters and details in ${colorScheme}`, async ({
     page,
@@ -75,7 +76,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
       await header.focus();
       await expect(header).toBeFocused();
       const definition = page.getByRole('tooltip');
-      await expect(definition).toContainText(`${ruleId} · `);
+      await expect(definition).toContainText(ruleSummary(ruleId));
       await page.keyboard.press('Escape');
       await expect(definition).toHaveCount(0);
     }

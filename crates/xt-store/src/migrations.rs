@@ -56,6 +56,23 @@ const MIGRATIONS: &[(i64, &str)] = &[
         include_str!("../migrations/0016_task_notification_inputs.sql"),
     ),
     (17, include_str!("../migrations/0017_record_previews.sql")),
+    (
+        18,
+        include_str!("../migrations/0018_session_child_facts.sql"),
+    ),
+    (
+        19,
+        include_str!("../migrations/0019_claude_launch_binding_witnesses.sql"),
+    ),
+    (
+        20,
+        include_str!("../migrations/0020_codex_cli_launch_children.sql"),
+    ),
+    (21, include_str!("../migrations/0021_tool_sent_inputs.sql")),
+    (
+        22,
+        include_str!("../migrations/0022_session_child_checks.sql"),
+    ),
 ];
 
 impl Store {

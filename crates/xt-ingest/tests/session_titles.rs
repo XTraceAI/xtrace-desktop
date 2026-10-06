@@ -1158,15 +1158,17 @@ fn a_fork_never_borrows_its_parents_sidecar_name() {
     );
 }
 
-/// A spawned thread's header names its parent in `payload.session_id`, and
-/// the parent in its typed `thread_spawn`. That parent-valued `session_id` is
-/// the thread's own header only when the same typed spawn names exactly that
-/// distinct full parent; an ordinary header keeps a `session_id` naming the
-/// thread itself. Anything else — a missing, child-valued or third
-/// `session_id` in a spawn, a disagreeing or malformed typed parent, a
-/// guardian, role or path lookalike, a `history_base`, or another thread's
-/// `payload.id` — leaves the thread untitled. The parent's sidecar row never
-/// names the child, and a flat header is read as before.
+/// A spawned thread's header names its immediate parent in its typed
+/// `thread_spawn` (and, in current headers, in `payload.parent_thread_id`),
+/// and the root of its spawn tree in `payload.session_id`: the parent itself
+/// at the first level, another thread deeper. Such a header is the thread's
+/// own whatever root it shares; an ordinary header keeps a `session_id`
+/// naming the thread itself. Anything else — a missing or child-valued root
+/// in a spawn, an explicit parent that disagrees with the typed one, a
+/// malformed typed parent, a guardian, role or path lookalike, a
+/// `history_base`, or another thread's `payload.id` — leaves the thread
+/// untitled. The parent's sidecar row never names the child, and a flat
+/// header is read as before.
 #[test]
 fn a_spawned_paginated_thread_is_proven_only_by_its_typed_parent() {
     let temp = tempfile::TempDir::new().unwrap();
@@ -1202,6 +1204,11 @@ fn a_spawned_paginated_thread_is_proven_only_by_its_typed_parent() {
             .to_string(),
         ])
     };
+    let explicit = |line: String, parent: &str| {
+        let mut value: serde_json::Value = serde_json::from_str(&line).unwrap();
+        value["payload"]["parent_thread_id"] = json!(parent);
+        value.to_string()
+    };
     let titled_as = |native: &str| titled(&format!("Name {native}"), TitleSource::CodexSidecar);
     let untitled = || TitleOutcome::Untitled(Untitled::IdentityMismatch);
     let mut flat_spawn: serde_json::Value =
@@ -1226,7 +1233,26 @@ fn a_spawned_paginated_thread_is_proven_only_by_its_typed_parent() {
             paged_body(header(&n(63), json!("cli"), None, None)),
             titled_as(&n(63)),
         ),
-        // A spawn whose session_id is missing, the child or a third thread.
+        // A nested spawn, whose root is another thread, with or without the
+        // explicit immediate parent.
+        (
+            n(74),
+            paged_body(explicit(
+                header(&n(74), spawn(PARENT), Some(json!(OTHER)), None),
+                PARENT,
+            )),
+            titled_as(&n(74)),
+        ),
+        // An explicit parent that disagrees with the typed one.
+        (
+            n(75),
+            paged_body(explicit(
+                header(&n(75), spawn(PARENT), Some(json!(PARENT)), None),
+                OTHER,
+            )),
+            untitled(),
+        ),
+        // A spawn whose session_id is missing or the child.
         (
             n(64),
             paged_body(header(&n(64), spawn(PARENT), None, None)),
@@ -1237,17 +1263,18 @@ fn a_spawned_paginated_thread_is_proven_only_by_its_typed_parent() {
             paged_body(header(&n(65), spawn(PARENT), Some(json!(n(65))), None)),
             untitled(),
         ),
+        // A root that is not the typed parent is never compared with it.
         (
             n(66),
             paged_body(header(&n(66), spawn(PARENT), Some(json!(OTHER)), None)),
-            untitled(),
+            titled_as(&n(66)),
         ),
-        // A typed parent that disagrees with session_id, or is malformed.
         (
             n(67),
             paged_body(header(&n(67), spawn(OTHER), Some(json!(PARENT)), None)),
-            untitled(),
+            titled_as(&n(67)),
         ),
+        // A malformed typed parent.
         (
             n(68),
             paged_body(header(

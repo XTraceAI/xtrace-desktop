@@ -24,6 +24,21 @@ pub(crate) const EXISTS_QUERY: &str =
     "SELECT session_id,host,surface FROM sessions WHERE kind='user'";
 pub(crate) const EVENTS_QUERY: &str = "SELECT session_id,ts_ms,ts,uuid,human_is_eligible,tool_use_count FROM v_session_events WHERE ts_ms>=?1 AND ts_ms<?2";
 
+/// Sessions a sub-session walk visits at most, found or counted.
+pub const SUB_SESSION_WALK: usize = 20_000;
+
+/// The verified sub-sessions [`MetricsDb::sub_sessions`] found.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SubSessions {
+    /// Within the limit, nearer levels first, each most recently active first.
+    pub sessions: Vec<String>,
+    /// Found beyond the limit, by the named session whose walk found them.
+    pub not_shown: BTreeMap<String, u64>,
+    /// Named sessions whose walk stopped at [`SUB_SESSION_WALK`], so their
+    /// `not_shown` count is only a lower bound and may be missing.
+    pub cut_short: std::collections::BTreeSet<String>,
+}
+
 /// What one indexed session contributes inside the selected window.
 /// `None` is an unmeasured observation; a real zero stays zero.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -76,6 +91,11 @@ impl Default for Session {
 /// Bind the window, then one placeholder per requested identifier. The shared
 /// projection's own selection is unaffected: it is evaluated before this filter.
 pub(crate) fn by_session(query: &str, count: usize) -> String {
+    by_session_from(query, count, 3)
+}
+
+/// [`by_session`] for a statement whose identifiers are bound from `?first`.
+pub(crate) fn by_session_from(query: &str, count: usize, first: usize) -> String {
     let mut sql = String::with_capacity(query.len() + count * 5 + 24);
     sql.push_str(query);
     sql.push_str(if query.contains(" WHERE ") {
@@ -88,7 +108,7 @@ pub(crate) fn by_session(query: &str, count: usize) -> String {
             sql.push(',');
         }
         sql.push('?');
-        sql.push_str(&(index + 3).to_string());
+        sql.push_str(&(index + first).to_string());
     }
     sql.push(')');
     sql
@@ -282,6 +302,89 @@ impl MetricsDb {
         Ok(xt_store::session_list::context(&self.connection, sessions)?)
     }
 
+    /// Every verified sub-session under the named sessions, at any depth and
+    /// whenever it ran, that is not itself one of them: walked level by level
+    /// through [`xt_store::session_list::child_candidates`], keeping a
+    /// candidate only when its resolved parent is a session of the level
+    /// above — the same verified link every list groups by. Each level is
+    /// ordered most recently active first.
+    ///
+    /// At most `limit` are returned, nearer levels first. Every one found
+    /// beyond that is counted under the named session whose walk found it, so
+    /// a cap is never silent. The walk itself stops after [`SUB_SESSION_WALK`]
+    /// sessions; a named session whose walk that cut short is in `cut_short`,
+    /// and its count is then only a lower bound.
+    pub fn sub_sessions(&self, sessions: &[&str], limit: usize) -> Result<SubSessions> {
+        self.sub_session_walk(sessions, limit, SUB_SESSION_WALK)
+    }
+
+    /// [`MetricsDb::sub_sessions`] with its walk ceiling as a parameter.
+    fn sub_session_walk(
+        &self,
+        sessions: &[&str],
+        limit: usize,
+        ceiling: usize,
+    ) -> Result<SubSessions> {
+        let mut seen: std::collections::BTreeSet<String> =
+            sessions.iter().map(|id| (*id).to_owned()).collect();
+        // Each found session's origin: the named session whose walk found it.
+        let mut origin: BTreeMap<String, String> =
+            seen.iter().map(|id| (id.clone(), id.clone())).collect();
+        let mut found = SubSessions::default();
+        let mut walked = 0usize;
+        let mut level: Vec<String> = seen.iter().cloned().collect();
+        while !level.is_empty() && walked < ceiling {
+            let members: std::collections::BTreeSet<&str> =
+                level.iter().map(String::as_str).collect();
+            let mut candidates = Vec::new();
+            for batch in level.chunks(xt_store::session_list::MAX_CONTEXT) {
+                let batch: Vec<&str> = batch.iter().map(String::as_str).collect();
+                candidates.extend(xt_store::session_list::child_candidates(
+                    &self.connection,
+                    &batch,
+                )?);
+            }
+            candidates.retain(|(id, _)| !seen.contains(id));
+            candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            candidates.dedup_by(|a, b| a.0 == b.0);
+            let mut next = Vec::new();
+            for batch in candidates.chunks(xt_store::session_list::MAX_CONTEXT) {
+                let ids: Vec<&str> = batch.iter().map(|(id, _)| id.as_str()).collect();
+                let parents = xt_store::session_list::parents(&self.connection, &ids)?;
+                for (id, _) in batch {
+                    let Some(parent) = parents.get(id) else {
+                        continue;
+                    };
+                    if !members.contains(parent.session_id.as_str()) {
+                        continue;
+                    }
+                    let root = origin[&parent.session_id].clone();
+                    if walked >= ceiling {
+                        // Found but never counted: this walk is cut short.
+                        found.cut_short.insert(root);
+                        continue;
+                    }
+                    walked += 1;
+                    seen.insert(id.clone());
+                    if found.sessions.len() < limit {
+                        found.sessions.push(id.clone());
+                    } else {
+                        *found.not_shown.entry(root.clone()).or_default() += 1;
+                    }
+                    origin.insert(id.clone(), root);
+                    next.push(id.clone());
+                }
+            }
+            level = next;
+        }
+        // Stopped at the ceiling with sessions whose own sub-sessions were
+        // never looked for: their walks are cut short too.
+        for id in &level {
+            found.cut_short.insert(origin[id].clone());
+        }
+        Ok(found)
+    }
+
     /// Exactly the session with this identity, or nothing, read on this
     /// read-only connection so the caller can measure it in the same snapshot
     /// it was read in. The same metadata a listed row carries; the identity is
@@ -328,6 +431,48 @@ impl MetricsDb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_walk_cut_short_at_its_ceiling_says_so_for_that_session_only() {
+        use xt_store::{
+            Host, SessionMeta, SessionSource,
+            creation::{
+                CODEX_THREAD_SPAWN_VERSION, CreationEvidence, CreationWitness, SessionCreationProof,
+            },
+        };
+        let spawn = |child: &str, parent: &str| SessionCreationProof {
+            child_session_id: format!("codex-{child}"),
+            child_host: Host::Codex,
+            child_native_session_id: child.into(),
+            parent_host: Host::Codex,
+            parent_native_session_id: parent.into(),
+            evidence_kind: CreationEvidence::CodexThreadSpawn,
+            evidence_version: CODEX_THREAD_SPAWN_VERSION,
+            witness: CreationWitness::RolloutOpeningSessionMeta,
+        };
+        let mut db = xt_fixtures::TempDb::empty().unwrap();
+        for native in ["big", "a", "b", "c", "small"] {
+            let mut session =
+                SessionMeta::new(format!("codex-{native}"), "codex", SessionSource::Fixture);
+            session.native_session_id = Some(native.into());
+            db.store_mut().upsert_session(&session, false).unwrap();
+        }
+        db.store_mut()
+            .record_session_creations(&[spawn("a", "big"), spawn("b", "big"), spawn("c", "a")], 1)
+            .unwrap();
+        let metrics = MetricsDb::open(db.path()).unwrap();
+        let ids = ["codex-big", "codex-small"];
+        let whole = metrics.sub_session_walk(&ids, 10, 10).unwrap();
+        assert_eq!(whole.sessions.len(), 3);
+        assert!(whole.cut_short.is_empty());
+        // Two visits allowed: the third session is never reached, and only
+        // the walk it belongs to is marked.
+        let cut = metrics.sub_session_walk(&ids, 10, 2).unwrap();
+        assert_eq!(cut.sessions.len(), 2);
+        assert_eq!(
+            cut.cut_short.into_iter().collect::<Vec<_>>(),
+            ["codex-big".to_owned()]
+        );
+    }
     #[test]
     fn session_filter_binds_after_the_window_parameters() {
         assert_eq!(

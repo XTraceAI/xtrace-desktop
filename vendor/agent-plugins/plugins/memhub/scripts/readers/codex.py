@@ -935,7 +935,8 @@ def locate(ref: str) -> tuple[Path | None, str]:
 
 
 def to_canonical(source, *, strict: bool = False, title_index=None,
-                 record_guard=None, witness=None, origin=None, human=None) -> tuple[list[dict], dict]:
+                 record_guard=None, witness=None, origin=None, human=None,
+                 automated=None) -> tuple[list[dict], dict]:
     """Normalize a rollout; an optional complete title index supports historical exports.
 
     ``source`` is whatever ``load_rollout`` accepts: a path, or rollout bytes
@@ -946,8 +947,10 @@ def to_canonical(source, *, strict: bool = False, title_index=None,
     ``origin``, when a dict, receives the origin evidence of each record this
     conversion made from an injected skill item (see ``codex_origin``).
     ``human`` receives optional image-wrapper length evidence from these same
-    rows and record mappings (see ``codex_human``), without changing records."""
-    if witness is None and origin is None and human is None:
+    rows and record mappings (see ``codex_human``), without changing records.
+    ``automated`` receives the automated-input evidence of each record made
+    from an item Codex itself wrote (see ``automated_input``)."""
+    if witness is None and origin is None and human is None and automated is None:
         return rollout_to_claude_records(load_rollout(source, strict=strict),
                                         strict=strict, title_index=title_index,
                                         record_guard=record_guard)
@@ -969,4 +972,10 @@ def to_canonical(source, *, strict: bool = False, title_index=None,
         codex_origin.collect(human, lambda: codex_human.describe(
             codex_human.flat_segments(rows, records, sources, origins, meta["session_id"]),
             records, native_session_id=meta["session_id"], out=human))
+    if automated is not None:
+        from . import automated_input
+        codex_origin.collect(automated, lambda: automated_input.codex_describe(
+            automated_input.codex_flat_segments(rows, records, sources, origins,
+                                                meta["session_id"]),
+            records, native_session_id=meta["session_id"], out=automated))
     return records, meta

@@ -315,7 +315,9 @@ test('shows what a refresh made on the Dashboard stored, and starts none itself'
   await page.getByText('What is listed and counted', { exact: true }).click();
   await page.getByRole('link', { name: 'Dashboard' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
-  await page.getByRole('button', { name: 'Refresh PR facts…' }).click();
+  // F1's links were never checked and this source never checks on its own,
+  // so the Effort card's red ! is there to open the refresh.
+  await page.getByRole('button', { name: 'Pull-request checks need your attention' }).click();
   const dialog = page.getByRole('dialog', { name: 'Refresh pull-request facts' });
   await dialog.getByRole('checkbox', { name: /#11/ }).check();
   await dialog.getByRole('checkbox', { name: /#12/ }).check();

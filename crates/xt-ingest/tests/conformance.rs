@@ -413,6 +413,141 @@ fn conformance_native_import() {
     let _ = fs::remove_dir_all(&temp);
 }
 
+/// A Codex conversation forked in Codex Desktop is imported as its own
+/// session. The fork's rollout references the original conversation's rollout
+/// instead of copying it; the pinned producer emits only the fork's own rows,
+/// with the original's cumulative counters at the cutoff as its usage
+/// baseline. Bundle mode supplies equivalent synthetic data; checkout mode
+/// uses the pinned checkout's own history fixture.
+#[test]
+fn conformance_codex_fork_import() {
+    use xt_ingest::native::{HostStatus, ImportRequest, SessionOutcome, import_native};
+    use xt_store::{Host, Store};
+    let Some(plugin_root) = std::env::var_os("AGENT_PLUGINS_DIR") else {
+        println!(
+            "SKIP conformance_codex_fork_import: set AGENT_PLUGINS_DIR to the pinned plugin root"
+        );
+        return;
+    };
+    let python = std::env::var_os("PYTHON").unwrap_or_else(|| "python3".into());
+    if Command::new(&python).arg("--version").output().is_err() {
+        println!("SKIP conformance_codex_fork_import: Python 3 is unavailable");
+        return;
+    }
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = temp.path().canonicalize().unwrap().join("home");
+    fs::create_dir_all(&home).unwrap();
+    let bundled = conformance_source::bundle_mode();
+    let fixture_script = if bundled {
+        "import runpy,sys\nfrom pathlib import Path\n\
+         history=runpy.run_path(sys.argv[1])\n\
+         parent,child,original,_=history['fixture'](Path(sys.argv[2]))\n\
+         child.unlink()\n\
+         history['fork_fixture'](Path(sys.argv[2]),parent,original,4)\n\
+         print(history['SID'])\nprint(history['FORK'])"
+    } else {
+        "import sys\nfrom pathlib import Path\n\
+         sys.path[:0]=[sys.argv[1]+'/tests',sys.argv[1]+'/plugins/memhub/scripts']\n\
+         import codex_history_test as history\n\
+         parent,child,original,_=history.fixture(Path(sys.argv[2]))\n\
+         child.unlink()\n\
+         history.fork_fixture(Path(sys.argv[2]),parent,original,4)\n\
+         print(history.SID)\nprint(history.FORK)"
+    };
+    let fixture_path = if bundled {
+        repo_root().join("scripts/conformance/paginated-fixture.py")
+    } else {
+        Path::new(&plugin_root).join("../..")
+    };
+    let built = Command::new(&python)
+        .env_remove("PYTHONOPTIMIZE")
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .args(["-c", fixture_script])
+        .arg(fixture_path)
+        .arg(&home)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{built:?}");
+    let stdout = String::from_utf8(built.stdout).unwrap();
+    let ids: Vec<&str> = stdout.lines().collect();
+    let (original, fork) = (ids[0], ids[1]);
+    let mut store = Store::open(temp.path().join("index.sqlite")).unwrap();
+    let producer = conformance_source::source(&repo_root(), Path::new(&plugin_root));
+    let request = || ImportRequest {
+        home: &home,
+        hosts: &[Host::Codex],
+        producer: &producer,
+        python: Some(&python),
+        observed_at: now_ms(),
+        cancel: None,
+    };
+    let report = import_native(&mut store, &request());
+    assert!(report.complete(), "{report:?}");
+    let codex = &report.hosts[0];
+    assert_eq!(codex.status, HostStatus::Complete, "{codex:?}");
+    let mut natives: Vec<_> = codex
+        .sessions
+        .iter()
+        .map(|session| session.native_session_id.clone().unwrap())
+        .collect();
+    natives.sort();
+    let mut want = vec![original.to_owned(), fork.to_owned()];
+    want.sort();
+    assert_eq!(natives, want, "{codex:?}");
+    let session = |native: &str| {
+        let reported = codex
+            .sessions
+            .iter()
+            .find(|session| session.native_session_id.as_deref() == Some(native))
+            .unwrap();
+        assert!(
+            matches!(reported.outcome, SessionOutcome::Imported { records_new, .. } if records_new > 0),
+            "{reported:?}"
+        );
+        store
+            .session(reported.conversation_id.as_deref().unwrap())
+            .unwrap()
+            .unwrap()
+    };
+    let forked = session(fork);
+    let base = session(original);
+    // Its own identity and start, not the original's.
+    assert_eq!(forked.meta.native_session_id.as_deref(), Some(fork));
+    assert_eq!(forked.meta.started_at_ms, Some(1_767_571_200_000));
+    let records = store.records(&forked.meta.session_id).unwrap();
+    let base_records = store.records(&base.meta.session_id).unwrap();
+    // Only the fork's own ask and reply; nothing of the original is copied.
+    assert_eq!(records.len(), 2, "{records:?}");
+    assert!(
+        records
+            .iter()
+            .all(|r| base_records.iter().all(|b| b.uuid != r.uuid))
+    );
+    // 25 + 6 cumulative at the fork's meter, minus the 10 + 2 the original
+    // had counted at the cutoff: the fork's own work only.
+    let tokens: i64 = records
+        .iter()
+        .filter_map(|r| r.usage.as_ref())
+        .map(|u| {
+            u.input_tokens.unwrap_or(0)
+                + u.output_tokens.unwrap_or(0)
+                + u.cache_read_input_tokens.unwrap_or(0)
+                + u.cache_creation_input_tokens.unwrap_or(0)
+        })
+        .sum();
+    assert_eq!(tokens, 19);
+    // A repeated scan adds nothing.
+    let again = import_native(&mut store, &request());
+    assert!(again.complete(), "{again:?}");
+    assert!(again.hosts[0].sessions.iter().all(|session| {
+        session.outcome
+            == SessionOutcome::Imported {
+                records_new: 0,
+                records_enriched: 0,
+            }
+    }));
+}
+
 /// The bundled reader sources the app ships are byte for byte the pinned
 /// commit's scripts tree, notices included, and read the F18 fixture home to
 /// the same index as the verified checkout, in place, with no checkout or Git.

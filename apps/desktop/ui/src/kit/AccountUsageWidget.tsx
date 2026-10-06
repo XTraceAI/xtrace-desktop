@@ -121,7 +121,11 @@ export function ageLabel(seconds: number | null, stale: boolean): string | null 
   return `${days} ${days === 1 ? 'day' : 'days'} ago`;
 }
 
-/** "On pace · ~68% used by reset", or "Runs out ~Sat 3 PM" (a warning). */
+/**
+ * "Runs out ~Sat 3 PM" (a warning) when use is ahead of even use, "Behind
+ * pace · ~68% used by reset" when it is behind, or "On pace · …" when it is
+ * exactly even: the same comparison the tick and the bar color use.
+ */
 export function paceLabel(
   window: AccountUsageWindow,
   prefix = '',
@@ -136,26 +140,49 @@ export function paceLabel(
     return { text: `${prefix ? `${prefix} runs` : 'Runs'} out ~${runOut}`, warning: true };
   if (!Number.isFinite(pace.projected_percent_at_reset)) return null;
   const projected = Math.min(100, Math.round(pace.projected_percent_at_reset));
+  const where = window.used_percent < pace.expected_percent ? 'behind' : 'on';
+  const lead = prefix ? `${prefix} ${where}` : where[0].toUpperCase() + where.slice(1);
   return {
-    text: `${prefix ? `${prefix} on` : 'On'} pace · ~${projected}% used by reset`,
+    text: `${lead} pace · ~${projected}% used by reset`,
     warning: false,
   };
 }
 
 /**
  * How far use is from even use at the reading's time: "4% ahead of pace"
- * (used faster than even), "3% behind pace", or "On pace" within 1%.
+ * (used faster than even), "3% behind pace", "<1% ahead of pace" for a gap
+ * under a point, or "On pace" only when exactly even. Ahead is exactly when
+ * the bar is orange and the app gives a run-out time.
  */
 export function paceGapLabel(window: AccountUsageWindow): string | null {
   const expected = window.pace?.expected_percent;
   if (expected === undefined || !Number.isFinite(expected)) return null;
   const gap = window.used_percent - expected;
   if (!Number.isFinite(gap)) return null;
-  if (Math.abs(gap) < 1) return 'On pace';
-  return `${Math.round(Math.abs(gap))}% ${gap > 0 ? 'ahead of' : 'behind'} pace`;
+  if (gap === 0) return 'On pace';
+  const size = Math.abs(gap) < 1 ? '<1%' : `${Math.round(Math.abs(gap))}%`;
+  return `${size} ${gap > 0 ? 'ahead of' : 'behind'} pace`;
 }
 
 const clampPercent = (value: number) => Math.min(100, Math.max(0, value));
+
+/**
+ * The summary bar's fill against the even-use mark. A bar that stops short of
+ * the mark (less left than even use would leave) is orange; past the mark,
+ * the extra length is green.
+ */
+export function paceFill(
+  usedPercent: number,
+  expectedPercent: number | undefined,
+): { className?: string; split?: string } {
+  if (expectedPercent === undefined || !Number.isFinite(expectedPercent)) return {};
+  const remaining = 100 - usedPercent;
+  const mark = 100 - clampPercent(expectedPercent);
+  if (remaining < mark) return { className: 'is-behind-pace' };
+  if (remaining > mark)
+    return { className: 'is-ahead-of-pace', split: `${(mark / remaining) * 100}%` };
+  return {};
+}
 
 /** The tick does nothing itself: keep a click or key press from toggling the row. */
 function holdRow(event: MouseEvent | KeyboardEvent) {
@@ -783,6 +810,7 @@ function Provider({
   // The even-use mark goes only on the week's own bar, and only while its
   // pace line is shown. The row's description carries its text too.
   const gap = week === main && pace && main ? paceGapLabel(main) : null;
+  const fill = main && gap ? paceFill(main.used_percent, main.pace?.expected_percent) : {};
   return (
     <details className={`xt-account-provider xt-host-${host}`}>
       <summary
@@ -803,7 +831,13 @@ function Provider({
         {main && (
           <span className="xt-account-summary-bar">
             <span className="xt-account-track xt-account-summary-track" aria-hidden="true">
-              <span style={{ width: `${100 - main.used_percent}%` }} />
+              <span
+                className={fill.className}
+                style={{
+                  width: `${100 - main.used_percent}%`,
+                  ...(fill.split ? { '--pace-split': fill.split } : {}),
+                }}
+              />
             </span>
             {gap && <PaceTick window={main} />}
           </span>
@@ -818,11 +852,10 @@ function Provider({
           }
         >
           {sub}
-          {pace && (
-            <span className={`xt-account-pace${pace.warning ? ' is-warning' : ''}`}>
-              {pace.text}
-            </span>
-          )}
+          {/* A run-out warning stays in view; the on-pace line shows only
+              when the row is open, but screen readers still hear it here. */}
+          {pace?.warning && <span className="xt-account-pace is-warning">{pace.text}</span>}
+          {pace && !pace.warning && <span className="sr-only">{pace.text}</span>}
         </span>
         {gap && (
           <span id={gapId} className="sr-only">
@@ -832,6 +865,11 @@ function Provider({
       </summary>
       <div className="xt-account-detail">
         {!main && <p>{statusLine}</p>}
+        {pace && !pace.warning && (
+          <span className="xt-account-pace" aria-hidden="true">
+            {pace.text}
+          </span>
+        )}
         {detail.length > 0 && (
           <>
             {/* When the header already says all the main window's row would
@@ -858,7 +896,7 @@ function Provider({
 
 const forecastSteps = [
   'Usage is read every 10 minutes for Claude, and every 5 minutes for Codex while this window is open. Readings stay on this Mac.',
-  "Your speed is how fast usage rose over the last 24 hours. Until there's enough history, it's your average since the week started.",
+  'Your speed is your average since the week started.',
   "That speed is extended to the reset. If it reaches 100% first, you see when you'd run out.",
   "The tick on the bar marks where you'd be with even use through the week.",
   "It assumes a steady pace, so nights and weekends aren't taken into account.",

@@ -5,7 +5,7 @@
 use jiff::{Timestamp, tz::TimeZone};
 use serde_json::json;
 use xt_fixtures::TempDb;
-use xt_metrics::{MetricsDb, PriceCatalog, TypingRate, Window};
+use xt_metrics::{BreakLength, MetricsDb, PriceCatalog, TypingRate, Window};
 use xt_store::{
     CanonicalRecord, SessionMeta, SessionSource,
     pr_link::{
@@ -32,6 +32,7 @@ fn report(db: &TempDb) -> DashboardMetrics {
         MetricClock::Fixture,
         &PriceCatalog::bundled().unwrap(),
         TypingRate::default(),
+        BreakLength::default(),
     )
     .unwrap()
 }
@@ -264,7 +265,7 @@ fn unknown_facts_keep_the_known_subtotal_and_leave_the_count_unknown() {
     assert_eq!(merged_prs.value, None);
     assert_eq!(
         merged_prs.reason.as_deref(),
-        Some("1 known merged; 1 linked pull request has no cached merge facts")
+        Some("1 merged so far; not known yet for 1 linked pull request")
     );
     assert!(merged_prs.delta.suppressed);
     assert_eq!(

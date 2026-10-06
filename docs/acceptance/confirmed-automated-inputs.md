@@ -272,6 +272,54 @@ confirmation, so every metric rule above applies unchanged.
   malformed `origin` is no marker and no error, and a written marker becomes
   one proof.
 
+## Tool-sent input proofs (Codex and Cursor)
+
+Some Codex and Cursor user records are written by the tool, or by the pinned
+reader, not typed by a person, so ingestion classifies them as human. The
+pinned reader's opt-in `--automated-input-evidence` (contract
+`xtrace.automated_input`, version 1) claims a closed set of them from
+structural markers in the native source, never from text:
+
+| Kind                          | Marker                                                                                         |
+| ----------------------------- | ---------------------------------------------------------------------------------------------- |
+| `codex_subagent_notification` | every `content_item_kinds` entry of the Codex user item is `multi_agent.subagent_notification` |
+| `codex_turn_aborted`          | every entry is `generic.turn_aborted`                                                          |
+| `codex_apps_open_page`        | every entry is `additional_content.codex_apps_open_page`                                       |
+| `cursor_conversation_summary` | the Cursor message's `providerOptions.cursor.isSummary` is `true`                              |
+| `cursor_import_banner`        | the `[Imported from Cursor ...]` record the reader writes first in every Cursor session        |
+
+A Codex item with any `user.text` or `user.image` kind, or two different
+listed kinds, is never claimed. The claim names only its kind, the native
+session and the record UUID. `native/tool_sent.rs` validates it against its own
+line's record and session header (closed shape, version 1, a kind of the
+session's own host, the line's UUID, a user record); a refused claim leaves the
+record exactly as the ordinary import stores it. The scan reads Codex with
+this evidence beside its origin evidence and Cursor with this evidence alone.
+
+Migration 21 adds `tool_sent_inputs`, a fifth metadata-only table with the
+same shape and immutability as `task_notification_inputs` and the closed kinds
+above. Like a task-notification proof, a tool-sent proof binds to the stored
+record whether this input inserted it or the index already held it, but only
+to an unconflicted, human-classified user input of the batch's own session on
+the kind's host. Codex and Cursor keep no resume checkpoint — every scan reads
+every session again — so the first scan after the upgrade corrects inputs
+indexed before it, and the migration resets nothing. `v_records`,
+`v_human_inputs` and the typed record read treat a proof like a confirmation;
+a person preview of a proven input is withdrawn and no automatic preview is
+kept (these inputs have no summary of their own).
+
+- `cargo test -p xt-metrics --test tool_sent_inputs`: claimed inputs leave
+  M-02 and the hours estimate while the people's messages and an unclaimed
+  lookalike stay; an index written without claims is corrected by reading the
+  same sessions again, with no stored record changed, and its person previews
+  of corrected inputs go; a claim of another host's kind, on a tool result or
+  on a Claude session abstains.
+- `cargo test -p xt-ingest --test tool_sent_import`: the import path stores
+  the ordinary records with each validated claim's proof, corrects records an
+  earlier import stored, and refuses malformed or misbound claims;
+  `conformance_tool_sent_import` runs the pinned bundle over a synthetic Codex
+  and Cursor home.
+
 ## Privacy and limits
 
 Metadata-only storage is unchanged. Proofs carry identities only. Original

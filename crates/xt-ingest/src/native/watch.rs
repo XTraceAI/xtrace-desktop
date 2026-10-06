@@ -154,10 +154,12 @@ pub enum TailEvent {
         freshness: Freshness,
     },
     /// A sub-session pass the worker ran between reconciliations committed
-    /// this many changes to stored creation relations: a relation newly
-    /// recorded, or an accepted one first withheld as conflicted. It is sent
-    /// once per such pass, after the commit, and never for a pass that only
-    /// replayed, abstained or read nothing. It says nothing about freshness
+    /// this many changes to what the session lists show: a relation newly
+    /// recorded, or an accepted one first withheld as conflicted, a child
+    /// fact, or a session's display check finished
+    /// ([`super::claude_launch::check`]). It is sent once per such pass,
+    /// after the commit, and never for a pass that only replayed, abstained
+    /// or read nothing. It says nothing about freshness
     /// and is not a reconciliation. A scan's own changes are carried by the
     /// `Ready` or `Reconciled` event that follows it.
     SessionCreationsChanged {
@@ -1031,10 +1033,13 @@ impl Worker {
         report
     }
 
-    /// Whether sub-session work is left for a later pass. Only a worker that
-    /// scans Codex has any.
+    /// Whether sub-session work is left for a later pass: Codex work for a
+    /// worker that scans Codex, Claude `Bash` launch work for one that scans
+    /// Claude, and display checks for any.
     fn spawns_pending(&self) -> bool {
-        self.config.hosts.contains(&Host::Codex) && self.spawns.pending()
+        (self.config.hosts.contains(&Host::Codex) && self.spawns.pending())
+            || (self.config.hosts.contains(&Host::Claude) && self.spawns.bash.pending())
+            || self.spawns.checks.pending()
     }
 
     /// One bounded pass of left-over sub-session work. The next waits the
@@ -1054,9 +1059,9 @@ impl Worker {
             &mut progress,
         )
         .is_ok();
-        if progress.changed > 0 {
+        if progress.shown_changes() > 0 {
             (self.sink)(TailEvent::SessionCreationsChanged {
-                changed: progress.changed,
+                changed: progress.shown_changes(),
             });
         }
         self.probe(ProbePoint::SpawnsContinued {

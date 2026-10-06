@@ -4,7 +4,7 @@ import {
   emptyReportText,
   evidenceMix,
   medianAside,
-  medianCounts,
+  medianGap,
   medianView,
   mixedEvidence,
   rowHandsOff,
@@ -31,16 +31,15 @@ describe('per-PR medians', () => {
     const partial = median({ measured_prs: 3, unknown_prs: 1, median: null });
     expect(medianView(partial)).toEqual({ kind: 'measured', value: 3 });
     expect(medianAside(partial)).toBe('3 of 4 PRs');
-    expect(medianCounts(partial)).toBe('3 of 4 merged PRs measured · 1 unknown');
+    expect(medianGap(partial)).toBe('Median of 3 of 4 merged PRs; 1 unknown.');
+    expect(medianGap(median({}))).toBeUndefined();
   });
 
   it('counts a published median by the PRs that gave it a value, not every eligible PR', () => {
     const sparse = median({ eligible_prs: 3, measured_prs: 2, no_sample_prs: 1, median: 5 });
     expect(medianView(sparse)).toEqual({ kind: 'complete', value: 5 });
     expect(medianAside(sparse)).toBe('n = 2 of 3 PRs');
-    expect(medianCounts(sparse, 'no stretch')).toBe(
-      '2 of 3 merged PRs measured · 1 with no stretch',
-    );
+    expect(medianGap(sparse, 'no stretch')).toBe('Median of 2 of 3 merged PRs; 1 with no stretch.');
   });
 
   it('keeps a measured zero a value and gives every absence its counted reason', () => {

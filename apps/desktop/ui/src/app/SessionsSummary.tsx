@@ -4,7 +4,7 @@ import { Button } from '../kit/Button';
 import { count, tokens as formatTokens } from '../kit/format';
 import { StatTile } from '../kit/StatTile';
 import type { TimeRange } from '../kit/TopBar';
-import { plural, ruleId, tileDelta, tileTip } from './dashboard/present';
+import { plural, ruleId, tileDelta, tileReason, tileTip } from './dashboard/present';
 import { useDashboardReport } from './dashboard/range';
 import { continuous } from './metric-format';
 import '../styles/sessions.css';
@@ -24,15 +24,12 @@ export const SUMMARY_SCOPE_SHORT = 'Range: all indexed activity · filters: tabl
 
 /** Agent time is reported in hours (M-05); the tile states it in minutes. */
 const MINUTES_PER_HOUR = 60;
-const AGENT_MINUTES = 'Active-span time in this range, stated in minutes.';
-const OUTPUT_INDEPENDENT =
-  'Output tokens are measured on their own, so they are shown even when the range total is not.';
 /**
  * M-04 leaves output null when its counters are absent and when a response
  * mixes measured counters with missing ones; the report does not say which, so
  * the tile must not read the null as "there was no output".
  */
-const NO_OUTPUT = 'Output counters are absent or incomplete';
+const NO_OUTPUT = 'Output token counts are missing or incomplete';
 
 export function SessionsSummary({
   range,
@@ -57,7 +54,8 @@ export function SessionsSummary({
       ? undefined
       : 'Range metrics are still being read';
   const tip = (tile: MetricTile | undefined, ...extra: (string | null | undefined)[]) =>
-    tile ? tileTip(tile, ...extra) : pending;
+    // While pending or failed, the tile's reason already says why.
+    tile ? tileTip(tile, ...extra) : undefined;
   return (
     <section
       className="xt-sessions-summary"
@@ -106,7 +104,7 @@ function HumanMessages({ metrics, pending, tip }: TileProps) {
       ruleId={tile ? ruleId(tile.rule_id, 'M-02') : 'M-02'}
       value={tile?.value ?? null}
       format={count}
-      reason={pending ?? tile?.reason ?? undefined}
+      reason={pending ?? (tile && tileReason(tile))}
       delta={tile && tileDelta(tile)}
       tip={tip(tile)}
     />
@@ -135,15 +133,20 @@ function OutputTokens({ metrics, pending }: Pick<TileProps, 'metrics' | 'pending
       tip={
         metrics && coverage
           ? [
-              OUTPUT_INDEPENDENT,
-              total === null
-                ? 'The range total is unmeasured.'
-                : `Range total ${formatTokens(total)} including cache.`,
-              // `usage_coverage` counts sessions with no gap at all, so this
-              // is complete four-counter, known-model coverage. It is not a
-              // count of sessions with measured output, and says so.
-              `Coverage: ${coverage.measured} of ${plural(coverage.sessions, 'session')} have all four counters and a known model, which is not the same as having measured output.`,
-            ].join(' ')
+              // Output is measured on its own, so it can show while the
+              // range total is unknown.
+              total !== null
+                ? `Range total with cache: ${formatTokens(total)}.`
+                : usage?.counters.output_tokens == null
+                  ? 'Total tokens unknown because some counts are missing.'
+                  : 'Total tokens unknown because some counts are missing; output is known.',
+              // `usage_coverage` counts sessions with no gap at all: usage
+              // recorded, every token counter, and a known model.
+              coverage.measured < coverage.sessions &&
+                `${coverage.sessions - coverage.measured} of ${plural(coverage.sessions, 'session')} ${coverage.sessions - coverage.measured === 1 ? 'is' : 'are'} missing a token count or model name.`,
+            ]
+              .filter(Boolean)
+              .join(' ')
           : pending
       }
     />
@@ -162,11 +165,11 @@ function AgentMinutes({ metrics, pending, tip }: TileProps) {
       value={value}
       format={continuous}
       unit="min"
-      reason={pending ?? tile?.reason ?? undefined}
+      reason={pending ?? (tile && tileReason(tile))}
       // A percentage change is the same in minutes as in hours, so the
       // report's own change carries over without being recalculated.
       delta={tile && tileDelta(tile)}
-      tip={tip(tile, AGENT_MINUTES)}
+      tip={tip(tile)}
     />
   );
 }
@@ -189,13 +192,10 @@ function SessionsPerDay({ metrics, pending, tip }: TileProps) {
       value={tile?.value ?? null}
       format={continuous}
       unit="mean"
-      reason={pending ?? tile?.reason ?? undefined}
+      reason={pending ?? (tile && tileReason(tile))}
       delta={tile && tileDelta(tile)}
       aside={busiest === null ? undefined : `max ${count(busiest)}`}
-      tip={tip(
-        tile,
-        busiest === null ? null : 'The max is the busiest single day bucket in this range.',
-      )}
+      tip={tip(tile)}
     />
   );
 }

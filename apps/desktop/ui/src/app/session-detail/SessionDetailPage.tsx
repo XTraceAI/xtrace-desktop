@@ -14,7 +14,7 @@ import { MetricCell } from '../../kit/MetricCell';
 import { RulePopover } from '../../kit/RulePopover';
 import type { RuleId } from '../../kit/rules';
 import { SectionCard } from '../../kit/SectionCard';
-import { rangeDays } from '../dashboard/present';
+import { plainReason, rangeDays } from '../dashboard/present';
 import { DefinitionInfo } from '../dashboard/DefinitionInfo';
 import { useSelectedRange } from '../dashboard/range';
 import { continuous } from '../metric-format';
@@ -67,7 +67,7 @@ const MEASURES: {
     rule: 'M-02',
     value: (row) => indexed(row)?.human_messages,
     format: count,
-    reason: 'Human classification is unmeasured (M-02)',
+    reason: plainReason('Human classification is unmeasured'),
   },
   {
     key: 'tokens',
@@ -75,7 +75,7 @@ const MEASURES: {
     rule: 'M-04',
     value: (row) => indexed(row)?.tokens.counters.total_tokens,
     format: formatTokens,
-    reason: 'Selected usage counters are absent or incomplete (M-04)',
+    reason: plainReason('Selected usage counters are absent or incomplete'),
   },
   {
     key: 'agent',
@@ -423,7 +423,7 @@ export function SessionDetailPage() {
                     <button
                       type="button"
                       className="xt-table-metric-header"
-                      aria-label={`${measure.label}, definition ${measure.rule}`}
+                      aria-label={`${measure.label} definition`}
                     >
                       {measure.label}
                     </button>

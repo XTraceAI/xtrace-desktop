@@ -3,8 +3,10 @@ import type { DashboardCapture } from "./DashboardCapture";
 import type { DashboardCost } from "./DashboardCost";
 import type { DashboardDay } from "./DashboardDay";
 import type { DashboardFavorite } from "./DashboardFavorite";
+import type { DashboardHumanHours } from "./DashboardHumanHours";
 import type { DashboardLane } from "./DashboardLane";
 import type { DashboardLaneSession } from "./DashboardLaneSession";
+import type { DashboardLeverage } from "./DashboardLeverage";
 import type { DashboardPrEffort } from "./DashboardPrEffort";
 import type { DashboardTiles } from "./DashboardTiles";
 import type { DashboardUnavailable } from "./DashboardUnavailable";
@@ -13,16 +15,36 @@ import type { DashboardUsage } from "./DashboardUsage";
 import type { DashboardUsageGate } from "./DashboardUsageGate";
 import type { DashboardWindow } from "./DashboardWindow";
 import type { HostTokenSummary } from "./HostTokenSummary";
+import type { MetricDayConcurrency } from "./MetricDayConcurrency";
+import type { MetricDayHandsOff } from "./MetricDayHandsOff";
 import type { MetricExcludedSurface } from "./MetricExcludedSurface";
 import type { MetricInventory } from "./MetricInventory";
 import type { MetricTokenSummary } from "./MetricTokenSummary";
 
 export type DashboardMetrics = { window: DashboardWindow, tiles: DashboardTiles, hands_off_excluded_surfaces: Array<MetricExcludedSurface>, favorite: DashboardFavorite, tokens: MetricTokenSummary, tokens_by_host: Array<HostTokenSummary>, days: Array<DashboardDay>, lanes: Array<DashboardLane>, 
 /**
- * Context and measured output for each distinct session `lanes` names,
- * ordered by identifier. Not a display order: rows read it by identity.
+ * Context and measured cost for each distinct session `lanes` names,
+ * then context only for each indexed parent those sessions' own context
+ * links that `lanes` does not name, so a display can tell whether that
+ * parent is itself a known child with no verified parent. Ordered by
+ * identifier; not a display order: rows read it by identity, and a
+ * referenced parent's entry never makes a row. At most twice the returned
+ * sessions; see [`DashboardLaneSession`].
  */
-lane_sessions: Array<DashboardLaneSession>, lane_start_ms: number, lane_end_ms: number, lanes_total: number, lanes_truncated: boolean, usage_coverage: DashboardUsage, usage_gate_14d: DashboardUsageGate, capture_inventory: MetricInventory, capture_coverage: Array<DashboardCapture>, 
+lane_sessions: Array<DashboardLaneSession>, 
+/**
+ * Every verified sub-session, at any depth and whenever it ran, under a
+ * session `lanes` names, that `lanes` does not name itself: its context,
+ * its own `parent` (a listed session or another entry here) and its
+ * whole cost, read in the same snapshot. It has no span in the lane
+ * window, so it never makes a row of its own; a display lists it only
+ * under its parent, so a group can show every sub-session it adds up.
+ * Nearer levels first, each most recently active first, at most
+ * [`crate::dashboard::SUB_SESSION_LIMIT`]; the rest are counted on the
+ * listed session's `sub_sessions_not_shown`. The order is the walk's,
+ * so a parent always comes before its own sub-sessions here.
+ */
+lane_sub_sessions: Array<DashboardLaneSession>, lane_start_ms: number, lane_end_ms: number, lanes_total: number, lanes_truncated: boolean, usage_coverage: DashboardUsage, usage_gate_14d: DashboardUsageGate, capture_inventory: MetricInventory, capture_coverage: Array<DashboardCapture>, 
 /**
  * All indexed history with no timestamp, independent of `window`.
  */
@@ -31,4 +53,21 @@ untimed_history: DashboardUntimed,
  * M-19 merged pull requests and effort by work type, from cached
  * refresh facts only; `tiles.merged_prs` states the same tile.
  */
-pr_effort: DashboardPrEffort, cost: DashboardCost, unavailable: Array<DashboardUnavailable>, };
+pr_effort: DashboardPrEffort, cost: DashboardCost, unavailable: Array<DashboardUnavailable>, 
+/**
+ * "Your hours" over the selected window, by local day.
+ */
+human_hours: DashboardHumanHours, 
+/**
+ * Leverage's agent hours and each day's leverage, over the whole local
+ * days of `human_hours`.
+ */
+leverage: DashboardLeverage, 
+/**
+ * Each reported local day measured alone, the same days as `days`.
+ */
+concurrency_by_day: Array<MetricDayConcurrency>, 
+/**
+ * Each reported local day measured alone, the same days as `days`.
+ */
+hands_off_by_day: Array<MetricDayHandsOff>, };

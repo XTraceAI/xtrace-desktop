@@ -221,7 +221,7 @@ const columns: readonly Column<PrRow>[] = [
   {
     key: 'sessions',
     header: (
-      <span title="Sessions that still link this pull request: every retained link, whatever its evidence, over all time. Not the selected range.">
+      <span title="Sessions linked to this PR over all time, not just the selected range.">
         sessions
       </span>
     ),
@@ -294,10 +294,12 @@ export function PrInventory() {
             </p>
             <p>
               Title, state, merge time, size and branch are what the last successful refresh stored.
-              Nothing here contacts GitHub: facts change only through Refresh PR facts on the{' '}
-              <Link to="/dashboard">Dashboard</Link>. The list is read from storage when this view
-              opens, again after such a refresh commits, after an import, turn, backfill or index
-              change commits new sessions or links, and after live updates reconnect.
+              Nothing here contacts GitHub. XTrace checks pull requests on GitHub by itself. When
+              the pull requests the <Link to="/dashboard">Dashboard</Link> counts need you (a check
+              failed, gh stopped, or automatic checks are off), a red ! appears on its Effort card.
+              The list is read from storage when this view opens, again after a check commits new
+              facts, after an import, turn, backfill or index change commits new sessions or links,
+              and after live updates reconnect.
             </p>
           </details>
         </div>

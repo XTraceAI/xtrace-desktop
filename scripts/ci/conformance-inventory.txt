@@ -4,3 +4,5 @@ conformance_native_reader_stream
 conformance_native_import
 conformance_bundled_readers
 conformance_exact_detail
+conformance_codex_fork_import
+conformance_tool_sent_import

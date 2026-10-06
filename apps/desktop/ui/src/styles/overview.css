@@ -1,0 +1,382 @@
+/*
+ * The Overview card (two by two tiles, each with a day-by-day line) and the
+ * Effort card's "human h" timeline. Theme tokens only, so light and dark
+ * share every rule.
+ */
+
+/* ---- Overview card ---- */
+.xt-overview-vs {
+  color: var(--meta);
+  font:
+    400 10.5px/14px 'Geist Mono',
+    Menlo,
+    monospace;
+  white-space: nowrap;
+}
+/* At its smallest each tile still shows its label, number and the line
+   under it; that is the card's minimum height. */
+.xt-overview-grid {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  min-height: 196px;
+  margin: -4px -12px;
+}
+@media (min-height: 800px) {
+  .xt-overview-grid {
+    margin: -8px -12px -6px;
+  }
+}
+/* Each tile is a size container: its content never sets the card's minimum
+   height, so the effort row keeps the minimum Effort sets. A short tile
+   drops its takeaway, then its chart or list, rather than clipping them. */
+.xt-overview-tile {
+  container: overview-tile / size;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px 12px 6px;
+  overflow: hidden;
+}
+.xt-overview-tile:nth-child(odd) {
+  border-right: 1px solid var(--divider);
+}
+.xt-overview-tile:nth-child(-n + 2) {
+  border-bottom: 1px solid var(--divider);
+}
+.xt-overview-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  color: var(--meta);
+  font:
+    400 10px/14px 'Geist Mono',
+    Menlo,
+    monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.xt-overview-label > span:not(.xt-metric-icon) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-overview-label .xt-metric-icon {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+}
+/* A narrow tile keeps its whole label: the decorative icon goes first. */
+@container overview-tile (max-width: 190px) {
+  .xt-overview-label .xt-metric-icon {
+    display: none;
+  }
+}
+.xt-overview-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-family: 'Geist Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  line-height: 28px;
+}
+.xt-overview-value .xt-metric-cell {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.xt-overview-unit {
+  color: var(--secondary);
+  font-size: 12px;
+}
+/* A change is stated, not judged: its colour is the text's, not good or bad. */
+.xt-overview-delta {
+  color: var(--secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.xt-overview-placeholder {
+  color: var(--body);
+  font-family: inherit;
+  font-size: 13px;
+}
+.xt-overview-sub {
+  min-height: 15px;
+  margin: 0;
+  color: var(--meta);
+  font:
+    400 10.5px/15px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+/* Up to two lines; a narrow tile wraps rather than cutting the sentence. */
+.xt-overview-take {
+  display: -webkit-box;
+  flex: 0 0 auto;
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: var(--secondary);
+  font-size: 11.5px;
+  line-height: 15px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+/* ---- A tile's line ---- */
+.xt-dayline {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 24px;
+  margin-top: 6px;
+}
+.xt-dayline-plot {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 12px;
+}
+.xt-dayline-plot svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.xt-dayline-area {
+  fill: var(--accent-tint);
+  stroke: none;
+}
+.xt-dayline-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.xt-dayline-average {
+  stroke: var(--meta);
+  stroke-width: 1px;
+  stroke-dasharray: 3 4;
+  opacity: 0.8;
+}
+/* Each day's hover target is its whole column; its dot shows on hover, and
+   always for a day alone between gaps. */
+.xt-dayline-day {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+.xt-dayline-dot {
+  position: absolute;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+  transform: translate(-50%, -50%);
+}
+.xt-dayline-dot[data-alone],
+.xt-dayline-day:hover .xt-dayline-dot,
+.xt-dayline-day[data-popup-open] .xt-dayline-dot {
+  opacity: 1;
+}
+.xt-dayline-axis {
+  position: relative;
+  flex: 0 0 auto;
+  height: 14px;
+  margin-top: 3px;
+  color: var(--meta);
+  font:
+    400 9.5px/14px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-dayline-axis > span {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.xt-dayline-axis > span:first-child {
+  transform: translateX(-30%);
+}
+.xt-dayline-axis > span:last-child {
+  transform: translateX(-70%);
+}
+
+/* ---- Merged pull requests ---- */
+.xt-overview-prs {
+  flex: 1 1 0;
+  min-height: 0;
+  margin: 6px 0 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+}
+.xt-overview-prs li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 3px 0;
+  border-top: 1px solid var(--divider);
+  font-size: 11.5px;
+  line-height: 16px;
+}
+.xt-overview-pr-title {
+  overflow: hidden;
+  color: var(--body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-overview-pr-number,
+.xt-overview-pr-hours {
+  color: var(--meta);
+  font:
+    400 10.5px 'Geist Mono',
+    Menlo,
+    monospace;
+  font-variant-numeric: tabular-nums;
+}
+.xt-overview-pr-number {
+  margin-right: 6px;
+}
+
+/* ---- Effort: your hours as a 24-hour timeline ---- */
+.xt-human-plot {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+.xt-human-axis,
+.xt-human-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 48px;
+  gap: 10px;
+}
+.xt-human-axis {
+  flex: 0 0 auto;
+  padding: 0 4px 4px;
+  border-bottom: 1px solid var(--divider);
+  color: var(--meta);
+  font:
+    400 10px/12px 'Geist Mono',
+    Menlo,
+    monospace;
+}
+.xt-human-hours {
+  display: flex;
+  justify-content: space-between;
+}
+/* Eight rows fill it (`--row-h`, set from its height); more scroll, and the
+   top fades while there are rows above. Its floor is the bar chart's, so the
+   card keeps its minimum in every view. */
+.xt-human-body {
+  --row-h: 28px;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 54px;
+  padding: 2px 4px 0;
+  overflow-y: auto;
+  scrollbar-color: var(--divider) transparent;
+  scrollbar-width: thin;
+}
+.xt-human-body:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.xt-human-body[data-more-above] {
+  mask-image: linear-gradient(to bottom, transparent 0, black 24px);
+}
+/* Fewer days than fit sit at the bottom, so today is always the last row. */
+.xt-human-row:first-child {
+  margin-top: auto;
+}
+.xt-human-row {
+  flex: 0 0 auto;
+  align-items: center;
+  height: var(--row-h);
+  outline: none;
+}
+.xt-human-row:focus-visible .xt-human-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.xt-human-day,
+.xt-human-total {
+  color: var(--meta);
+  font:
+    400 11px/14px 'Geist Mono',
+    Menlo,
+    monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.xt-human-day[data-weekend] {
+  opacity: 0.6;
+}
+.xt-human-total {
+  color: var(--secondary);
+  text-align: right;
+}
+/* The track: up to 30px tall with space between rows, faint lines at 06, 12
+   and 18. */
+.xt-human-track {
+  position: relative;
+  height: min(30px, calc(var(--row-h) - 10px));
+  border-radius: 4px;
+  --grid: color-mix(in srgb, var(--meta) 30%, transparent);
+  background:
+    linear-gradient(var(--grid), var(--grid)) 25% 0 / 1px 100% no-repeat,
+    linear-gradient(var(--grid), var(--grid)) 50% 0 / 1px 100% no-repeat,
+    linear-gradient(var(--grid), var(--grid)) 75% 0 / 1px 100% no-repeat,
+    var(--track);
+}
+.xt-human-bar {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  min-width: 3px;
+  border-radius: 3px;
+  background: var(--info);
+}
+.xt-human-bar[data-tick] {
+  width: 3px;
+  margin-left: -1px;
+  border-radius: 1.5px;
+}
+.xt-human-track[data-fold] .xt-human-bar {
+  top: 3px;
+  bottom: calc(50% + 1px);
+}
+.xt-human-track[data-fold] .xt-human-bar[data-lane='1'] {
+  top: calc(50% + 1px);
+  bottom: 3px;
+}
+.xt-human-row:hover .xt-human-bar,
+.xt-human-row[data-popup-open] .xt-human-bar {
+  filter: brightness(1.15);
+}
+
+/* Short tiles shed detail; placed last so they win over the rules above. */
+@container overview-tile (max-height: 150px) {
+  .xt-overview-take {
+    display: none;
+  }
+}
+@container overview-tile (max-height: 118px) {
+  .xt-overview-tile .xt-dayline,
+  .xt-overview-prs {
+    display: none;
+  }
+}

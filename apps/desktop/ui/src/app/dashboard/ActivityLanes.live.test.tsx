@@ -93,6 +93,16 @@ function setup(withCapability = true, returnedParent = false, parentHost = 'code
           }
         : null,
   }));
+  // As the native report does: the absent parent's context-only entry.
+  if (!ids.includes(parent))
+    report.lane_sessions.push({
+      ...report.lane_sessions[0],
+      session_id: parent,
+      host: parentHost,
+      title: parent,
+      cost: null,
+      parent: null,
+    });
   report.lanes_total = ids.length;
   let issued = 0;
   const read = vi.fn<NonNullable<DataSource['liveSessions']>['read']>(
@@ -164,7 +174,7 @@ it.each(['claude', 'codex'])(
     expect(claudeLogo.querySelector('img')!.getAttribute('src')).toBe('/hosts/claude.svg');
     expect(claudeLogo.getAttribute('title')).toBe('Claude Code runtime · Running');
     expect(read).toHaveBeenLastCalledWith(['claude-chat', own].sort(), expect.any(String));
-    fireEvent.click(screen.getByRole('button', { name: `1 returned sub-session of ${parent}` }));
+    fireEvent.click(screen.getByRole('button', { name: `1 sub-session of ${parent}` }));
     const childRow = await rowFor(child);
     expect(childRow.getAllByRole('cell')[compactionColumn].textContent).toBe('');
     expect(childRow.queryByText('Unknown')).toBeNull();
@@ -177,7 +187,7 @@ it.each(['claude', 'codex'])(
     expect(release).toHaveBeenCalledWith(firstId);
     expect(parentLink.closest('[role="row"]')!.querySelector('[data-live-status]')).toBeNull();
     const expandedId = read.mock.calls.at(-1)![1];
-    fireEvent.click(screen.getByRole('button', { name: `1 returned sub-session of ${parent}` }));
+    fireEvent.click(screen.getByRole('button', { name: `1 sub-session of ${parent}` }));
     await waitFor(() =>
       expect(read).toHaveBeenLastCalledWith([own, 'claude-chat'].sort(), expect.any(String)),
     );
@@ -203,7 +213,7 @@ it.each(['claude', 'codex'])(
     const parentRow = await rowFor(parent);
     Observer.current.show([parent]);
     await parentRow.findByRole('img', { name: `${label} · Running` });
-    fireEvent.click(screen.getByRole('button', { name: `1 returned sub-session of ${parent}` }));
+    fireEvent.click(screen.getByRole('button', { name: `1 sub-session of ${parent}` }));
     const childRow = await rowFor(child);
     Observer.current.show([parent, child]);
     await waitFor(() =>

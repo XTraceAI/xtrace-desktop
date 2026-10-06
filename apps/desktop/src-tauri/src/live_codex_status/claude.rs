@@ -624,7 +624,7 @@ mod tests {
         registry.write(PID, &value);
         let key = registry.path(&format!("{PID}.key"));
         std::fs::write(&key, b"not JSON; DO NOT READ").unwrap();
-        std::fs::set_permissions(&key, Permissions::from_mode(0o000)).unwrap();
+        std::fs::set_permissions(&key, Permissions::from_mode(0o0)).unwrap();
         assert_eq!(registry.scan().unwrap()[ID], LiveSessionState::Running);
         assert_eq!(
             Record::parse(&serde_json::to_vec(&value).unwrap(), PID)

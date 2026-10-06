@@ -205,12 +205,19 @@ The Sessions page shows "Recent indexed activity · last 48 hours" above the
 existing All sessions table. It uses the same cached Dashboard report as the
 range summary. The fixed 48-hour activity window does not change with the
 selected range. `groupSessionLanes(report.lanes)` makes one row per session,
-ordered by the end of its newest returned span. The first eight sessions are
-shown; if more were returned, the section says "8 most recent indexed sessions
-with activity in the last 48 hours." A session that started days ago can
-therefore appear near the top when it has recent indexed activity. A
-sub-session has its own row. The report's `lane_sessions` supplies saved
-context by exact host and session ID, independent of its ordering.
+ordered by the end of its newest returned span. Sub-sessions are then grouped
+and hidden exactly as the Dashboard's lanes are (`listedLanes` and `laneRows`
+over the same report's `lane_sessions` context, by exact host and session ID):
+a verified sub-session is collapsed under the session that created it; one
+whose parent returned no span sits under a row that only names the parent and
+says "Main session: no activity returned here", with no time, live state or
+compactions; a known sub-session whose creator is not verified is not listed,
+nor anything returned under it. The first eight main sessions and groups are
+then shown; if there were more, the section says "8 most recent main sessions
+and groups with activity in the last 48 hours; opening a group also lists its
+sub-sessions." Opening a group lists its sub-sessions under it, beyond the
+eight. A session that started days ago can appear near the top when it has
+recent indexed activity.
 
 For those eight sessions, the app may read the host's own title from its local
 source, using the existing bounded title reader. A row falls back to its saved
@@ -222,6 +229,35 @@ filters affect All sessions only. If the report capped its spans, it warns
 that earlier activity can be missing. A failed report shows no recent rows,
 including when a prior result remains in the query cache. The All sessions
 table keeps its existing query, order, pagination, and filters.
+
+## Sub-sessions in All sessions
+
+All sessions groups the rows it has loaded with the same Dashboard helpers.
+Each 50-row page, its query, filters, cursor and every row's measurements are
+unchanged; nothing extra is fetched. A verified sub-session is collapsed under
+its parent's own row when that row is loaded, and the group sits where its
+newest loaded member does in the list's order. A parent on a later page or
+outside the filters is only named, on a row that says "Main session not loaded
+here: on a later page or outside these filters"; it has no measurement, start,
+PR, live state, compactions or details, and its link opens the parent's page
+with the list's address. When the parent's own row arrives on a later page it
+takes that row's place, and the group stays open or closed as it was.
+
+A known sub-session whose creator is not verified is not listed, even when
+searched for, nor any loaded session under it, nor a branch whose parent is not
+loaded and whose page context (`referenced_parents`) says that parent is such a
+session. Only the direct parent's own context is read; no further ancestor.
+Parents are matched by exact host and identity. An ordinary session with no
+title or parent is listed as before.
+
+The caption keeps the raw loaded count and adds how many loaded sub-sessions are
+grouped under main sessions and how many are hidden because their main session
+is unknown. Group disclosures are separate from each row's details. Only drawn
+rows are read for host titles, live state and compactions; a collapsed or hidden
+row, or a row only naming a parent, is not. Refresh and next-page scroll
+anchoring follow the drawn row by its group, so a parent that replaces the row
+naming it keeps its place. Groups are not kept open across routes; Back returns
+to the same list with its groups collapsed.
 
 ## Verification and expected results
 

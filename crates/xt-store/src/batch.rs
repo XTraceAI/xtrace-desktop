@@ -40,6 +40,11 @@ pub struct IngestBatch<'a> {
     /// proof to its stored record, new or already held. See
     /// `task_notification.rs`.
     pub task_notifications: &'a [bool],
+    /// Per-input kind of a validated reader claim that the Codex or Cursor
+    /// tool itself wrote this input; empty means none, otherwise exactly one
+    /// entry per input. A marked input that is accepted binds a proof to its
+    /// stored record, new or already held. See [`crate::tool_sent`].
+    pub tool_sent: &'a [Option<crate::tool_sent::ToolSentKind>],
     /// Per-input marker that the caller knows a human-input adjustment says
     /// only part, or none, of this input is a person's words, so no person
     /// preview may be kept for it; empty means none, otherwise exactly one
@@ -94,6 +99,7 @@ impl<'a> IngestBatch<'a> {
             confirmed_iteration_usage: &[],
             injected_context: &[],
             task_notifications: &[],
+            tool_sent: &[],
             withheld_previews: &[],
             namespace: None,
             identities: &[],
@@ -316,6 +322,14 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let first_before = if batch.native_history || batch.native_codex {
+            Some(crate::child_fact::first_input_record(
+                &transaction,
+                &batch.session.session_id,
+            )?)
+        } else {
+            None
+        };
         let keep_content = crate::retention::allows_content(&transaction, batch.keep_content)?;
         // Receipt-bearing writer batches may reject every record. Keep their
         // destination writes provisional while still recording original-owner conflicts.
@@ -383,6 +397,12 @@ impl Store {
         // no receipt, so none of this is inside the provisional savepoint.
         outcome.injected_context = crate::injected::apply(&transaction, batch, &outcome.records)?;
         crate::task_notification::apply(
+            &transaction,
+            batch,
+            &outcome.records,
+            &mut outcome.affected_owners,
+        )?;
+        crate::tool_sent::apply(
             &transaction,
             batch,
             &outcome.records,
@@ -524,6 +544,19 @@ impl Store {
                 .all(|row| row.disposition.is_accepted())
         {
             upsert_native_checkpoint(&transaction, checkpoint)?;
+        }
+        // A session committed for the first time starts checking, in this
+        // transaction, so no reader sees its rows as checked first.
+        crate::child_check::require(&transaction, &batch.session.session_id)?;
+        if let Some(before) = first_before
+            && before
+                != crate::child_fact::first_input_record(&transaction, &batch.session.session_id)?
+        {
+            transaction.execute(
+                "UPDATE session_child_checks SET required_generation=required_generation+1
+                 WHERE session_id=?1 AND own_check_key IS NOT NULL",
+                [&batch.session.session_id],
+            )?;
         }
         transaction.commit()?;
         Ok(outcome)

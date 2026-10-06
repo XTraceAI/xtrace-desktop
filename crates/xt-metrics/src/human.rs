@@ -15,7 +15,6 @@ pub struct HumanTime {
     /// this is always the same estimate as `human_minutes_est`.
     pub summed_session_minutes_est: Option<f64>,
     pub agent_minutes: f64,
-    pub agent_to_human_ratio: Option<f64>,
     /// Each message belongs to the local day containing its exact timestamp.
     /// A missing classification or counted length makes every bucket unknown.
     pub by_day: Vec<DayHuman>,
@@ -92,9 +91,6 @@ impl MetricsDb {
             human_minutes_est,
             summed_session_minutes_est: human_minutes_est,
             agent_minutes,
-            agent_to_human_ratio: human_minutes_est
-                .filter(|minutes| *minutes > 0.0)
-                .map(|minutes| agent_minutes / minutes),
             by_day: days
                 .iter()
                 .zip(daily)
@@ -157,7 +153,7 @@ mod tests {
             .human_time(window(), TypingRate::default(), TimeZone::UTC)
             .unwrap();
         assert_eq!(report.human_minutes_est, Some(0.675));
-        assert_eq!(report.agent_to_human_ratio, Some(23.0 / 0.675));
+        assert_eq!(report.agent_minutes, 23.0);
         assert!(metrics.connection.is_autocommit());
         assert_eq!(
             metrics

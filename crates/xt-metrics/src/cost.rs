@@ -11,6 +11,10 @@ pub(crate) const QUERY: &str = "SELECT host,model,surface,ts,input_tokens,output
 /// The same selection and columns as [`QUERY`], plus the response's session
 /// (column 11), for callers that group the priced responses by session.
 pub(crate) const SESSION_QUERY: &str = "SELECT host,model,surface,ts,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,cache_creation_5m,cache_creation_1h,service_tier,session_id FROM v_response_usage WHERE ts_ms>=?1 AND ts_ms<?2";
+/// [`SESSION_QUERY`]'s selection and columns with no window: every response
+/// of the named sessions, whenever it was, and those with no timestamp too,
+/// which no window holds and which are counted, unpriced, rather than dropped.
+pub(crate) const WHOLE_SESSION_QUERY: &str = "SELECT host,model,surface,ts,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,cache_creation_5m,cache_creation_1h,service_tier,session_id FROM v_response_usage";
 /// The host whose responses carry no service tier: its reader does not keep
 /// one, and OpenAI bills a request that names no tier at its default tier.
 const ASSUMED_DEFAULT_TIER_HOST: &str = "codex";
@@ -27,6 +31,9 @@ pub enum UnpricedReason {
     MissingCacheSplit,
     InconsistentCacheSplit,
     MissingRate,
+    /// The response records no time. Only a whole-session read selects it:
+    /// it is in no window, and it is counted rather than dropped.
+    MissingTimestamp,
 }
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct UnpricedCost {
@@ -110,6 +117,10 @@ pub(crate) fn read_row(
             rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
         })?
         .0;
+    Ok((ts, row.get(2)?, read_observation(row)?))
+}
+/// The observation of one such row, whatever its timestamp.
+fn read_observation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Observation> {
     let mut values = [None; 6];
     for (i, value) in values.iter_mut().enumerate() {
         *value = row
@@ -119,17 +130,13 @@ pub(crate) fn read_row(
             })
             .transpose()?;
     }
-    Ok((
-        ts,
-        row.get(2)?,
-        Observation {
-            host: row.get(0)?,
-            model: row.get(1)?,
-            tier: row.get(10)?,
-            counters: [values[0], values[1], values[2], values[3]],
-            split: [values[4], values[5]],
-        },
-    ))
+    Ok(Observation {
+        host: row.get(0)?,
+        model: row.get(1)?,
+        tier: row.get(10)?,
+        counters: [values[0], values[1], values[2], values[3]],
+        split: [values[4], values[5]],
+    })
 }
 impl Observation {
     /// The recorded model name; `None` when absent or blank, as pricing treats it.
@@ -378,21 +385,22 @@ impl MetricsDb {
 }
 
 impl MetricsDb {
-    /// The cost of exactly the named sessions' selected responses inside one
-    /// window: the same `v_response_usage` selection, deduplication and
-    /// pricing as [`MetricsDb::cost`], restricted to a session after the
-    /// shared projection has selected its rows, so a session's cost is a slice
-    /// of the window's total and never a re-derivation. A response belongs to
-    /// the session that owns its record (a Claude Code sidechain belongs to
-    /// its parent session; a separately indexed sub-session is its own).
+    /// The cost of exactly the named sessions' selected responses over their
+    /// whole history, whenever each was: the same `v_response_usage`
+    /// selection, deduplication and pricing as [`MetricsDb::cost`], restricted
+    /// to a session but not to a window. A response belongs to the session
+    /// that owns its record (a Claude Code sidechain belongs to its parent
+    /// session; a separately indexed sub-session is its own). A response with
+    /// no timestamp is in no window, so no other cost read sees it; here it is
+    /// counted as unpriced ([`UnpricedReason::MissingTimestamp`]), so the
+    /// session's total is a floor rather than silently short.
     ///
     /// Only indexed user sessions get an entry; an unknown identifier is
     /// absent rather than an invented zero. An indexed session with no
-    /// selected response in the window reports zero selected observations
-    /// and no total. Bounded like [`MetricsDb::session_windows`].
-    pub fn session_costs(
+    /// selected response reports zero selected observations and no total.
+    /// Bounded like [`MetricsDb::session_windows`].
+    pub fn whole_session_costs(
         &self,
-        window: Window,
         sessions: &[&str],
         catalog: &PriceCatalog,
     ) -> Result<BTreeMap<String, CostSummary>> {
@@ -402,16 +410,18 @@ impl MetricsDb {
         if ids.len() > crate::session::MAX_SESSIONS {
             return Err(Error::TooManySessions);
         }
-        let mut totals = BTreeMap::<String, Totals>::new();
         if ids.is_empty() {
             return Ok(BTreeMap::new());
         }
-        let parameters = crate::session::bind(window, &ids)?;
-        let mut statement = self.connection.prepare(&crate::session::by_session(
+        // No window, so the identifiers are bound from ?1.
+        let parameters = rusqlite::params_from_iter(ids.iter());
+        let mut totals = BTreeMap::<String, Totals>::new();
+        let mut statement = self.connection.prepare(&crate::session::by_session_from(
             crate::session::EXISTS_QUERY,
             ids.len(),
+            1,
         ))?;
-        let mut rows = statement.query(rusqlite::params_from_iter(&parameters))?;
+        let mut rows = statement.query(parameters.clone())?;
         while let Some(row) = rows.next()? {
             totals.insert(row.get(0)?, Totals::default());
         }
@@ -420,19 +430,25 @@ impl MetricsDb {
         if totals.is_empty() {
             return Ok(BTreeMap::new());
         }
-        let start = InstantKey::from_millisecond(window.start_ms());
-        let end = InstantKey::from_millisecond(window.end_ms());
-        let mut statement = self
-            .connection
-            .prepare(&crate::session::by_session(SESSION_QUERY, ids.len()))?;
-        let mut rows = statement.query(rusqlite::params_from_iter(&parameters))?;
+        let mut statement = self.connection.prepare(&crate::session::by_session_from(
+            WHOLE_SESSION_QUERY,
+            ids.len(),
+            1,
+        ))?;
+        let mut rows = statement.query(parameters)?;
         while let Some(row) = rows.next()? {
-            let (ts, _, observation) = read_row(row)?;
-            if ts < start || ts >= end {
-                continue;
-            }
             let session: String = row.get(11)?;
-            if let Some(total) = totals.get_mut(&session) {
+            let Some(total) = totals.get_mut(&session) else {
+                continue;
+            };
+            if row.get_ref(3)?.data_type() == rusqlite::types::Type::Null {
+                let observation = read_observation(row)?;
+                total.push(
+                    &observation,
+                    Outcome::Unpriced(UnpricedReason::MissingTimestamp),
+                )?;
+            } else {
+                let (_, _, observation) = read_row(row)?;
                 let priced = observation.price(catalog)?;
                 total.push(&observation, priced)?;
             }
@@ -506,82 +522,121 @@ mod tests {
         );
     }
     #[test]
-    fn session_costs_slice_the_window_total_by_session() {
+    fn whole_session_costs_price_every_response_whenever_it_was() {
         let fixture = xt_fixtures::Fixture::load(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/F1"),
         )
         .unwrap();
         let catalog = PriceCatalog::from_json(&fixture.snapshots()["prices"].to_string()).unwrap();
         let mut db = xt_fixtures::TempDb::empty().unwrap();
-        let record = |uuid: &str, ts: &str, model: &str| -> xt_store::CanonicalRecord {
-            serde_json::from_value(json!({"uuid":uuid,"type":"assistant","timestamp":ts,"message":{"model":model,"usage":{"input_tokens":0,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"service_tier":"standard"}}})).unwrap()
+        let record = |uuid: &str, ts: Option<&str>, model: &str| -> xt_store::CanonicalRecord {
+            let mut value = json!({"uuid":uuid,"type":"assistant","message":{"model":model,"usage":{"input_tokens":0,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"service_tier":"standard"}}});
+            if let Some(ts) = ts {
+                value["timestamp"] = json!(ts);
+            }
+            serde_json::from_value(value).unwrap()
         };
         for (id, rows) in [
             (
-                "priced",
+                "long",
                 vec![
-                    record("p1", "2026-09-07T12:00:00Z", "test-flat"),
-                    record("p2", "2026-09-07T13:00:00Z", "test-flat"),
-                    record("p3", "2026-09-07T14:00:00Z", "not-in-catalog"),
+                    // Years apart, both counted; one has no published price.
+                    record("l1", Some("2020-01-01T00:00:00Z"), "test-flat"),
+                    record("l2", Some("2026-09-07T12:00:00Z"), "test-flat"),
+                    record("l3", Some("2026-09-07T13:00:00Z"), "not-in-catalog"),
+                    // No timestamp: counted, unpriced, never dropped.
+                    record("l4", None, "test-flat"),
                 ],
             ),
             (
-                "outside",
-                vec![record("o1", "2026-08-01T12:00:00Z", "test-flat")],
+                "other",
+                vec![record("o1", Some("2026-09-07T12:00:00Z"), "test-flat")],
             ),
             (
                 "unpriced",
-                vec![record("u1", "2026-09-07T12:00:00Z", "not-in-catalog")],
+                vec![record("u1", Some("2026-09-07T12:00:00Z"), "not-in-catalog")],
             ),
         ] {
             let session = xt_store::SessionMeta::new(id, "codex", xt_store::SessionSource::Fixture);
             db.store_mut().upsert_session(&session, false).unwrap();
             db.store_mut().upsert_records(id, &rows, false).unwrap();
         }
+        let empty = xt_store::SessionMeta::new("empty", "codex", xt_store::SessionSource::Fixture);
+        db.store_mut().upsert_session(&empty, false).unwrap();
         let metrics = MetricsDb::open(db.path()).unwrap();
-        let window = Window::new(1788220800000, 1788825600000).unwrap();
         let costs = metrics
-            .session_costs(
-                window,
-                &["unpriced", "priced", "outside", "absent", "priced"],
+            .whole_session_costs(
+                &["long", "absent", "long", "other", "unpriced", "empty"],
                 &catalog,
             )
             .unwrap();
         // An unknown identifier is absent, never an invented zero.
         assert_eq!(
             costs.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["outside", "priced", "unpriced"]
+            ["empty", "long", "other", "unpriced"]
         );
-        let priced = &costs["priced"];
+        let long = &costs["long"];
         assert_eq!(
             (
-                priced.selected_observations,
-                priced.priced_observations,
-                priced.unpriced_observations,
-                priced.total_usd,
-                priced.priced_subtotal_usd
+                long.selected_observations,
+                long.priced_observations,
+                long.unpriced_observations,
+                long.total_usd,
+                long.priced_subtotal_nano_usd
             ),
-            (3, 2, 1, None, 0.00002)
+            (4, 2, 2, None, 20_000)
         );
-        let outside = &costs["outside"];
         assert_eq!(
-            (outside.selected_observations, outside.total_usd),
+            long.unpriced
+                .iter()
+                .map(|u| (u.model.as_deref(), u.reason, u.observations))
+                .collect::<Vec<_>>(),
+            [
+                (Some("not-in-catalog"), UnpricedReason::UnknownModel, 1),
+                (Some("test-flat"), UnpricedReason::MissingTimestamp, 1),
+            ]
+        );
+        assert_eq!(
+            (
+                costs["empty"].selected_observations,
+                costs["empty"].total_usd
+            ),
             (0, None)
         );
-        let unpriced = &costs["unpriced"];
         assert_eq!(
-            (unpriced.priced_observations, unpriced.unpriced_observations),
+            (
+                costs["unpriced"].priced_observations,
+                costs["unpriced"].unpriced_observations
+            ),
             (0, 1)
         );
-        // The per-session costs add up to the window's own cost report,
-        // exactly: compared in nano-USD, never as floating-point sums.
-        let total = metrics.cost(window, TimeZone::UTC, &catalog).unwrap().total;
+        // Every timed response is the cost report's own: over a window that
+        // holds them all, the sessions add up to its total exactly, in
+        // nano-USD, never as floating-point sums.
+        let all = Window::new(946684800000, 1893456000000).unwrap(); // 2000 through 2029.
+        let total = metrics.cost(all, TimeZone::UTC, &catalog).unwrap().total;
         let sum: u128 = costs.values().map(|c| c.priced_subtotal_nano_usd).sum();
         assert_eq!(sum, total.priced_subtotal_nano_usd);
-        assert_eq!(sum, 20_000);
         assert_eq!(
             costs.values().map(|c| c.selected_observations).sum::<u64>(),
-            total.selected_observations
+            total.selected_observations + 1,
+            "only the untimed response is beyond every window"
+        );
+        // Read through the session index, not a scan of all history.
+        let plan: Vec<String> = metrics
+            .connection
+            .prepare(&format!(
+                "EXPLAIN QUERY PLAN {}",
+                crate::session::by_session_from(WHOLE_SESSION_QUERY, 1, 1)
+            ))
+            .unwrap()
+            .query_map(["long"], |row| row.get(3))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert!(
+            plan.iter().any(|s| s.contains("records_session_ts")),
+            "{plan:?}"
         );
     }
 }

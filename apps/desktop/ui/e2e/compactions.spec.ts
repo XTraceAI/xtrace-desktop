@@ -96,6 +96,12 @@ for (const colorScheme of ['dark', 'light'] as const) {
         .getByText('Running', { exact: true }),
     ).toBeVisible();
     await expect(page.getByLabel('Recorded compactions: 8', { exact: true })).toHaveCount(0);
+    // A fork shows its own count plus the count before the fork, even zero.
+    const fork = (own: number, from: string) =>
+      page.getByLabel(`Recorded compactions: ${own} + ${from}`, { exact: true });
+    await expect(fork(3, '0')).toHaveCount(2);
+    await expect(fork(3, '0').first()).toHaveText('↺ 3 + 0');
+    await expect(fork(2, 'unknown').first()).toHaveText('↺ 2 + ?');
     const scroll = await page.evaluate(
       () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
     );
@@ -109,8 +115,14 @@ for (const colorScheme of ['dark', 'light'] as const) {
     ).toBeVisible();
     await expect(page.locator('.xt-session-name .xt-compaction')).toHaveCount(0);
     await nine.last().focus();
-    await expect(page.getByRole('tooltip')).toContainText('independent of the selected range');
-    await expect(page.getByRole('tooltip')).toContainText('does not measure model quality');
+    await expect(page.getByRole('tooltip')).toContainText('not just this range');
+    await expect(page.getByRole('tooltip')).toContainText('not a quality score');
+    await page.keyboard.press('Escape');
+    await fork(2, 'unknown').last().scrollIntoViewIfNeeded();
+    await fork(2, 'unknown').last().focus();
+    await expect(page.getByRole('tooltip')).toContainText(
+      '2 in this conversation + an unknown number in the conversation it was forked from, before the fork. The saved conversation it was forked from could not be found.',
+    );
     await page.keyboard.press('Escape');
     await page.screenshot({ path: info.outputPath(`sessions-compactions-${colorScheme}.png`) });
     await page.goto('/e2e/compactions.html?view=dashboard');
@@ -119,6 +131,14 @@ for (const colorScheme of ['dark', 'light'] as const) {
       page.getByRole('columnheader', { name: 'Compactions', exact: true }),
     ).toBeVisible();
     await expect(page.locator('.xt-lane-name .xt-compaction')).toHaveCount(0);
+    await expect(fork(3, '0')).toHaveText('↺ 3 + 0');
+    // Its lane's ticks are its own compactions only.
+    await expect(
+      page
+        .locator('[role="row"]')
+        .filter({ has: fork(3, '0') })
+        .locator('.xt-compaction-tick'),
+    ).toHaveCount(3);
     await expect(
       page
         .locator('[role="row"]')

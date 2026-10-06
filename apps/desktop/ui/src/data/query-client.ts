@@ -45,8 +45,12 @@ export const queryKeys = {
   }: PullRequestSessionsRequest) =>
     ['sessions', 'pr-linked', repository, number, windowDays, windowEndMs, confirmedOnly] as const,
   contentRetention: ['settings', 'content-retention'],
+  /** The automatic pull-request check's status; its own event re-reads it. */
+  prAutoCheck: ['prs-auto', 'status'],
   /** A saved change re-reads every cached Dashboard range, and nothing else. */
   typingSpeed: ['settings', 'typing-speed'],
+  /** Like the typing speed: a saved change re-reads every cached Dashboard range. */
+  humanBreak: ['settings', 'human-break'],
   /** The prefix of every Dashboard range, for a committed typing-speed change. */
   dashboards: ['metrics', 'dashboard'],
   /** Under `metrics`, so committed-data events refresh it like the Dashboard. */

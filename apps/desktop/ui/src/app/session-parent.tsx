@@ -19,11 +19,11 @@ export function verifiedParent(row: {
 }
 
 /**
- * How a parent is named. `shown` is the name its own row carries on this view
- * right now — its host title when that was read, else its saved title — and is
- * `undefined` when the parent is not one of the rows shown, so no title is read
- * for it. Then the title the index saved for it, else enough of its identity to
- * tell it apart. No role or task is claimed: the report states none.
+ * How a parent is named. `shown` is the name this view has for it right now —
+ * its own row's, or a host title read for it where a row only names it — and
+ * is `null` or `undefined` when there is none. Then the title the index saved
+ * for it, else enough of its identity to tell it apart. No role or task is
+ * claimed: the report states none.
  */
 export const parentName = (parent: SessionParentLink, shown?: string | null) =>
   shown ?? parent.title ?? `Session ${shortId(parent.session_id)}`;
@@ -63,5 +63,45 @@ export function ParentMarker({
       <span className="xt-subsession-words">Sub-session of </span>
       <span className="xt-subsession-parent">{name}</span>
     </Link>
+  );
+}
+
+/**
+ * The disclosure for a group: a real button in the name cell, so the row keeps
+ * its columns and its height. Its name says whose sub-sessions and how many
+ * are counted (`noun` says which: returned by a report, loaded by a list);
+ * `aria-expanded` says whether they are listed. It controls no single element
+ * — the children are rows of the same list, mounted only while open — so it
+ * names none with `aria-controls`.
+ */
+export function GroupToggle({
+  row,
+  name,
+  noun,
+  onToggle,
+}: {
+  row: { key: string; children: number; expanded: boolean };
+  name: string;
+  noun: string;
+  onToggle: (key: string) => void;
+}) {
+  // Counted as the Dashboard's `plural` counts, without reading its module.
+  const label = `${row.children.toLocaleString('en-US')} ${row.children === 1 ? noun : `${noun}s`} of ${name}`;
+  return (
+    <button
+      type="button"
+      className="xt-lane-toggle"
+      // WebKit leaves a button out of the Tab order unless it is named here.
+      tabIndex={0}
+      aria-expanded={row.expanded}
+      aria-label={label}
+      title={`${row.expanded ? 'Hide' : 'Show'} ${label}`}
+      onClick={() => onToggle(row.key)}
+    >
+      <span className="xt-lane-chevron" aria-hidden="true">
+        ›
+      </span>
+      <span aria-hidden="true">{row.children.toLocaleString('en-US')}</span>
+    </button>
   );
 }

@@ -148,11 +148,13 @@ fn a_saved_speed_survives_restart_and_both_windows_read_it() {
         serde_json::to_value(&after.tiles.tokens).unwrap(),
         serde_json::to_value(&before.tiles.tokens).unwrap()
     );
-    // The ratio's numerator (the reply's ten agent minutes) is unchanged, so
-    // it moves with the human time: 10/22 at 40 WPM, 10/11 at 80.
+    // Leverage divides agent hours by your hours, which come from message
+    // times, not typing: the speed does not move it.
     close(before.tiles.agent_hours.value.unwrap() * 60.0, 10.0);
-    close(before.tiles.ratio.value.unwrap(), 10.0 / 22.0);
-    close(after.tiles.ratio.value.unwrap(), 10.0 / 11.0);
+    assert_eq!(
+        serde_json::to_value(&after.tiles.leverage).unwrap(),
+        serde_json::to_value(&before.tiles.leverage).unwrap()
+    );
     // The daily human bars sum to the same character estimate the tile reports.
     let daily: f64 = after
         .days

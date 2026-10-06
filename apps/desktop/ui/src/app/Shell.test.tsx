@@ -39,6 +39,30 @@ function mount(path: string, source: DataSource = new FixtureDataSource(exported
   );
 }
 
+it('wires Updates only for a native source with the optional capability', async () => {
+  const base = new FixtureDataSource(exported);
+  const controls = { viewPublicReleases: vi.fn().mockResolvedValue(undefined) };
+  // Keep deterministic fixture reads while exercising Shell's native capability boundary.
+  const native = Object.assign(Object.create(base) as DataSource, {
+    kind: 'native',
+    localUpdates: controls,
+  });
+  const view = mount('/settings', native);
+  await opened();
+  fireEvent.click(screen.getByRole('button', { name: 'Updates' }));
+  await screen.findByRole('dialog', { name: 'Updates' });
+  expect(controls.viewPublicReleases).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'View public releases' }));
+  await waitFor(() => expect(controls.viewPublicReleases).toHaveBeenCalledOnce());
+  view.unmount();
+  const fixtureWithCapability = Object.assign(Object.create(base) as DataSource, {
+    localUpdates: controls,
+  });
+  mount('/settings', fixtureWithCapability);
+  await opened();
+  expect(screen.queryByRole('button', { name: 'Updates' })).toBeNull();
+});
+
 it('does not reread account limits when the Dashboard history range changes', async () => {
   const source = new FixtureDataSource(exported);
   const noLimits: AccountUsage = {
