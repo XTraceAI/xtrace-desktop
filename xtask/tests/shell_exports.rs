@@ -1,36 +1,8 @@
 use std::{fs, process::Command};
 
-fn assert_shell_export_matches_golden(actual: &str, golden: &str) {
-    let actual_metadata: serde_json::Value = serde_json::from_str(actual).unwrap();
-    assert_eq!(
-        actual_metadata["app_info"]["version"],
-        env!("CARGO_PKG_VERSION")
-    );
-    assert_eq!(actual, golden_with_package_version(golden));
-}
-
-fn golden_with_package_version(golden: &str) -> String {
-    // Fail closed if the committed AppInfo header changes shape. Never round-trip
-    // the body: parsed floats are not round-trip exact under serde_json defaults.
-    const PREFIX: &str = "{\n  \"app_info\": {\n";
-    let (header, _) = golden
-        .strip_prefix(PREFIX)
-        .expect("golden must start with the AppInfo header")
-        .split_once("\n  },\n")
-        .expect("golden must delimit the AppInfo header exactly");
-    assert_eq!(header.matches("\"version\"").count(), 1);
-    let metadata: serde_json::Value = serde_json::from_str(&format!("{{\n{header}\n}}"))
-        .expect("golden AppInfo header must be valid JSON");
-    let version = metadata["version"]
-        .as_str()
-        .expect("golden AppInfo version must be a string");
-    let token = format!("    \"version\": \"{version}\",\n");
-    assert_eq!(header.matches(&token).count(), 1);
-    let start = PREFIX.len() + header.find(&token).unwrap() + "    \"version\": \"".len();
-    let mut expected = golden.to_owned();
-    expected.replace_range(start..start + version.len(), env!("CARGO_PKG_VERSION"));
-    expected
-}
+#[path = "../../tests/support/fixture_exports.rs"]
+mod fixture_exports;
+use fixture_exports::{assert_fixture_export_matches_golden, golden_with_package_version};
 
 #[test]
 fn generated_shell_export_uses_ipc_structs_and_rejects_skeletons() {
@@ -39,9 +11,10 @@ fn generated_shell_export_uses_ipc_structs_and_rejects_skeletons() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_shell_export_matches_golden(
+    assert_fixture_export_matches_golden(
         std::str::from_utf8(&output.stdout).unwrap(),
         include_str!("../../apps/desktop/ui/fixtures/F1.json"),
+        env!("CARGO_PKG_VERSION"),
     );
     let actual: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(actual["app_info"]["data_dir"], "fixture://F1");
@@ -69,8 +42,11 @@ fn synthetic_current_export() -> String {
 fn shell_export_oracle_changes_only_the_app_info_version() {
     let actual = synthetic_current_export();
     assert!(actual.contains("\"nested\": {\"version\": \"0.0.0\"}"));
-    assert_eq!(golden_with_package_version(SYNTHETIC_GOLDEN), actual);
-    assert_shell_export_matches_golden(&actual, SYNTHETIC_GOLDEN);
+    assert_eq!(
+        golden_with_package_version(SYNTHETIC_GOLDEN, env!("CARGO_PKG_VERSION")),
+        actual
+    );
+    assert_fixture_export_matches_golden(&actual, SYNTHETIC_GOLDEN, env!("CARGO_PKG_VERSION"));
 }
 
 #[test]
@@ -78,7 +54,11 @@ fn shell_export_oracle_rejects_wrong_emitted_version() {
     // Even a byte-identical old export must fail the package-version assertion.
     assert!(
         std::panic::catch_unwind(|| {
-            assert_shell_export_matches_golden(SYNTHETIC_GOLDEN, SYNTHETIC_GOLDEN);
+            assert_fixture_export_matches_golden(
+                SYNTHETIC_GOLDEN,
+                SYNTHETIC_GOLDEN,
+                env!("CARGO_PKG_VERSION"),
+            );
         })
         .is_err()
     );
@@ -95,7 +75,11 @@ fn shell_export_oracle_rejects_body_byte_format_and_float_changes() {
     ] {
         assert!(
             std::panic::catch_unwind(|| {
-                assert_shell_export_matches_golden(&changed, SYNTHETIC_GOLDEN);
+                assert_fixture_export_matches_golden(
+                    &changed,
+                    SYNTHETIC_GOLDEN,
+                    env!("CARGO_PKG_VERSION"),
+                );
             })
             .is_err()
         );
@@ -117,7 +101,7 @@ fn shell_export_oracle_rejects_missing_or_ambiguous_header_version() {
     ] {
         assert!(
             std::panic::catch_unwind(|| {
-                golden_with_package_version(&golden);
+                golden_with_package_version(&golden, env!("CARGO_PKG_VERSION"));
             })
             .is_err()
         );
@@ -133,7 +117,7 @@ fn shell_export_oracle_rejects_unrecognized_header_format() {
     ] {
         assert!(
             std::panic::catch_unwind(|| {
-                golden_with_package_version(&golden);
+                golden_with_package_version(&golden, env!("CARGO_PKG_VERSION"));
             })
             .is_err()
         );
