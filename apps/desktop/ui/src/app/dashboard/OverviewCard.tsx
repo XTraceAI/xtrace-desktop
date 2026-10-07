@@ -1,16 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
-import { useMemo, type ReactNode } from 'react';
+import { useId, useMemo, type ReactNode } from 'react';
 import { useData } from '../../data/DataProvider';
 import type { DashboardMetrics } from '../../data/generated/DashboardMetrics';
 import type { MetricMergedPrs } from '../../data/generated/MetricMergedPrs';
 import type { MetricTile } from '../../data/generated/MetricTile';
 import { queryKeys } from '../../data/query-client';
-import { count, delta as formatDelta, isMeasured } from '../../kit/format';
+import { count, delta as formatDelta, isMeasured, UNMEASURED } from '../../kit/format';
 import { MetricCell } from '../../kit/MetricCell';
 import { MetricIcon, type MetricIconName } from '../../kit/metric-icons';
 import type { RuleId } from '../../kit/rules';
 import type { TimeRange } from '../../kit/TopBar';
-import { continuous } from '../metric-format';
+import { continuous, handsOffTime } from '../metric-format';
+import { agentTime } from '../agent-duration';
 import { DashCard } from './DashCard';
 import { DayLine } from './DayLine';
 import { DefinitionInfo } from './DefinitionInfo';
@@ -23,11 +24,10 @@ import {
   concurrencyTakeaway,
   handsOffByDay,
   handsOffTakeaway,
-  hoursText,
   latestMerged,
   mergedTakeaway,
   leverageByDay,
-  leverageTakeaway,
+  leverageSpanText,
 } from './overview';
 import { MERGED_PRS_DEFINITION, mergedTileView, type AutoCheck } from './pr-effort';
 import {
@@ -48,7 +48,7 @@ export const MERGED_LISTED = 4;
  * Leverage, Concurrency, Merged PRs and Hands-off median for the selected
  * range, two by two, each with its change against the previous period, a
  * day-by-day line where a day can be measured on its own, and one computed
- * takeaway. Every number is the Rust report's.
+ * takeaway on every tile but Leverage. Every number is the Rust report's.
  */
 export function OverviewCard({
   report,
@@ -81,13 +81,18 @@ export function OverviewCard({
           tile={tiles.leverage}
           format={continuous}
           unit="×"
+          // The exact whole days and what its change compares with (as many
+          // whole days before, one more than the range when it starts
+          // mid-day) are stated in its definition and accessible description.
+          description={leverageSpanText(human.by_day)}
           sub={
-            // The two sides the value divides: the same whole local days.
+            // The two sides the value divides, over the same whole local
+            // days, so they never read as the rolling range's agent hours,
+            // each written as all agent time is.
             human.active_ms !== null
-              ? `${hoursText(report.leverage.agent_ms)} agent h ÷ ${hoursText(human.active_ms)} your h`
+              ? `${agentTime(report.leverage.agent_ms)} agent ÷ ${agentTime(human.active_ms)} human · whole days`
               : undefined
           }
-          takeaway={leverageTakeaway(leverage)}
         >
           <DayChart
             days={leverage}
@@ -125,19 +130,18 @@ export function OverviewCard({
           definition={HANDS_OFF_DEFINITION}
           context={excludedNote(report.hands_off_excluded_surfaces)}
           tile={tiles.hands_off_median}
-          format={continuous}
-          unit="min"
+          format={handsOffTime}
           sub={
             tiles.hands_off_p90.value === null
               ? undefined
-              : `p90 ${continuous(tiles.hands_off_p90.value)} min`
+              : `p90 ${handsOffTime(tiles.hands_off_p90.value)}`
           }
           takeaway={handsOffTakeaway(report)}
         >
           <DayChart
             days={handsOff}
             average={tiles.hands_off_median.value}
-            format={(value) => `${continuous(value)} min`}
+            format={handsOffTime}
             name="Hands-off median by day"
           />
         </OverviewTile>
@@ -184,6 +188,7 @@ function OverviewTile({
   reason = tileReason(tile),
   placeholder,
   sub,
+  description,
   takeaway,
   children,
 }: {
@@ -201,6 +206,8 @@ function OverviewTile({
   /** Words in place of the number while there is none. */
   placeholder?: string;
   sub?: string;
+  /** More about the number, in its definition and accessible description, not on the tile. */
+  description?: string;
   takeaway?: string | null;
   children: ReactNode;
 }) {
@@ -208,7 +215,12 @@ function OverviewTile({
   // Words in place of the number already say why there is none.
   const words = !measured && placeholder !== undefined;
   const change = measured ? tileDelta(tile) : undefined;
-  const tip = [measured || !reason || words ? undefined : sentence(reason), tileTip(tile, context)]
+  const describedBy = useId();
+  const tip = [
+    measured || !reason || words ? undefined : sentence(reason),
+    tileTip(tile, context),
+    description,
+  ]
     .filter(Boolean)
     .join(' ');
   return (
@@ -217,7 +229,13 @@ function OverviewTile({
       aria-label={label}
       data-testid="overview-tile"
       data-label={label}
+      aria-describedby={description ? describedBy : undefined}
     >
+      {description && (
+        <span id={describedBy} className="sr-only" data-testid="overview-description">
+          {description}
+        </span>
+      )}
       <h3 className="xt-overview-label">
         <MetricIcon name={icon} />
         <span>{label}</span>
@@ -313,7 +331,7 @@ function MergedTile({
               {row.title ?? row.repository}
             </span>
             <span className="xt-overview-pr-hours">
-              {row.agentMs === null ? '—' : `${hoursText(row.agentMs)} h`}
+              {row.agentMs === null ? UNMEASURED : agentTime(row.agentMs)}
             </span>
           </li>
         ))}

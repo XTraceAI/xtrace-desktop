@@ -3,7 +3,9 @@ import type { DashboardWindow } from '../../data/generated/DashboardWindow';
 import type { MetricHumanHoursDay } from '../../data/generated/MetricHumanHoursDay';
 import type { MetricPrAnalyticsRow } from '../../data/generated/MetricPrAnalyticsRow';
 import type { MetricPrMarker } from '../../data/generated/MetricPrMarker';
-import { continuous } from '../metric-format';
+import { clock } from '../../kit/clock';
+import { agentDuration, agentTime } from '../agent-duration';
+import { continuous, handsOffTime } from '../metric-format';
 import { dayLabel } from './effort-chart';
 import { plural, zoneOf } from './present';
 
@@ -17,7 +19,7 @@ const HOUR_MS = 3_600_000;
 
 /** What the card shows, in place of a rule's technical text. */
 export const OVERVIEW_DEFINITION =
-  'Four numbers for the selected range. Each change compares with the previous period of the same length. Each chart shows the range day by day, every day measured on its own; its dashed line is the number for the whole range.';
+  'Four numbers for the selected range. Each change compares with the previous period of the same length; Leverage counts whole days, so its change compares with as many whole days before. Each chart shows the range day by day, every day measured on its own; its dashed line is the number for the whole range.';
 
 export const CONCURRENCY_DEFINITION =
   'How many agent sessions ran at the same time, on average over the time any ran. Max is the most at once.';
@@ -31,29 +33,41 @@ export interface DayValue {
   value: number | null;
 }
 
-/** A day of the leverage line, with the hours of yours it divides by. */
-export interface LeverageDay extends DayValue {
-  /** Your hours that day in milliseconds; `null` when unknown. */
-  yoursMs: number | null;
+/**
+ * The whole local days a number covers, e.g. `Sep 28–Oct 5, whole days`:
+ * human time and the agent hours beside them, never the rolling range.
+ */
+export function wholeDaysText(days: readonly { date: string }[]) {
+  if (days.length === 0) return 'whole days';
+  const first = dayLabel(days[0]!.date);
+  const last = dayLabel(days[days.length - 1]!.date);
+  return `${first === last ? first : `${first}–${last}`}, whole days`;
 }
 
-/** The fewest hours of yours a day needs before the takeaway may name it. */
-export const TAKEAWAY_MIN_YOURS_MS = 30 * 60_000;
-
-/** Hours with one decimal, `<0.1` for a positive the scale cannot show. */
-export const hoursText = (ms: number) => continuous(ms / HOUR_MS);
+/**
+ * What a whole-day change compares with: the same number of whole days just
+ * before, e.g. `the previous 8 whole days` when a 7-day range starts mid-day.
+ * The rolling numbers keep the range's own `vs. previous 7 days`.
+ */
+export const previousWholeDaysText = (days: readonly { date: string }[]) =>
+  `the previous ${days.length} whole ${days.length === 1 ? 'day' : 'days'}`;
 
 /**
- * The report's leverage for each whole local day, with the hours of yours it
- * divides by. A day with no hours of yours, or unknown ones, has no value: a
- * gap, never infinity or zero.
+ * Leverage's exact span and what its change compares with, for its
+ * definition and accessible description, not the tile's face; e.g.
+ * `Both sides cover Sep 28–Oct 5, whole days. Its change compares with the previous 8 whole days.`
  */
-export const leverageByDay = (report: DashboardMetrics): LeverageDay[] =>
-  report.leverage.by_day.map((day) => ({
-    date: day.date,
-    value: day.value,
-    yoursMs: day.human_ms,
-  }));
+export const leverageSpanText = (days: readonly { date: string }[]) =>
+  days.length === 0
+    ? undefined
+    : `Both sides cover ${wholeDaysText(days)}. Its change compares with ${previousWholeDaysText(days)}.`;
+
+/**
+ * The report's leverage for each whole local day. A day with no human
+ * time, or unknown human time, has no value: a gap, never infinity or zero.
+ */
+export const leverageByDay = (report: DashboardMetrics): DayValue[] =>
+  report.leverage.by_day.map((day) => ({ date: day.date, value: day.value }));
 
 export const concurrencyByDay = (report: DashboardMetrics): DayValue[] =>
   report.concurrency_by_day.map((day) => ({ date: day.date, value: day.mean }));
@@ -78,19 +92,6 @@ export function largest<T extends { date: string }>(
   return best;
 }
 
-/**
- * The day with the most agent hours for each of yours, among days with at
- * least half an hour of yours: a few minutes of yours would make any ratio
- * look huge. None when no day has that much.
- */
-export function leverageTakeaway(days: readonly LeverageDay[]): string | null {
-  const best = largest(days, (day) =>
-    day.yoursMs !== null && day.yoursMs >= TAKEAWAY_MIN_YOURS_MS ? day.value : null,
-  );
-  if (!best || best.value === null) return null;
-  return `Highest on ${dayLabel(best.date)}: ${continuous(best.value)} agent h for each of yours.`;
-}
-
 export function concurrencyTakeaway(report: DashboardMetrics): string | null {
   const best = largest(report.concurrency_by_day, (day) => day.max);
   if (!best || best.max === null) return null;
@@ -100,7 +101,7 @@ export function concurrencyTakeaway(report: DashboardMetrics): string | null {
 export function handsOffTakeaway(report: DashboardMetrics): string | null {
   const best = largest(report.hands_off_by_day, (day) => day.median_min);
   if (!best || best.median_min === null) return null;
-  return `Longest median on ${dayLabel(best.date)}: ${continuous(best.median_min)} min.`;
+  return `Longest median on ${dayLabel(best.date)}: ${handsOffTime(best.median_min)}.`;
 }
 
 /** One listed merged pull request: the report's marker, with the PRs page's title and hours. */
@@ -184,11 +185,13 @@ export function clockHours(ms: number, window: DashboardWindow, end = false) {
   return end && hours === 0 ? 24 : hours;
 }
 
-/** `13:56`, or `24:00` for a stretch cut at the next midnight. */
-export const clockText = (hours: number) => {
-  const minutes = Math.round(hours * 60);
-  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
-};
+/**
+ * A time of day from hours after midnight, written as every clock time in the
+ * app is (`1:56 PM` or `13:56`, as this Mac prefers). A stretch cut at the
+ * next midnight ends at midnight.
+ */
+export const clockText = (hours: number) =>
+  clock(Math.round(hours * 60) * 60_000, { timeZone: 'UTC' });
 
 export interface TimelineBar {
   /** Fractions of the day's 24 hours. */
@@ -196,7 +199,7 @@ export interface TimelineBar {
   width: number;
   /** A single message: drawn as a thin tick. */
   tick: boolean;
-  /** e.g. `13:56–17:08`, or `09:42` for a single message. */
+  /** e.g. `1:56 PM–5:08 PM`, or `9:42 AM` for a single message. */
   text: string;
   /** Constant-offset pieces of one stretch; one accessible name and tooltip entry. */
   pieces?: { left: number; width: number; lane: 0 | 1 }[];
@@ -206,7 +209,7 @@ export interface TimelineRow {
   label: string;
   weekend: boolean;
   bars: TimelineBar[];
-  /** The day's total in words; `–` for a measured zero, null when unknown. */
+  /** The day's total, written as all agent time is (`0h00m` for a measured zero); null when unknown. */
   total: string | null;
   /** The row's accessible name. */
   name: string;
@@ -298,15 +301,14 @@ export function timelineRows(
       }
       return bar;
     });
-    const total =
-      day.active_ms === null ? null : day.active_ms > 0 ? `${hoursText(day.active_ms)} h` : '–';
+    const total = day.active_ms === null ? null : agentTime(day.active_ms);
     const label = dayLabel(day.date);
     const name =
       day.active_ms === null
         ? `${label}: unknown`
         : bars.length === 0
           ? `${label}: no messages`
-          : `${label}: ${day.active_ms > 0 ? `${hoursText(day.active_ms)} h` : 'no time between messages'}; ${bars
+          : `${label}: ${day.active_ms > 0 ? agentDuration(day.active_ms).spoken : 'no time between messages'}; ${bars
               .map((bar) => (bar.tick ? `one message at ${bar.text}` : bar.text))
               .join(', ')}`;
     return {
@@ -320,12 +322,3 @@ export function timelineRows(
     };
   });
 }
-
-/** A headline's hours: whole from 10 h, one decimal below. */
-export function bigHours(hours: number) {
-  if (hours >= 10) return Math.round(hours).toLocaleString('en-US');
-  return continuous(hours);
-}
-
-/** The "your h" headline from milliseconds. */
-export const yourHoursText = (ms: number) => bigHours(ms / HOUR_MS);

@@ -1,0 +1,1 @@
+- Keep saved Claude conversation names after a very large record when a later valid rename confirms the name.

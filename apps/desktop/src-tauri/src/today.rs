@@ -64,13 +64,13 @@ pub struct TodayCost {
     pub basis: String,
 }
 
-/// M-05 agent time from today's events only: a span begun before midnight
-/// contributes from its first event after midnight.
+/// M-05 agent time on today's date, the same number the Dashboard's bar for
+/// today shows: a span begun before midnight counts from midnight.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct TodayAgent {
     #[ts(type = "number")]
     pub active_ms: u64,
-    /// Distinct sessions with at least one event today.
+    /// Distinct sessions with agent time or at least one event today.
     #[ts(type = "number")]
     pub sessions: u64,
 }
@@ -178,13 +178,17 @@ pub fn today(
         none(catalog.version().into(), xt_metrics::COST_BASIS.into())
     } else {
         let window = Window::new(start_ms, now_ms)?;
-        let (tokens, cost, spans) = db.read_snapshot(|db| {
+        let (tokens, cost, (day, spans)) = db.read_snapshot(|db| {
             Ok((
                 db.tokens(window, zone.clone())?,
                 db.cost(window, zone.clone(), catalog)?,
-                db.active_spans(window)?,
+                db.active_last_day(window, zone.clone())?,
             ))
         })?;
+        // The one day bucket must be the day this summary names.
+        if (day.date.as_str(), day.start_ms, day.end_ms) != (date.as_str(), start_ms, now_ms) {
+            return Err(StateError::MetricEncoding);
+        }
         let total = &tokens.total;
         let output = TodayOutput {
             state: match total.counters.output_tokens {
@@ -212,14 +216,13 @@ pub fn today(
             basis: cost.basis,
         };
         let mut sessions: Vec<(&str, &str)> = spans
-            .spans
             .iter()
             .map(|span| (span.host.as_str(), span.session_id.as_str()))
             .collect();
         sessions.sort_unstable();
         sessions.dedup();
         let agent = TodayAgent {
-            active_ms: spans.active_ms,
+            active_ms: day.active_ms,
             sessions: sessions.len() as u64,
         };
         (output, cost, agent)

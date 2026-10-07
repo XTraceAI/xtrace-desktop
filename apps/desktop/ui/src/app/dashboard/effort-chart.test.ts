@@ -8,6 +8,7 @@ import {
   dayLabel,
   effortChart,
   niceTop,
+  rangeText,
   scaleText,
   tickIndices,
 } from './effort-chart';
@@ -48,7 +49,7 @@ it('draws one bar per day for the whole cohort, every assignment added, on one s
       },
     ],
   });
-  const chart = effortChart(current, 'agent');
+  const chart = effortChart(current, 'agent', 7);
   expect(chart.bars).toHaveLength(7);
   expect(chart.bars.map((bar) => bar.value)).toEqual([null, 3, 5, null, null, null, null]);
   expect(chart.bars.map((bar) => bar.state)).toEqual([
@@ -69,14 +70,15 @@ it('draws one bar per day for the whole cohort, every assignment added, on one s
   expect(chart.unit).toBe('hours');
   // Each day's models, largest first, with their share of the day.
   expect(chart.bars[2]!.models).toEqual([
-    { name: 'other-model', value: 4, text: '4 h', share: '80%' },
-    { name: SYNTHETIC_MODEL, value: 1, text: '1 h', share: '20%' },
+    { name: 'other-model', value: 4, text: '4h00m', share: '80%' },
+    { name: SYNTHETIC_MODEL, value: 1, text: '1h00m', share: '20%' },
   ]);
   expect(chart.bars[2]!.name).toBe(
-    `${chart.days[2]!.date}: 5 h. other-model 4 h (80%), ${SYNTHETIC_MODEL} 1 h (20%)`,
+    `${chart.days[2]!.date}: 5h00m. other-model 4h00m (80%), ${SYNTHETIC_MODEL} 1h00m (20%)`,
   );
-  expect(chart.bars[0]!.name).toBe(`${chart.days[0]!.date}: no agent time`);
-  expect(chart.headline).toEqual({ text: '8 agent h', range: 'last 7 days', note: null });
+  // A day without agent time is a measured zero, written as one.
+  expect(chart.bars[0]!.name).toBe(`${chart.days[0]!.date}: 0h00m`);
+  expect(chart.headline).toEqual({ text: '8h00m agent', range: 'last 7 days', note: null });
 });
 
 it('draws the 24 h line from a 12 h day, extends the scale to it and notes days above it', () => {
@@ -92,6 +94,7 @@ it('draws the 24 h line from a 12 h day, extends the scale to it and notes days 
       ],
     }),
     'agent',
+    7,
   );
   expect(chart.scale).toEqual({ top: 30, topText: '30 h', midText: '15 h' });
   expect(chart.reference).toEqual({ fraction: 0.8, text: '24 h' });
@@ -105,10 +108,10 @@ it('draws the 24 h line from a 12 h day, extends the scale to it and notes days 
     false,
   ]);
   expect(chart.bars[3]!.name).toBe(
-    `${chart.days[3]!.date}: 30 h. gpt-6-astra 30 h (100%). Above 24 h: agents ran at the same time`,
+    `${chart.days[3]!.date}: 30h00m. gpt-6-astra 30h00m (100%). Above 24 h: agents ran at the same time`,
   );
   expect(chart.headline).toEqual({
-    text: '43 agent h',
+    text: '43h00m agent',
     range: 'last 7 days',
     note: '1 day above 24 h',
   });
@@ -119,12 +122,13 @@ it('draws the 24 h line from a 12 h day, extends the scale to it and notes days 
       groups: [{ assignment: ty('feat'), sessions: 1, days: { 0: { agentMs: 12 * HOUR } } }],
     }),
     'agent',
+    7,
   );
   expect(half.scale).toEqual({ top: 24, topText: '24 h', midText: '12 h' });
   // The line sits on the top line, which the scale's own label names: no second label.
   expect(half.reference).toEqual({ fraction: 1, text: null });
   // Cost never has the line.
-  expect(effortChart(section(MANY_TYPES), 'dollars').reference).toBeNull();
+  expect(effortChart(section(MANY_TYPES), 'dollars', 7).reference).toBeNull();
 });
 
 it('keeps unpriced days out of the bars: a + for a partial day, no bar for an unknown one', () => {
@@ -145,6 +149,7 @@ it('keeps unpriced days out of the bars: a + for a partial day, no bar for an un
       ],
     }),
     'dollars',
+    7,
   );
   expect(chart.bars.map((bar) => bar.state)).toEqual([
     'measured',
@@ -190,11 +195,11 @@ it('keeps unpriced days out of the bars: a + for a partial day, no bar for an un
 
 it('states an entirely unpriced plot instead of drawing a scale for it', () => {
   // A partial day is still a priced subtotal on the scale.
-  const partial = effortChart(section(PARTIAL_COST), 'dollars');
+  const partial = effortChart(section(PARTIAL_COST), 'dollars', 7);
   expect(partial.unmeasured).toBeNull();
   expect(partial.bars[2]!.partial).toBe(true);
   // The same cohort's agent time is measured whatever the pricing says.
-  const agent = effortChart(section(PARTIAL_COST), 'agent');
+  const agent = effortChart(section(PARTIAL_COST), 'agent', 7);
   expect(agent.unmeasured).toBeNull();
   expect(agent.bars[2]!.value).toBe(0.5);
   const unknown = effortChart(
@@ -211,13 +216,14 @@ it('states an entirely unpriced plot instead of drawing a scale for it', () => {
       ],
     }),
     'dollars',
+    7,
   );
   expect(unknown.scale).toBeNull();
   expect(unknown.unmeasured).toBe('No priced daily usage to plot.');
   expect(unknown.bars.every((bar) => bar.state === 'unknown')).toBe(true);
   expect(unknown.headline.text).toBe('cost unknown');
   // No usage at all is not an unmeasured plot; it is nothing to plot.
-  const empty = effortChart(section({ tile: { known_merged: 0 }, groups: [] }), 'dollars');
+  const empty = effortChart(section({ tile: { known_merged: 0 }, groups: [] }), 'dollars', 7);
   expect(empty.scale).toBeNull();
   expect(empty.unmeasured).toBeNull();
   expect(empty.bars).toHaveLength(7);
@@ -229,6 +235,7 @@ it('states an entirely unpriced plot instead of drawing a scale for it', () => {
       groups: [{ assignment: ty('feat'), sessions: 1, days: { 1: { usd: 1 } } }],
     }),
     'agent',
+    7,
   );
   expect(idle.scale).toBeNull();
   expect(idle.unmeasured).toBe('No agent time in this range.');
@@ -240,10 +247,10 @@ it('labels a tiny range with values the chart reaches, never 0 h or $0 at the to
     tile: { known_merged: 0 },
     groups: [{ assignment: ty('feat'), sessions: 1, days: { 2: { agentMs: 12_000, usd: 0.003 } } }],
   });
-  const seconds = effortChart(tiny, 'agent');
+  const seconds = effortChart(tiny, 'agent', 7);
   expect([seconds.scale!.topText, seconds.scale!.midText]).toEqual(['12 s', '6 s']);
   expect(seconds.bars[2]!.fraction).toBe(1);
-  const cents = effortChart(tiny, 'dollars');
+  const cents = effortChart(tiny, 'dollars', 7);
   expect([cents.scale!.topText, cents.scale!.midText]).toEqual(['$0.003', '$0.0015']);
   // Tops from 0.01 to 0.03 h read in seconds or minutes, each top distinct from its middle.
   for (const [ms, top, mid] of [
@@ -258,6 +265,7 @@ it('labels a tiny range with values the chart reaches, never 0 h or $0 at the to
         groups: [{ assignment: ty('feat'), sessions: 1, days: { 2: { agentMs: ms } } }],
       }),
       'agent',
+      7,
     );
     expect([chart.scale!.topText, chart.scale!.midText]).toEqual([top, mid]);
   }
@@ -268,6 +276,7 @@ it('labels a tiny range with values the chart reaches, never 0 h or $0 at the to
       groups: [{ assignment: ty('feat'), sessions: 1, days: { 2: { agentMs: 0.11 * HOUR } } }],
     }),
     'agent',
+    7,
   );
   expect([tenth.scale!.topText, tenth.scale!.midText]).toEqual(['0.12 h', '0.06 h']);
 });
@@ -297,6 +306,7 @@ it('lists every model of a day, names no model recorded, and marks a tiny share'
       ],
     }),
     'agent',
+    7,
   );
   const day = chart.bars[1]!;
   expect(day.models.map((model) => [model.name, model.share])).toEqual([
@@ -308,7 +318,7 @@ it('lists every model of a day, names no model recorded, and marks a tiny share'
   ]);
   // The name lists the three largest and counts the rest.
   expect(day.name).toBe(
-    `${chart.days[1]!.date}: 13 h. ${SYNTHETIC_MODEL} 10 h (77%), a 1 h (8%), b 1 h (8%) and 2 more models`,
+    `${chart.days[1]!.date}: 13h01m. ${SYNTHETIC_MODEL} 10h00m (77%), a 1h00m (8%), b 1h00m (8%) and 2 more models`,
   );
   // Cost: models are those with a priced response; no model recorded had none.
   const cost = effortChart(
@@ -321,9 +331,10 @@ it('lists every model of a day, names no model recorded, and marks a tiny share'
       ],
     }),
     'dollars',
+    7,
   ).bars[1]!;
   expect(cost.models.map((model) => [model.name, model.text, model.share])).toEqual([
-    [SYNTHETIC_MODEL, '$500.00', '100%'],
+    [SYNTHETIC_MODEL, '$500', '100%'],
     ['claude-haiku', '$0.50', '<1%'],
   ]);
 });
@@ -332,7 +343,7 @@ it('adds each day’s models up to the day, in both measures, as the report does
   for (const spec of [F19_SHARED, UNKNOWN_FACTS, NO_LINKS, MANY_TYPES, PARTIAL_COST])
     for (const metric of ['agent', 'dollars'] as const) {
       const current = section(spec);
-      const chart = effortChart(current, metric);
+      const chart = effortChart(current, metric, 7);
       chart.bars.forEach((bar, index) => {
         const day = current.cohort.by_day[index]!;
         const sum = bar.models.reduce((total, model) => total + model.value, 0);
@@ -348,7 +359,7 @@ it('adds each day’s models up to the day, in both measures, as the report does
 
 it('positions bars, date ticks and merge markers from one day-centre mapping over 7, 14 and 30 days', () => {
   for (const days of [7, 14, 30] as const) {
-    const chart = effortChart(section(F19_SHARED, days), 'dollars');
+    const chart = effortChart(section(F19_SHARED, days), 'dollars', days);
     expect(chart.days).toHaveLength(days);
     expect(chart.bars).toHaveLength(days);
     expect(chart.bars.map((bar) => bar.index)).toEqual([...Array(days).keys()]);
@@ -362,7 +373,7 @@ it('positions bars, date ticks and merge markers from one day-centre mapping ove
     expect(chart.bars[4]!.merged.map((marker) => marker.number)).toEqual([1]);
     expect(chart.bars[4]!.name).toBe(`${chart.days[4]!.date}: no usage. merged #1`);
     expect(chart.markers[0]!.text).toBe(
-      `${chart.days[4]!.date}: 1 merged pull request · xtrace/app#1 · feat · exact link · refreshed`,
+      `${chart.days[4]!.date}: 1 merged pull request · xtrace/app#1 · feat · exact link · checked`,
     );
     for (const index of chart.ticks) expect(index).toBeLessThan(days);
     expect(chart.ticks.at(-1)).toBe(days - 1);
@@ -375,11 +386,11 @@ it('positions bars, date ticks and merge markers from one day-centre mapping ove
   expect(dayCenter(0, 7)).toBeCloseTo(1 / 14, 12);
   expect(dayCenter(29, 30)).toBeCloseTo(59 / 60, 12);
   // Two pull requests merged on one day are one count with every identity in words.
-  const many = effortChart(section(MANY_TYPES), 'agent');
+  const many = effortChart(section(MANY_TYPES), 'agent', 7);
   const day3 = many.markers.find((marker) => marker.index === 3)!;
   expect(day3.merged).toHaveLength(2);
   expect(day3.text).toMatch(
-    /^2026-09-04: 2 merged pull requests · xtrace\/app#4 · feat · sha link · refreshed; xtrace\/app#5 · fix · exact link · stale: last refresh failed \(rate limited\)$/,
+    /^2026-09-04: 2 merged pull requests · xtrace\/app#4 · feat · commit link · checked; xtrace\/app#5 · fix · exact link · stale after a failed check \(rate limited\)$/,
   );
 });
 
@@ -397,4 +408,16 @@ it('rounds the scale up to a round value and labels it compactly', () => {
   expect(scaleText(0.2, 'agent')).toBe('0.2 h');
   expect(scaleText(0.0015, 'dollars')).toBe('$0.0015');
   expect(dayLabel('2026-09-04')).toBe('Sep 4');
+});
+
+it('names the selected range in the headline, not the count of local-day buckets', () => {
+  // A rolling 7-day range that starts mid-day touches eight local days.
+  const current = section({ tile: { known_merged: 0 }, groups: [] });
+  const last = current.cohort.by_day.at(-1)!;
+  current.cohort.by_day = [...current.cohort.by_day, { ...last, date: '2026-09-08' }];
+  expect(current.cohort.by_day).toHaveLength(8);
+  for (const metric of ['agent', 'dollars'] as const)
+    expect(effortChart(current, metric, 7).headline.range).toBe('last 7 days');
+  expect(rangeText(7)).toBe('last 7 days');
+  expect(rangeText(1)).toBe('last 1 day');
 });

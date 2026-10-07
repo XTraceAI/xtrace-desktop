@@ -1,4 +1,4 @@
-//! The saved break length "your hours" read: the longest gap, in whole minutes,
+//! The saved break length human time read: the longest gap, in whole minutes,
 //! between two messages a person sent that still counts as one stretch of
 //! work. It lives in the existing `settings` table under one key; an absent key
 //! reads as the default. A stored value this build cannot read is an error,

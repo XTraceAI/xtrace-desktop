@@ -134,7 +134,11 @@ fn stale_metadata_ranges_do_not_control_display_or_pagination() {
     sql.execute("INSERT INTO native_record_copies(session_id,record_uuid) VALUES('copied-work','a'),('copied-work','meta')",[]).unwrap();
     let copied = store.sessions_page("copied-work", None, None).unwrap();
     assert_eq!(copied[0].record_count, 1);
-    assert_eq!(copied[0].model.as_deref(), Some("own"));
+    // Copied work is its owner's: it names no model and sets no start here,
+    // though it is still the earliest visible work.
+    assert_eq!(copied[0].model, None);
+    assert_eq!(copied[0].other_models, 0);
+    assert_eq!(copied[0].started_at_ms, None);
     assert_eq!(
         copied[0].first_ts.as_deref(),
         Some("2026-01-03T00:00:00.123456789012Z")
@@ -199,6 +203,7 @@ fn claude_sessions_without_a_stored_start_start_at_their_earliest_message() {
     assert_eq!(unstarted.first_ts.as_deref(), Some("2026-01-02T00:00:00Z"));
 
     let sql = rusqlite::Connection::open(&path).unwrap();
+    xt_store::timestamp::register_sqlite(&sql).unwrap();
     for (id, start) in expected {
         let one = xt_store::session_list::exact(&sql, id).unwrap().unwrap();
         assert_eq!(one.started_at_ms, start, "{id}");
@@ -650,5 +655,123 @@ mod exact_pull_request {
         )
         .0;
         assert!(without.len() > rows.len());
+    }
+}
+
+/// A number GitHub said is not a pull request (its repository resolved, the
+/// number did not, and GitHub never confirmed it) is no pull-request link on
+/// the Sessions page: not a chip, not a match for "with PRs", and it has no
+/// members. A later successful check brings it back.
+mod not_found_on_github {
+    use xt_store::pr_link::{
+        PrConfidence, PrIdentity, PrLinkObservation, PrRefreshError, PrState, RefreshFailure,
+        RefreshOutcome, RefreshSuccess,
+    };
+    use xt_store::session_list::{PrMembership, SessionFilter, SessionSummary};
+    use xt_store::{SessionMeta, SessionSource, Store};
+
+    fn link(store: &mut Store, id: &str, number: u64) {
+        store
+            .record_pr_link(&PrLinkObservation {
+                session_id: id.into(),
+                pull_request: PrIdentity::from_parts("example/atlas", number).unwrap(),
+                confidence: PrConfidence::Exact,
+                first_seen_at: 1,
+                last_seen_at: 1,
+            })
+            .unwrap();
+    }
+
+    fn answer(store: &mut Store, number: u64, at: i64, error: Option<PrRefreshError>) {
+        let pull_request = PrIdentity::from_parts("example/atlas", number).unwrap();
+        let outcome = match error {
+            Some(error) => RefreshOutcome::Failure(RefreshFailure {
+                pull_request,
+                attempted_at: at,
+                error,
+            }),
+            None => RefreshOutcome::Success(RefreshSuccess {
+                pull_request,
+                attempted_at: at,
+                title: "Found later".into(),
+                state: PrState::Open,
+                merged_at: None,
+                additions: 1,
+                deletions: 1,
+                head_ref_name: "feature/later".into(),
+            }),
+        };
+        store.record_pr_refresh(&outcome).unwrap();
+    }
+
+    fn chips(rows: &[SessionSummary], id: &str) -> Vec<u64> {
+        rows.iter()
+            .find(|row| row.id == id)
+            .unwrap()
+            .pr_links
+            .iter()
+            .map(|link| link.pull_request.number())
+            .collect()
+    }
+
+    fn ids(store: &Store, filter: &SessionFilter<'_>) -> Vec<String> {
+        let mut ids: Vec<String> = store
+            .sessions_page_filtered(filter, None)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.id)
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn a_not_found_link_is_no_chip_no_filter_match_and_no_membership() {
+        let mut store = Store::open_in_memory().unwrap();
+        for id in ["real", "fake-only", "both"] {
+            store
+                .upsert_session(
+                    &SessionMeta::new(id, "claude", SessionSource::Fixture),
+                    false,
+                )
+                .unwrap();
+        }
+        link(&mut store, "real", 7);
+        link(&mut store, "fake-only", 999);
+        link(&mut store, "both", 7);
+        link(&mut store, "both", 999);
+        // A repository gh could not see stays a link.
+        link(&mut store, "both", 19);
+        answer(&mut store, 999, 10, Some(PrRefreshError::NotFound));
+        answer(&mut store, 19, 10, Some(PrRefreshError::ExecutionFailed));
+
+        let all = store
+            .sessions_page_filtered(&SessionFilter::default(), None)
+            .unwrap();
+        assert_eq!(chips(&all, "both"), vec![7, 19]);
+        assert!(chips(&all, "fake-only").is_empty());
+        let with_prs = SessionFilter {
+            with_prs: true,
+            ..Default::default()
+        };
+        assert_eq!(ids(&store, &with_prs), vec!["both", "real"]);
+        let fake = PrIdentity::from_parts("example/atlas", 999).unwrap();
+        let members = SessionFilter {
+            pull_request: Some(PrMembership {
+                identity: &fake,
+                confirmed_only: false,
+            }),
+            ..Default::default()
+        };
+        assert!(ids(&store, &members).is_empty());
+
+        // GitHub later finds it: everything shows it again.
+        answer(&mut store, 999, 20, None);
+        let all = store
+            .sessions_page_filtered(&SessionFilter::default(), None)
+            .unwrap();
+        assert_eq!(chips(&all, "fake-only"), vec![999]);
+        assert_eq!(ids(&store, &with_prs), vec!["both", "fake-only", "real"]);
+        assert_eq!(ids(&store, &members), vec!["both", "fake-only"]);
     }
 }

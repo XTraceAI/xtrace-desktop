@@ -25,7 +25,7 @@ use xt_store::{
     SessionMeta, SessionSource, Store,
     pr_link::{
         PrConfidence, PrIdentity, PrLinkObservation, PrRefreshError, PrState, RefreshFailure,
-        RefreshOutcome, RefreshSuccess,
+        RefreshOrigin, RefreshOutcome, RefreshSuccess,
     },
 };
 use xtrace_desktop::{
@@ -2015,8 +2015,13 @@ fn ms(duration: Duration) -> i64 {
     i64::try_from(duration.as_millis()).unwrap()
 }
 
-/// Store one result as if an earlier check had answered it.
+/// Store one result as if an earlier check had answered it. `None` is a
+/// failure gh could not explain (another account's repository, an outage).
 fn answered(app: &App, url: &str, at: i64, state: Option<PrState>) {
+    answered_with(app, url, at, state, PrRefreshError::ExecutionFailed);
+}
+
+fn answered_with(app: &App, url: &str, at: i64, state: Option<PrState>, error: PrRefreshError) {
     let pull_request = identity(url);
     let outcome = match state {
         Some(state) => RefreshOutcome::Success(RefreshSuccess {
@@ -2032,10 +2037,12 @@ fn answered(app: &App, url: &str, at: i64, state: Option<PrState>) {
         None => RefreshOutcome::Failure(RefreshFailure {
             pull_request,
             attempted_at: at,
-            error: PrRefreshError::NotFound,
+            error,
         }),
     };
-    app.state.record_pr_refresh(&outcome).unwrap();
+    app.state
+        .record_pr_refresh(&outcome, RefreshOrigin::Automatic)
+        .unwrap();
 }
 
 fn urls(log: &Log) -> Vec<String> {
@@ -2707,4 +2714,320 @@ fn a_failure_after_a_success_never_pauses_automatic_checks() {
         app.stored()[&identity(EPSILON).url()].state,
         Some(PrState::Merged)
     );
+}
+
+/// The exact stderr line gh 2.90.0 writes for a visible repository with no
+/// such pull request, for number `n`.
+fn missing_line(n: u64) -> String {
+    format!(
+        "GraphQL: Could not resolve to a PullRequest with the number of {n}. (repository.pullRequest)"
+    )
+}
+
+/// A number GitHub said is not a pull request (its repository resolved) is
+/// left out of the list and never checked again automatically. One GitHub
+/// once confirmed keeps being checked while it was last seen open.
+#[test]
+fn a_number_github_says_is_not_a_pull_request_is_marked_and_never_rechecked() {
+    let app = app(&[ALPHA, BETA, GAMMA]);
+    let (alpha, beta, gamma) = (app.id(ALPHA), app.id(BETA), app.id(GAMMA));
+    let start = BASE_ATTEMPT;
+    answered_with(&app, ALPHA, start, None, PrRefreshError::NotFound);
+    answered(&app, BETA, start, None);
+    answered(&app, GAMMA, start, Some(PrState::Open));
+    answered_with(&app, GAMMA, start + 1, None, PrRefreshError::NotFound);
+
+    // Still listed (for the refresh dialog), with its own status; one GitHub
+    // confirmed earlier stays a stale pull request.
+    assert_eq!(app.ids(), vec![alpha, beta, gamma]);
+    let status = |id: i64| {
+        app.state
+            .pr_list()
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|row| row.pull_request.id == id)
+            .unwrap()
+            .status
+    };
+    assert_eq!(status(alpha), PrRefreshStatusReport::NotFoundOnGithub);
+    assert_eq!(
+        status(gamma),
+        PrRefreshStatusReport::FailedAfterRefresh {
+            error: PrRefreshErrorCode::NotFound
+        }
+    );
+    assert_eq!(
+        serde_json::to_value(status(alpha)).unwrap(),
+        serde_json::json!({"status": "not_found_on_github"})
+    );
+    for later in [
+        start + 1 + ms(AUTO_RECHECK_AFTER),
+        start + 365 * 24 * ms(AUTO_RECHECK_AFTER),
+    ] {
+        let selection = app.state.pr_auto_selection(later, &HashSet::new()).unwrap();
+        assert!(!selection.ids.contains(&alpha));
+        assert_eq!(
+            selection.ids.iter().copied().collect::<HashSet<_>>(),
+            HashSet::from([beta, gamma])
+        );
+    }
+
+    // A manual refresh that succeeds wins: the facts are back.
+    let service =
+        PrRefreshService::injected(attempts(&log(), |request, _| success(request)), silent())
+            .with_clock(HandClock::at(start + MINUTE));
+    let report = service.refresh(&app.state, &[alpha]).unwrap();
+    assert_eq!(report.succeeded, 1);
+    assert_eq!(status(alpha), PrRefreshStatusReport::Refreshed);
+}
+
+/// A conversation that mentions a not-found number again after GitHub's
+/// answer makes it due for exactly one more automatic check (the pull request
+/// may have been opened since). A replayed older mention does not.
+#[test]
+fn a_new_mention_after_a_not_found_answer_earns_one_more_automatic_check() {
+    let app = app(&[ALPHA, BETA]);
+    let alpha = app.id(ALPHA);
+    let start = BASE_ATTEMPT;
+    answered_with(&app, ALPHA, start, None, PrRefreshError::NotFound);
+    answered(&app, BETA, start, Some(PrState::Merged));
+    let mention = |at: i64| {
+        let mut store = Store::open(&app.database).unwrap();
+        store
+            .record_pr_link(&PrLinkObservation {
+                session_id: "session-b".into(),
+                pull_request: identity(ALPHA),
+                confidence: PrConfidence::Exact,
+                first_seen_at: at,
+                last_seen_at: at,
+            })
+            .unwrap();
+    };
+    // A mention from before the answer changes nothing.
+    mention(start - MINUTE);
+    let later = start + 2 * ms(AUTO_RECHECK_AFTER);
+    assert!(
+        app.state
+            .pr_auto_selection(later, &HashSet::new())
+            .unwrap()
+            .ids
+            .is_empty()
+    );
+    // A mention after it: due once the usual hour since the last check has
+    // passed, not before.
+    mention(start + MINUTE);
+    assert!(
+        app.state
+            .pr_auto_selection(start + 2 * MINUTE, &HashSet::new())
+            .unwrap()
+            .ids
+            .is_empty()
+    );
+    let hour = start + ms(AUTO_RECHECK_AFTER);
+    assert_eq!(
+        app.state
+            .pr_auto_selection(hour, &HashSet::new())
+            .unwrap()
+            .ids,
+        vec![alpha]
+    );
+    let log = log();
+    let service = PrRefreshService::injected(
+        attempts(&log, |request, _| {
+            failure(request, PrRefreshError::NotFound)
+        }),
+        silent(),
+    )
+    .with_clock(HandClock::at(hour));
+    let report = ran(service.auto_check(&app.state));
+    assert_eq!(report.attempted, 1);
+    // Still not found: not chosen again, however long after.
+    assert!(
+        app.state
+            .pr_auto_selection(later + 365 * 24 * ms(AUTO_RECHECK_AFTER), &HashSet::new())
+            .unwrap()
+            .ids
+            .is_empty()
+    );
+    assert_eq!(calls(&log).len(), 1);
+}
+
+/// A mention stamped in the future (another machine's clock) stays later than
+/// every check until its time comes. It never makes a not-found number due
+/// more than once an hour: runs every 11 minutes ask gh at most once per hour.
+#[test]
+fn a_future_dated_mention_is_checked_at_most_once_an_hour() {
+    let app = app(&[ALPHA]);
+    let start = BASE_ATTEMPT;
+    answered_with(&app, ALPHA, start, None, PrRefreshError::NotFound);
+    Store::open(&app.database)
+        .unwrap()
+        .record_pr_link(&PrLinkObservation {
+            session_id: "session-b".into(),
+            pull_request: identity(ALPHA),
+            confidence: PrConfidence::Exact,
+            first_seen_at: start + 24 * ms(AUTO_RECHECK_AFTER),
+            last_seen_at: start + 24 * ms(AUTO_RECHECK_AFTER),
+        })
+        .unwrap();
+    let log = log();
+    let clock = HandClock::at(start + MINUTE);
+    let service = PrRefreshService::injected(
+        attempts(&log, |request, _| {
+            failure(request, PrRefreshError::NotFound)
+        }),
+        silent(),
+    )
+    .with_clock(clock.clone());
+    // The reviewer's case: five runs 11 minutes apart, inside the first hour.
+    for _ in 0..5 {
+        let _ = service.auto_check(&app.state);
+        clock.advance(11 * MINUTE);
+    }
+    assert_eq!(
+        calls(&log).len(),
+        0,
+        "no check within the hour of the answer"
+    );
+    // From the hour on: one check, then nothing for the next hour.
+    clock.advance(ms(AUTO_RECHECK_AFTER));
+    for _ in 0..5 {
+        let _ = service.auto_check(&app.state);
+        clock.advance(11 * MINUTE);
+    }
+    assert_eq!(calls(&log).len(), 1, "at most one check an hour");
+}
+
+/// Through the real client: never-checked pull requests whose repository
+/// resolves but whose number does not are stored as not found, three of them
+/// do not stop the run as a cost cap, they are marked so, and later runs do
+/// not ask gh about them again. A repository gh cannot see stays a failure
+/// and is retried.
+#[test]
+fn missing_pull_requests_in_a_visible_repository_through_the_real_client() {
+    let app = app(&[ALPHA, BETA, GAMMA, DELTA, EPSILON]);
+    let root = TempDir::new().unwrap();
+    let base = root.path().canonicalize().unwrap();
+    let log = base.join("runs");
+    let response = serde_json::json!({
+        "number": 4,
+        "title": "Synthetic response",
+        "url": identity(DELTA).url(),
+        "state": "OPEN",
+        "mergedAt": null,
+        "additions": 1,
+        "deletions": 1,
+        "headRefName": "feature/answers",
+    })
+    .to_string();
+    // Newest stored first: #5 (repository gh cannot see), then #4 answers,
+    // then #3, #2, #1 are missing pull requests in visible repositories.
+    let gh = fake_gh(
+        &base,
+        &log,
+        &format!(
+            "case \"$*\" in\n  *\"/pull/5 \"*) echo \"GraphQL: Could not resolve to a Repository with the name 'octo-org/epsilon'. (repository)\" >&2; exit 1 ;;\n  *\"/pull/4 \"*) cat <<'JSON'\n{response}\nJSON\n  ;;\n  *\"/pull/3 \"*) echo '{three}' >&2; exit 1 ;;\n  *\"/pull/2 \"*) echo '{two}' >&2; exit 1 ;;\n  *\"/pull/1 \"*) echo '{one}' >&2; exit 1 ;;\nesac",
+            three = missing_line(3),
+            two = missing_line(2),
+            one = missing_line(1),
+        ),
+    );
+    let clock = HandClock::at(BASE_ATTEMPT);
+    let service = PrRefreshService::production(Some(gh), silent()).with_clock(clock.clone());
+
+    let report = ran(service.auto_check(&app.state));
+    assert_eq!((report.attempted, report.paused), (5, None));
+    assert_eq!(runs(&log), 5);
+    let stored = app.stored();
+    for url in [ALPHA, BETA, GAMMA] {
+        assert_eq!(
+            stored[&identity(url).url()].refresh_error,
+            Some(PrRefreshError::NotFound),
+            "{url}"
+        );
+        assert!(stored[&identity(url).url()].not_found_on_github());
+    }
+    assert_eq!(
+        stored[&identity(EPSILON).url()].refresh_error,
+        Some(PrRefreshError::ExecutionFailed)
+    );
+    let not_found: Vec<String> = app
+        .state
+        .pr_list()
+        .unwrap()
+        .rows
+        .iter()
+        .filter(|row| row.status == PrRefreshStatusReport::NotFoundOnGithub)
+        .map(|row| row.pull_request.url.clone())
+        .collect();
+    assert_eq!(
+        not_found,
+        [ALPHA, BETA, GAMMA].map(|url| identity(url).url())
+    );
+
+    // An hour later only the open one and the unseen repository are asked.
+    clock.advance(ms(AUTO_RECHECK_AFTER) + MINUTE);
+    let again = ran(service.auto_check(&app.state));
+    assert_eq!(again.attempted, 2);
+    assert_eq!(runs(&log), 7);
+}
+
+/// Three missing pull requests before any success do not stop the run: gh
+/// answered each time, so it is working.
+#[test]
+fn not_found_answers_never_count_towards_the_cost_cap() {
+    let app = app(&[ALPHA, BETA, GAMMA, DELTA]);
+    let log = log();
+    let service = PrRefreshService::injected(
+        attempts(&log, |request, _| {
+            failure(request, PrRefreshError::NotFound)
+        }),
+        silent(),
+    )
+    .with_clock(HandClock::at(BASE_ATTEMPT));
+    let report = ran(service.auto_check(&app.state));
+    assert_eq!(calls(&log).len(), 4);
+    assert!(report.clean);
+    assert_eq!(report.paused, None);
+    assert!(
+        app.state
+            .pr_list()
+            .unwrap()
+            .rows
+            .iter()
+            .all(|row| row.status == PrRefreshStatusReport::NotFoundOnGithub)
+    );
+    // Nothing is due any more.
+    assert_eq!(service.auto_check(&app.state), AutoRun::NothingDue);
+}
+
+#[test]
+fn a_manual_failure_marks_the_pull_request_and_an_automatic_one_does_not() {
+    let app = app(&[ALPHA, BETA]);
+    // The automatic check fails for ALPHA: no mark.
+    let automatic = PrRefreshService::injected(
+        attempts(&log(), |request, _| {
+            failure(request, PrRefreshError::ExecutionFailed)
+        }),
+        silent(),
+    )
+    .with_clock(HandClock::at(BASE_ATTEMPT));
+    ran(automatic.auto_check(&app.state));
+    assert_eq!(app.stored()[&identity(ALPHA).url()].manual_failed_at, None);
+    // The user's own refresh fails for BETA: marked at that attempt.
+    let manual = PrRefreshService::injected(
+        attempts(&log(), |request, _| {
+            failure(request, PrRefreshError::ExecutionFailed)
+        }),
+        silent(),
+    )
+    .with_clock(Arc::new(PinnedClock(BASE_ATTEMPT + 10)));
+    manual.refresh(&app.state, &[app.id(BETA)]).unwrap();
+    let stored = app.stored();
+    assert_eq!(
+        stored[&identity(BETA).url()].manual_failed_at,
+        Some(BASE_ATTEMPT + 10)
+    );
+    assert_eq!(stored[&identity(ALPHA).url()].manual_failed_at, None);
 }

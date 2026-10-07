@@ -92,11 +92,6 @@
   letter-spacing: -0.03em;
   line-height: 1;
 }
-.xt-tray-unit {
-  margin-left: 3px;
-  color: var(--secondary);
-  font-size: 12px;
-}
 /* Wraps rather than truncates: a partial cost must never lose "not a total". */
 .xt-tray-meta {
   color: var(--meta);

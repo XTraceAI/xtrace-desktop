@@ -114,7 +114,7 @@ it('adds a group’s whole costs into one known total when every session is pric
     priced_observations: 4,
   });
   expect(sum).toMatchObject({ total: true, sessions: 3, unknown: 0, notShown: 0 });
-  expect(shownCostText(sum)).toBe('$7,849.59 API-equivalent cost of 4 responses');
+  expect(shownCostText(sum)).toBe('$7,850 API-equivalent cost of 4 responses');
 });
 
 it('keeps a group total a floor and names what an unpriced sub-session could not price', () => {

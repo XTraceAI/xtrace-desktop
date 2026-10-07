@@ -1,4 +1,5 @@
 //! Read-only metrics over canonical work records and explicit event windows.
+mod activity;
 mod cost;
 mod counts;
 mod coverage;
@@ -23,6 +24,7 @@ mod sweep;
 mod tokens;
 mod untimed;
 mod window;
+pub use activity::WindowActivity;
 pub use cost::{
     CostReport, CostSummary, DayCost, HostCost, ModelCost, SurfaceCost, UnpricedCost,
     UnpricedReason,

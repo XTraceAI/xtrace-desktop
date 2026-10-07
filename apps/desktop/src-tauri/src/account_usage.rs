@@ -28,8 +28,26 @@ use std::{
 /// How often the automatic reader wakes to look for a reading Claude Code
 /// saved on its own (for example after the user ran `/usage`).
 const TICK: Duration = Duration::from_secs(60);
-/// A reading older than this is shown as stale.
-const STALE_AFTER_SECS: i64 = 15 * 60;
+/// A reading is stale this long after its own read time: the read interval
+/// plus five minutes, so a reading kept fresh by on-time reads never shows as
+/// stale. Every staleness decision goes through [`stale_at`].
+pub(super) const STALE_AFTER_SECS: i64 = CLAUDE_INTERVAL.as_secs() as i64 + 5 * 60;
+// A saved reading used without a probe (younger than the read interval) is
+// never stale on arrival.
+const _: () = assert!((CLAUDE_INTERVAL.as_secs() as i64) < STALE_AFTER_SECS);
+
+/// Unix seconds when a reading read at `checked_at` becomes stale. The one
+/// staleness rule: the backend's stale state and the `stale_at` sent to the
+/// screen both come from it.
+pub(super) fn stale_at(checked_at: i64) -> i64 {
+    checked_at.saturating_add(STALE_AFTER_SECS)
+}
+
+/// A reading read at `checked_at` is fresh at `now`: not from the future and
+/// not yet stale.
+pub(super) fn fresh_at(checked_at: i64, now: i64) -> bool {
+    checked_at <= now && now < stale_at(checked_at)
+}
 /// A passive read reuses a Codex result younger than this.
 const CODEX_REUSE: Duration = Duration::from_secs(60);
 
@@ -162,7 +180,8 @@ impl AccountUsageService {
     }
 
     /// Keeps only the weekly limits, then adds each window's pace (from the
-    /// reading alone) and its daily use and series (from the history).
+    /// reading alone) and its daily use and series (from the history), and
+    /// each reading's stale time. Every returned reading passes through here.
     fn with_pace(&self, mut usage: AccountUsage) -> AccountUsage {
         weekly_only(&mut usage.claude);
         weekly_only(&mut usage.codex);
@@ -174,6 +193,9 @@ impl AccountUsageService {
             .map_or(&[][..], |history| history.samples());
         annotate(&mut usage.claude, Provider::Claude, samples, now, &zone);
         annotate(&mut usage.codex, Provider::Codex, samples, now, &zone);
+        for provider in [&mut usage.claude, &mut usage.codex] {
+            provider.stale_at = provider.checked_at.map(stale_at);
+        }
         usage
     }
 
@@ -396,18 +418,31 @@ fn usable_without_probe(cached: &CachedUsage, held: Option<i64>, now: Timestamp)
 
 impl ReadState {
     /// Records a finished Claude read. Returns the reading to save when it
-    /// succeeded. A failure keeps the last good reading (shown stale) and
-    /// pushes the next automatic read back.
+    /// succeeded with a reading at least as new as the one held. A success
+    /// with an older reading (Claude Code showed an older saved copy) still
+    /// counts as a read but keeps the newer reading held. A failure keeps the
+    /// last good reading (shown stale) and pushes the next automatic read back.
     fn finish_claude(&mut self, result: AccountProviderUsage) -> Option<AccountProviderUsage> {
         let claude = &mut self.claude;
         let now = Instant::now();
         let now_ms = Timestamp::now().as_millisecond();
         if result.state == AccountUsageState::Available {
-            claude.last_good = Some(result.clone());
             claude.good_at = Some(now);
             claude.last_failure = None;
             claude.failures = 0;
             claude.next_auto = Some(now_ms + CLAUDE_INTERVAL.as_millis() as i64);
+            // A held reading timed in the future (the clock was set back) is
+            // never kept over a new one: it would hold until the clock passes it.
+            let now_secs = now_ms.div_euclid(1000);
+            let held = claude
+                .last_good
+                .as_ref()
+                .and_then(|good| good.checked_at)
+                .filter(|&held| held <= now_secs);
+            if held.is_some_and(|held| result.checked_at.is_none_or(|at| at < held)) {
+                return None;
+            }
+            claude.last_good = Some(result.clone());
             Some(result)
         } else {
             claude.last_failure = Some(result);
@@ -422,9 +457,7 @@ impl ReadState {
         if let Some(good) = &claude.last_good {
             let mut shown = good.clone();
             let now = Timestamp::now().as_second();
-            let recent = good
-                .checked_at
-                .is_some_and(|at| at <= now && now - at < STALE_AFTER_SECS);
+            let recent = good.checked_at.is_some_and(|at| fresh_at(at, now));
             let fresh = claude.good_at.is_some() && claude.last_failure.is_none() && recent;
             if !fresh {
                 shown.state = AccountUsageState::Stale;
@@ -477,6 +510,7 @@ pub(super) fn unavailable(issue: AccountUsageIssue) -> AccountProviderUsage {
         state: AccountUsageState::Unavailable,
         issue: Some(issue),
         checked_at: None,
+        stale_at: None,
         windows: Vec::new(),
     }
 }
@@ -486,6 +520,7 @@ pub(super) fn failed(issue: AccountUsageIssue) -> AccountProviderUsage {
         state: AccountUsageState::Failed,
         issue: Some(issue),
         checked_at: None,
+        stale_at: None,
         windows: Vec::new(),
     }
 }
@@ -513,6 +548,7 @@ pub(super) fn available(windows: Vec<AccountUsageWindow>) -> AccountProviderUsag
         state: AccountUsageState::Available,
         issue: None,
         checked_at: Some(Timestamp::now().as_second()),
+        stale_at: None,
         windows,
     }
 }
@@ -1150,6 +1186,82 @@ mod tests {
         assert_eq!(cached.issue, None);
         assert_eq!(cached.checked_at, old.checked_at);
         assert_eq!(cached.windows[0].used_percent, 80.0);
+    }
+
+    /// The state the backend gives and the stale time it sends come from the
+    /// same rule, so the screen turns a reading stale exactly when a new
+    /// read of the same reading would.
+    #[cfg(not(feature = "fixtures"))]
+    #[test]
+    fn stale_state_and_stale_time_follow_one_rule() {
+        let service = AccountUsageService::default();
+        let now = Timestamp::now().as_second();
+        let mut reading = available(vec![week(40.0)]);
+        // A minute before its stale time: fresh, and says when it turns stale.
+        reading.checked_at = Some(now - STALE_AFTER_SECS + 60);
+        service.lock().finish_claude(reading.clone());
+        let shown = service.read_with_codex(|| unavailable(AccountUsageIssue::SourceUnavailable));
+        assert_eq!(shown.claude.state, AccountUsageState::Available);
+        assert_eq!(shown.claude.stale_at, Some(now + 60));
+        // A reading at its stale time (with nothing newer held): stale, with
+        // the same stale time.
+        reading.checked_at = Some(now - STALE_AFTER_SECS);
+        service.lock().claude.last_good = None;
+        service.lock().finish_claude(reading);
+        let shown = service.read_with_codex(|| {
+            let mut codex = available(vec![week(10.0)]);
+            codex.checked_at = Some(now - 30);
+            codex
+        });
+        assert_eq!(shown.claude.state, AccountUsageState::Stale);
+        assert_eq!(shown.claude.stale_at, Some(now));
+        // Codex readings carry their stale time by the same rule.
+        assert_eq!(shown.codex.stale_at, Some(now - 30 + STALE_AFTER_SECS));
+        // No read time, no stale time.
+        let none = service.read_with_codex(|| unavailable(AccountUsageIssue::SourceUnavailable));
+        assert_eq!(none.codex.stale_at, None);
+        // A successful read of an older reading (Claude Code showed an older
+        // saved copy) keeps the newer reading held, saves nothing and does
+        // not back off.
+        let mut held = available(vec![week(55.0)]);
+        held.checked_at = Some(now - 120);
+        let mut state = service.lock();
+        state.claude.failures = 3;
+        assert!(state.finish_claude(held.clone()).is_some());
+        let mut older = available(vec![week(50.0)]);
+        older.checked_at = Some(now - 50 * 60);
+        assert_eq!(state.finish_claude(older), None);
+        assert_eq!(state.claude.failures, 0);
+        assert!(state.claude.last_failure.is_none());
+        let shown = state.claude_snapshot();
+        assert_eq!(shown.windows[0].used_percent, 55.0);
+        assert_eq!(shown.checked_at, held.checked_at);
+        // A held reading timed in the future (the clock was set back) does
+        // not block a new reading.
+        let mut future = available(vec![week(70.0)]);
+        future.checked_at = Some(now + 3600);
+        state.claude.last_good = Some(future);
+        let mut current = available(vec![week(45.0)]);
+        current.checked_at = Some(now - 60);
+        assert!(state.finish_claude(current.clone()).is_some());
+        assert_eq!(state.claude_snapshot().checked_at, current.checked_at);
+        assert_eq!(state.claude_snapshot().windows[0].used_percent, 45.0);
+        // With no reading held, an old copy is adopted with its own time and
+        // shown stale by the one rule, not as a failure.
+        let mut newer_old = available(vec![week(60.0)]);
+        newer_old.checked_at = Some(now - 40 * 60);
+        state.claude.last_good = None;
+        assert!(state.finish_claude(newer_old.clone()).is_some());
+        let shown = state.claude_snapshot();
+        assert_eq!(shown.state, AccountUsageState::Stale);
+        assert_eq!(shown.checked_at, newer_old.checked_at);
+        drop(state);
+        // The stale time is never saved with the reading.
+        assert!(
+            !serde_json::to_string(&service.lock().claude_snapshot())
+                .unwrap()
+                .contains("stale_at")
+        );
     }
 
     fn live_paths(root: &std::path::Path) -> ClaudeUsagePaths {

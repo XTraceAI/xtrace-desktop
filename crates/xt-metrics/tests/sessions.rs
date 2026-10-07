@@ -167,3 +167,79 @@ fn sessions_per_day_metadata_parity_and_empty_days() {
     }
     assert_eq!(reports[0], reports[1]);
 }
+
+/// A forked Claude session starts at its own first event, everywhere: the
+/// Sessions row's start and the day sessions per day counts it on are the same
+/// instant, and the parent records the fork copied never move either. A fork
+/// made on Sep 5 from Sep 3 history starts on Sep 5 in both.
+#[test]
+fn a_fork_starts_at_its_own_first_event_in_the_list_and_in_sessions_per_day() {
+    let mut db = TempDb::empty().unwrap();
+    for (id, times) in [
+        (
+            "parent",
+            &["2026-09-03T10:00:00Z", "2026-09-03T10:05:00Z"][..],
+        ),
+        ("fork", &["2026-09-05T09:00:00Z"][..]),
+        // A fork with no work of its own yet, and an older session.
+        ("empty-fork", &[][..]),
+        ("older", &["2026-09-01T08:00:00Z"][..]),
+    ] {
+        let session = xt_store::SessionMeta::new(id, "claude", xt_store::SessionSource::Transcript);
+        db.store_mut().upsert_session(&session, false).unwrap();
+        let rows: Vec<CanonicalRecord> = times
+            .iter()
+            .enumerate()
+            .map(|(i, ts)| {
+                serde_json::from_value(json!({"uuid":format!("{id}-{i}"),"type":"assistant",
+                    "timestamp":ts,"message":{"role":"assistant"}}))
+                .unwrap()
+            })
+            .collect();
+        db.store_mut().upsert_records(id, &rows, false).unwrap();
+    }
+    // The fork's transcript repeats the parent's history; the index keeps it
+    // once, under the parent, and records the fork's copies beside it.
+    rusqlite::Connection::open(db.path())
+        .unwrap()
+        .execute(
+            "INSERT INTO native_record_copies(session_id,record_uuid)
+             VALUES('fork','parent-0'),('fork','parent-1'),
+                   ('empty-fork','parent-0'),('empty-fork','parent-1')",
+            [],
+        )
+        .unwrap();
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    let per_day = metrics.sessions_per_day(window(), TimeZone::UTC).unwrap();
+    let day_of = |date: &str| {
+        per_day
+            .days
+            .iter()
+            .find(|day| day.date == date)
+            .unwrap()
+            .sessions
+    };
+    assert_eq!((day_of("2026-09-03"), day_of("2026-09-05")), (1, 1));
+    // The copy-only fork has no event of its own, so no day counts it.
+    assert_eq!(per_day.total_sessions, 3);
+    let fork = metrics.session_exact("fork").unwrap().unwrap();
+    assert_eq!(fork.started_at_ms, Some(ms("2026-09-05T09:00:00Z")));
+    // The earliest visible work still includes the copies, as documented.
+    assert_eq!(fork.first_ts.as_deref(), Some("2026-09-03T10:00:00Z"));
+    let parent = metrics.session_exact("parent").unwrap().unwrap();
+    assert_eq!(parent.started_at_ms, Some(ms("2026-09-03T10:00:00Z")));
+    // A fork with no work of its own has no start, and is ordered by its
+    // first recorded time, beside the history it copied, not below every
+    // dated session.
+    let empty = metrics.session_exact("empty-fork").unwrap().unwrap();
+    assert_eq!(empty.started_at_ms, None);
+    assert_eq!(empty.first_ts.as_deref(), Some("2026-09-03T10:00:00Z"));
+    // The list's order follows the start it shows: the fork is newer.
+    let page = metrics
+        .sessions_page_filtered(&xt_store::session_list::SessionFilter::default(), None)
+        .unwrap();
+    assert_eq!(
+        page.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
+        ["fork", "parent", "empty-fork", "older"]
+    );
+}

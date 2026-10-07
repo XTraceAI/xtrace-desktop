@@ -119,7 +119,7 @@ impl Record {
             && pid > 0
             && canonical_claude(&record.session_id).is_some()
             && record.pid_domain == "darwin"
-            && matches!(record.version.as_str(), "2.1.280" | "2.1.284")
+            && well_formed_version(&record.version)
             && matches!(record.kind.as_str(), "interactive" | "bg")
             && record.proc_start.len() == 24
             && matches!(record.status.as_str(), "busy" | "idle" | "waiting")
@@ -142,6 +142,17 @@ impl Record {
             _ => LiveSessionState::Unknown,
         }
     }
+}
+
+/// Any dot-separated numeric version such as "2.1.288". Claude Code updates
+/// often, so no exact version is pinned; the other field checks in
+/// `Record::parse` and the later process start check catch a format change.
+fn well_formed_version(version: &str) -> bool {
+    !version.is_empty()
+        && version.len() <= 32
+        && version
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -521,7 +532,7 @@ mod tests {
     #[test]
     fn claude_known_versions_kinds_and_waiting_reasons_use_existing_states() {
         let registry = Registry::new();
-        for version in ["2.1.280", "2.1.284"] {
+        for version in ["2.1.280", "2.1.284", "2.1.288", "3.0.0"] {
             for kind in ["interactive", "bg"] {
                 for (status, reason, expected) in [
                     ("busy", None, LiveSessionState::Running),
@@ -593,7 +604,15 @@ mod tests {
             ("pid", json!(1.5)),
             ("pidDomain", json!("linux")),
             ("procStart", json!("local time")),
-            ("version", json!("2.1.285")),
+            ("version", json!("")),
+            ("version", json!("2..1")),
+            ("version", json!("2.1.x")),
+            ("version", json!(".2.1")),
+            ("version", json!("2.1.")),
+            ("version", json!(" 2.1.288")),
+            ("version", json!("2.1.288 ")),
+            ("version", json!(format!("{}1", "1.".repeat(16)))),
+            ("version", json!(2.1)),
             ("kind", json!("future")),
             ("status", json!("active")),
             ("waitingFor", json!(false)),
@@ -612,6 +631,43 @@ mod tests {
         assert!(Record::parse(&duplicate, PID).is_none());
         assert!(Record::parse(b"not JSON", PID).is_none());
         assert!(Record::parse(&vec![b' '; MAX_BYTES + 1], PID).is_none());
+    }
+
+    #[test]
+    fn claude_version_must_be_well_formed_but_is_not_pinned() {
+        let long = format!("{}1", "1.".repeat(15)); // 31 bytes
+        let longest = format!("{}11", "1.".repeat(15)); // 32 bytes
+        assert_eq!(longest.len(), 32);
+        for version in ["2", "2.1.288", "3.0.0", "10.20.300", &long, &longest] {
+            assert!(well_formed_version(version), "{version}");
+        }
+        for version in [
+            "",
+            "2..1",
+            "2.1.x",
+            ".2.1",
+            "2.1.",
+            " 2.1",
+            "2.1 ",
+            "2.1.288-beta",
+            "+2.1",
+        ] {
+            assert!(!well_formed_version(version), "{version}");
+        }
+        assert!(!well_formed_version(&format!("{}1", "1.".repeat(16)))); // 33 bytes
+    }
+
+    #[test]
+    fn claude_2_1_288_busy_record_is_running() {
+        // Claude Code 2.1.288 adds bridgeSessionId and hostSessionId; an
+        // exact version pin made this whole census fail, hiding every arc.
+        let registry = Registry::new();
+        let mut value = registry.value(PID);
+        value["version"] = json!("2.1.288");
+        value["bridgeSessionId"] = json!(null);
+        value["hostSessionId"] = json!("local_00000000-0000-4000-8000-000000000000");
+        registry.write(PID, &value);
+        assert_eq!(registry.scan().unwrap()[ID], LiveSessionState::Running);
     }
 
     #[test]

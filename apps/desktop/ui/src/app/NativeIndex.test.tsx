@@ -41,6 +41,7 @@ const ready: NativeIndexStatus = {
     {
       host: 'claude',
       state: 'complete',
+      needs_attention: false,
       detail: null,
       sessions_imported: 2,
       sessions_partial: 0,
@@ -54,6 +55,7 @@ const ready: NativeIndexStatus = {
     {
       host: 'codex',
       state: 'missing_runtime',
+      needs_attention: true,
       detail: 'python runtime unavailable: python3 on PATH: python3 must be 3.10 or newer',
       sessions_imported: 0,
       sessions_partial: 0,
@@ -65,6 +67,7 @@ const ready: NativeIndexStatus = {
       diagnostics: 0,
     },
   ],
+  needs_attention: true,
   reconciles: 3,
   files_scanned: 2,
 };
@@ -122,13 +125,11 @@ it('shows the typed native index status as reported and refreshes it on its even
   expect(within(card).getByText('/opt/homebrew/bin/python3')).toBeTruthy();
   expect(within(card).getByText('Bundled memhub 0.55.0 at d7c94227cc9b')).toBeTruthy();
   expect(
-    within(card).getByText(
-      'complete · 2 imported, 0 partial, 0 skipped, 6 new records, 1 enriched',
-    ),
+    within(card).getByText('Read · 2 imported, 0 partial, 0 skipped, 6 new records, 1 enriched'),
   ).toBeTruthy();
   expect(
     within(card).getByText(
-      'missing_runtime · 0 imported, 0 partial, 0 skipped, 0 new records, 0 enriched · python runtime unavailable: python3 on PATH: python3 must be 3.10 or newer',
+      'Needs Python 3 · 0 imported, 0 partial, 0 skipped, 0 new records, 0 enriched · python runtime unavailable: python3 on PATH: python3 must be 3.10 or newer',
     ),
   ).toBeTruthy();
   // The next status arrives through the event: the query is invalidated and refetched.
@@ -298,13 +299,11 @@ it('says a host state covers the supported source scan, and that Cursor IDE data
   const card = await screen.findByTestId('native-index');
   // The reported state and counts are unchanged, and no total is invented.
   expect(
-    within(card).getByText(
-      'complete · 5 imported, 0 partial, 0 skipped, 40 new records, 0 enriched',
-    ),
+    within(card).getByText('Read · 5 imported, 0 partial, 0 skipped, 40 new records, 0 enriched'),
   ).toBeTruthy();
   const scope = screen.getByTestId('native-index-scope');
   expect(scope.textContent).toBe(
-    "Complete and incomplete describe each host's last scan of the sources this index reads, not all of that host's history. Conversations kept only in the Cursor IDE's database are not read, so they are not in Cursor's counts.",
+    "“Read” and “Read with gaps” describe each host's last scan of the sources this index reads, not all of that host's history. Conversations kept only in the Cursor IDE's database are not read, so they are not in Cursor's counts.",
   );
   // A plain note after the host rows: nothing to focus, nothing announced as it changes.
   expect(card.compareDocumentPosition(scope) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -321,7 +320,7 @@ it('says a host state covers the supported source scan, and that Cursor IDE data
   vi.useRealTimers();
   await waitFor(() => expect(screen.queryByText(/^cursor$/)).toBeNull());
   expect(screen.getByTestId('native-index-scope').textContent).toBe(
-    "Complete and incomplete describe each host's last scan of the sources this index reads, not all of that host's history.",
+    "“Read” and “Read with gaps” describe each host's last scan of the sources this index reads, not all of that host's history.",
   );
 });
 

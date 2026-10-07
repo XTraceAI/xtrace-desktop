@@ -1,8 +1,17 @@
 # Indexed Sessions browser
 
 The Sessions route reads the local index through a generated Rust DTO. It shows
-host, repository/branch, a shortened session ID, observed model, first recorded
-time, indexed record count and identity-conflict status. The list query does
+host, repository/branch, a shortened session ID, the model the session used
+most (with `+N more` when its work named other models), first recorded time,
+indexed record count and identity-conflict status. The model is the one the
+Dashboard's Effort card gives the session's hours to: one shared rule (most
+selected responses, then most output tokens, then the first name) picks it, so
+200 Opus responses and one Haiku title call read `Opus +1 more`, never
+"Multiple models"; a session whose work names no model reads `no model
+recorded`, the Effort card's words. A Claude session's `started` time is its
+own first event, the one sessions per day counts it on, never a record a fork
+copied from its parent; a fork with no work of its own yet shows no start and
+is ordered by its first recorded time. The list query does
 not read source transcripts or select stored content. The identity column leads with
 the repository's own name and, when it is known, the branch, because that is
 what names the work; the shortened session ID and the observed model follow on
@@ -75,10 +84,10 @@ second read could otherwise pair a row with numbers taken after it changed.
 
 Each measured column states its own rule. The header label is a real button
 wrapped in the shared `RulePopover`, so hovering or focusing `msgs`, `tokens` or
-`agent min` quotes M-02, M-04 or M-05 verbatim from the reviewed rule contract,
+`agent` quotes M-02, M-04 or M-05 verbatim from the reviewed rule contract,
 and Escape dismisses it without moving focus. Those labels are abbreviated for
 density while the spoken column name stays whole, so the button is still reached
-as "Human messages, definition M-02" or "Agent minutes, definition M-05". Because the label
+as "Human messages, definition M-02" or "Agent time, definition M-05". Because the label
 itself is the trigger, no glyph is added and a measured column stays as narrow
 as an unmeasured one. Every cell beneath a header is tied to it by the grid's
 `columnheader`/`cell` roles, so no number is presented without its definition,
@@ -110,8 +119,10 @@ closed native disclosure away (Tab, then Enter or Space):
   summary's accessible description — is the full rule: "All indexed activity in
   this range. Search, host and pull-request filters apply to the table below."
 - When the index reports it, one warning-toned state word — `Index unavailable`,
-  `Indexing`, `Updates interrupted` or `History incomplete`, chosen by the same
-  predicates as before — whose disclosure holds the full sentence and the
+  `Indexing` (the phase is `scanning`), `Updates interrupted` or
+  `History incomplete` (the status's `needs_attention`, the same answer the
+  sidebar, Welcome and Settings read: no local history for a host is not
+  incomplete) — whose disclosure holds the full sentence and the
   "View indexing status" link to Settings. Nothing is shown when the index is
   healthy or its status has not been read.
 - When the report counts untimed history, "Untimed history · N records ·
@@ -143,17 +154,18 @@ again for a filter change and never narrowed by one.
   count in the definition is `usage_coverage.total`, which counts sessions with
   no gap at all: it is named as sessions with all four counters and a known
   model, and stated not to be a count of sessions with measured output.
-- **Agent minutes** is the M-05 hours tile stated in minutes. An unmeasured
-  hour count stays unmeasured: only a number is converted, and the report's own
-  reason is what the tile gives. A percentage change is the same in minutes as
-  in hours, so the report's change carries over unrecalculated.
+- **Agent time** is the M-05 hours tile written as all agent time is
+  (`3h12.8m`, by `agent-duration.ts`). An unmeasured hour count stays
+  unmeasured: only a number is converted, and the report's own reason is what
+  the tile gives. A percentage change is the same in any unit, so the report's
+  change carries over unrecalculated.
 - **Sessions / day** is the M-16 mean, denominator untouched. Its aside is the
   busiest of the very day buckets that mean divides by, read from the report's
   `days` and never recounted, and it is omitted when the report carries no
   buckets at all.
 
 Both one-decimal tiles are formatted by `metric-format.ts`'s `continuous`
-rather than by the shared scale alone, and the list's own `agent min` column
+rather than by the shared scale alone, and the list's own `agent` column
 keeps that same scale, so the page reads one way throughout. That scale rounds anything under
 half a tenth to `0`, which would read as "nothing happened" for a session or a
 range that did a little: one session across 30 day buckets is 0.03/day, and a
@@ -165,7 +177,7 @@ are unchanged, and `usd` already reads a small cost as `<$0.01`. The helper is
 app-level and shared with the Dashboard's continuous values; no kit formatter
 and no report value changes.
 
-The `agent min` column states the row's M-05 `agent_ms` as hours and the
+The `agent` column states the row's M-05 `agent_ms` as hours and the
 minutes that remain, as the design does: 192 minutes reads `3h12m`, 124
 minutes `2h04m`, 47 minutes `0h47m` and 192.8 minutes `3h12.8m`. The local
 helper `agent-duration.ts` rounds once, with the scale above, to whole tenths
@@ -318,10 +330,10 @@ to the same list with its groups collapsed.
   outside their scroll. A window too short to leave the list a usable height
   keeps a minimum list height and scrolls the page instead of losing rows.
 - `pnpm e2e --grep 'below the shown scale'` (same file): a synthetic export
-  served in place of F1 renders agent minutes and sessions per day as `<0.1` at
+  served in place of F1 renders agent time as `<0.1m` and sessions per day as `<0.1` at
   1120x720, shows the absent-counters reason for output, and renders the row's
   own two-second span as `<0.1m`; every one of those longer values still
-  fits, in its tile and in the narrow `agent min` column.
+  fits, in its tile and in the narrow `agent` column.
 - `pnpm e2e --grep 'agent time fits'` (`e2e/sessions.spec.ts`): at 1120x720,
   in light and dark, in Chromium and WebKit, rows served at `719h59.9m`,
   `3h12.8m`, `<0.1m` and `0h00m` fit the 64px column under its header without

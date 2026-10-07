@@ -9,7 +9,7 @@ use xt_store::{
     Error, SessionMeta, SessionSource, Store,
     pr_link::{
         MAX_ATTEMPTED_AT, MAX_HEAD_REF_LEN, MAX_TITLE_LEN, PrConfidence, PrIdentity,
-        PrLinkObservation, PrRefreshError, PrRefreshStatus, PrState, RefreshFailure,
+        PrLinkObservation, PrRefreshError, PrRefreshStatus, PrState, RefreshFailure, RefreshOrigin,
         RefreshOutcome, RefreshSuccess, RefreshWrite,
     },
 };
@@ -109,7 +109,7 @@ fn migration_8_adds_nullable_status_columns_and_preserves_rows() {
     // typed writer: every value must survive the upgrade unchanged.
     let raw = Connection::open(&path).unwrap();
     raw.execute_batch(
-        "DELETE FROM schema_version WHERE version>=8;
+        "ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DELETE FROM schema_version WHERE version>=8;
          ALTER TABLE pull_requests DROP COLUMN refresh_error;
          ALTER TABLE pull_requests DROP COLUMN last_attempted_at;
          ALTER TABLE tool_uses DROP COLUMN group_key;
@@ -129,13 +129,16 @@ fn migration_8_adds_nullable_status_columns_and_preserves_rows() {
     let before = snapshot(&path);
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 22);
+        assert_eq!(store.schema_version().unwrap(), 23);
         let (pull_requests, links) = snapshot(&path);
         assert_eq!(links, before.1);
         assert_eq!(pull_requests.len(), before.0.len());
         for (after, before) in pull_requests.iter().zip(&before.0) {
             assert_eq!(after[..before.len()], before[..]);
-            assert_eq!(after[before.len()..], [SqlValue::Null, SqlValue::Null]);
+            assert_eq!(
+                after[before.len()..],
+                [SqlValue::Null, SqlValue::Null, SqlValue::Null]
+            );
         }
         let stub = store.pull_request(&identity(URL)).unwrap().unwrap();
         assert_eq!(stub.refresh_status(), PrRefreshStatus::NeverAttempted);
@@ -149,7 +152,7 @@ fn migration_8_adds_nullable_status_columns_and_preserves_rows() {
     }
     assert_eq!(
         rows(&path, "SELECT count(*) FROM schema_version"),
-        vec![vec![SqlValue::Integer(22)]]
+        vec![vec![SqlValue::Integer(23)]]
     );
     // The closed vocabulary and status shape are enforced by the schema too.
     for statement in [
@@ -746,8 +749,8 @@ fn only_typed_codes_are_stored_and_no_other_table_changes() {
     store
         .record_pr_refresh(&failure(URL, 60, PrRefreshError::InvalidResponse))
         .unwrap();
-    // The table gains exactly the attempt time and the typed code: no message,
-    // stderr, response body or stale flag.
+    // The table gains exactly the attempt time, the typed code and the time of
+    // a failed manual refresh: no message, stderr, response body or stale flag.
     assert_eq!(
         rows(
             &path,
@@ -773,6 +776,7 @@ fn only_typed_codes_are_stored_and_no_other_table_changes() {
             "refreshed_at",
             "last_attempted_at",
             "refresh_error",
+            "manual_failed_at",
         ]
     );
     assert_eq!(
@@ -873,4 +877,271 @@ fn linked_pull_requests_read_metadata_and_link_counts_together() {
             .collect::<Vec<_>>(),
         vec![1, 0, 2]
     );
+}
+
+/// "Not found on GitHub" is a not_found answer for a pull request GitHub never
+/// confirmed. Every other failure, and not_found after an earlier success, is
+/// not; a later success clears it. The SQL form agrees with the method.
+#[test]
+fn not_found_on_github_is_a_never_confirmed_not_found_answer() {
+    let directory = TempDir::new().unwrap();
+    let missing = "https://github.com/octo-org/hello.world/pull/999";
+    let confirmed = "https://github.com/octo-org/hello.world/pull/7";
+    let (mut store, path) = open(&directory, &[URL, missing, confirmed]);
+    let flagged = |store: &Store| {
+        let mut flagged: Vec<String> = store
+            .all_pull_requests()
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.not_found_on_github())
+            .map(|row| row.identity.url())
+            .collect();
+        flagged.sort();
+        flagged
+    };
+    let flagged_sql = |path: &Path| -> Vec<String> {
+        rows(
+            path,
+            &format!(
+                "SELECT url FROM pull_requests p WHERE {} ORDER BY url",
+                xt_store::not_found_on_github_sql!()
+            ),
+        )
+        .into_iter()
+        .map(|row| match &row[0] {
+            SqlValue::Text(url) => url.clone(),
+            other => panic!("{other:?}"),
+        })
+        .collect()
+    };
+    assert!(flagged(&store).is_empty(), "never attempted is not flagged");
+
+    // Every other failure code leaves a never-refreshed row unflagged.
+    for (at, error) in ERRORS
+        .into_iter()
+        .filter(|error| *error != PrRefreshError::NotFound)
+        .enumerate()
+    {
+        store
+            .record_pr_refresh(&failure(URL, 100 + at as i64, error))
+            .unwrap();
+        assert!(flagged(&store).is_empty(), "{error:?} is not not-found");
+    }
+
+    store
+        .record_pr_refresh(&failure(missing, 200, PrRefreshError::NotFound))
+        .unwrap();
+    // Confirmed once, then reported missing: its facts are kept and counted.
+    store
+        .record_pr_refresh(&RefreshOutcome::Success(success(
+            confirmed,
+            200,
+            PrState::Merged,
+        )))
+        .unwrap();
+    store
+        .record_pr_refresh(&failure(confirmed, 300, PrRefreshError::NotFound))
+        .unwrap();
+    assert_eq!(flagged(&store), vec![identity(missing).url()]);
+    assert_eq!(flagged_sql(&path), flagged(&store));
+
+    // A later success wins.
+    store
+        .record_pr_refresh(&RefreshOutcome::Success(success(
+            missing,
+            400,
+            PrState::Open,
+        )))
+        .unwrap();
+    assert!(flagged(&store).is_empty());
+    assert!(flagged_sql(&path).is_empty());
+    assert_eq!(
+        store
+            .pull_request(&identity(missing))
+            .unwrap()
+            .unwrap()
+            .refresh_status(),
+        PrRefreshStatus::Refreshed
+    );
+}
+
+/// The link readers leave out a number GitHub said is not a pull request, and
+/// the linked list reports when a conversation last mentioned each one.
+#[test]
+fn link_readers_leave_out_not_found_links_and_the_list_reports_the_last_mention() {
+    let directory = TempDir::new().unwrap();
+    let missing = "https://github.com/octo-org/hello.world/pull/999";
+    let (mut store, _path) = open(&directory, &[URL, missing]);
+    store
+        .record_pr_link(&PrLinkObservation {
+            session_id: "session-b".into(),
+            pull_request: identity(missing),
+            confidence: PrConfidence::Exact,
+            first_seen_at: 30,
+            last_seen_at: 70,
+        })
+        .unwrap();
+    store
+        .record_pr_refresh(&failure(missing, 50, PrRefreshError::NotFound))
+        .unwrap();
+    let urls = |links: Vec<xt_store::pr_link::StoredPrLink>| {
+        links
+            .into_iter()
+            .map(|link| link.pull_request.url())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        urls(store.all_pr_links().unwrap()),
+        vec![identity(URL).url()]
+    );
+    assert_eq!(
+        urls(store.session_pr_links("session-a").unwrap()),
+        vec![identity(URL).url()]
+    );
+    assert!(
+        store
+            .pull_request_links(&identity(missing))
+            .unwrap()
+            .is_empty()
+    );
+
+    // The linked list keeps it, with the newest mention across its links.
+    let listed = store.linked_pull_requests().unwrap();
+    let row = listed
+        .iter()
+        .find(|row| row.pull_request.identity == identity(missing))
+        .unwrap();
+    assert!(row.pull_request.not_found_on_github());
+    assert_eq!((row.linked_sessions, row.last_linked_at), (2, Some(70)));
+
+    // A later success brings its links back.
+    store
+        .record_pr_refresh(&RefreshOutcome::Success(success(
+            missing,
+            80,
+            PrState::Open,
+        )))
+        .unwrap();
+    assert_eq!(
+        store.pull_request_links(&identity(missing)).unwrap().len(),
+        2
+    );
+}
+
+/// The mark a manual refresh's failure leaves, read back from storage.
+fn manual_mark(store: &Store) -> Option<i64> {
+    store
+        .pull_request(&identity(URL))
+        .unwrap()
+        .unwrap()
+        .manual_failed_at
+}
+
+#[test]
+fn a_manual_failure_marks_the_pull_request_until_a_success() {
+    use RefreshOrigin::{Automatic, Manual};
+    let directory = TempDir::new().unwrap();
+    let (mut store, _) = open(&directory, &[URL]);
+    // An automatic failure leaves no mark.
+    store
+        .record_pr_refresh_from(&failure(URL, 100, PrRefreshError::NotFound), Automatic)
+        .unwrap();
+    assert_eq!(manual_mark(&store), None);
+    // A manual failure marks it at that attempt.
+    store
+        .record_pr_refresh_from(&failure(URL, 200, PrRefreshError::NotFound), Manual)
+        .unwrap();
+    assert_eq!(manual_mark(&store), Some(200));
+    // A later automatic failure keeps the mark, and its own error and time.
+    store
+        .record_pr_refresh_from(&failure(URL, 300, PrRefreshError::Timeout), Automatic)
+        .unwrap();
+    let stored = store.pull_request(&identity(URL)).unwrap().unwrap();
+    assert_eq!(
+        (
+            stored.manual_failed_at,
+            stored.last_attempted_at,
+            stored.refresh_error
+        ),
+        (Some(200), Some(300), Some(PrRefreshError::Timeout))
+    );
+    // The default writer is the automatic one: it keeps the mark too.
+    store
+        .record_pr_refresh(&failure(URL, 350, PrRefreshError::ExecutionFailed))
+        .unwrap();
+    assert_eq!(manual_mark(&store), Some(200));
+    // A success, of either origin, clears it.
+    store
+        .record_pr_refresh_from(
+            &RefreshOutcome::Success(success(URL, 400, PrState::Open)),
+            Automatic,
+        )
+        .unwrap();
+    assert_eq!(manual_mark(&store), None);
+    store
+        .record_pr_refresh_from(&failure(URL, 500, PrRefreshError::ExecutionFailed), Manual)
+        .unwrap();
+    assert_eq!(manual_mark(&store), Some(500));
+    store
+        .record_pr_refresh_from(
+            &RefreshOutcome::Success(success(URL, 600, PrState::Open)),
+            Manual,
+        )
+        .unwrap();
+    assert_eq!(manual_mark(&store), None);
+}
+
+#[test]
+fn a_manual_failure_about_the_whole_run_leaves_no_mark() {
+    let directory = TempDir::new().unwrap();
+    let (mut store, _) = open(&directory, &[URL]);
+    for (offset, error) in (1..).zip(ERRORS) {
+        let marks = matches!(
+            error,
+            PrRefreshError::NotFound
+                | PrRefreshError::ExecutionFailed
+                | PrRefreshError::InvalidResponse
+                | PrRefreshError::OutputTooLarge
+        );
+        assert_eq!(error.about_this_pull_request(), marks, "{error:?}");
+        // A success first, so each failure starts from no mark.
+        store
+            .record_pr_refresh(&RefreshOutcome::Success(success(
+                URL,
+                offset * 10,
+                PrState::Open,
+            )))
+            .unwrap();
+        store
+            .record_pr_refresh_from(&failure(URL, offset * 10 + 1, error), RefreshOrigin::Manual)
+            .unwrap();
+        assert_eq!(
+            manual_mark(&store),
+            marks.then_some(offset * 10 + 1),
+            "{error:?}"
+        );
+    }
+}
+
+#[test]
+fn the_schema_refuses_a_mark_without_a_failure() {
+    let directory = TempDir::new().unwrap();
+    let (mut store, path) = open(&directory, &[URL]);
+    store
+        .record_pr_refresh(&RefreshOutcome::Success(success(URL, 100, PrState::Open)))
+        .unwrap();
+    drop(store);
+    let raw = Connection::open(&path).unwrap();
+    for statement in [
+        "UPDATE pull_requests SET manual_failed_at=100",
+        "UPDATE pull_requests SET refresh_error='timeout', last_attempted_at=200, manual_failed_at=300",
+        "UPDATE pull_requests SET refresh_error='timeout', last_attempted_at=200, manual_failed_at='soon'",
+    ] {
+        assert!(raw.execute(statement, []).is_err(), "{statement}");
+    }
+    raw.execute(
+        "UPDATE pull_requests SET refresh_error='timeout', last_attempted_at=200, manual_failed_at=200",
+        [],
+    )
+    .unwrap();
 }

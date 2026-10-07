@@ -5,7 +5,7 @@ import type { MetricTile } from '../../data/generated/MetricTile';
 import type { PrAnalyticsPage } from '../../data/generated/PrAnalyticsPage';
 
 /**
- * Test-only synthetic Overview and "your hours" data: not real history and
+ * Test-only synthetic Overview and "human time" data: not real history and
  * not a design sample. It fills a generated F1 report's days with a fixed,
  * repeatable working pattern (morning and afternoon stretches, a late evening
  * on some days, single messages, lighter weekends), agent hours to match, and
@@ -67,7 +67,7 @@ const measured = (tile: MetricTile, value: number, previous: number): MetricTile
 
 /**
  * `effort: false` keeps the report's own Effort chart and agent hours;
- * `tiles: false` keeps its tiles. Your hours and the daily lines are always
+ * `tiles: false` keeps its tiles. Human time and the daily lines are always
  * replaced.
  */
 export function syntheticOverview(

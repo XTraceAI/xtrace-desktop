@@ -45,7 +45,7 @@ defines no metric of its own.
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Output tokens                   | `recorded` (a measured sum, `0` included), `incomplete` (a selected response lacks its output counter: `—`), `none_recorded` (no response today: `—`)                  |
 | API-equivalent cost             | `priced` (a total), `partial` (a subtotal labelled "not a total", with priced-of-selected coverage), `unpriced`, `none_recorded`                                       |
-| Agent hours                     | Always measured; `0` when there was no activity. Only today's events count, so a span that began before midnight contributes from its first event after it.            |
+| Agent hours                     | Always measured; `0` when there was no activity. The same number as the Dashboard's bar for today: a span that began before midnight counts from midnight.             |
 | Local date, zone, observed time | The report's own date and zone, and the captured instant.                                                                                                              |
 | Active now, last rule fire      | Stated as unavailable. Indexed events cannot prove what is running, and no rule-fire data exists. Nothing is invented: no waiting state, fire command, share or ratio. |
 

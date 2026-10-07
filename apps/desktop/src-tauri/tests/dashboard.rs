@@ -69,7 +69,7 @@ mod assembled {
     }
 
     /// A steady user, every day from Sep 15 for `days` days (UTC, synthetic):
-    /// your messages every 30 minutes from 09:00 to 17:00 (8 of your hours),
+    /// your messages every 30 minutes from 09:00 to 17:00 (8 hours of human time),
     /// and two sessions whose agents work from 08:00 to 16:00 (16 agent hours).
     fn steady_user(days: i64) -> TempDb {
         let mut db = TempDb::empty().unwrap();

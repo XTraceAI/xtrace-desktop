@@ -2,21 +2,28 @@ import { Tooltip } from '@base-ui/react/tooltip';
 import { useMemo, type CSSProperties, type ReactNode } from 'react';
 import type { DashboardMetrics } from '../../data/generated/DashboardMetrics';
 import type { MetricEffortCost } from '../../data/generated/MetricEffortCost';
+import type { MetricLeverageDay } from '../../data/generated/MetricLeverageDay';
+import { RulePopover } from '../../kit/RulePopover';
+import { ruleSummary, type RuleId } from '../../kit/rules';
 import { Segmented } from '../../kit/Segmented';
 import { useSurfaceTheme } from '../../theme/ThemeProvider';
+import { InfoIcon } from './DefinitionInfo';
 import { DetailDialog } from './DetailDialog';
 import {
+  NO_MODEL,
   OVER_FULL_DAY,
   dayCenter,
+  dayLabel,
   effortChart,
   unpricedLine,
   type EffortBar,
   type EffortChart as Chart,
 } from './effort-chart';
-import { agentHours, costCell } from './pr-effort';
+import { UNMEASURED } from '../../kit/format';
+import { agentTime } from '../agent-duration';
+import { costCell } from './pr-effort';
 import type { BarMetric, EffortMetric } from './pr-effort';
 import { HumanTimeline } from './HumanTimeline';
-import { hoursText } from './overview';
 import { plural, unpricedText, usd } from './present';
 
 const metricOptions = [
@@ -65,7 +72,11 @@ export function EffortByType({
   metric: EffortMetric;
 }) {
   const { current } = report.pr_effort;
-  const chart = useMemo(() => effortChart(current, barMetric(metric)), [current, metric]);
+  const days = report.window.days;
+  const chart = useMemo(
+    () => effortChart(current, barMetric(metric), days),
+    [current, metric, days],
+  );
   const empty = current.cohort.sessions === 0;
   if (metric === 'human') return <HumanTimeline report={report} />;
   return (
@@ -258,7 +269,7 @@ function DayCard({ bar, metric }: { bar: EffortBar; metric: BarMetric }) {
     <>
       <span className="xt-effort-tip-head">
         <span>{bar.label}</span>
-        <b>{bar.state === 'none' ? '—' : bar.totalText}</b>
+        <b>{bar.totalText}</b>
       </span>
       {bar.models.length === 0 && (
         <span className="xt-effort-tip-note">
@@ -289,15 +300,26 @@ function DayCard({ bar, metric }: { bar: EffortBar; metric: BarMetric }) {
   );
 }
 
-/** A day's hours of yours; unknown when a message's sender is. */
+/**
+ * What the table's two kinds of day are: the range's own days for the bars,
+ * whole days for the pair that leverage divides.
+ */
+const WHOLE_DAY_NOTE =
+  'Agent time, cost and merged cover the range, so its first day starts when the range does. The whole-day columns run from midnight to midnight, as human time and leverage do; they are the same agent hours the Overview divides.';
+
+/** A whole day's agent time from the leverage pair; unknown (—) when the report has none. */
+const wholeAgentHours = (day: MetricLeverageDay | undefined) =>
+  day === undefined ? UNMEASURED : agentTime(day.agent_ms);
+
+/** A whole day's human time, written as agent time is; unknown (—) when a message's sender is. */
 const yourHours = (ms: number | null | undefined) =>
-  ms === null || ms === undefined ? 'unknown' : `${hoursText(ms)} h`;
+  ms === null || ms === undefined ? UNMEASURED : agentTime(ms);
 
 /** A day's cost, compact; a trailing `+` marks a priced subtotal that leaves responses out. */
 function costShort(cost: MetricEffortCost) {
   const cell = costCell(cost);
   if (cell.state === 'none') return 'no usage';
-  if (cell.state === 'unknown') return 'unknown';
+  if (cell.state === 'unknown') return UNMEASURED;
   return `${usd(cell.value)}${cost.unpriced_observations > 0 ? '+' : ''}`;
 }
 
@@ -306,24 +328,32 @@ const unpricedModels = (cost: MetricEffortCost) =>
   cost.unpriced
     .map(
       (item) =>
-        `${item.model ?? 'unknown model'}: ${unpricedText[item.reason]}, ${plural(item.observations, 'response')}`,
+        `${item.model ?? NO_MODEL}: ${unpricedText[item.reason]}, ${plural(item.observations, 'response')}`,
     )
     .join('; ');
 
 /**
- * How the card counts, one step away over the page: the measure and its
- * exceptions, then each day's totals and merged pull requests as a table. It
- * opens from the card's header, so the card keeps its height.
+ * How the card counts, one step away over the page: the card's definition,
+ * the measure and its exceptions, then each day's totals and merged pull
+ * requests as a table. Its trigger is the ⓘ beside the card's title: hover or
+ * focus reads the short definition, as every card's ⓘ does, and a click opens
+ * this dialog, so the card needs no further button and keeps its height.
  */
 export function EffortMethod({
   report,
   metric,
+  rule,
+  context,
   open,
   onOpenChange,
   children,
 }: {
   report: DashboardMetrics;
   metric: EffortMetric;
+  /** The card's rule: its summary is the ⓘ's tip and the dialog's first line. */
+  rule: RuleId;
+  /** Read after the rule's summary, in the tip and in the dialog. */
+  context?: string;
   /** Held by the page, so an open Details survives another range loading. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -331,31 +361,49 @@ export function EffortMethod({
   children?: ReactNode;
 }) {
   const { current } = report.pr_effort;
-  const chart = useMemo(() => effortChart(current, barMetric(metric)), [current, metric]);
+  const days = report.window.days;
+  const chart = useMemo(
+    () => effortChart(current, barMetric(metric), days),
+    [current, metric, days],
+  );
   const cost = current.cohort.cost;
   const human = report.human_hours.current;
-  // Matched by date: the table's days are the Effort report's.
-  const yoursByDate = useMemo(
-    () => new Map(human.by_day.map((day) => [day.date, day.active_ms])),
-    [human],
+  // Agent and human time over the same whole day, paired in Rust (the
+  // leverage days), matched to the range's rows by date.
+  const wholeDays = useMemo(
+    () => new Map(report.leverage.by_day.map((day) => [day.date, day])),
+    [report.leverage],
   );
   return (
     <DetailDialog
-      trigger="Details"
+      trigger={<InfoIcon />}
+      label="Effort definition"
       title="How effort is counted · daily values"
       className="xt-effort-method"
+      triggerBase=""
+      triggerClassName="xt-dash-definition"
       testId="effort-method"
       open={open}
       onOpenChange={onOpenChange}
+      wrapTrigger={(button) => (
+        <RulePopover ruleId={rule} context={context} closeOnClick>
+          {button}
+        </RulePopover>
+      )}
     >
+      <p className="xt-dash-note" data-testid="effort-definition">
+        {ruleSummary(rule)}
+        {context && ` ${context}`}
+      </p>
       <p className="xt-dash-note" data-testid="effort-notes">
         {metric === 'human'
-          ? `Your hours come from the times you sent messages to agents, across every conversation and tool, on one timeline. When two of your messages are at most ${human.break_minutes} minutes apart (the break length in Settings), the time between them counts; a longer gap is a break. Each bar runs from a message to your last one before a break; a single message is a thin tick and adds no time. Stretches are split at local midnight. Every row is a whole day, midnight to midnight, the first one too; a stretch that began the evening before counts from midnight. Which messages are yours is the same as the human message count; if any is unknown, your hours are unknown.`
+          ? `Human time comes from the times you sent messages to agents, across every conversation and tool, on one timeline. When two of your messages are at most ${human.break_minutes} minutes apart (the break length in Settings), the time between them counts; a longer gap is a break. Each bar runs from a message to your last one before a break; a single message is a thin tick and adds no time. Stretches are split at local midnight. Every row is a whole day, midnight to midnight, the first one too; a stretch that began the evening before counts from midnight. Which messages are yours is the same as the human message count; if any is unknown, human time are unknown.`
           : `${
               metric === 'agent'
-                ? 'Each bar is one local day’s agent time over every session in the range, on one shared scale from zero. Agents running at the same time add up, so a day can pass 24 h; the dashed line marks 24 h. Each session’s hours count toward the model it used most: the most responses in this range, then the most output tokens. A session with no response that names a model counts as no model recorded.'
+                ? `Each bar is one local day’s agent time over every session in the range, on one shared scale from zero. Agents running at the same time add up, so a day can pass 24 h; the dashed line marks 24 h. Each session’s hours count toward the model it used most within this range: the most responses, then the most output tokens. A session none of whose responses names a model counts its records that name one instead; one whose work names no model counts as ${NO_MODEL}. Sessions uses the same rule over the session’s whole history, so a session that changed models can show a different model there.`
                 : 'Each bar is one local day’s API-equivalent cost over every session in the range, on the day each response was recorded, not the merge day, on one shared scale from zero. Every token of each response (input, output, cache reads and cache writes, Claude cache writes split by five-minute and one-hour lifetime) is priced at its own model’s public rate, as the API-equivalent cost below prices it, and counts toward that model.'
             } Markers count the pull requests merged on each local day, through confirmed links (exact and SHA; inferred links are removed first), and allocate no effort.`}
+        {` ${WHOLE_DAY_NOTE}`}
         {metric === 'dollars' &&
           cost.unpriced_observations > 0 &&
           ` ${cost.unpriced_observations} of ${plural(cost.selected_observations, 'selected response')} could not be priced (${unpricedModels(cost)}); they add nothing to the bars. A day with some of them is drawn at its priced subtotal with a + above it, a day with none priced has no bar, and any total that leaves responses out is marked + in the table.`}
@@ -377,18 +425,18 @@ export function EffortMethod({
             <thead>
               <tr>
                 <th scope="col">Day</th>
-                <th scope="col">Agent h</th>
-                <th scope="col">Your h</th>
+                <th scope="col">Agent time</th>
                 <th scope="col">Cost</th>
                 <th scope="col">Merged</th>
+                <th scope="col">Whole day: agent time</th>
+                <th scope="col">Whole day: human time</th>
               </tr>
             </thead>
             <tbody>
               {chart.days.map((day, index) => (
                 <tr key={day.date}>
-                  <th scope="row">{day.date}</th>
-                  <td>{agentHours(day.agent_ms)}</td>
-                  <td>{yourHours(yoursByDate.get(day.date))}</td>
+                  <th scope="row">{dayLabel(day.date)}</th>
+                  <td>{agentTime(day.agent_ms)}</td>
                   <td>{costShort(day.cost)}</td>
                   <td>
                     {chart.markers
@@ -396,6 +444,8 @@ export function EffortMethod({
                       ?.merged.map((marker) => `#${marker.number}`)
                       .join(', ') || 'none'}
                   </td>
+                  <td>{wholeAgentHours(wholeDays.get(day.date))}</td>
+                  <td>{yourHours(wholeDays.get(day.date)?.human_ms)}</td>
                 </tr>
               ))}
             </tbody>

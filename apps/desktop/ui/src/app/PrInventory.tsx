@@ -12,7 +12,8 @@ import { count } from '../kit/format';
 import { MetricCell, Unmeasured } from '../kit/MetricCell';
 import { Search } from '../kit/Search';
 import { SectionCard } from '../kit/SectionCard';
-import { refreshErrorText } from './dashboard/pr-effort';
+import { clock, isInstant } from '../kit/clock';
+import { notFoundOnGitHub, refreshStatusWords } from './dashboard/pr-effort';
 import { plural } from './dashboard/present';
 import '../styles/prs.css';
 
@@ -27,24 +28,14 @@ import '../styles/prs.css';
  */
 
 /**
- * Day, year and 24-hour time in this Mac's own zone, as the Sessions list
- * states a recorded time. Cached facts have no age limit, so the year is shown
- * rather than left to a tooltip. There is no report window on this page, and
- * none is made up to borrow a zone from.
+ * Day, year and time in this Mac's own zone, as the Sessions list states a
+ * recorded time. Cached facts have no age limit, so the year is shown rather
+ * than left to a tooltip. There is no report window on this page, and none is
+ * made up to borrow a zone from. A stored instant outside what a Date can
+ * hold is stated, never thrown on.
  */
-const timeFormat: Intl.DateTimeFormatOptions = {
-  month: 'short',
-  day: 'numeric',
-  year: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23',
-};
-/** A stored instant outside what a Date can hold is stated, never thrown on. */
 const timeText = (ms: number) =>
-  Number.isNaN(new Date(ms).getTime())
-    ? 'an unreadable time'
-    : new Date(ms).toLocaleString(undefined, timeFormat);
+  isInstant(ms) ? clock(ms, { date: 'year' }) : 'an unreadable time';
 
 const NOT_CACHED = 'no successful refresh has stored it';
 
@@ -158,30 +149,38 @@ function Size({ row }: { row: PrRow }) {
 }
 
 /**
- * What storage holds about refreshing this row, in the words the Dashboard's
- * refresh dialog uses. "refreshed" is when, never how current: storage applies
- * no age policy and neither does this, so it is not drawn as healthy.
+ * What storage holds about checking this row, in the app's one check-status
+ * wording (`refreshStatusWords`, also the refresh dialog's). "checked" is when,
+ * never how current: storage applies no age policy and neither does this, so
+ * it is not drawn as healthy.
  */
 function cacheStatus(row: PrRow): { label: string; tone: ControlTone; detail: string | null } {
-  const status = row.status;
   const at = (ms: number | null) => (ms === null ? 'an unknown time' : timeText(ms));
-  switch (status.status) {
+  const { label, reason } = refreshStatusWords(row.status);
+  switch (row.status.status) {
     case 'never_attempted':
-      return { label: 'never refreshed', tone: 'meta', detail: null };
+      return { label, tone: 'meta', detail: null };
     case 'refreshed':
-      return { label: 'refreshed', tone: 'info', detail: at(row.refreshed_at_ms) };
+      return { label, tone: 'info', detail: at(row.refreshed_at_ms) };
     case 'failed_never_refreshed':
       return {
-        label: 'failed · never refreshed',
+        label,
         tone: 'warning',
-        detail: `${refreshErrorText[status.error]} · tried ${at(row.last_attempted_at_ms)}`,
+        detail: [reason, `tried ${at(row.last_attempted_at_ms)}`].filter(Boolean).join(' · '),
       };
     case 'failed_after_refresh':
       // The earlier facts stay in the row beside this, exactly as stored.
       return {
-        label: 'stale · last refresh failed',
+        label,
         tone: 'warning',
-        detail: `${refreshErrorText[status.error]} · facts from ${at(row.refreshed_at_ms)}`,
+        detail: [reason, `facts from ${at(row.refreshed_at_ms)}`].filter(Boolean).join(' · '),
+      };
+    case 'not_found_on_github':
+      // Not listed here (see PrInventory); kept so the words are total.
+      return {
+        label,
+        tone: 'meta',
+        detail: `tried ${at(row.last_attempted_at_ms)}`,
       };
   }
 }
@@ -257,7 +256,9 @@ export function PrInventory() {
   // Narrows the rows already read; it never asks storage for anything.
   const [filter, setFilter] = useState('');
   const needle = filter.trim().toLowerCase();
-  const all = query.data?.rows;
+  // A number GitHub said is not a pull request is not one: only the
+  // Dashboard's refresh dialog lists it, for a check by hand.
+  const all = useMemo(() => query.data?.rows.filter((row) => !notFoundOnGitHub(row)), [query.data]);
   const rows = useMemo(
     () => (all ?? []).filter((row) => needle === '' || matches(row, needle)),
     [all, needle],

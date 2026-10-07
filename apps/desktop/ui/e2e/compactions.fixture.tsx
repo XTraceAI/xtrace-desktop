@@ -19,6 +19,8 @@ const rows = Array.from({ length: readDelay ? 32 : 9 }, (_, index) => ({
   ...base,
   host: 'codex',
   id: `compaction-${index}`,
+  child_check: index === 8 ? ('child' as const) : ('checked' as const),
+  known_child: index === 8,
   title: `Synthetic session ${index} with a deliberately long title to check the narrow window`,
   parent:
     index === 8
@@ -48,6 +50,8 @@ for (const report of exported.dashboards) {
     repo: row.repo,
     branch: row.branch,
     parent: row.parent,
+    child_check: row.child_check,
+    known_child: row.known_child,
     automated_review: false,
     started_at_ms: null,
     cost: null,

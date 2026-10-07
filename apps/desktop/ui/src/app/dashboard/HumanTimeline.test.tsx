@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import fixture from '../../../fixtures/F1.json';
 import type { DashboardMetrics } from '../../data/generated/DashboardMetrics';
 import type { FixtureExport } from '../../data/generated/FixtureExport';
@@ -7,7 +7,20 @@ import { ThemeProvider } from '../../theme/ThemeProvider';
 import { HumanTimeline } from './HumanTimeline';
 
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => false }));
-afterEach(cleanup);
+// Set the test Mac's default locale explicitly; production still reads its own.
+const NativeDateTimeFormat = Intl.DateTimeFormat;
+beforeEach(() => {
+  class TestDateTimeFormat extends NativeDateTimeFormat {
+    constructor(locales?: Intl.LocalesArgument, options?: Intl.DateTimeFormatOptions) {
+      super(locales ?? 'en-US', options);
+    }
+  }
+  vi.stubGlobal('Intl', Object.assign(Object.create(Intl), { DateTimeFormat: TestDateTimeFormat }));
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 const H = 3_600_000;
 /** F1's 7-day report with synthetic stretches (not real history) on its last two days. */
@@ -42,8 +55,8 @@ const mount = (r: DashboardMetrics) =>
 
 it('draws one 24-hour row per day with each stretch, ticks for single messages and the day total', () => {
   mount(report());
-  expect(screen.getByTestId('effort-total').textContent).toBe('1.5 your h');
-  expect(screen.getByTestId('effort-headline').textContent).toContain('last 7 days');
+  expect(screen.getByTestId('effort-total').textContent).toBe('1h30m human');
+  expect(screen.getByTestId('effort-headline').textContent).toContain('Sep 1–Sep 7, whole days');
   expect(screen.getByTestId('effort-headline').textContent).toContain(
     'gaps over 45 min count as breaks',
   );
@@ -53,26 +66,43 @@ it('draws one 24-hour row per day with each stretch, ticks for single messages a
     report().human_hours.current.by_day.map((day) => day.date),
   );
   const [sixth, last] = rows.slice(-2) as [HTMLElement, HTMLElement];
-  // A stretch cut at midnight runs to 24:00, and the next day's piece starts at 00:00.
-  expect(sixth.getAttribute('aria-label')).toBe('Sep 6: 1 h; 23:00–24:00');
-  expect(last.getAttribute('aria-label')).toBe('Sep 7: 0.5 h; 00:00–00:30, one message at 02:00');
+  // A stretch cut at midnight runs to midnight, and the next day's piece starts at midnight.
+  expect(sixth.getAttribute('aria-label')).toBe('Sep 6: 1 hour 0 minutes; 11:00 PM–12:00 AM');
+  expect(last.getAttribute('aria-label')).toBe(
+    'Sep 7: 30 minutes; 12:00 AM–12:30 AM, one message at 2:00 AM',
+  );
   const bars = within(last).getAllByRole('img');
   expect(bars.map((bar) => bar.getAttribute('aria-label'))).toEqual([
-    'Sep 7, 00:00–00:30',
-    'Sep 7, one message at 02:00',
+    'Sep 7, 12:00 AM–12:30 AM',
+    'Sep 7, one message at 2:00 AM',
   ]);
   expect(bars[0]!.style.left).toBe('0%');
   expect(bars[1]!.dataset.tick).toBe('true');
   expect(bars[1]!.style.width).toBe('');
-  expect(rows[0]!.textContent).toBe('Sep 1–');
-  expect(last.textContent).toBe('Sep 70.5 h');
+  // A measured zero is a zero, never a dash: a dash means unknown.
+  expect(rows[0]!.textContent).toBe('Sep 10h00m');
+  expect(last.textContent).toBe('Sep 70h30m');
   // The hour axis is drawn once, above the rows.
   expect(screen.getByTestId('human-timeline').querySelector('.xt-human-axis')!.textContent).toBe(
     '0006121824',
   );
 });
 
-it('says your hours are unknown instead of drawing a smaller number', () => {
+it('names the whole days human time cover, not the rolling range', () => {
+  mount(
+    report((r) => {
+      const days = r.human_hours.current.by_day;
+      days.push({ ...days.at(-1)!, date: '2026-09-08' });
+    }),
+  );
+  expect(screen.getAllByTestId('human-day')).toHaveLength(8);
+  // A 7-day range that starts mid-day: human time covers eight whole days.
+  const headline = screen.getByTestId('effort-headline').textContent;
+  expect(headline).toContain('Sep 1–Sep 8, whole days');
+  expect(headline).not.toContain('last 7 days');
+});
+
+it('says human time is unknown instead of drawing a smaller number', () => {
   mount(
     report((r) => {
       r.human_hours.current.active_ms = null;
@@ -82,9 +112,9 @@ it('says your hours are unknown instead of drawing a smaller number', () => {
       }
     }),
   );
-  expect(screen.getByTestId('effort-total').textContent).toBe('your h unknown');
+  expect(screen.getByTestId('effort-total').textContent).toBe('human time unknown');
   expect(screen.getByTestId('effort-headline').textContent).toContain(
-    'Could not tell which messages are yours.',
+    'Could not tell which messages a person sent.',
   );
   expect(screen.queryAllByTestId('human-stretch')).toHaveLength(0);
   expect(screen.getAllByTestId('human-day').map((row) => row.textContent?.slice(-1))).toEqual(
@@ -115,16 +145,16 @@ it('keeps a folded stretch as one accessible image and tooltip entry with two dr
   mount(folded);
   const images = screen.getAllByRole('img');
   expect(images).toHaveLength(1);
-  expect(images[0]!.getAttribute('aria-label')).toBe('Nov 1, 01:50 PDT → 01:10 PST — 20 min');
+  expect(images[0]!.getAttribute('aria-label')).toBe('Nov 1, 1:50 AM PDT → 1:10 AM PST — 20 min');
   const pieces = images[0]!.querySelectorAll<HTMLElement>('.xt-human-bar');
   expect(pieces).toHaveLength(2);
   expect(pieces[0]!.dataset.lane).toBe('0');
   expect(pieces[1]!.dataset.lane).toBe('1');
   for (const piece of pieces)
     expect(parseFloat(piece.style.width)).toBeCloseTo((10 / (24 * 60)) * 100);
-  expect(screen.getByTestId('effort-total').textContent).toBe('0.3 your h');
+  expect(screen.getByTestId('effort-total').textContent).toBe('0h20m human');
   fireEvent.focus(screen.getByTestId('human-day'));
-  await screen.findByText('01:50 PDT → 01:10 PST — 20 min');
+  await screen.findByText('1:50 AM PDT → 1:10 AM PST — 20 min');
   expect(document.querySelectorAll('.xt-effort-tip-row')).toHaveLength(1);
   expect(folded).toEqual(before);
 });
@@ -204,7 +234,7 @@ it('is one tab stop, today at first; arrow keys move between days and open their
   expect(stops()).toEqual([rows[6]]);
   // Every day and stretch is still named.
   expect(rows[6]!.getAttribute('aria-label')).toBe(
-    'Sep 7: 0.5 h; 00:00–00:30, one message at 02:00',
+    'Sep 7: 30 minutes; 12:00 AM–12:30 AM, one message at 2:00 AM',
   );
   expect(within(rows[6]!).getAllByRole('img')).toHaveLength(2);
   rows[6]!.focus();

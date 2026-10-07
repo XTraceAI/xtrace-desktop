@@ -51,6 +51,53 @@ text_enum!(PrRefreshError {
     RateLimited => "rate_limited",
 });
 
+impl PrRefreshError {
+    /// The one rule for "is this failure about this pull request itself, or
+    /// about the whole run?". Both refresh paths read it: a manual refresh
+    /// marks a pull request as tried (`StoredPullRequest::manual_failed_at`)
+    /// only for a failure about that pull request. The automatic check pauses
+    /// a run, or stops it at once, only for a failure about the whole run
+    /// (`unavailable`, `unauthorized`, `rate_limited`). Separately, while
+    /// nothing in a run has succeeded yet, it counts `timeout` and the
+    /// per-PR failures other than `not_found` toward a cap
+    /// (`AUTO_GIVE_UP_AFTER`) that ends the run, since several in a row may
+    /// mean a broken gh rather than broken pull requests.
+    ///
+    /// About the whole run, or temporary: the GitHub CLI could not be run
+    /// (`unavailable`) or is not signed in (`unauthorized`), GitHub's rate
+    /// limit (`rate_limited`), the run's own cancellation (`cancelled`), and a
+    /// check that took too long (`timeout`, a slow or offline network more
+    /// often than this pull request). Checking again later can succeed.
+    ///
+    /// About this pull request: GitHub said it does not exist (`not_found`),
+    /// `gh pr view` failed for it (`execution_failed`, for example another
+    /// account's repository), or its answer was unusable (`invalid_response`,
+    /// `output_too_large`).
+    pub fn about_this_pull_request(self) -> bool {
+        match self {
+            Self::Unavailable
+            | Self::Unauthorized
+            | Self::RateLimited
+            | Self::Cancelled
+            | Self::Timeout => false,
+            Self::NotFound
+            | Self::ExecutionFailed
+            | Self::InvalidResponse
+            | Self::OutputTooLarge => true,
+        }
+    }
+}
+
+/// Who started a refresh attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefreshOrigin {
+    /// The user, from the refresh dialog (or the fixture exporter standing in
+    /// for it).
+    Manual,
+    /// The app's own automatic check.
+    Automatic,
+}
+
 /// Longest accepted pull-request title, in bytes.
 pub const MAX_TITLE_LEN: usize = 1024;
 /// Longest accepted head branch name, in bytes (Git's own ref-name limit).
@@ -281,6 +328,11 @@ pub struct StoredPullRequest {
     pub refreshed_at: Option<i64>,
     pub last_attempted_at: Option<i64>,
     pub refresh_error: Option<PrRefreshError>,
+    /// Set by a manual refresh that failed (for an error that
+    /// [`PrRefreshError::about_this_pull_request`]); kept through later automatic
+    /// failures and cleared by the next success. Only set while
+    /// `refresh_error` is.
+    pub manual_failed_at: Option<i64>,
 }
 
 /// One stored pull request with the number of sessions that still link it,
@@ -289,6 +341,9 @@ pub struct StoredPullRequest {
 pub struct LinkedPullRequest {
     pub pull_request: StoredPullRequest,
     pub linked_sessions: i64,
+    /// The newest `last_seen_at` of the links that remain: when a
+    /// conversation last mentioned this pull request. `None` with no link.
+    pub last_linked_at: Option<i64>,
 }
 
 /// Facts derived from the stored refresh columns alone. No age or staleness
@@ -307,7 +362,34 @@ pub enum PrRefreshStatus {
     FailedAfterRefresh(PrRefreshError),
 }
 
+/// The SQL form of [`StoredPullRequest::not_found_on_github`], for a
+/// `pull_requests` row aliased `p`, as a string literal so it can be spliced
+/// into a `concat!` statement. Every reader that leaves such rows out in SQL
+/// (the merged-PR and effort reads, the Sessions page's PR links, filters and
+/// counts, and this module's link readers) uses this one definition.
+#[macro_export]
+macro_rules! not_found_on_github_sql {
+    () => {
+        "(p.refresh_error IS 'not_found' AND p.refreshed_at IS NULL)"
+    };
+}
+
 impl StoredPullRequest {
+    /// GitHub answered that this pull request does not exist in a repository
+    /// the signed-in GitHub CLI account can see, and never confirmed it
+    /// before: the link names a number that is not a pull request (for
+    /// example a made-up URL in a conversation). Such a link is not counted
+    /// or shown as a pull request. Only the Dashboard's refresh dialog lists
+    /// it, marked as not found, so it can be checked again by hand; automatic
+    /// checks ask about it again only after a conversation mentions it again.
+    ///
+    /// A pull request GitHub once confirmed keeps its facts even if a later
+    /// check says it is missing ([`PrRefreshStatus::FailedAfterRefresh`]).
+    /// A later success clears `refresh_error`, so its facts win again.
+    pub fn not_found_on_github(&self) -> bool {
+        self.refresh_error == Some(PrRefreshError::NotFound) && self.refreshed_at.is_none()
+    }
+
     pub fn refresh_status(&self) -> PrRefreshStatus {
         match (
             self.refresh_error,
@@ -474,15 +556,18 @@ impl Store {
         let rows = transaction
             .prepare(&format!(
                 "SELECT {PULL_REQUEST_COLUMNS},
-                    (SELECT COUNT(*) FROM pr_links WHERE pr_links.pr_id = pull_requests.id)
+                    (SELECT COUNT(*) FROM pr_links WHERE pr_links.pr_id = pull_requests.id),
+                    (SELECT MAX(last_seen_at) FROM pr_links WHERE pr_links.pr_id = pull_requests.id)
                  FROM pull_requests ORDER BY repo, number, id"
             ))?
             .query_map([], |row| {
                 let stored = stored_pull_request(row)?;
                 let linked_sessions = row.get(PULL_REQUEST_COLUMN_COUNT)?;
+                let last_linked_at = row.get(PULL_REQUEST_COLUMN_COUNT + 1)?;
                 Ok(stored.map(|pull_request| LinkedPullRequest {
                     pull_request,
                     linked_sessions,
+                    last_linked_at,
                 }))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?
@@ -504,17 +589,33 @@ impl Store {
     /// and `refreshed_at`. An older attempt returns `Stale` without writing. At
     /// an equal attempt time, an exactly identical result is `Unchanged`; any
     /// other success or failure is a conflict error and nothing is written.
+    ///
+    /// This records an automatic attempt; see [`Self::record_pr_refresh_from`].
     pub fn record_pr_refresh(&mut self, outcome: &RefreshOutcome) -> Result<RefreshWrite> {
+        self.record_pr_refresh_from(outcome, RefreshOrigin::Automatic)
+    }
+
+    /// [`Self::record_pr_refresh`] for an attempt of the given origin. A newer
+    /// manual failure whose error [`PrRefreshError::about_this_pull_request`]
+    /// sets `manual_failed_at` to the attempt; any other newer failure keeps
+    /// it; a newer success clears it.
+    pub fn record_pr_refresh_from(
+        &mut self,
+        outcome: &RefreshOutcome,
+        origin: RefreshOrigin,
+    ) -> Result<RefreshWrite> {
         outcome.validate()?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let write = record_pr_refresh(&transaction, outcome)?;
+        let write = record_pr_refresh(&transaction, outcome, origin)?;
         transaction.commit()?;
         Ok(write)
     }
 
-    /// Links of one session, ordered by repository then number.
+    /// Links of one session, ordered by repository then number. Links to a
+    /// number GitHub said is not a pull request are left out, here and in the
+    /// other link readers.
     pub fn session_pr_links(&self, session_id: &str) -> Result<Vec<StoredPrLink>> {
         links(
             &self.connection,
@@ -676,10 +777,10 @@ fn canonical_row(connection: &Connection, identity: &PrIdentity) -> Result<Optio
 }
 
 const PULL_REQUEST_COLUMNS: &str = "id,repo,number,url,title,state,merged_at,additions,deletions,\
-     head_ref_name,refreshed_at,last_attempted_at,refresh_error";
+     head_ref_name,refreshed_at,last_attempted_at,refresh_error,manual_failed_at";
 /// How many columns `PULL_REQUEST_COLUMNS` selects, so a query that appends
 /// one names its index rather than counting the string again.
-const PULL_REQUEST_COLUMN_COUNT: usize = 13;
+const PULL_REQUEST_COLUMN_COUNT: usize = 14;
 
 fn stored_pull_request(row: &Row<'_>) -> rusqlite::Result<Result<StoredPullRequest>> {
     let identity = PrIdentity::from_stored(
@@ -689,7 +790,8 @@ fn stored_pull_request(row: &Row<'_>) -> rusqlite::Result<Result<StoredPullReque
     );
     let id = row.get(0)?;
     let refresh = refresh_columns(row, 4)?;
-    let (last_attempted_at, refresh_error) = (row.get(11)?, row.get(12)?);
+    let (last_attempted_at, refresh_error, manual_failed_at) =
+        (row.get(11)?, row.get(12)?, row.get(13)?);
     Ok(identity.map(|identity| StoredPullRequest {
         id,
         identity,
@@ -702,6 +804,7 @@ fn stored_pull_request(row: &Row<'_>) -> rusqlite::Result<Result<StoredPullReque
         refreshed_at: refresh.refreshed_at,
         last_attempted_at,
         refresh_error,
+        manual_failed_at,
     }))
 }
 
@@ -782,7 +885,11 @@ fn refresh_text(value: &str, limit: usize) -> Result<()> {
     Ok(())
 }
 
-fn record_pr_refresh(connection: &Connection, outcome: &RefreshOutcome) -> Result<RefreshWrite> {
+fn record_pr_refresh(
+    connection: &Connection,
+    outcome: &RefreshOutcome,
+    origin: RefreshOrigin,
+) -> Result<RefreshWrite> {
     let id = canonical_row(connection, outcome.pull_request())?.ok_or(Error::InvalidInput(
         "pull request must be recorded before it is refreshed",
     ))?;
@@ -830,7 +937,7 @@ fn record_pr_refresh(connection: &Connection, outcome: &RefreshOutcome) -> Resul
             connection.execute(
                 "UPDATE pull_requests SET title=?2,state=?3,merged_at=?4,additions=?5,
                      deletions=?6,head_ref_name=?7,refreshed_at=?8,last_attempted_at=?8,
-                     refresh_error=NULL
+                     refresh_error=NULL,manual_failed_at=NULL
                  WHERE id=?1",
                 params![
                     id,
@@ -845,9 +952,14 @@ fn record_pr_refresh(connection: &Connection, outcome: &RefreshOutcome) -> Resul
             )?;
         }
         RefreshOutcome::Failure(failure) => {
+            // Only a manual attempt that failed for the pull request's own
+            // reason sets the mark; every other failure leaves it as it was.
+            let marks = origin == RefreshOrigin::Manual && failure.error.about_this_pull_request();
             connection.execute(
-                "UPDATE pull_requests SET last_attempted_at=?2,refresh_error=?3 WHERE id=?1",
-                params![id, attempted_at, failure.error],
+                "UPDATE pull_requests SET last_attempted_at=?2,refresh_error=?3,
+                     manual_failed_at=CASE WHEN ?4 THEN ?2 ELSE manual_failed_at END
+                 WHERE id=?1",
+                params![id, attempted_at, failure.error, marks],
             )?;
         }
     }
@@ -871,9 +983,16 @@ fn links(
     filter: &str,
     parameters: impl rusqlite::Params,
 ) -> Result<Vec<StoredPrLink>> {
+    // A link to a number GitHub said is not a pull request is not reported
+    // as a pull-request link.
     let sql = format!(
-        "SELECT l.session_id,p.repo,p.number,p.url,l.confidence,l.first_seen_at,l.last_seen_at
-         FROM pr_links l JOIN pull_requests p ON p.id=l.pr_id WHERE {filter}"
+        concat!(
+            "SELECT l.session_id,p.repo,p.number,p.url,l.confidence,l.first_seen_at,l.last_seen_at
+         FROM pr_links l JOIN pull_requests p ON p.id=l.pr_id WHERE NOT ",
+            crate::not_found_on_github_sql!(),
+            " AND {filter}"
+        ),
+        filter = filter
     );
     let rows = connection
         .prepare(&sql)?

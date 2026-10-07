@@ -373,15 +373,15 @@ fn installed() -> TempDb {
 fn rewind_to_schema_12(path: &std::path::Path) {
     let sql = Connection::open(path).unwrap();
     sql.execute_batch(&format!(
-        "DELETE FROM schema_version WHERE version>=13;
+        "ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DELETE FROM schema_version WHERE version>=13;
          DROP VIEW v_response_usage; DROP VIEW v_usage_records;
          DROP VIEW v_session_events; DROP VIEW v_records;
          DROP TABLE injected_context_inputs; DROP TABLE IF EXISTS tool_sent_inputs; DROP TABLE IF EXISTS task_notification_inputs; DROP TABLE IF EXISTS record_previews; DROP TABLE IF EXISTS session_child_checks; DROP TABLE IF EXISTS session_child_facts; DROP TABLE IF EXISTS human_input_adjustments; DROP TABLE IF EXISTS human_session_origins; DROP TABLE claude_launch_groups; DROP TABLE claude_launch_group_members; DROP TABLE claude_launch_candidates; DROP TABLE claude_launch_staged_candidates;
          {SCHEMA_12_RECORDS_VIEW}
          {}; {}; {};",
-        include_str!("../../xt-store/views/usage_records.sql"),
-        include_str!("../../xt-store/views/response_usage.sql"),
-        include_str!("../../xt-store/views/session_events.sql"),
+        xt_store::views::USAGE_RECORDS,
+        xt_store::views::RESPONSE_USAGE,
+        xt_store::views::SESSION_EVENTS,
     ))
     .unwrap();
 }
@@ -423,12 +423,12 @@ fn scalar(path: &std::path::Path, query: &str) -> i64 {
         .unwrap()
 }
 
-fn records_view(path: &std::path::Path) -> String {
+fn view_sql(path: &std::path::Path, name: &str) -> String {
     Connection::open(path)
         .unwrap()
         .query_row(
-            "SELECT sql FROM sqlite_schema WHERE type='view' AND name='v_records'",
-            [],
+            "SELECT sql FROM sqlite_schema WHERE type='view' AND name=?1",
+            [name],
             |row| row.get(0),
         )
         .unwrap()
@@ -455,7 +455,7 @@ fn a_schema_12_index_upgrades_with_its_621_and_8_confirmations_and_metrics_uncha
     assert!(MetricsDb::open(&path).is_err());
     assert!(!table_exists(&path, "injected_context_inputs"));
     assert_eq!(
-        records_view(&path),
+        view_sql(&path, "v_records"),
         SCHEMA_12_RECORDS_VIEW.trim_end_matches(';')
     );
     let old_rows = confirmations(&path);
@@ -477,11 +477,11 @@ fn a_schema_12_index_upgrades_with_its_621_and_8_confirmations_and_metrics_uncha
 
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 22);
+        assert_eq!(store.schema_version().unwrap(), 23);
         assert!(store.injected_context_proofs(GUARDIAN).unwrap().is_empty());
         drop(store);
         assert!(
-            records_view(&path).contains("injected_context_inputs"),
+            view_sql(&path, "v_record_metadata").contains("injected_context_inputs"),
             "view rebuilt on open"
         );
         assert_eq!(confirmations(&path), old_rows);

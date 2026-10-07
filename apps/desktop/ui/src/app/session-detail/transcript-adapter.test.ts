@@ -3,6 +3,7 @@ import type { SessionSourceReason } from '../../data/generated/SessionSourceReas
 import type { SessionSourceStatus } from '../../data/generated/SessionSourceStatus';
 import type { SourceBlock } from '../../data/generated/SourceBlock';
 import type { SourceRecord } from '../../data/generated/SourceRecord';
+import { clock } from '../../kit/clock';
 import { blockId, partialNote, transcriptProps, unavailableNote } from './transcript-adapter';
 import type { ToolCallBlock, ToolResultBlock } from './transcript-view';
 
@@ -324,12 +325,8 @@ it('words a recorded instant in the reader’s own zone and borrows none', () =>
     ]),
   );
   expect(props.records[0].at?.iso).toBe('2026-09-07T12:00:00.000Z');
-  expect(props.records[0].at?.label).toBe(
-    new Date('2026-09-07T12:00:00.000Z').toLocaleTimeString(undefined, {
-      hour: '2-digit',
-      minute: '2-digit',
-    }),
-  );
+  // Written as every clock time in the app is: this Mac's locale and 12/24-hour choice.
+  expect(props.records[0].at?.label).toBe(clock(Date.parse('2026-09-07T12:00:00.000Z')));
   // A record with no recorded time shows none rather than a neighbour's.
   expect(props.records[1].at).toBe(null);
 });

@@ -288,6 +288,57 @@ mod summary {
         assert_eq!(unpriced.output.output_tokens, Some(2));
     }
 
+    #[test]
+    fn today_agent_time_is_the_dashboards_bar_for_today() {
+        // 23:50 and 00:10 in one session: a span over midnight. The tray and
+        // the Dashboard's bar for today both count its 10 minutes after
+        // midnight; a span ending before midnight counts for neither.
+        let mut db = TempDb::empty().unwrap();
+        seed(
+            db.store_mut(),
+            "night",
+            &[
+                event("n1", "2026-09-07T23:50:00Z"),
+                event("n2", "2026-09-08T00:10:00Z"),
+            ],
+        );
+        seed(
+            db.store_mut(),
+            "evening",
+            &[
+                event("e1", "2026-09-07T22:00:00Z"),
+                event("e2", "2026-09-07T22:15:00Z"),
+            ],
+        );
+        let now = ms("2026-09-08T12:00:00Z");
+        let summary = read(&db, now, TimeZone::UTC);
+        assert_eq!(
+            (summary.agent.active_ms, summary.agent.sessions),
+            (600_000, 1)
+        );
+        for days in xtrace_desktop::dashboard::WINDOW_PRESETS {
+            let report = xtrace_desktop::dashboard::assemble(
+                &MetricsDb::open(db.path()).unwrap(),
+                days,
+                now,
+                TimeZone::UTC,
+                MetricClock::System,
+                &catalog(),
+                xt_metrics::TypingRate::default(),
+                xt_metrics::BreakLength::default(),
+            )
+            .unwrap();
+            let bar = report.days.last().unwrap();
+            assert_eq!(bar.date, summary.date);
+            assert_eq!((bar.start_ms, bar.end_ms), (summary.start_ms, now));
+            assert_eq!(
+                (bar.agent_hours * 3_600_000.0).round() as u64,
+                summary.agent.active_ms,
+                "{days}"
+            );
+        }
+    }
+
     /// Tokens, cost and spans are read in one snapshot, by construction.
     #[test]
     fn today_reads_stay_inside_one_snapshot_by_construction() {
@@ -300,7 +351,7 @@ mod summary {
         for read in [
             "db.tokens(window",
             "db.cost(window",
-            "db.active_spans(window)",
+            "db.active_last_day(window",
         ] {
             assert_eq!(module.matches(read).count(), 1, "{read} is read elsewhere");
             assert!(closure.contains(read), "{read} is outside the snapshot");

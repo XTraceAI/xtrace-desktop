@@ -5,13 +5,16 @@ import type { AccountUsageWindow } from '../data/generated/AccountUsageWindow';
 import {
   AccountUsageWidget,
   ageLabel,
+  burndownSummary,
   limitingWindow,
   dayValueLabel,
+  isStale,
   paceFill,
   paceGapLabel,
   paceLabel,
   readingsSpanVisible,
   remainingLabel,
+  remainingPercent,
   resetLabel,
   shortTime,
   weekDays,
@@ -129,7 +132,8 @@ const usage: AccountUsage = {
         window: 'Weekly',
         used_percent: 26,
         duration_minutes: 10080,
-        resets_at: 1791050717,
+        // Relative to now, so the reset is still ahead on any test date.
+        resets_at: Math.floor(Date.now() / 1000) + 5 * 86_400,
       },
     ],
   },
@@ -761,6 +765,41 @@ function renderClaude(windows: AccountUsageWindow[], checkedAgoSeconds = 60) {
   );
 }
 
+it('marks a reading stale exactly when the app said it would turn stale', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(nowIso));
+  const checked = Date.now() / 1000 - 14 * 60;
+  const provider = {
+    state: 'available' as const,
+    issue: null,
+    checked_at: checked,
+    stale_at: checked + 15 * 60,
+    windows: [claudeWeek({ resets_at: Date.now() / 1000 + 86_400 })],
+  };
+  expect(isStale(provider)).toBe(false);
+  expect(isStale(provider, (checked + 15 * 60) * 1000)).toBe(true);
+  expect(isStale({ ...provider, state: 'stale' })).toBe(true);
+  expect(isStale({ ...provider, stale_at: undefined })).toBe(false);
+  render(
+    <AccountUsageWidget
+      usage={{
+        claude: provider,
+        codex: { state: 'unavailable', issue: 'source_unavailable', checked_at: null, windows: [] },
+      }}
+      failed={false}
+      refreshing={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  const sub = () => document.querySelector('summary .xt-account-sub')!.firstChild!.textContent;
+  expect(sub()).toMatch(/ · 14 min ago$/);
+  expect(sub()).not.toContain('Stale');
+  // No new read arrives; the screen turns the reading stale on time, with its age.
+  act(() => vi.advanceTimersByTime(60_000));
+  expect(sub()).toContain('Stale · 15 min ago');
+  expect(document.querySelector('summary')!.getAttribute('aria-label')).toContain('· stale');
+});
+
 it('shows a short one-line reset and an on-pace line for the week', () => {
   vi.stubEnv('TZ', 'America/Los_Angeles');
   vi.useFakeTimers();
@@ -1006,7 +1045,7 @@ it('draws the week by day on a fixed scale, with numbers, unknown and upcoming d
   expect(days.map((day) => day.querySelector('.xt-account-daily-value')!.textContent)).toEqual([
     '4',
     '>30',
-    '–',
+    '—',
     '≥5',
     '\u00a0',
     '\u00a0',
@@ -1056,8 +1095,8 @@ it('lists the rest of the window as upcoming or unread, and labels day values', 
   expect(value(12.5)).toBe('13');
   expect(value(12.9, true)).toBe('≥12');
   // A lower bound under one point says nothing about the day.
-  expect(value(0.4, true)).toBe('–');
-  expect(value(0, true)).toBe('–');
+  expect(value(0.4, true)).toBe('—');
+  expect(value(0, true)).toBe('—');
   // The box holds 30 points: the label and the cut-off mark agree.
   expect(value(30)).toBe('30');
   expect(value(30.1)).toBe('>30');
@@ -1254,6 +1293,26 @@ describe('the week burndown', () => {
     expect(svg.querySelector('.is-latest-label')).toBeNull();
   });
 
+  it.each([
+    [99.6, '0.4%'],
+    [99.96, '<0.1%'],
+    [0.04, '99.9%'],
+  ])(
+    'labels a latest reading %s%% used with the same remaining percent as the header',
+    (used, shown) => {
+      vi.stubEnv('TZ', 'America/Los_Angeles');
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(nowIso));
+      const now = Date.now() / 1000 - 60;
+      renderClaude([claudeWeek({ used_percent: used, series: [{ at: now, used_percent: used }] })]);
+      expect(remainingPercent(used)).toBe(shown);
+      expect(screen.getByLabelText(`Claude account usage: ${shown} remaining · Week`)).toBeTruthy();
+      const svg = chartOf().querySelector('svg[role="img"]')!;
+      expect(svg.querySelector('.is-latest-label')!.textContent).toBe(shown);
+      expect(svg.getAttribute('aria-label')).toBe(`${shown} remaining.`);
+    },
+  );
+
   it('draws readings spanning under 2% of the week as the latest reading, not a line', () => {
     vi.stubEnv('TZ', 'America/Los_Angeles');
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -1425,7 +1484,7 @@ it('marks a day cut off exactly when its number reads over 30', () => {
   expect(days.map((day) => day.querySelector('.xt-account-daily-value')!.textContent)).toEqual([
     '30',
     '>30',
-    '–',
+    '—',
   ]);
   expect(days.map((day) => day.classList.contains('is-over'))).toEqual([false, true, false]);
   // Screen readers still hear the exact value.
@@ -1709,4 +1768,14 @@ it('words the pace line with the same comparison as the tick and the bar', () =>
   expect(line(31)).toEqual({ text: 'Behind pace · ~66% used by reset', warning: false });
   expect(line(evenNow)).toEqual({ text: 'On pace · ~66% used by reset', warning: false });
   expect(paceGapLabel(pacedWeek(31))).toMatch(/behind pace$/);
+});
+
+it('says the same projection on screen and to a screen reader, rounded once', () => {
+  // 49.5% projected: "~50% used by reset" and "about 50% left", never 51% left.
+  const week = pacedWeek(31, {
+    resets_at: Date.now() / 1000 + 3 * 86_400,
+    pace: { projected_percent_at_reset: 49.5, expected_percent: evenNow, run_out_at: null },
+  });
+  expect(paceLabel(week)?.text).toBe('Behind pace · ~50% used by reset');
+  expect(burndownSummary(week)).toContain('At this pace about 50% is left at the reset.');
 });

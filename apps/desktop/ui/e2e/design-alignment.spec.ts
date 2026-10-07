@@ -32,13 +32,13 @@ const CARDS = [
   ['Sessions', ruleSummary('M-05')],
 ] as const;
 /**
- * Measurements opened from the card they belong to — tokens and cost as sections of Effort's
- * Details, coverage from the Sessions header — each with its definition beside its title.
+ * Measurements opened from the card they belong to — tokens and cost as sections of the dialog
+ * behind Effort's ⓘ, coverage from the Sessions header — each with its definition beside its title.
  */
 const METHOD = 'How effort is counted · daily values';
 const DETAILS = [
-  ['Tokens per day', 'M-04', 'Effort', /^Details$/, METHOD],
-  ['API-equivalent cost', 'M-04', 'Effort', /^Details$/, METHOD],
+  ['Tokens per day', 'M-04', 'Effort', /^Effort definition$/, METHOD],
+  ['API-equivalent cost', 'M-04', 'Effort', /^Effort definition$/, METHOD],
   ['Coverage', 'M-18', 'Sessions', /^Coverage/, 'Coverage'],
 ] as const;
 
@@ -189,4 +189,55 @@ test('a window too short for the list keeps its rows reachable by scrolling the 
   await scroll.focus();
   await page.keyboard.press('End');
   await expect(page.getByText('Session 00000059', { exact: true })).toBeInViewport();
+});
+
+/**
+ * Effort's ⓘ also opens the card's details, but looks and takes focus exactly
+ * as every other card's ⓘ does: the same box, centring, ink and focus ring.
+ */
+test('the Effort ⓘ is drawn and focused like the Sessions ⓘ', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/dashboard');
+  await expect(page.getByTestId('dashboard-summary')).toBeVisible();
+  const style = (name: string) =>
+    page.getByRole('button', { name, exact: true }).evaluate((node) => {
+      const css = getComputedStyle(node);
+      const icon = node.querySelector('svg')!.getBoundingClientRect();
+      const box = node.getBoundingClientRect();
+      return {
+        display: css.display,
+        alignItems: css.alignItems,
+        justifyItems: css.justifyItems,
+        width: css.width,
+        height: css.height,
+        padding: css.padding,
+        border: css.borderStyle,
+        radius: css.borderRadius,
+        color: css.color,
+        background: css.backgroundColor,
+        textDecoration: css.textDecorationLine,
+        outline: `${css.outlineStyle} ${css.outlineWidth} ${css.outlineColor} ${css.outlineOffset}`,
+        // The icon sits in the middle of its box.
+        iconOffset: [
+          Math.round(icon.left - box.left - (box.right - icon.right)),
+          Math.round(icon.top - box.top - (box.bottom - icon.bottom)),
+        ],
+      };
+    });
+  const sessions = 'Sessions definition';
+  const effort = 'Effort definition';
+  expect(await style(effort)).toEqual(await style(sessions));
+  // Focused from the keyboard (Tab onto it), both show the same ring.
+  await page.getByRole('button', { name: sessions, exact: true }).focus();
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  const focusedSessions = await style(sessions);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: effort, exact: true }).focus();
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  const focusedEffort = await style(effort);
+  expect(focusedEffort.outline).toBe(focusedSessions.outline);
+  expect(focusedEffort.outline).not.toMatch(/^none/);
+  expect(focusedEffort).toEqual(focusedSessions);
 });

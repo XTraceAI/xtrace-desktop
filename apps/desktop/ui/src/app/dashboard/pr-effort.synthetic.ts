@@ -179,6 +179,8 @@ const tileOf = (patch: Partial<MetricMergedPrs>): MetricMergedPrs => {
       refreshed: known,
       failed_never_refreshed: 0,
       failed_after_refresh: 0,
+      manual_failed_never_refreshed: 0,
+      manual_failed_after_refresh: 0,
       oldest_refreshed_at: known > 0 ? 1_788_825_600_000 : null,
       newest_attempted_at: known > 0 ? 1_788_825_600_000 : null,
     },

@@ -27,24 +27,36 @@ struct Period {
     cost: xt_metrics::CostReport,
 }
 impl Period {
+    /// The period's reports and its M-19 report; the window's spans are read
+    /// once for agent time, human time, concurrency and M-19.
     fn read(
         db: &MetricsDb,
         window: Window,
         zone: TimeZone,
         catalog: &PriceCatalog,
         typing_rate: TypingRate,
-    ) -> xt_metrics::Result<Self> {
-        Ok(Self {
+    ) -> xt_metrics::Result<(Self, xt_metrics::PrEffortReport)> {
+        // M-19 from cached refresh facts only: no request is made here.
+        // Inferred links are removed before eligibility and assignment, so
+        // the tile and the chart count exact and SHA links only.
+        let xt_metrics::WindowActivity {
+            spans,
+            human,
+            concurrency,
+            pr_effort,
+        } = db.window_activity(window, zone.clone(), typing_rate, CONFIRMED_ONLY, catalog)?;
+        let period = Self {
             counts: db.counts(window, typing_rate)?,
-            spans: db.active_spans(window)?,
-            human: db.human_time(window, typing_rate, zone.clone())?,
-            concurrency: db.concurrency(window)?,
+            spans,
+            human,
+            concurrency,
             hands_off: db.hands_off(window)?,
             tokens: db.tokens(window, zone.clone())?,
             favorite: db.favorite_model(window)?,
             sessions: db.sessions_per_day(window, zone.clone())?,
             cost: db.cost(window, zone, catalog)?,
-        })
+        };
+        Ok((period, pr_effort))
     }
 }
 
@@ -484,16 +496,10 @@ pub fn assemble(
             // so this counts all indexed history. Reading it in the same
             // snapshot keeps it describing the state the windows describe.
             db.untimed_history()?,
-            // M-19 over both equal windows, from cached refresh facts only:
-            // no request is made here. Inferred links are removed before
-            // eligibility and assignment, so the tile and the chart count
-            // exact and SHA links only.
-            db.pr_effort(window, zone.clone(), CONFIRMED_ONLY, catalog)?,
-            db.pr_effort(previous, zone.clone(), CONFIRMED_ONLY, catalog)?,
             Daily::read(db, window, break_length, zone.clone())?,
         ))
     })?;
-    let (current, prior, coverage, lanes, untimed, pr_current, pr_prior, daily) = read;
+    let ((current, pr_current), (prior, pr_prior), coverage, lanes, untimed, daily) = read;
     checked_value(&current)?;
     checked_value(&prior)?;
     let session_n = (
@@ -660,7 +666,7 @@ pub fn assemble(
         return Err(StateError::MetricEncoding);
     }
     // The daily series must name the same days as the hero's buckets, with
-    // the same bounds; your hours' days are the same dates made whole.
+    // the same bounds; human time's days are the same dates made whole.
     for (index, tokens) in series.iter().enumerate() {
         let day = (tokens.date.as_str(), tokens.start_ms, tokens.end_ms);
         let human = &daily.human.current.by_day[index];
@@ -825,7 +831,7 @@ impl Daily {
     }
 
     /// Leverage for each whole local day: that day's agent hours divided by
-    /// its own hours of yours; no value when yours are zero or unknown.
+    /// its own human time; no value when it is zero or unknown.
     fn leverage(&self, zone: TimeZone) -> Result<DashboardLeverage, StateError> {
         let agent_days = self.agent.by_day(self.agent_window, zone)?;
         if agent_days.len() != self.human.current.by_day.len() {
@@ -862,9 +868,9 @@ impl Daily {
     }
 }
 
-/// Leverage (M-08): agent hours (M-05) divided by your hours, both over the
+/// Leverage (M-08): agent hours (M-05) divided by human time, both over the
 /// same whole local days, against the same ratio over the previous whole
-/// days. Unknown, never infinite, when your hours are zero or unknown;
+/// days. Unknown, never infinite, when human time is zero or unknown;
 /// sessions are n, as for agent hours.
 pub(crate) fn leverage_tile(
     (agent_ms, prior_agent_ms): (u64, u64),
@@ -879,11 +885,11 @@ pub(crate) fn leverage_tile(
     let current = &human.current;
     let reason = match (current.active_ms, current.messages) {
         (None, _) | (_, None) => {
-            "Your hours are unknown: a message's sender is not classified".to_owned()
+            "Human time is unknown: a message's sender is not classified".to_owned()
         }
         (Some(_), Some(0)) => "You sent no messages to agents in this range".to_owned(),
         (Some(_), Some(_)) => format!(
-            "Each message you sent stood alone: no other message came within {} minutes of it, so your hours are zero",
+            "Each message you sent stood alone: no other message came within {} minutes of it, so human time is zero",
             current.break_minutes
         ),
     };
@@ -896,7 +902,7 @@ pub(crate) fn leverage_tile(
         &reason,
     )?;
     tile.note = Some(format!(
-        "Agent hours divided by your hours, both over the same whole local days. Your hours run from each message you sent to the next one when they are at most {} minutes apart.",
+        "Agent hours divided by human time, both over the same whole local days. Human time runs from each message you sent to the next one when they are at most {} minutes apart.",
         current.break_minutes
     ));
     Ok(tile)
@@ -1428,7 +1434,7 @@ mod leverage_tests {
         assert_eq!(tile.value, None);
         assert_eq!(
             tile.reason.as_deref(),
-            Some("Your hours are unknown: a message's sender is not classified")
+            Some("Human time is unknown: a message's sender is not classified")
         );
         assert_eq!(tile.delta.previous, Some(2.0));
     }
@@ -1461,7 +1467,7 @@ mod leverage_tests {
         let reason = tile.reason.unwrap();
         assert_eq!(
             reason,
-            "Each message you sent stood alone: no other message came within 45 minutes of it, so your hours are zero"
+            "Each message you sent stood alone: no other message came within 45 minutes of it, so human time is zero"
         );
         assert!(!reason.contains("no messages"));
     }

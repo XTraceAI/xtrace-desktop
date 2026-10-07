@@ -1,0 +1,1 @@
+- Explain incompatible or newer data files in a startup alert, with a Show in Finder action.

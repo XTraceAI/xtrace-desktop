@@ -73,7 +73,7 @@ async function mount(data: DataSource) {
       </DataProvider>
     </ThemeProvider>,
   );
-  await screen.findByRole('heading', { name: 'Your hours' });
+  await screen.findByRole('heading', { name: 'Human time' });
   // The settled index status reconciles its own queries once; spy after that.
   await screen.findByTestId('native-index');
 }

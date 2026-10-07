@@ -16,7 +16,10 @@
 //!   whatever order they were written in: the client keeps writing a stale
 //!   generated title after a rename. Within each kind the last valid record
 //!   wins. A sidechain record, a record naming another session, and a value
-//!   that is not a nonblank string are ignored.
+//!   that is not a nonblank string are ignored. A complete line too long to
+//!   inspect could be a later rename, so it leaves the session untitled
+//!   unless a later valid rename, whose top-level keys each appear once,
+//!   settles it; a generated title never does.
 //! - **Codex.** The last valid `event_msg`/`thread_name_updated` of the
 //!   verified rollout. Only when that rollout names no thread, the last
 //!   matching `id`/`thread_name` row in the bounded tail of the host's
@@ -42,9 +45,10 @@
 //! inode, length and change time — before and after it is streamed. A Claude
 //! transcript must also still hold the generation its checkpoint recorded. A
 //! missing, moved, ambiguous, replaced, oversized or cancelled source, one
-//! with a complete line too long to inspect, a spent batch budget or the batch
-//! deadline gives that row no title, which leaves its identifier in place; a
-//! wrong session's title is never returned.
+//! with a complete line too long to inspect (that no later Claude rename
+//! settles), a spent batch budget or the batch deadline gives that row no
+//! title, which leaves its identifier in place; a wrong session's title is
+//! never returned.
 
 use super::checkpoint::{self, FileIdentity, ResumeBasis};
 use super::readers_cli::CancelToken;
@@ -79,7 +83,8 @@ pub const MAX_TITLE_BATCH_BYTES: u64 = 512 * 1024 * 1024;
 /// The longest line inspected. A Codex rollout's opening `session_meta` can
 /// hold long instructions; a title line is a few hundred bytes. A longer
 /// complete line is never partly parsed, and because it could hold the latest
-/// title it leaves its whole source untitled.
+/// title it leaves its whole source untitled — for Claude, unless a later
+/// valid rename settles it.
 pub const MAX_TITLE_LINE_BYTES: usize = 1024 * 1024;
 
 /// The longest title returned, in characters, as the Codex reader bounds a
@@ -195,7 +200,8 @@ pub enum Untitled {
     /// The source is larger than a title read may stream.
     TooLarge,
     /// A complete line is longer than a title read inspects; it could hold a
-    /// later title than any line that was read.
+    /// later title than any line that was read. In a Claude transcript, only
+    /// when no later valid rename settles it.
     LineTooLong,
     /// Earlier rows spent the batch's byte budget.
     Budget,
@@ -599,7 +605,12 @@ impl<'a> Batch<'a> {
             Err(why) => return TitleOutcome::Untitled(why),
         };
         let mut titles = ClaudeTitles::new(native);
-        match self.stream(&candidate, Proof::Checkpoint, &mut |line| titles.line(line)) {
+        match self.stream_lines(
+            &candidate,
+            Proof::Checkpoint,
+            Overlong::Report,
+            &mut |line| titles.line(line),
+        ) {
             Ok(()) => titles.outcome(),
             Err(why) => TitleOutcome::Untitled(why),
         }
@@ -748,12 +759,29 @@ impl<'a> Batch<'a> {
     }
 
     /// Stream one verified source line by line, and prove afterwards that the
-    /// bytes streamed are the file that was observed.
+    /// bytes streamed are the file that was observed. A complete line longer
+    /// than the bound refuses the whole source.
     pub(super) fn stream(
         &mut self,
         candidate: &Candidate<'_>,
         proof: Proof,
         on_line: &mut dyn FnMut(&[u8]) -> Flow,
+    ) -> Result<(), Untitled> {
+        self.stream_lines(candidate, proof, Overlong::Refuse, &mut |line| match line {
+            Line::Inspected(line) => on_line(line),
+            // Never handed on: the scan refuses the source instead.
+            Line::Opaque => Flow::Stop,
+        })
+    }
+
+    /// [`Self::stream`], with what a complete line longer than the bound does
+    /// chosen by the caller.
+    fn stream_lines(
+        &mut self,
+        candidate: &Candidate<'_>,
+        proof: Proof,
+        overlong: Overlong,
+        on_line: &mut dyn FnMut(Line<'_>) -> Flow,
     ) -> Result<(), Untitled> {
         let (mut source, identity) =
             open_regular(&candidate.path, &candidate.observed).map_err(|_| {
@@ -788,12 +816,13 @@ impl<'a> Batch<'a> {
                 .seek(SeekFrom::Start(0))
                 .map_err(|_| Untitled::Unreadable)?;
         }
-        let read = scan_lines(
+        let read = scan(
             &mut source,
             identity.len,
             self.limits.max_line_bytes,
             READ_CHUNK,
             &self.stop,
+            overlong,
             on_line,
         );
         self.bytes_read += match &read {
@@ -1085,12 +1114,27 @@ pub(super) enum Flow {
     Stop,
 }
 
-/// Read exactly `len` bytes from `source` in bounded chunks, handing every
-/// complete line of at most `max_line` bytes to `on_line` without its newline.
-/// A longer complete line ends the read: it is never partly parsed, and what
-/// it might say is not known. A final line without a newline is not a line (a
-/// torn write is left as the importer leaves it), however long. Returns the
-/// bytes read, also on failure.
+/// What a scan does with a complete line longer than its bound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Overlong {
+    /// End the read: what the line says is not known.
+    Refuse,
+    /// Drop the line's bytes unkept and unparsed, report that a line was
+    /// there, and read on.
+    Report,
+}
+
+/// One complete line a scan hands on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Line<'a> {
+    /// A line within the bound, without its newline.
+    Inspected(&'a [u8]),
+    /// A line longer than the bound, under [`Overlong::Report`]. None of its
+    /// bytes are kept.
+    Opaque,
+}
+
+/// [`scan`] for readers that refuse a source with an overlong complete line.
 fn scan_lines(
     source: &mut fs::File,
     len: u64,
@@ -1098,6 +1142,37 @@ fn scan_lines(
     chunk: usize,
     stop: &Stop<'_>,
     on_line: &mut dyn FnMut(&[u8]) -> Flow,
+) -> Result<u64, (Untitled, u64)> {
+    scan(
+        source,
+        len,
+        max_line,
+        chunk,
+        stop,
+        Overlong::Refuse,
+        &mut |line| match line {
+            Line::Inspected(line) => on_line(line),
+            // Never handed on: the scan refuses the source instead.
+            Line::Opaque => Flow::Stop,
+        },
+    )
+}
+
+/// Read exactly `len` bytes from `source` in bounded chunks, handing every
+/// complete line of at most `max_line` bytes to `on_line` without its newline.
+/// A longer complete line is never partly parsed, and what it might say is not
+/// known: under [`Overlong::Refuse`] it ends the read, under
+/// [`Overlong::Report`] it is handed on as [`Line::Opaque`]. A final line
+/// without a newline is not a line (a torn write is left as the importer
+/// leaves it), however long. Returns the bytes read, also on failure.
+fn scan(
+    source: &mut fs::File,
+    len: u64,
+    max_line: usize,
+    chunk: usize,
+    stop: &Stop<'_>,
+    overlong_lines: Overlong,
+    on_line: &mut dyn FnMut(Line<'_>) -> Flow,
 ) -> Result<u64, (Untitled, u64)> {
     let mut buffer = vec![0_u8; chunk];
     // The start of a line the previous chunk ended inside.
@@ -1121,14 +1196,17 @@ fn scan_lines(
         while let Some(at) = rest.iter().position(|byte| *byte == b'\n') {
             let piece = &rest[..at];
             rest = &rest[at + 1..];
-            if overlong || carry.len() + piece.len() > max_line {
-                return Err((Untitled::LineTooLong, read_total));
-            }
-            let flow = if carry.is_empty() {
-                on_line(piece)
+            let flow = if overlong || carry.len() + piece.len() > max_line {
+                if overlong_lines == Overlong::Refuse {
+                    return Err((Untitled::LineTooLong, read_total));
+                }
+                overlong = false;
+                on_line(Line::Opaque)
+            } else if carry.is_empty() {
+                on_line(Line::Inspected(piece))
             } else {
                 carry.extend_from_slice(piece);
-                on_line(&carry)
+                on_line(Line::Inspected(&carry))
             };
             carry.clear();
             if flow == Flow::Stop {
@@ -1204,11 +1282,18 @@ pub fn host_title(value: &Value) -> Option<String> {
     )
 }
 
-/// The two Claude title kinds, each keeping its last valid value.
+/// The two Claude title kinds, each keeping its last valid value, and whether
+/// a line too long to inspect could hold a later rename.
 struct ClaudeTitles<'a> {
     native: &'a str,
     rename: Option<String>,
     generated: Option<String>,
+    /// A complete overlong line came after the last rename that may settle
+    /// it.
+    unsettled: bool,
+    /// A complete overlong line came anywhere before: from then on, only a
+    /// rename with no repeated top-level key counts.
+    overlong_seen: bool,
 }
 
 impl<'a> ClaudeTitles<'a> {
@@ -1217,10 +1302,21 @@ impl<'a> ClaudeTitles<'a> {
             native,
             rename: None,
             generated: None,
+            unsettled: false,
+            overlong_seen: false,
         }
     }
 
-    fn line(&mut self, line: &[u8]) -> Flow {
+    fn line(&mut self, line: Line<'_>) -> Flow {
+        let line = match line {
+            Line::Inspected(line) => line,
+            // It could be a later rename than any read so far.
+            Line::Opaque => {
+                self.unsettled = true;
+                self.overlong_seen = true;
+                return Flow::Continue;
+            }
+        };
         // Only a line naming one of the two kinds is parsed at all.
         if !contains(line, b"-title\"") {
             return Flow::Continue;
@@ -1228,9 +1324,9 @@ impl<'a> ClaudeTitles<'a> {
         let Some(record) = object(line) else {
             return Flow::Continue;
         };
-        let (slot, field) = match record.get("type").and_then(Value::as_str) {
-            Some("custom-title") => (&mut self.rename, "customTitle"),
-            Some("ai-title") => (&mut self.generated, "aiTitle"),
+        let (is_rename, field) = match record.get("type").and_then(Value::as_str) {
+            Some("custom-title") => (true, "customTitle"),
+            Some("ai-title") => (false, "aiTitle"),
             _ => return Flow::Continue,
         };
         if record.get("isSidechain").and_then(Value::as_bool) == Some(true) {
@@ -1243,13 +1339,29 @@ impl<'a> ClaudeTitles<'a> {
         {
             return Flow::Continue;
         }
-        if let Some(title) = record.get(field).and_then(host_title) {
-            *slot = Some(title);
+        let Some(title) = record.get(field).and_then(host_title) else {
+            return Flow::Continue;
+        };
+        if !is_rename {
+            self.generated = Some(title);
+            return Flow::Continue;
         }
+        // A later rename outranks whatever an overlong line before it held,
+        // but only one that reads the same whichever of a repeated key wins.
+        // Once such a line was seen, an ambiguous rename neither settles it
+        // nor replaces a rename that did.
+        if self.overlong_seen && !distinct_top_level_keys(line) {
+            return Flow::Continue;
+        }
+        self.unsettled = false;
+        self.rename = Some(title);
         Flow::Continue
     }
 
     fn outcome(self) -> TitleOutcome {
+        if self.unsettled {
+            return TitleOutcome::Untitled(Untitled::LineTooLong);
+        }
         match (self.rename, self.generated) {
             (Some(title), _) => TitleOutcome::Titled {
                 title,
@@ -1262,6 +1374,40 @@ impl<'a> ClaudeTitles<'a> {
             (None, None) => TitleOutcome::Untitled(Untitled::NoTitle),
         }
     }
+}
+
+/// Whether `line` is one JSON object none of whose top-level keys appears
+/// twice, however each is spelled. [`object`] keeps the last of a repeated
+/// key, so a record with two `type`s or two `customTitle`s could be read
+/// either way. Values are checked for syntax and not kept.
+fn distinct_top_level_keys(line: &[u8]) -> bool {
+    use serde::de::{Deserializer as _, IgnoredAny, MapAccess, Visitor};
+
+    struct Keys;
+
+    impl<'de> Visitor<'de> for Keys {
+        type Value = bool;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a JSON object")
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<bool, A::Error> {
+            let mut seen = std::collections::BTreeSet::new();
+            let mut distinct = true;
+            while let Some(key) = map.next_key::<String>()? {
+                map.next_value::<IgnoredAny>()?;
+                distinct &= seen.insert(key);
+            }
+            Ok(distinct)
+        }
+    }
+
+    let mut reader = serde_json::Deserializer::from_slice(line);
+    (&mut reader)
+        .deserialize_map(Keys)
+        .and_then(|distinct| reader.end().map(|()| distinct))
+        .unwrap_or(false)
 }
 
 /// What a rollout's opening line says about the history it belongs to.
@@ -1552,6 +1698,111 @@ mod tests {
         });
         assert_eq!(expired.err(), Some(Untitled::Deadline));
         assert_eq!(source.stream_position().unwrap(), 2 * CHUNK);
+    }
+
+    /// What a scan of `body` hands on, an opaque line as `None`, and how it
+    /// ended.
+    #[allow(clippy::type_complexity)]
+    fn scanned(
+        body: &[u8],
+        max_line: usize,
+        chunk: usize,
+        overlong: Overlong,
+    ) -> (Vec<Option<Vec<u8>>>, Result<u64, (Untitled, u64)>) {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("s.jsonl");
+        fs::write(&path, body).unwrap();
+        let mut source = fs::File::open(&path).unwrap();
+        let stop = Stop {
+            cancel: None,
+            deadline: Instant::now() + Duration::from_secs(3600),
+        };
+        let mut seen = Vec::new();
+        let read = scan(
+            &mut source,
+            body.len() as u64,
+            max_line,
+            chunk,
+            &stop,
+            overlong,
+            &mut |line| {
+                seen.push(match line {
+                    Line::Inspected(line) => Some(line.to_vec()),
+                    Line::Opaque => None,
+                });
+                Flow::Continue
+            },
+        );
+        (seen, read)
+    }
+
+    /// A line of exactly the bound is inspected; one byte more is opaque under
+    /// `Report` and refuses the read under `Refuse`, at the end of the chunk
+    /// holding its newline, wherever its overflow began. The lines after it
+    /// are handed on whole, in the same chunk or a later one, and the whole
+    /// file is read. A torn final line hands on nothing, however long.
+    #[test]
+    fn an_overlong_line_is_refused_or_reported_at_exact_edges() {
+        let inspected = |line: &str| Some(line.as_bytes().to_vec());
+        for chunk in [4, 64] {
+            for overlong in [Overlong::Refuse, Overlong::Report] {
+                assert_eq!(
+                    scanned(b"12345678\nab\n", 8, chunk, overlong),
+                    (vec![inspected("12345678"), inspected("ab")], Ok(12)),
+                    "{chunk} {overlong:?}"
+                );
+            }
+        }
+        // One byte over: by the newline's piece, or by the carry long before
+        // the newline arrives.
+        for (body, refused_at) in [
+            (&b"123456789\nab\n"[..], [12, 13]),
+            (&b"aaaaaaaaaaaaaaaaaaa\nab\ncd\n"[..], [20, 26]),
+        ] {
+            for (chunk, refused_at) in [4, 64].into_iter().zip(refused_at) {
+                let (seen, read) = scanned(body, 8, chunk, Overlong::Refuse);
+                assert_eq!(
+                    (seen.len(), read),
+                    (0, Err((Untitled::LineTooLong, refused_at))),
+                    "{chunk}"
+                );
+                let (seen, read) = scanned(body, 8, chunk, Overlong::Report);
+                assert_eq!(seen[0], None, "{chunk}");
+                assert_eq!(seen[1], inspected("ab"), "{chunk}");
+                assert_eq!(read, Ok(body.len() as u64), "{chunk}");
+            }
+        }
+        for torn in [&b"ab\n123456789012"[..], &b"ab\ncd"[..]] {
+            for chunk in [4, 64] {
+                assert_eq!(
+                    scanned(torn, 8, chunk, Overlong::Report),
+                    (vec![inspected("ab")], Ok(torn.len() as u64)),
+                    "{chunk}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_top_level_keys_are_found_however_spelled() {
+        for (line, distinct) in [
+            (&br#"{}"#[..], true),
+            (br#"{"a":1,"b":{"c":1,"c":2}}"#, true),
+            (br#"{"a":1,"a":1}"#, false),
+            (br#"{"a":1,"\u0061":2}"#, false),
+            (br#"{"type":"x","b":[1],"type":"y"}"#, false),
+            (br#"[1]"#, false),
+            (br#"{"a":1"#, false),
+            (br#"{"a":1} x"#, false),
+            (br#"{"a":1}{"b":2}"#, false),
+        ] {
+            assert_eq!(
+                distinct_top_level_keys(line),
+                distinct,
+                "{}",
+                String::from_utf8_lossy(line)
+            );
+        }
     }
 
     const THREAD: &str = "019a0000-0000-7000-8000-00000000c0de";

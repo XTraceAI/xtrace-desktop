@@ -26,7 +26,7 @@ import { freshnessText, phaseText } from '../src/app/native-index-text';
  * default (1440×900), in both schemes, over the generated F1 export and over
  * synthetic data (not real history, not a design sample) that makes every
  * part of the page as long and as full as it gets at once: dense tiles with
- * comparisons, a long favorite model, a week of effort from eight assignments with a partly priced day, a full week of your hours and daily
+ * comparisons, a long favorite model, a week of effort from eight assignments with a partly priced day, a full week of human time and daily
  * Overview lines, fourteen truncated lane sessions with long
  * repositories, four-figure partial costs, a priced total with unpriced tiers,
  * partial coverage rows, hands-off exclusions and untimed history.
@@ -201,6 +201,7 @@ function stressReport(report: DashboardMetrics): DashboardMetrics {
       title:
         index % 3 === 1 ? `A saved session title long enough to need an ellipsis ${index}` : null,
       automated_review: false,
+      child_check: 'checked',
       started_at_ms: index % 4 === 2 ? null : start - index * 86_400_000,
       pr_links: index % 5 === 0 ? 0 : index * 9,
       inferred_pr_links: index % 5 === 0 ? 0 : index % 2,
@@ -268,7 +269,7 @@ function exportFor(shape: Shape): FixtureExport {
     partial: partialReport,
   }[shape];
   if (edit) out.dashboards = out.dashboards.map(edit);
-  // A full timeline of your hours and full daily lines, beside the stress report's own values.
+  // A full timeline of human time and full daily lines, beside the stress report's own values.
   if (shape === 'stress')
     out.dashboards = out.dashboards.map((report) =>
       syntheticOverview(report, { effort: false, tiles: false }),
@@ -632,7 +633,7 @@ function expectFits(g: Geometry, width: number, height: number) {
   }
   // At least three rows of each list are wholly in view, or all of them when fewer.
   expect(g.rows.lanes).toBeGreaterThanOrEqual(Math.min(3, g.rows.lanesTotal));
-  // The human h view draws your hours instead of the chart: at least three
+  // The human h view draws human time instead of the chart: at least three
   // of its days are wholly in view, all of them when fewer.
   if (g.human) {
     expect(g.effort, 'no effort chart beside the timeline').toBeNull();
@@ -752,7 +753,7 @@ for (const shape of ['plain', 'stress'] as const)
           // only by scrolling inside itself.
           expect(g.rows.lanesTotal).toBe(14);
           expect(g.effort).toMatchObject({ days: 7, bars: 5, markers: 3 });
-          expect(g.effort!.headline).toBe('18 agent hlast 7 days');
+          expect(g.effort!.headline).toBe('18h00m agentlast 7 days');
           // Effort draws no work type, so it has no unresolved triangle.
           await expect(page.getByTestId('effort-unresolved')).toHaveCount(0);
           // The lanes are capped, but no caption under the rows says so.
@@ -761,7 +762,7 @@ for (const shape of ['plain', 'stress'] as const)
             /^Coverage: .*2,318 untimed records$/,
           );
           const merged = page.getByTestId('overview-tile').filter({ hasText: 'Merged PRs' });
-          await expect(merged.getByTestId('overview-value')).toHaveText('5');
+          await expect(merged.getByTestId('overview-value')).toHaveText('5so far');
           await expect(merged.locator('.xt-overview-sub')).toHaveText('1 not checked yet');
         }
         await expectPageStill(page);
@@ -804,7 +805,7 @@ test('a failed report keeps the page in the window', async ({ page }) => {
 
 /**
  * The secondary details, each one keyboard step from the page, from the card
- * it belongs to: tokens and cost are sections of Details, coverage and untimed
+ * it belongs to: tokens and cost are sections of the dialog behind Effort's ⓘ, coverage and untimed
  * history open from the Sessions header, each panel's unresolved data from
  * the triangle at its header's end, and the pull-request refresh from the
  * Effort card's red ! (the stress report has a linked pull request that this
@@ -812,7 +813,7 @@ test('a failed report keeps the page in the window', async ({ page }) => {
  */
 const OVERLAYS = [
   { name: /^Coverage/, dialog: 'Coverage' },
-  { name: /^Details$/, dialog: 'How effort is counted · daily values' },
+  { name: /^Effort definition$/, dialog: 'How effort is counted · daily values' },
   { name: 'Pull-request checks need your attention', dialog: 'Refresh pull-request facts' },
 ] as const;
 
@@ -870,7 +871,7 @@ for (const [width, height, scheme] of [
     await page.getByRole('radio', { name: '30d' }).click();
     await expect(page.locator('.xt-effort-column')).toHaveCount(30);
     expectFits(await page.evaluate(geometry), width, height);
-    await page.getByRole('button', { name: 'Details', exact: true }).click();
+    await page.getByRole('button', { name: 'Effort definition', exact: true }).click();
     const tokens = page.getByRole('dialog', { name: 'How effort is counted · daily values' });
     await expect(
       tokens.getByRole('group', { name: 'Output tokens per day' }).getByRole('img'),
@@ -921,7 +922,7 @@ test('the daily tables inside the dialogs scroll from the keyboard at 1120x720',
     expect((await page.evaluate(geometry)).primary).toEqual(before.primary);
   };
 
-  // Details: from Close, one Tab reaches the region; the day, both measures
+  // Effort's ⓘ dialog: from Close, one Tab reaches the region; the day, both measures
   // and the merged numbers fit its width in dollars mode.
   await page.getByRole('radio', { name: 'cost' }).click();
   await expectMeasure(page, 'cost');
@@ -931,7 +932,7 @@ test('the daily tables inside the dialogs scroll from the keyboard at 1120x720',
   expectFits(before, 1120, 720);
   const method = page
     .locator('.xt-dashboard')
-    .getByRole('button', { name: 'Details', exact: true });
+    .getByRole('button', { name: 'Effort definition', exact: true });
   await method.focus();
   await page.keyboard.press('Enter');
   const methodDialog = page.getByRole('dialog', {
@@ -948,7 +949,7 @@ test('the daily tables inside the dialogs scroll from the keyboard at 1120x720',
   );
   await escape(methodDialog, method, before);
 
-  // Tokens per day, Details' usage section: the daily token values open inside
+  // Tokens per day, that dialog's usage section: the daily token values open inside
   // it first, then one Tab from their summary reaches the region.
   await method.focus();
   await page.keyboard.press('Enter');
@@ -966,15 +967,19 @@ test('the daily tables inside the dialogs scroll from the keyboard at 1120x720',
 test('the lists scroll inside themselves from the keyboard at 1120x720', async ({ page }) => {
   await open(page, exportFor('stress'), 1120, 720, 'light');
   const before = await page.evaluate(geometry);
-  // The lanes always overflow here; the 30-day timeline of your hours too.
+  // The lanes always overflow here; the 30-day timeline of human time too.
   await page.getByRole('radio', { name: '30d' }).click();
   await page.getByRole('radio', { name: 'human h' }).click();
-  for (const [region, last, mustScroll] of [
-    [page.getByRole('region', { name: 'Session lanes scroll area' }), '.xt-data-row', true],
-    [page.getByRole('list', { name: /^Your hours by day/ }), '.xt-human-row', true],
+  const humanDays = page.getByRole('list', { name: /^Human time by day/ });
+  for (const [region, last, mustScroll, rovingDays] of [
+    [page.getByRole('region', { name: 'Session lanes scroll area' }), '.xt-data-row', true, false],
+    [humanDays, '.xt-human-row', true, true],
   ] as const) {
-    await region.focus();
-    await expect(region).toBeFocused();
+    const focusTarget = rovingDays
+      ? region.locator('[data-testid="human-day"][tabindex="0"]')
+      : region;
+    await focusTarget.focus();
+    await expect(focusTarget).toBeFocused();
     const overflows = await region.evaluate((node) => node.scrollHeight > node.clientHeight);
     if (mustScroll) expect(overflows).toBe(true);
     if (!overflows) {
@@ -986,6 +991,7 @@ test('the lists scroll inside themselves from the keyboard at 1120x720', async (
       continue;
     }
     await page.keyboard.press('End');
+    if (rovingDays) await expect(region.getByRole('listitem').last()).toBeFocused();
     await expect
       .poll(() => region.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop))
       .toBeLessThanOrEqual(1);
@@ -993,6 +999,7 @@ test('the lists scroll inside themselves from the keyboard at 1120x720', async (
     const [item, frame] = await Promise.all([rows.last().boundingBox(), region.boundingBox()]);
     expect(item!.y + item!.height).toBeLessThanOrEqual(frame!.y + frame!.height + 1);
     await page.keyboard.press('Home');
+    if (rovingDays) await expect(region.getByRole('listitem').first()).toBeFocused();
     // WebKit's animated keyboard scroll can settle a pixel short of the top.
     await expect.poll(() => region.evaluate((node) => node.scrollTop)).toBeLessThanOrEqual(1);
   }
@@ -1093,7 +1100,7 @@ test('the chart, its ticks and its markers share one day mapping at 14d, 1120x72
     '09-07',
   ]);
   expect(measured.markers[0]!.label).toMatch(
-    /^2026-08-26: 1 merged pull request · xtrace\/app#1 · docs · exact link · refreshed$/,
+    /^2026-08-26: 1 merged pull request · xtrace\/app#1 · docs · exact link · checked$/,
   );
   await page.screenshot({ path: info.outputPath('effort-14d-agent.png') });
   // Dollars: the same five days priced, the unresolved day a priced subtotal
@@ -1139,6 +1146,8 @@ test('a window too short for the page scrolls the outlet and keeps three rows in
 const host = (name: string, state: NativeHostState) => ({
   host: name,
   state,
+  // None of these statuses has a host the app would flag.
+  needs_attention: false,
   detail: null,
   sessions_imported: 1,
   sessions_partial: 0,
@@ -1155,6 +1164,7 @@ const live: NativeIndexStatus = {
   python: { state: 'available', path: '/synthetic/python3' },
   readers: { state: 'verified', commit: '0'.repeat(40), plugin_version: '0.0.0' },
   hosts: [host('claude', 'complete'), host('codex', 'complete'), host('cursor', 'missing_source')],
+  needs_attention: false,
   reconciles: 12,
   files_scanned: 1234,
 };

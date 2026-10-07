@@ -1,5 +1,5 @@
 //! The saved break length through the application state: bounds, and the one
-//! length the Dashboard's "your hours" and leverage read. Every session and
+//! length the Dashboard's human time and leverage read. Every session and
 //! record is synthetic, placed relative to the live clock.
 use jiff::{Timestamp, tz::TimeZone};
 use serde_json::json;
@@ -150,5 +150,41 @@ fn seven_days_of_your_hours_are_eight_whole_local_days() {
     assert_eq!(human.end_ms, human.by_day.last().unwrap().end_ms);
     // The first row is a whole day even though the range starts mid-day.
     assert!(human.by_day[0].start_ms <= report.window.start_ms);
+    state.shutdown();
+}
+
+#[test]
+fn leverage_agent_hours_are_the_whole_day_bars_of_your_hours_days() {
+    let root = tempfile::TempDir::new().unwrap();
+    let state = live(root.path());
+    seed(root.path());
+    let report = state.metrics_dashboard(7).unwrap();
+    let human = &report.human_hours.current;
+    let leverage = &report.leverage;
+    let bars = &report.pr_effort.current.cohort.by_day;
+    // Leverage's days are human time's whole days, bound for bound.
+    assert_eq!(leverage.by_day.len(), human.by_day.len());
+    for (day, row) in leverage.by_day.iter().zip(&human.by_day) {
+        assert_eq!(
+            (day.date.as_str(), day.start_ms, day.end_ms),
+            (row.date.as_str(), row.start_ms, row.end_ms)
+        );
+        assert_eq!(day.human_ms, row.active_ms);
+    }
+    // The total beside human time is those whole days' agent hours added up.
+    assert_eq!(
+        leverage.agent_ms,
+        leverage.by_day.iter().map(|day| day.agent_ms).sum::<u64>()
+    );
+    // Each whole day holds at least the range's bar for that date; a day the
+    // range covers whole, the last one included, is the same number.
+    assert_eq!(bars.len(), leverage.by_day.len());
+    for (bar, day) in bars.iter().zip(&leverage.by_day) {
+        assert_eq!(bar.date, day.date);
+        assert!(day.agent_ms >= bar.agent_ms, "{}", day.date);
+        if bar.start_ms == day.start_ms {
+            assert_eq!(day.agent_ms, bar.agent_ms, "{}", day.date);
+        }
+    }
     state.shutdown();
 }

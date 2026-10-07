@@ -148,7 +148,7 @@ fn a_saved_speed_survives_restart_and_both_windows_read_it() {
         serde_json::to_value(&after.tiles.tokens).unwrap(),
         serde_json::to_value(&before.tiles.tokens).unwrap()
     );
-    // Leverage divides agent hours by your hours, which come from message
+    // Leverage divides agent hours by human time, which come from message
     // times, not typing: the speed does not move it.
     close(before.tiles.agent_hours.value.unwrap() * 60.0, 10.0);
     assert_eq!(

@@ -6,7 +6,9 @@ import type { MetricPrMedian } from '../data/generated/MetricPrMedian';
 import type { PrAnalyticsPage } from '../data/generated/PrAnalyticsPage';
 import { EvidenceDot } from '../kit/Badge';
 import { Button } from '../kit/Button';
+import { clock } from '../kit/clock';
 import { DataTable, type Column } from '../kit/DataTable';
+import { surfaceLabel } from '../kit/hosts';
 import { count, tokens as formatTokens } from '../kit/format';
 import { MetricCell, Unmeasured } from '../kit/MetricCell';
 import type { MetricIconName } from '../kit/metric-icons';
@@ -15,7 +17,7 @@ import { Search } from '../kit/Search';
 import { SectionCard } from '../kit/SectionCard';
 import { StatTile } from '../kit/StatTile';
 import { Toggle } from '../kit/Toggle';
-import { agentDuration } from './agent-duration';
+import { agentDuration, agentTime } from './agent-duration';
 import {
   clockTime,
   excludedNote,
@@ -24,7 +26,7 @@ import {
   windowLabel,
   zoneOf,
 } from './dashboard/present';
-import { continuous } from './metric-format';
+import { continuous, handsOffTime } from './metric-format';
 import {
   emptyReportText,
   evidenceMix,
@@ -50,15 +52,9 @@ import {
 import { PrSessionsDrawer, type PrTarget } from './PrSessionsDrawer';
 import { MetricHeader } from './session-cells';
 
-const agentText = (ms: number) => agentDuration(ms).visible;
 /** The merge day alone, in the report's zone; the time sits beneath it. */
 const mergedDay = (ms: number, window: DashboardWindow) =>
-  new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    timeZone: zoneOf(window),
-  }).format(ms);
-const minutesText = (value: number) => `${continuous(value)}m`;
+  clock(ms, { date: 'day', time: false, timeZone: zoneOf(window) });
 
 /** A tile's value and label from one report median; never a recomputed one. */
 function MedianTile({
@@ -208,7 +204,8 @@ function buildColumns(
     {
       key: 'merged',
       header: <span title="The cached merge instant, in the report's zone.">merged</span>,
-      width: '46px',
+      // Wide enough for a 12-hour time (`12:59 PM`) as well as a 24-hour one.
+      width: '58px',
       render: (row) => (
         <div className="xt-pr-name">
           <time
@@ -303,7 +300,7 @@ function buildColumns(
           <MetricCell value={null} align="right" reason="No indexed session is linked" />
         ) : (
           <span title={`Exactly ${agentDuration(row.agent_ms).exact}; parallel sessions add`}>
-            <MetricCell value={agentText(row.agent_ms)} align="right" />
+            <MetricCell value={agentTime(row.agent_ms)} align="right" />
           </span>
         ),
     },
@@ -318,7 +315,7 @@ function buildColumns(
         const { value, text } = rowHandsOff(row);
         return (
           <div className="xt-pr-name xt-pr-right" title={text}>
-            <MetricCell value={value} format={minutesText} align="right" reason={text} />
+            <MetricCell value={value} format={handsOffTime} align="right" reason={text} />
             <span className="xt-pr-meta">
               {row.hands_off.n === null ? '' : `n=${count(row.hands_off.n)}`}
               {row.hands_off.excluded_sessions > 0 && <span className="xt-pr-excluded"> excl</span>}
@@ -490,7 +487,7 @@ export function PrAnalytics({
           ruleId="M-11a"
           median={summary?.agent_ms}
           view={summary && medianView(summary.agent_ms)}
-          format={agentText}
+          format={agentTime}
         />
         <MedianTile
           unavailable={unavailable}
@@ -499,7 +496,7 @@ export function PrAnalytics({
           ruleId="M-12a"
           median={summary?.hands_off_min}
           view={summary && medianView(summary.hands_off_min, 'no stretch')}
-          format={minutesText}
+          format={handsOffTime}
           noSample="no stretch"
           note={excludedNote(excluded)}
         />
@@ -573,7 +570,7 @@ export function PrAnalytics({
                         <span className="xt-pr-meta">agent </span>
                         <TypeValue
                           median={group.summary.agent_ms}
-                          format={agentText}
+                          format={agentTime}
                           testId="type-agent"
                         />
                       </span>
@@ -581,7 +578,7 @@ export function PrAnalytics({
                         <span className="xt-pr-meta">hands-off </span>
                         <TypeValue
                           median={group.summary.hands_off_min}
-                          format={minutesText}
+                          format={handsOffTime}
                           noSample="no stretch"
                           testId="type-hands-off"
                         />
@@ -615,7 +612,7 @@ export function PrAnalytics({
             {eligibility.unresolved_type > 0 &&
               ` · ${count(eligibility.unresolved_type)} unresolved type`}
             {excluded.length > 0 &&
-              ` · hands-off excludes ${excluded.map((item) => `${item.host} ${item.surface ?? 'unknown surface'}`).join(', ')}`}
+              ` · hands-off excludes ${excluded.map((item) => surfaceLabel(item.host, item.surface)).join(', ')}`}
           </span>{' '}
           <button type="button" tabIndex={0} className="xt-pr-link-button" onClick={onInventory}>
             Cached inventory

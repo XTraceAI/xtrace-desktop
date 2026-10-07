@@ -9,7 +9,7 @@ import type { MetricPrMedian } from '../data/generated/MetricPrMedian';
 import type { MetricPrTokenMedian } from '../data/generated/MetricPrTokenMedian';
 import { count } from '../kit/format';
 import { excludedSurfaceText, plural, surfaceLabel, windowLabel } from './dashboard/present';
-import { refreshErrorText } from './dashboard/pr-effort';
+import { refreshStatusText } from './dashboard/pr-effort';
 
 /**
  * Words for the PRs page's report. Presentation only: every number is a field
@@ -31,6 +31,10 @@ export const prIdentity = (row: { repository: string; number: number }) =>
 /** The report's work type, or unresolved; an unresolved type is not `other`. */
 export const workTypeLabel = (workType: string | null) => workType ?? 'unresolved';
 
+/**
+ * A pull-request link's evidence in words, the one wording every screen uses:
+ * a link found by a commit is `commit`, never the stored `sha`.
+ */
 export const evidenceWords: Record<MetricPrConfidence, string> = {
   exact: 'exact',
   sha: 'commit',
@@ -99,6 +103,18 @@ export function medianSample(median: MetricPrMedian, noSample = 'no sample') {
   return rest.length > 0 ? `${n}: ${rest.join(', ')}` : n;
 }
 
+/**
+ * The gate's coverage as shown: one decimal, rounded down, never up. Rust
+ * decides whether the gate passes; rounding up could make a failing 89.99%
+ * read as `90%` beside "need at least 90%", so the shown value never exceeds
+ * the measured one.
+ */
+export const gatePercentText = (pct: number) => `${Math.floor(pct * 10 + 1e-9) / 10}%`;
+
+/** Rust's pass/fail for the gate, in words. */
+export const gateVerdict = (passes: boolean | null) =>
+  passes === null ? 'gate unknown' : passes ? 'meets the 90% gate' : 'below the 90% gate';
+
 /** The fixed trailing-14-day token+model coverage behind token medians. */
 export function gateText(gate: DashboardUsageGate, window: DashboardWindow) {
   const span = windowLabel({
@@ -109,7 +125,7 @@ export function gateText(gate: DashboardUsageGate, window: DashboardWindow) {
   const coverage =
     gate.pct === null
       ? 'no session with work in those days'
-      : `${count(gate.measured_sessions)} of ${plural(gate.eligible_sessions, 'session')} measured with a model (${gate.pct.toLocaleString('en-US', { maximumFractionDigits: 1 })}%)`;
+      : `${count(gate.measured_sessions)} of ${plural(gate.eligible_sessions, 'session')} measured with a model (${gatePercentText(gate.pct)}, ${gateVerdict(gate.passes)})`;
   const excluded =
     gate.excluded_surfaces.length > 0
       ? ` · not counted, structurally unmeasured: ${gate.excluded_surfaces
@@ -136,16 +152,8 @@ export function tokenMedianView(
 
 /** How fresh a row's cached merge facts are, without an age policy. */
 export function freshnessText(freshness: MetricPrFreshness) {
-  switch (freshness.state) {
-    case 'never_attempted':
-      return 'never refreshed';
-    case 'refreshed':
-      return 'cached facts';
-    case 'failed_never_refreshed':
-      return `refresh failed (${refreshErrorText[freshness.error]})`;
-    case 'failed_after_refresh':
-      return `stale: last refresh failed (${refreshErrorText[freshness.error]}); earlier facts kept`;
-  }
+  const text = refreshStatusText(freshness);
+  return freshness.state === 'failed_after_refresh' ? `${text}; earlier facts kept` : text;
 }
 
 const sessionsText = (value: number) => plural(value, 'linked session');

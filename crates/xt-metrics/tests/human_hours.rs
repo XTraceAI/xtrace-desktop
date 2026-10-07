@@ -197,7 +197,7 @@ fn daily_series_name_the_ranges_days() {
 }
 
 /// A rolling range from 10:00 on Sep 2 to 10:00 on Sep 5 touches four local
-/// days, so your hours cover Sep 2-5 whole and the previous period Aug 29 to
+/// days, so human time covers Sep 2-5 whole and the previous period Aug 29 to
 /// Sep 1 whole.
 fn rolling() -> Window {
     Window::new(ms("2026-09-02T10:00:00Z"), ms("2026-09-05T10:00:00Z")).unwrap()

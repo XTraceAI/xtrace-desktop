@@ -198,7 +198,7 @@ it('shows what was measured even when the text cannot be shown at all', async ()
   // Every measured column is still here, under its own rule.
   expect(screen.getByRole('button', { name: 'Human messages definition' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Tokens definition' })).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Agent minutes definition' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Agent time definition' })).toBeTruthy();
   expect(screen.getByText('3')).toBeTruthy();
   expect(screen.getByText('Records 42 · measured over the last 7 days')).toBeTruthy();
   // And it is never worded as a session that recorded nothing.
@@ -454,7 +454,7 @@ it('names each measure and says why one is missing without a rule ID', async () 
   mount(source);
   const card = (await screen.findByText('Measured in this range')).closest('section')!;
   expect(
-    within(card).getByText('Unmeasured: Could not tell which messages are yours.'),
+    within(card).getByText('Unmeasured: Could not tell which messages a person sent.'),
   ).toBeTruthy();
   expect(within(card).getByText('Unmeasured: Some token counts are missing.')).toBeTruthy();
   const said = [...card.querySelectorAll('[aria-label], [title], .sr-only')].map(
@@ -467,9 +467,9 @@ it('names each measure and says why one is missing without a rule ID', async () 
 
   // Each definition still opens on focus with the rule's plain summary, and closes on Escape.
   for (const [name, summary] of [
-    ['Human messages definition', /^Messages counted as yours\./],
+    ['Human messages definition', /^Messages a person sent\./],
     ['Tokens definition', /^Tokens used by each model response/],
-    ['Agent minutes definition', /^Time your agent sessions were active/],
+    ['Agent time definition', /^Time your agent sessions were active/],
   ] as const) {
     const trigger = within(card).getByRole('button', { name });
     fireEvent.focus(trigger);
@@ -771,4 +771,10 @@ describe('linked pull requests in the heading', () => {
     await screen.findByText(/holds no session with this identifier/);
     expect(badges()).toHaveLength(0);
   });
+});
+
+it('names the same most-used model, with the others counted, as the session’s list row', async () => {
+  const { source } = harness({ auto: readable, rows: [{ ...row, other_models: 1 }] });
+  mount(source);
+  expect(await screen.findByText('model-a +1 more')).toBeTruthy();
 });

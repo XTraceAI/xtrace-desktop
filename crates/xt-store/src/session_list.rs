@@ -17,13 +17,22 @@ pub struct SessionSummary {
     /// The session start shown on its row. For Codex and Cursor this is only
     /// the start the host recorded; a missing one stays unknown. Claude Code
     /// records no start, so a Claude session without a stored one starts at
-    /// its earliest imported message (the time `first_ts` names). For a forked
-    /// Claude session that can be a message copied from the session it was
-    /// forked from. The stored `sessions.started_at_ms` is never changed.
+    /// its own first event: its earliest work record, the event M-16's
+    /// sessions per day counts it by. Records a fork shares with the session
+    /// it was forked from are that session's work and never set a fork's
+    /// start: a fork with no work of its own has no shown start and is ordered
+    /// by its first recorded time instead. The stored
+    /// `sessions.started_at_ms` is never changed.
     pub started_at_ms: Option<i64>,
     pub repo: Option<String>,
     pub branch: Option<String>,
+    /// The model the session used most over its whole history
+    /// ([`crate::session_model`]), or `None` when nothing named one.
     pub model: Option<String>,
+    /// How many other models the same work named besides `model`.
+    pub other_models: u64,
+    /// The earliest visible work record, counting copies inherited from a
+    /// forked session; not a session start.
     pub first_ts: Option<String>,
     pub record_count: u64,
     pub has_conflict: bool,
@@ -97,7 +106,8 @@ pub struct SessionFilter<'a> {
     /// duplicates collapse.
     pub hosts: Option<&'a [&'a str]>,
     /// Only sessions with at least one stored pull-request link, of any
-    /// confidence, independent of merge state or the selected window.
+    /// confidence, independent of merge state or the selected window. A link
+    /// to a number GitHub said is not a pull request does not count.
     pub with_prs: bool,
     /// Only the sessions linked to exactly this canonical pull request.
     pub pull_request: Option<PrMembership<'a>>,
@@ -109,7 +119,8 @@ pub struct SessionFilter<'a> {
 /// in a selected window. With `confirmed_only`, a session whose link is only
 /// `inferred` is not a member. The identity is compared exactly, never by a
 /// substring of a title, repository or URL, so the same number in another
-/// repository is another pull request.
+/// repository is another pull request. A number GitHub said is not a pull
+/// request has no members.
 #[derive(Clone, Copy, Debug)]
 pub struct PrMembership<'a> {
     pub identity: &'a crate::pr_link::PrIdentity,
@@ -134,23 +145,37 @@ impl SessionFilter<'_> {
         Ok(Some(bound))
     }
 }
-/// The earliest non-meta message time (ms) of the session aliased `s`: its own
-/// records and the records its transcript shares with a session it was forked
-/// from. The Sessions page orders by this when no start is stored, and both the
-/// page and the Dashboard show it as a Claude session's start.
-macro_rules! first_message_ms_sql {
+/// The session's own first event (ms) for the session aliased `s`: the
+/// earliest of its work events with a stored time, the same rows
+/// `v_session_events` holds and M-16's sessions per day counts it on (the
+/// shared [`work_record_sql`] predicate). Records a fork shares with the
+/// session it was forked from belong to that session and are not counted. The
+/// Sessions page orders by this when no start is stored, and both the page and
+/// the Dashboard show it as a Claude session's start.
+macro_rules! own_first_ms_sql {
     () => {
-        "(SELECT min(t) FROM (
-                  SELECT min(ts_ms) t FROM records WHERE session_id=s.session_id AND is_meta=0
-                  UNION ALL
-                  SELECT min(r.ts_ms) FROM native_record_copies m JOIN records r ON r.uuid=m.record_uuid
-                    WHERE m.session_id=s.session_id AND r.is_meta=0
-                ))"
+        concat!(
+            "(SELECT min(r.ts_ms) FROM records r WHERE r.session_id=s.session_id AND ",
+            work_record_sql!(),
+            ")"
+        )
+    };
+}
+
+/// The earliest non-meta time (ms) among the records the session aliased `s`
+/// shares with a session it was forked from. It never sets a start: `first_ts`,
+/// the earliest visible work, reads it, and a fork with no work of its own yet
+/// (no shown start) is ordered by it, beside the history it was forked from,
+/// rather than below every dated session.
+macro_rules! copied_first_ms_sql {
+    () => {
+        "(SELECT min(r.ts_ms) FROM native_record_copies m JOIN records r ON r.uuid=m.record_uuid
+                    WHERE m.session_id=s.session_id AND r.is_meta=0)"
     };
 }
 
 /// The start a session row shows. Claude Code transcripts record no session
-/// start, so a Claude session with none stored starts at its earliest message;
+/// start, so a Claude session with none stored starts at its own first event;
 /// every other host shows only the start it recorded. Nothing is written back.
 /// Takes the stored start, host and first-message expressions, so the page can
 /// pass the `first_ms` it already computed instead of running the subquery twice.
@@ -175,15 +200,25 @@ const PAGE_SQL: &str = concat!(
               SELECT s.session_id,s.host,coalesce(s.repo,s.cwd) repo,s.git_branch,s.has_conflict,s.started_at_ms native_start,
                 nullif(trim(s.title),'') title,
                 ",
-    first_message_ms_sql!(),
-    " first_ms
+    own_first_ms_sql!(),
+    " own_first_ms,
+                ",
+    copied_first_ms_sql!(),
+    " copied_first_ms
               FROM sessions s WHERE s.kind='user' AND (?2 IS NULL OR instr(?2,'|'||s.host||'|')>0)
                 -- A recorded session→PR link of any confidence, before paging.
-                AND (?6=0 OR EXISTS (SELECT 1 FROM pr_links l WHERE l.session_id=s.session_id))
+                -- A number GitHub said is not a pull request is no link.
+                AND (?6=0 OR EXISTS (SELECT 1 FROM pr_links l JOIN pull_requests p ON p.id=l.pr_id
+                     WHERE l.session_id=s.session_id AND NOT ",
+    crate::not_found_on_github_sql!(),
+    "))
                 -- A link to exactly one canonical pull request, after the
                 -- confidence filter, also before paging.
                 AND (?7 IS NULL OR EXISTS (SELECT 1 FROM pr_links l JOIN pull_requests p ON p.id=l.pr_id
                      WHERE l.session_id=s.session_id AND p.repo=?7 AND p.number=?8
+                       AND NOT ",
+    crate::not_found_on_github_sql!(),
+    "
                        AND (?9=0 OR l.confidence<>'inferred')))
                 -- One exact identity, or the whole filtered list. A substring
                 -- search can match any number of sessions, so a caller that
@@ -196,25 +231,25 @@ const PAGE_SQL: &str = concat!(
                      OR instr(lower(coalesce(s.title,'')),lower(?1))>0)
             ), ranked AS (
               SELECT *,",
-    shown_start_sql!("native_start", "host", "first_ms"),
+    shown_start_sql!("native_start", "host", "own_first_ms"),
     " started_at_ms,
-                coalesce(native_start,first_ms,-9223372036854775808) sort_time FROM candidates
+                coalesce(min(own_first_ms,copied_first_ms),own_first_ms,copied_first_ms) first_ms,
+                coalesce(native_start,own_first_ms,copied_first_ms,-9223372036854775808) sort_time FROM candidates
             ), page AS MATERIALIZED (
               SELECT * FROM ranked WHERE ?3 IS NULL OR sort_time < ?3 OR (sort_time=?3 AND session_id < ?4)
               ORDER BY sort_time DESC,session_id DESC LIMIT 51
             ), work AS (
-              SELECT session_id,count(*) record_count,
-                CASE WHEN min(model)<>max(model) THEN 'Multiple models' ELSE min(model) END model
+              SELECT session_id,count(*) record_count
               FROM (
-                SELECT session_id,model FROM records
+                SELECT session_id FROM records
                   WHERE session_id IN (SELECT session_id FROM page) AND is_meta=0
                 UNION ALL
-                SELECT m.session_id,r.model FROM native_record_copies m JOIN records r ON r.uuid=m.record_uuid
+                SELECT m.session_id FROM native_record_copies m JOIN records r ON r.uuid=m.record_uuid
                   WHERE m.session_id IN (SELECT session_id FROM page) AND r.is_meta=0
               ) GROUP BY session_id
             )
             SELECT p.session_id,p.host,p.repo,p.git_branch,coalesce(w.record_count,0),p.has_conflict,
-              p.sort_time,w.model,p.first_ms,p.title,p.started_at_ms
+              p.sort_time,p.first_ms,p.title,p.started_at_ms
             FROM page p LEFT JOIN work w ON w.session_id=p.session_id
             ORDER BY p.sort_time DESC,p.session_id DESC LIMIT 51"
 );
@@ -338,8 +373,8 @@ fn listed(
                         },
                         id,
                         host: row.get(1)?,
-                        title: row.get(9)?,
-                        started_at_ms: row.get(10)?,
+                        title: row.get(8)?,
+                        started_at_ms: row.get(9)?,
                         pr_links: Vec::new(),
                         parent: None,
                         automated_review: false,
@@ -349,9 +384,10 @@ fn listed(
                         record_count: u64::try_from(row.get::<_, i64>(4)?)
                             .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(4, -1))?,
                         has_conflict: row.get(5)?,
-                        model: row.get(7)?,
+                        model: None,
+                        other_models: 0,
                     },
-                    row.get::<_, Option<i64>>(8)?,
+                    row.get::<_, Option<i64>>(7)?,
                 ))
             },
         )?
@@ -368,7 +404,12 @@ fn listed(
     let ids: Vec<&str> = summaries.iter().map(|s| s.id.as_str()).collect();
     let mut links = page_links(connection, &ids)?;
     let (mut parents, reviewers) = parents_and_reviewers(connection, &ids)?;
+    let models = crate::session_model::whole_sessions(connection, &ids)?;
     for summary in &mut summaries {
+        if let Some(most) = models.get(&summary.id).and_then(|uses| uses.most_used()) {
+            summary.model = Some(most.model);
+            summary.other_models = most.other_models;
+        }
         summary.pr_links = links.remove(&summary.id).unwrap_or_default();
         summary.parent = parents.remove(&summary.id);
         summary.automated_review = reviewers.contains(&summary.id);
@@ -515,8 +556,13 @@ fn parents_and_reviewers(
 /// One statement for every link of a page's sessions, on the same snapshot.
 /// Canonical identity is re-validated exactly as every other link read does;
 /// a stored row that is not canonical fails rather than being re-spelled.
-const LINKS_SQL: &str = "SELECT l.session_id,p.repo,p.number,p.url,l.confidence,p.title
-     FROM pr_links l JOIN pull_requests p ON p.id=l.pr_id WHERE l.session_id IN ";
+/// A number GitHub said is not a pull request is not shown as one.
+const LINKS_SQL: &str = concat!(
+    "SELECT l.session_id,p.repo,p.number,p.url,l.confidence,p.title
+     FROM pr_links l JOIN pull_requests p ON p.id=l.pr_id WHERE NOT ",
+    crate::not_found_on_github_sql!(),
+    " AND l.session_id IN "
+);
 
 fn page_links(
     connection: &rusqlite::Connection,
@@ -583,12 +629,14 @@ pub struct SessionContext {
     pub title: Option<String>,
     pub automated_review: bool,
     /// The same start the Sessions page shows: the start the host recorded,
-    /// or, for a Claude session with none stored, its earliest imported message.
+    /// or, for a Claude session with none stored, its own first event (never a
+    /// record copied from a session it was forked from).
     pub started_at_ms: Option<i64>,
     /// Distinct canonical pull requests this session has a stored link to, at
     /// every evidence level, whatever their merge state, refresh state or the
-    /// time the link was observed. Zero means no link is recorded, not that no
-    /// pull request exists.
+    /// time the link was observed, except numbers GitHub said are not pull
+    /// requests. Zero means no link is recorded, not that no pull request
+    /// exists.
     pub pr_links: u64,
     /// The part of `pr_links` whose evidence is only `inferred`.
     pub inferred_pr_links: u64,
@@ -622,7 +670,7 @@ pub const MAX_CONTEXT: usize = 200;
 /// The session domain the shared projections use, and the same repository
 /// and saved-title expressions the page projects: a recorded repository, else
 /// the working directory it ran in; a nonblank saved title; the start the page
-/// shows, including a Claude session's earliest message when it has no stored
+/// shows, including a Claude session's own first event when it has no stored
 /// start. Link counts are
 /// keyed lookups on `pr_links`' own (session_id, pr_id) primary key, so each
 /// canonical pull request counts once per session and the read is bounded by
@@ -635,12 +683,16 @@ pub const MAX_CONTEXT: usize = 200;
 pub const CONTEXT_SQL: &str = concat!(
     "SELECT s.session_id,s.host,coalesce(s.repo,s.cwd),s.git_branch,
        nullif(trim(s.title),''),",
-    shown_start_sql!("s.started_at_ms", "s.host", first_message_ms_sql!()),
+    shown_start_sql!("s.started_at_ms", "s.host", own_first_ms_sql!()),
     ",
        (SELECT count(*) FROM pr_links l JOIN pull_requests p ON p.id=l.pr_id
-          WHERE l.session_id=s.session_id),
+          WHERE l.session_id=s.session_id AND NOT ",
+    crate::not_found_on_github_sql!(),
+    "),
        (SELECT count(*) FROM pr_links l JOIN pull_requests p ON p.id=l.pr_id
-          WHERE l.session_id=s.session_id AND l.confidence='inferred'),
+          WHERE l.session_id=s.session_id AND l.confidence='inferred' AND NOT ",
+    crate::not_found_on_github_sql!(),
+    "),
        ",
     crate::child_check::known_child_sql!(),
     ",

@@ -1,0 +1,2 @@
+- Use consistent time, money, model, and GitHub-check wording across screens.
+- Respect the Mac's clock preference and show longer durations as hours and remaining minutes.

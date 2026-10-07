@@ -46,6 +46,7 @@ combined.native_index = {
     {
       host: 'claude',
       state: 'incomplete',
+      needs_attention: true,
       detail: null,
       sessions_imported: 1,
       sessions_partial: 1,
@@ -57,6 +58,7 @@ combined.native_index = {
       diagnostics: 1,
     },
   ],
+  needs_attention: true,
 };
 
 async function open(page: Page, path: string, width: number, height: number, scheme: string) {
@@ -129,7 +131,7 @@ for (const [width, viewportHeight] of [
       await expect(effort.getByRole('button', { name: /^Unresolved type/ })).toHaveCount(0);
       const notes = page.getByTestId('effort-notes');
       await expect(notes).toHaveCount(0);
-      const method = effort.getByRole('button', { name: 'Details', exact: true });
+      const method = effort.getByRole('button', { name: 'Effort definition', exact: true });
       expect(await height(method)).toBeLessThanOrEqual(ONE_LINE);
       // Partial pricing is a priced subtotal marked +, on the total and on its
       // day, with the unpriced responses named.
@@ -170,11 +172,14 @@ for (const [width, viewportHeight] of [
       expect(await height(merged.locator('.xt-overview-sub'))).toBeLessThanOrEqual(ONE_LINE);
       const mergedInfo = overview.getByRole('button', { name: 'Merged PRs definition' });
       await mergedInfo.focus();
-      const gist = page.getByRole('tooltip');
-      await expect(gist).toContainText(/1 PR (not checked yet|could not be checked)/);
+      const tooltipId = await mergedInfo.getAttribute('aria-describedby');
+      expect(tooltipId).toBeTruthy();
+      const ownedPopup = page.locator(`[role="tooltip"][id="${tooltipId}"]`);
+      const gist = page.locator(`[role="tooltip"][id="${tooltipId}"][data-open]`);
+      await expect(gist).toContainText('1 PR is not checked yet');
       expect(await inside(gist, page.locator('body'))).toBe(true);
       await page.keyboard.press('Escape');
-      await expect(gist).toHaveCount(0);
+      await expect(ownedPopup).toHaveCount(0);
       await expect(mergedInfo).toBeFocused();
 
       const measured = {

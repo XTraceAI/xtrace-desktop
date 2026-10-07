@@ -239,8 +239,8 @@ fn a_torn_final_title_line_is_not_read() {
 
 /// A complete line longer than the inspected bound is never partly parsed,
 /// and it could be the latest rename: an earlier title is not shown in its
-/// place, so the source keeps its identifier. A torn final line stays
-/// ignored, however long.
+/// place, so the source keeps its identifier unless a later valid rename
+/// settles it. A torn final line stays ignored, however long.
 #[test]
 fn an_overlong_complete_line_leaves_the_source_untitled() {
     let temp = tempfile::TempDir::new().unwrap();
@@ -267,14 +267,22 @@ fn an_overlong_complete_line_leaves_the_source_untitled() {
         ])),
         [TitleOutcome::Untitled(Untitled::LineTooLong)]
     );
-    // Any overlong complete line: what it holds is not known.
+    // Any overlong complete line: what it holds is not known, so only a
+    // later rename names the session.
+    assert_eq!(
+        read_with(&lines(&[
+            earlier[0].clone(),
+            turn(SESSION, 0, &"x".repeat(4096)),
+        ])),
+        [TitleOutcome::Untitled(Untitled::LineTooLong)]
+    );
     assert_eq!(
         read_with(&lines(&[
             earlier[0].clone(),
             turn(SESSION, 0, &"x".repeat(4096)),
             earlier[1].clone(),
         ])),
-        [TitleOutcome::Untitled(Untitled::LineTooLong)]
+        [titled("Early rename", TitleSource::ClaudeRename)]
     );
     // The same rename straddling the reader's 256 KiB chunks.
     let mut straddling = lines(&earlier);
@@ -294,6 +302,318 @@ fn an_overlong_complete_line_leaves_the_source_untitled() {
     assert_eq!(
         read_with(&torn),
         [titled("Early rename", TitleSource::ClaudeRename)]
+    );
+}
+
+const SHORT_LINES: TitleLimits = TitleLimits {
+    max_line_bytes: 1024,
+    max_file_bytes: xt_ingest::native::session_titles::MAX_TITLE_FILE_BYTES,
+    max_batch_bytes: xt_ingest::native::session_titles::MAX_TITLE_BATCH_BYTES,
+    deadline: xt_ingest::native::session_titles::TITLE_DEADLINE,
+};
+
+/// A synthetic tool result too long for [`SHORT_LINES`] to inspect.
+fn opaque(index: usize) -> String {
+    turn(SESSION, index, &"x".repeat(4096))
+}
+
+/// Each overlong complete line could be a later rename; only a valid rename
+/// after it settles it, the last such rename names the session and outranks
+/// any later generated title. A generated title settles nothing, and another
+/// overlong line unsettles it again.
+#[test]
+fn a_later_valid_rename_settles_the_overlong_lines_before_it() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = claude_home(temp.path());
+    let path = transcript(&home, PROJECT, SESSION);
+    let targets = [target(Host::Claude, SESSION, vec![claude_locator(&path)])];
+    let read_with = |body: &str| {
+        write(&path, body);
+        read_titles(&home, &targets, SHORT_LINES, None).outcomes
+    };
+    let untitled = [TitleOutcome::Untitled(Untitled::LineTooLong)];
+    let cases: [(&str, Vec<String>, &[TitleOutcome]); 7] = [
+        (
+            "overlong tool result, then a rename",
+            vec![turn(SESSION, 0, "ask"), opaque(1), rename(SESSION, "Kept")],
+            &[titled("Kept", TitleSource::ClaudeRename)],
+        ),
+        (
+            "several overlong lines, the last rename wins",
+            vec![
+                opaque(0),
+                rename(SESSION, "First"),
+                opaque(1),
+                opaque(2),
+                rename(SESSION, "Second"),
+                rename(SESSION, "Third"),
+            ],
+            &[titled("Third", TitleSource::ClaudeRename)],
+        ),
+        (
+            "a settled rename outranks a later generated title",
+            vec![
+                opaque(0),
+                rename(SESSION, "Renamed"),
+                ai(SESSION, "Generated after"),
+            ],
+            &[titled("Renamed", TitleSource::ClaudeRename)],
+        ),
+        (
+            "an overlong line after the last rename",
+            vec![rename(SESSION, "Before"), opaque(0)],
+            &untitled,
+        ),
+        (
+            "another overlong line unsettles it again",
+            vec![opaque(0), rename(SESSION, "Settled"), opaque(1)],
+            &untitled,
+        ),
+        (
+            "a generated title settles nothing",
+            vec![ai(SESSION, "Before"), opaque(0), ai(SESSION, "After")],
+            &untitled,
+        ),
+        (
+            "an overlong rename, then a generated title",
+            vec![
+                rename(SESSION, &"L".repeat(4096)),
+                ai(SESSION, "Stale after"),
+            ],
+            &untitled,
+        ),
+    ];
+    for (label, body, want) in cases {
+        assert_eq!(read_with(&lines(&body)), want, "{label}");
+    }
+
+    // An overlong line straddling the reader's 256 KiB chunks, settled by a
+    // rename in a later chunk.
+    let mut straddling = String::new();
+    let mut index = 0;
+    while straddling.len() < 256 * 1024 - 2048 {
+        straddling.push_str(&lines(&[turn(SESSION, index, "filler")]));
+        index += 1;
+    }
+    straddling.push_str(&lines(&[opaque(index), ai(SESSION, "Generated")]));
+    assert_eq!(read_with(&straddling), untitled, "straddling, unsettled");
+    while straddling.len() < 2 * 256 * 1024 {
+        straddling.push_str(&lines(&[turn(SESSION, index, "filler")]));
+        index += 1;
+    }
+    straddling.push_str(&lines(&[rename(SESSION, "Across chunks")]));
+    assert_eq!(
+        read_with(&straddling),
+        [titled("Across chunks", TitleSource::ClaudeRename)],
+        "straddling, settled"
+    );
+
+    // A torn overlong final line is a write in progress: it neither unsettles
+    // nor settles anything.
+    let mut torn = lines(&[rename(SESSION, "Earlier")]);
+    torn.push_str(&opaque(0));
+    assert_eq!(
+        read_with(&torn),
+        [titled("Earlier", TitleSource::ClaudeRename)]
+    );
+    let mut torn = lines(&[opaque(0)]);
+    torn.push_str(&rename(SESSION, "Torn"));
+    assert_eq!(read_with(&torn), untitled, "a torn rename settles nothing");
+}
+
+/// Only a complete, valid, top-level rename of this session settles an
+/// overlong line: not a malformed, blank, nested, sidechain or other
+/// session's record, and not one with a repeated top-level key, however the
+/// key is spelled, because which value is meant is not known.
+#[test]
+fn only_a_valid_distinct_rename_of_this_session_settles_an_overlong_line() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = claude_home(temp.path());
+    let path = transcript(&home, PROJECT, SESSION);
+    let targets = [target(Host::Claude, SESSION, vec![claude_locator(&path)])];
+    let read_with = |body: &str| {
+        write(&path, body);
+        read_titles(&home, &targets, SHORT_LINES, None).outcomes
+    };
+    let s = SESSION;
+    let o = OTHER;
+    let candidates = [
+        json!({"type": "custom-title", "customTitle": 7, "sessionId": s}).to_string(),
+        json!({"type": "custom-title", "customTitle": "  ", "sessionId": s}).to_string(),
+        json!({"type": "custom-title", "customTitle": null, "sessionId": s}).to_string(),
+        json!({"type": "custom-title", "sessionId": s}).to_string(),
+        json!({"type": "user", "message": {"type": "custom-title",
+               "customTitle": "Nested", "sessionId": s}})
+        .to_string(),
+        json!({"type": "custom-title", "customTitle": "Side", "sessionId": s,
+               "isSidechain": true})
+        .to_string(),
+        rename(o, "Other session"),
+        json!({"type": "custom-title", "customTitle": "Numeric", "sessionId": 7}).to_string(),
+        format!(r#"{{"type":"custom-title","customTitle":"Malformed","sessionId":"{s}""#),
+        format!(r#"{{"type":"custom-title","customTitle":"Trailing","sessionId":"{s}"}} x"#),
+        format!(r#"{{"type":"user","type":"custom-title","customTitle":"T","sessionId":"{s}"}}"#),
+        format!(
+            r#"{{"type":"custom-title","customTitle":"A","customTitle":"B","sessionId":"{s}"}}"#
+        ),
+        format!(
+            r#"{{"type":"custom-title","customTitle":"S","sessionId":"{o}","sessionId":"{s}"}}"#
+        ),
+        format!(
+            r#"{{"type":"custom-title","customTitle":"C","sessionId":"{s}","isSidechain":true,"isSidechain":false}}"#
+        ),
+        format!(
+            r#"{{"type":"user","\u0074ype":"custom-title","customTitle":"E","sessionId":"{s}"}}"#
+        ),
+        format!(
+            r#"{{"type":"custom-title","customTitle":"A","custom\u0054itle":"B","sessionId":"{s}"}}"#
+        ),
+        format!(
+            r#"{{"type":"custom-title","customTitle":"U","sessionId":"{s}","uuid":"a","uuid":"b"}}"#
+        ),
+        format!(
+            r#"{{"type":"custom-title","customTitle":"I","sessionId":"{o}","session\u0049d":"{s}"}}"#
+        ),
+        format!(
+            r#"{{"type":"custom-title","customTitle":"K","sessionId":"{s}","isSidechain":true,"is\u0053idechain":false}}"#
+        ),
+    ];
+    for candidate in &candidates {
+        assert_eq!(
+            read_with(&lines(&[opaque(0), candidate.clone()])),
+            [TitleOutcome::Untitled(Untitled::LineTooLong)],
+            "{candidate}"
+        );
+    }
+    // Once a valid rename settled it, an ambiguous or invalid rename replaces
+    // nothing: the settled name stands until another valid rename, and after
+    // a further overlong line it settles nothing either.
+    for candidate in &candidates {
+        let settled = [opaque(0), rename(SESSION, "Safe"), candidate.clone()];
+        assert_eq!(
+            read_with(&lines(&settled)),
+            [titled("Safe", TitleSource::ClaudeRename)],
+            "{candidate}"
+        );
+        let mut replaced = settled.to_vec();
+        replaced.push(rename(SESSION, "Later"));
+        assert_eq!(
+            read_with(&lines(&replaced)),
+            [titled("Later", TitleSource::ClaudeRename)],
+            "{candidate}"
+        );
+        assert_eq!(
+            read_with(&lines(&[
+                opaque(0),
+                rename(SESSION, "Safe"),
+                opaque(1),
+                candidate.clone(),
+            ])),
+            [TitleOutcome::Untitled(Untitled::LineTooLong)],
+            "{candidate}"
+        );
+    }
+    // A valid rename after all of them still settles the line before it.
+    let mut body = vec![opaque(0)];
+    body.extend(candidates);
+    body.push(rename(SESSION, "Valid"));
+    assert_eq!(
+        read_with(&lines(&body)),
+        [titled("Valid", TitleSource::ClaudeRename)]
+    );
+    // A rename that names no session, as a rename may, is valid here too.
+    assert_eq!(
+        read_with(&lines(&[
+            opaque(0),
+            json!({"type": "custom-title", "customTitle": "Unnamed session"}).to_string(),
+        ])),
+        [titled("Unnamed session", TitleSource::ClaudeRename)]
+    );
+}
+
+/// A recovered name still loses to every refusal of the source: a cancel, the
+/// deadline, the budget, the file ceiling and a changed generation each leave
+/// the identifier; an indexed transcript that only grew is still named.
+#[test]
+fn a_settled_overlong_line_keeps_every_source_guard() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let home = claude_home(temp.path());
+    let path = transcript(&home, PROJECT, SESSION);
+    let body = lines(&[
+        turn(SESSION, 0, "ask"),
+        opaque(1),
+        rename(SESSION, "Original"),
+    ]);
+    write(&path, &body);
+    let mut db = TempDb::empty().unwrap();
+    index(db.store_mut(), &home);
+    let indexed = indexed_target(db.store(), SESSION);
+    assert!(indexed.locators[0].checkpoint.is_some());
+    let targets = [indexed.clone()];
+    let batch = read_titles(&home, &targets, SHORT_LINES, None);
+    assert_eq!(
+        batch.outcomes,
+        [titled("Original", TitleSource::ClaudeRename)]
+    );
+    // The whole file is read, overlong line included, once proven by its
+    // recorded tail.
+    let len = body.len() as u64;
+    assert!(
+        batch.bytes_read >= len && batch.bytes_read <= 2 * len,
+        "{}",
+        batch.bytes_read
+    );
+
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    assert_eq!(
+        read_titles(&home, &targets, SHORT_LINES, Some(&cancel)).outcomes,
+        [TitleOutcome::Untitled(Untitled::Cancelled)]
+    );
+    for (limits, why) in [
+        (
+            TitleLimits {
+                deadline: Duration::ZERO,
+                ..SHORT_LINES
+            },
+            Untitled::Deadline,
+        ),
+        (
+            TitleLimits {
+                max_batch_bytes: len,
+                ..SHORT_LINES
+            },
+            Untitled::Budget,
+        ),
+        (
+            TitleLimits {
+                max_file_bytes: len - 1,
+                ..SHORT_LINES
+            },
+            Untitled::TooLarge,
+        ),
+    ] {
+        assert_eq!(
+            read_titles(&home, &targets, limits, None).outcomes,
+            [TitleOutcome::Untitled(why)],
+            "{why:?}"
+        );
+    }
+
+    let mut grown = body.clone();
+    grown.push_str(&lines(&[opaque(2), rename(SESSION, "Grown")]));
+    fs::write(&path, &grown).unwrap();
+    assert_eq!(
+        read_titles(&home, &targets, SHORT_LINES, None).outcomes,
+        [titled("Grown", TitleSource::ClaudeRename)]
+    );
+
+    let rewritten = grown.replace("Original", "Imposter");
+    assert_eq!(rewritten.len(), grown.len());
+    fs::write(&path, &rewritten).unwrap();
+    assert_eq!(
+        read_titles(&home, &targets, SHORT_LINES, None).outcomes,
+        [TitleOutcome::Untitled(Untitled::Replaced)]
     );
 }
 

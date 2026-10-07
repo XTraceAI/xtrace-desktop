@@ -20,11 +20,12 @@ for (const colorScheme of ['light', 'dark'] as const) {
       'Details',
       'Host',
       'session · repo · branch',
+      'Compactions',
       'PRs',
       'started',
       'msgs',
       'tools',
-      'agent min',
+      'agent',
       'hands-off',
       'output',
     ]);
@@ -32,7 +33,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     // 23-minute active span, a three-minute hands-off median over five
     // stretches and 150 output tokens (not the 1,100 total).
     const row = page.getByRole('row').filter({ hasText: 'Session 00000000' });
-    for (const measured of ['5', '0h23m', '3', '150']) {
+    for (const measured of ['5', '0h23m', '3 min', '150']) {
       await expect(row.getByText(measured, { exact: true }).first()).toBeVisible();
     }
     await expect(row.getByText('1.1K', { exact: true })).toHaveCount(0);
@@ -68,7 +69,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     for (const [name, ruleId] of [
       ['Human messages, definition M-02', 'M-02'],
       ['Tool calls, definition M-17', 'M-17'],
-      ['Agent minutes, definition M-05', 'M-05'],
+      ['Agent time, definition M-05', 'M-05'],
       ['Hands-off median minutes, definition M-09', 'M-09'],
       ['Output tokens, definition M-04', 'M-04'],
     ] as const) {
@@ -176,7 +177,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
       ).toHaveCount(1);
     const layout = await page.evaluate(() => {
       const header = [...document.querySelectorAll<HTMLElement>('[role="columnheader"]')].find(
-        (cell) => cell.textContent?.trim() === 'agent min',
+        (cell) => cell.textContent?.trim() === 'agent',
       )!;
       const cells = [...document.querySelectorAll<HTMLElement>('.xt-session-agent')].map(
         (agent) => {

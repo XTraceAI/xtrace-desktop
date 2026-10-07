@@ -4,48 +4,38 @@ import type { MetricSessionStretch } from '../../data/generated/MetricSessionStr
 import type { MetricUnknownRepeats } from '../../data/generated/MetricUnknownRepeats';
 import type { MetricSessionStretches } from '../../data/generated/MetricSessionStretches';
 import { Button } from '../../kit/Button';
+import { clock, isInstant } from '../../kit/clock';
+import { surfaceLabel } from '../../kit/hosts';
+import { agentDuration } from '../agent-duration';
+import { handsOffSpoken, handsOffTime } from '../metric-format';
 import { jumpUnavailableText, type JumpTarget, type JumpUnavailable } from './timeline-jump';
 import './session-detail.css';
 
 /**
- * A stretch's length, from M-09's own duration.
+ * A stretch's length, from M-09's own duration, written as all hands-off time
+ * is (`3.2 min`); `spoken` is the same value in words, for a label read aloud.
  *
  * Only ever from `duration_ms`. The endpoints are the native spellings as
  * stored, and a length re-derived from them could disagree with the one the
  * Dashboard's hands-off number was built from — which is exactly the number
  * this segment is meant to be one piece of.
  */
-export function stretchDuration(ms: number): string {
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${Math.max(seconds, 1)} s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
-    const rest = seconds % 60;
-    return rest ? `${minutes} min ${rest} s` : `${minutes} min`;
-  }
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return rest ? `${hours} h ${rest} min` : `${hours} h`;
+export function stretchDuration(ms: number, spoken = false): string {
+  const minutes = ms / 60_000;
+  return spoken ? handsOffSpoken(minutes) : handsOffTime(minutes);
 }
 
 /** When a stretch began, in the reader's own zone, or nothing if it cannot be read. */
 export function stretchStart(iso: string): string | null {
-  const when = new Date(iso);
-  if (Number.isNaN(when.getTime())) return null;
-  return when.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const when = new Date(iso).getTime();
+  return isInstant(when) ? clock(when, { date: 'day' }) : null;
 }
 
 /** Why M-09 says nothing about this session, without claiming more than that. */
 export function unmeasuredText(surface: MetricExcludedSurface | null): string {
   if (surface) {
-    const name = surface.surface ?? 'unlabelled';
     return (
-      `Hands-off stretches are not measured for sessions on the ${surface.host} ${name} surface ` +
+      `Hands-off stretches are not measured for sessions on ${surfaceLabel(surface.host, surface.surface)} ` +
       `in this range: too many of its sessions record several turns at one instant to put them ` +
       `in order (${surface.degenerate_sessions} of ${surface.qualifying_sessions}). ` +
       'That is about how the surface records time, not about whether this session’s work happened.'
@@ -83,12 +73,13 @@ export function unknownRepeatsText(reason: MetricUnknownRepeats): string {
 }
 
 /**
- * A stretch's active time (M-05's fold over its records). Unlike an elapsed
- * length it can honestly be zero — every gap in the stretch was a long wait —
- * and a zero is said as one rather than rounded up to a second.
+ * A stretch's active time (M-05's fold over its records), written as all agent
+ * time is (`0h05m`). Unlike an elapsed length it can honestly be zero — every
+ * gap in the stretch was a long wait — and a zero is said as one (`0h00m`).
  */
-export function activeDuration(ms: number): string {
-  return ms === 0 ? '0 s' : stretchDuration(ms);
+export function activeDuration(ms: number, spoken = false): string {
+  const duration = agentDuration(ms);
+  return spoken ? duration.spoken : duration.visible;
 }
 
 /** Singular or plural, for a count a reader sees. */
@@ -117,7 +108,7 @@ export function repeatSummary(stretch: MetricSessionStretch): string {
  */
 export function circlingText(thresholds: MetricRepeatThresholds): string {
   return (
-    `Circling marks a stretch with at least ${stretchDuration(thresholds.active_ms)} of ` +
+    `Circling marks a stretch with at least ${activeDuration(thresholds.active_ms, true)} of ` +
     `active time and at least ${plural(thresholds.repeats, 'repeat', 'repeats')}. A repeat is a ` +
     'call to the same tool with the same command, path or pattern as an earlier call in the ' +
     'stretch. Active time leaves out long waits, so it can be shorter than how long the stretch ' +
@@ -140,7 +131,7 @@ export type TimelineQuery =
 
 /** What M-20 said about a stretch, spoken. */
 function repeatLabel(stretch: MetricSessionStretch): string[] {
-  const parts = [`${activeDuration(stretch.active_duration_ms)} of it active`];
+  const parts = [`${activeDuration(stretch.active_duration_ms, true)} of it active`];
   const repeats = stretch.repeats;
   if (repeats.state === 'unknown') {
     parts.push(
@@ -177,7 +168,7 @@ function segmentLabel(
   const parts = [
     `Stretch ${index + 1} of ${total}`,
     start ? `started ${start}` : 'start time not readable',
-    `lasted ${stretchDuration(stretch.duration_ms)}`,
+    `lasted ${stretchDuration(stretch.duration_ms, true)}`,
     ...repeatLabel(stretch),
   ];
   parts.push(

@@ -4,6 +4,7 @@ import { Button } from '../kit/Button';
 import { count, tokens as formatTokens } from '../kit/format';
 import { StatTile } from '../kit/StatTile';
 import type { TimeRange } from '../kit/TopBar';
+import { agentTime } from './agent-duration';
 import { plural, ruleId, tileDelta, tileReason, tileTip } from './dashboard/present';
 import { useDashboardReport } from './dashboard/range';
 import { continuous } from './metric-format';
@@ -22,8 +23,8 @@ export const SUMMARY_SCOPE =
 /** The same rule as the heading's one visible line. */
 export const SUMMARY_SCOPE_SHORT = 'Range: all indexed activity · filters: table only';
 
-/** Agent time is reported in hours (M-05); the tile states it in minutes. */
-const MINUTES_PER_HOUR = 60;
+/** Agent time is reported in hours (M-05); the tile writes it as all agent time is. */
+const MS_PER_HOUR = 3_600_000;
 /**
  * M-04 leaves output null when its counters are absent and when a response
  * mixes measured counters with missing ones; the report does not say which, so
@@ -155,19 +156,19 @@ function OutputTokens({ metrics, pending }: Pick<TileProps, 'metrics' | 'pending
 
 function AgentMinutes({ metrics, pending, tip }: TileProps) {
   const tile = metrics?.tiles.agent_hours;
-  // An unmeasured hour count stays unmeasured; only a number is converted.
-  const value = typeof tile?.value === 'number' ? tile.value * MINUTES_PER_HOUR : null;
+  // An unmeasured hour count stays unmeasured; only a number is converted, to
+  // the milliseconds every agent time is written from.
+  const value = typeof tile?.value === 'number' ? tile.value * MS_PER_HOUR : null;
   return (
     <StatTile
-      label="Agent minutes"
+      label="Agent time"
       icon="clock"
       ruleId={tile ? ruleId(tile.rule_id, 'M-05') : 'M-05'}
       value={value}
-      format={continuous}
-      unit="min"
+      format={agentTime}
       reason={pending ?? (tile && tileReason(tile))}
-      // A percentage change is the same in minutes as in hours, so the
-      // report's own change carries over without being recalculated.
+      // A percentage change is the same in any unit, so the report's own
+      // change carries over without being recalculated.
       delta={tile && tileDelta(tile)}
       tip={tip(tile)}
     />

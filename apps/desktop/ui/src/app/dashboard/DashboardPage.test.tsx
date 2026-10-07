@@ -211,18 +211,18 @@ function expectHiddenPanels() {
 }
 /**
  * The control that opens a supplementary measurement from the card it belongs
- * to: tokens and cost are sections of Effort's Details, coverage (with untimed
+ * to: tokens and cost are sections of the dialog behind Effort's ⓘ, coverage (with untimed
  * history) opens from the Sessions header.
  */
 const detailTrigger = (title: string) =>
   title === 'Coverage'
     ? within(card('Sessions')).getByRole('button', { name: /^Coverage/ })
-    : within(card('Effort')).getByRole('button', { name: 'Details' });
+    : within(card('Effort')).getByRole('button', { name: 'Effort definition' });
 const usageSection: Record<string, string> = {
   'Tokens per day': 'usage-tokens',
   'API-equivalent cost': 'usage-cost',
 };
-/** Opens one measurement and returns it: the Coverage dialog, or its titled section of Details. */
+/** Opens one measurement and returns it: the Coverage dialog, or its titled section of Effort's ⓘ dialog. */
 async function detail(title: string) {
   fireEvent.click(detailTrigger(title));
   if (title === 'Coverage') return screen.findByRole('dialog', { name: title });
@@ -278,7 +278,7 @@ it('renders the generated F1 report with honest unknowns and the shared sidebar 
   // This source never checks GitHub on its own, so the two unchecked pull
   // requests need the user: the tip points to the Effort card's red !.
   expect(mergedTip.textContent).toBe(
-    `${MERGED_PRS_DEFINITION}2 PRs not checked yet. Click the red ! on the Effort card to check them.`,
+    `${MERGED_PRS_DEFINITION}2 PRs are not checked yet. Click the red ! on the Effort card to check them.`,
   );
   expect(within(card('Effort')).getByTestId('pr-attention').dataset.state).toBe('attention');
   fireEvent.blur(tileInfo('Merged PRs'));
@@ -384,7 +384,7 @@ it('shows F2 concurrency and overlapping lanes on the fixed recent axis', async 
     expect(parseFloat(style.width)).toBeCloseTo((expected[index][1] / 2880) * 100, 9);
   });
   expect(rows[0].textContent).toContain(
-    'claude session f2-session-c, repository unknown, branch unknown: 1 active span',
+    'Claude Code session f2-session-c, repository unknown, branch unknown: 1 active span',
   );
   // The card states no caption under the rows and no line under its title.
   expect(screen.queryByTestId('lanes-disclosure')).toBeNull();
@@ -450,16 +450,18 @@ it('keeps F7 unmeasured tokens, cost, coverage and favorite model explicit', asy
   const surfaces = within(
     within(coverage).getByRole('list', { name: 'Token measurement by surface' }),
   );
-  expect(surfaces.getByText('cursor · cli')).toBeTruthy();
+  expect(surfaces.getByText('Cursor · cli')).toBeTruthy();
   await closeDialog(coverage);
   // Cursor is not a quota: an unmeasured host total shows a dash.
   expect(screen.getByRole('region', { name: 'Account usage' })).toBeTruthy();
 });
 
 it('converts F11 percentage-point deltas exactly once and hides suppressed ones', async () => {
+  let wholeDays = 0;
   mount(
     nativeSource(() =>
       synthetic((report) => {
+        wholeDays = report.human_hours.current.by_day.length;
         report.tiles.leverage = tile(1.5, {
           rule_id: 'M-08',
           delta: { previous: 0.75, pct: 100, suppressed: false },
@@ -482,6 +484,19 @@ it('converts F11 percentage-point deltas exactly once and hides suppressed ones'
   expect(change('Leverage')!.textContent).toBe('▲100%');
   expect(change('Hands-off median')!.textContent).toBe('▼25%');
   expect(change('Concurrency')).toBeNull();
+  // Leverage compares whole days with as many whole days before, and says so
+  // in its definition and accessible description, not on the tile's face;
+  // the rolling tiles keep the card's own "vs. previous N days".
+  const compared = `Its change compares with the previous ${wholeDays} whole ${wholeDays === 1 ? 'day' : 'days'}.`;
+  expect(wholeDays).toBeGreaterThan(0);
+  expect(`${tileValue('Leverage')} ${tileSub('Leverage')}`).not.toContain('previous');
+  const described = tileNamed('Leverage').getAttribute('aria-describedby');
+  expect(document.getElementById(described!)!.textContent).toContain(compared);
+  fireEvent.focus(tileInfo('Leverage'));
+  expect((await screen.findByRole('tooltip')).textContent).toContain(compared);
+  fireEvent.blur(tileInfo('Leverage'));
+  await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+  expect(tileNamed('Hands-off median').getAttribute('aria-describedby')).toBeNull();
   expect(document.body.textContent).not.toContain('5,000%');
 });
 
@@ -628,7 +643,7 @@ it('shows a complete total, measured zeros and hands-off exclusions', async () =
   expect(
     within(
       within(coverage).getByRole('list', { name: 'Surfaces excluded from hands-off' }),
-    ).getByText('claude · batch: 2 of 4 qualifying sessions have batch-stamped timestamps'),
+    ).getByText('Claude Code · batch: 2 of 4 qualifying sessions have batch-stamped timestamps'),
   ).toBeTruthy();
   const pill = within(coverage).getByText('Inventory complete');
   expect(pill.closest('[data-tone]')!.getAttribute('data-tone')).toBe('success');
@@ -798,8 +813,10 @@ it('groups a session\u2019s spans into one row and still draws every span', asyn
   // because a row's glyph can only name one host.
   const rows = laneRows();
   expect(rows).toHaveLength(2);
-  const claudeRow = rows.find((row) => row.textContent?.includes('claude session split-session'))!;
-  const codexRow = rows.find((row) => row.textContent?.includes('codex session split-session'))!;
+  const claudeRow = rows.find((row) =>
+    row.textContent?.includes('Claude Code session split-session'),
+  )!;
+  const codexRow = rows.find((row) => row.textContent?.includes('Codex session split-session'))!;
   // Every returned span is still drawn, on the same fixed 48-hour axis.
   expect(laneSpans(claudeRow)).toHaveLength(2);
   expect(laneSpans(codexRow)).toHaveLength(1);
@@ -809,7 +826,7 @@ it('groups a session\u2019s spans into one row and still draws every span', asyn
   ]);
   expect(claudeRow.textContent).toContain('2 active spans');
   // No first-seen column: the spans' earliest start is not a session start.
-  expect(within(claudeRow).queryByText('Sep 6, 00:10')).toBeNull();
+  expect(within(claudeRow).queryByText('Sep 6, 12:10 AM')).toBeNull();
   expect(errors.mock.calls.some((call) => String(call[0]).includes('same key'))).toBe(false);
 });
 
@@ -905,7 +922,7 @@ it('names a lane by its indexed repository, branch and identity, and prices it',
   ).toBeTruthy();
   // The row's own description carries the context and the measurement.
   expect(repo.textContent).toContain(
-    'claude session ctx-repo, repository /Users/dev/code/acme-api, branch feature/lanes: 1 active span',
+    'Claude Code session ctx-repo, repository /Users/dev/code/acme-api, branch feature/lanes: 1 active span',
   );
   expect(repo.textContent).toContain('Whole session: $12.40 API-equivalent cost of 3 responses.');
   expect(bare.textContent).toContain('Whole session: no responses to price.');
@@ -1015,15 +1032,15 @@ it('aligns lane columns to session, Compactions, PRs, started, activity and cost
   // The recorded start in the report zone, with year and zone in its title,
   // however far before the axis it is.
   const started = titled.querySelector('time')!;
-  expect(started.textContent).toBe('Jun 1, 08:30');
-  expect(started.getAttribute('title')).toBe('Jun 1, 2026, 08:30 (UTC)');
+  expect(started.textContent).toBe('Jun 1, 8:30 AM');
+  expect(started.getAttribute('title')).toBe('Jun 1, 2026, 8:30 AM (UTC)');
   expect(started.getAttribute('dateTime')).toBe('2026-06-01T08:30:00.000Z');
   // Unknown start stays unknown, never the first span.
   expect(untitled.querySelector('time')).toBeNull();
   expect(within(untitled).getByText('Unmeasured: Start unknown for this session')).toBeTruthy();
   // The span count moved into the row's description.
   expect(titled.textContent).toContain('1 active span in the last 48 hours');
-  expect(titled.textContent).toContain('started Jun 1, 2026, 08:30 (UTC)');
+  expect(titled.textContent).toContain('started Jun 1, 2026, 8:30 AM (UTC)');
   expect(untitled.textContent).toContain('start unknown');
 });
 
@@ -1171,7 +1188,7 @@ it('marks a partial lane cost, an unpriced one, and keeps small and large amount
   expect(costCell(tiny).textContent).toBe('<$0.01');
   expect(costCell(large).textContent).toBe('$1,234');
   expect(costCell(large).getAttribute('title')).toBe(
-    '$1,234.40 at public API prices. 1 Codex response priced at the standard tier.',
+    '$1,234 at public API prices. 1 Codex response priced at the standard tier.',
   );
   expect(within(missing).getByText('Unmeasured: Cost unknown for this session')).toBeTruthy();
 });
@@ -1337,7 +1354,7 @@ it('follows the design composition and keeps supplementary measurements in colla
     await closeDialog(section);
     expect(detailTrigger(title)).toBe(document.activeElement);
   }
-  // Details' own daily values come first; the usage sections follow them.
+  // The dialog's own daily values come first; the usage sections follow them.
   fireEvent.click(detailTrigger('Tokens per day'));
   const method = await screen.findByRole('dialog', { name: METHOD });
   expect([...method.querySelectorAll('h2, h3')].map((heading) => heading.textContent)).toEqual([
@@ -1403,21 +1420,21 @@ it('reads a small positive Dashboard measurement as below the scale, not as a me
   expect(await continuousText(0.03)).toEqual({
     leverage: '<0.1×',
     concurrency: '<0.1|max 1',
-    handsOff: '<0.1min|p90 <0.1 min',
+    handsOff: '<0.1 min|p90 <0.1 min',
   });
   cleanup();
   // A measured zero keeps saying zero: it is the one thing "0" means here.
   expect(await continuousText(0)).toEqual({
     leverage: '0×',
     concurrency: '0|max 1',
-    handsOff: '0min|p90 0 min',
+    handsOff: '0 min|p90 0 min',
   });
   cleanup();
   // A value the scale can show is shown by the scale, unchanged.
   expect(await continuousText(1.24)).toEqual({
     leverage: '1.2×',
     concurrency: '1.2|max 1',
-    handsOff: '1.2min|p90 1.2 min',
+    handsOff: '1.2 min|p90 1.2 min',
   });
   cleanup();
   // An unmeasured value never reaches a formatter: it still states its reason,
@@ -1460,19 +1477,29 @@ it('draws a below-scale value in the same cell at the same size, in light and in
   const [ordinary, dark, light] = seen;
   expect(dark).toEqual(light);
   expect(dark.cells).toEqual(ordinary.cells);
-  expect(ordinary.handsOff).toBe('1.2min');
-  expect(dark.handsOff).toBe('<0.1min');
+  expect(ordinary.handsOff).toBe('1.2 min');
+  expect(dark.handsOff).toBe('<0.1 min');
 });
 
 it('shows the generated report leverage with a point for each day of every range', async () => {
-  // F1's five messages within 23 minutes are its 0.3 hours of yours; the same
+  // F1's five messages within 23 minutes are its 0.3 human time; the same
   // 0.4 agent hours over them is its leverage at every range.
   mount(nativeSource((days) => f1(days)));
   await loaded();
   const leverage = () =>
     within(tileNamed('Leverage')).getByRole('img', { name: /^Leverage by day/ });
   expect(tileValue('Leverage')).toMatch(/^\d+\.\d×/);
-  expect(tileSub('Leverage')).toMatch(/agent h ÷ .* your h$/);
+  expect(tileSub('Leverage')).toMatch(
+    /^\d+h\d{2}(\.\d)?m agent ÷ \d+h\d{2}(\.\d)?m human · whole days$/,
+  );
+  // The exact days are stated in its definition and accessible description.
+  expect(
+    document.getElementById(tileNamed('Leverage').getAttribute('aria-describedby')!)!.textContent,
+  ).toBe(
+    'Both sides cover Sep 1–Sep 7, whole days. Its change compares with the previous 7 whole days.',
+  );
+  // No footer line under Leverage, as under the other charted tiles' numbers.
+  expect(within(tileNamed('Leverage')).queryByTestId('overview-takeaway')).toBeNull();
   const first = tileValue('Leverage');
   expect(leverage().getAttribute('aria-label')!.split(', ').length).toBeGreaterThan(7);
   fireEvent.click(screen.getByRole('radio', { name: '14d' }));
@@ -1541,7 +1568,7 @@ it('discloses untimed indexed history with coverage, whatever range is selected'
     expect(within(coverage).getByTestId('untimed-count').textContent).toContain(
       '9 records in all indexed history',
     );
-    expect(coverage.textContent).toContain('cursor · unknown surface');
+    expect(coverage.textContent).toContain('Cursor · unknown surface');
     await closeDialog(coverage);
   }
   expect(screen.getByTestId('dashboard-summary').textContent).toBe(summary);
@@ -1549,7 +1576,7 @@ it('discloses untimed indexed history with coverage, whatever range is selected'
   expect(document.querySelector('.xt-dashboard .xt-untimed')).toBeNull();
 });
 
-it('keeps an open Details or Coverage open while another range loads', async () => {
+it('keeps an open Effort detail or Coverage open while another range loads', async () => {
   mount(nativeSource((days) => synthetic(() => {}, days)));
   await loaded();
   for (const [title, name] of [

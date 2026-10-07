@@ -1,4 +1,4 @@
-use crate::{Error, MetricsDb, Result, TypingRate, Window};
+use crate::{ActiveSpanReport, Error, MetricsDb, Result, TypingRate, Window};
 use jiff::tz::TimeZone;
 use serde::Serialize;
 use xt_store::timestamp::{self, InstantKey};
@@ -38,13 +38,25 @@ impl MetricsDb {
         typing_rate: TypingRate,
         zone: TimeZone,
     ) -> Result<HumanTime> {
-        let snapshot = self
-            .connection
-            .is_autocommit()
-            .then(|| self.connection.unchecked_transaction())
-            .transpose()?;
+        self.read_snapshot(|db| db.read_human_time(window, typing_rate, zone, None))
+    }
+
+    /// [`MetricsDb::human_time`] inside the caller's snapshot. `measured` is
+    /// this window's [`MetricsDb::active_spans`] already read in that same
+    /// snapshot; without it the spans are read here.
+    pub(crate) fn read_human_time(
+        &self,
+        window: Window,
+        typing_rate: TypingRate,
+        zone: TimeZone,
+        measured: Option<&ActiveSpanReport>,
+    ) -> Result<HumanTime> {
         let days = window.local_days(zone)?;
-        let agent_minutes = self.active_spans(window)?.active_ms as f64 / 60_000.0;
+        let active_ms = match measured {
+            Some(spans) => spans.active_ms,
+            None => self.active_spans(window)?.active_ms,
+        };
+        let agent_minutes = active_ms as f64 / 60_000.0;
         let start = InstantKey::from_millisecond(window.start_ms());
         let end = InstantKey::from_millisecond(window.end_ms());
         let day_ends: Vec<_> = days
@@ -87,7 +99,7 @@ impl MetricsDb {
         }
         let rate = f64::from(typing_rate.characters_per_minute());
         let human_minutes_est = total.map(|chars| chars as f64 / rate);
-        let report = HumanTime {
+        Ok(HumanTime {
             human_minutes_est,
             summed_session_minutes_est: human_minutes_est,
             agent_minutes,
@@ -101,13 +113,7 @@ impl MetricsDb {
                     minutes_est: total.map(|_| chars as f64 / rate),
                 })
                 .collect(),
-        };
-        drop(rows);
-        drop(statement);
-        if let Some(snapshot) = snapshot {
-            snapshot.commit()?;
-        }
-        Ok(report)
+        })
     }
 }
 

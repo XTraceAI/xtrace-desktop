@@ -411,12 +411,13 @@ fn a_schema_19_index_upgrades_with_every_row_unchanged() {
         include_str!("../migrations/0018_session_child_facts.sql"),
         include_str!("../migrations/0019_claude_launch_binding_witnesses.sql"),
     ];
-    const VIEWS: [&str; 5] = [
-        include_str!("../views/human_inputs.sql"),
-        include_str!("../views/records.sql"),
-        include_str!("../views/usage_records.sql"),
-        include_str!("../views/response_usage.sql"),
-        include_str!("../views/session_events.sql"),
+    const VIEWS: [&str; 6] = [
+        xt_store::views::RECORD_METADATA,
+        xt_store::views::HUMAN_INPUTS,
+        xt_store::views::RECORDS,
+        xt_store::views::USAGE_RECORDS,
+        xt_store::views::RESPONSE_USAGE,
+        xt_store::views::SESSION_EVENTS,
     ];
     const SPAWNED: &str = "01a00000-0000-7000-8000-0000000000bb";
     const GUARDIAN: &str = "01a00000-0000-7000-8000-0000000000dd";
@@ -581,7 +582,7 @@ fn a_schema_19_index_upgrades_with_every_row_unchanged() {
         .unwrap();
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 22);
+        assert_eq!(store.schema_version().unwrap(), 23);
         assert_eq!(dump(), before);
         let parents = shown(&store);
         assert!(parents.contains(&(codex(SPAWNED), codex(PARENT), ParentEvidence::NativeSpawn)));

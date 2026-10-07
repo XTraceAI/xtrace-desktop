@@ -9,11 +9,12 @@ import type { SessionParentLink } from '../../data/generated/SessionParentLink';
 import { DataTable, type Column } from '../../kit/DataTable';
 import { EvidenceDot } from '../../kit/Badge';
 import { HostGlyph } from '../../kit/HostGlyph';
+import { hostName } from '../../kit/hosts';
 import { Icon } from '../../kit/icons';
 import { MetricCell } from '../../kit/MetricCell';
 import { RulePopover } from '../../kit/RulePopover';
 import type { TimeRange } from '../../kit/TopBar';
-import { contextLead, contextTitle, displayTitle, shortId } from '../session-context';
+import { NO_MODEL, contextLead, contextTitle, displayTitle, shortId } from '../session-context';
 import { GroupToggle, ParentMarker, parentName, verifiedParent } from '../session-parent';
 import { listAddress, sessionHref } from '../session-search';
 import { useSessionTitles, useVisibleIds } from '../session-titles';
@@ -31,7 +32,7 @@ import {
 } from '../live-session-status';
 import '../../styles/live-session-status.css';
 import { LaneSpan } from './LaneSpan';
-import { clockTime, plural, recordedTime, unpricedText, usd } from './present';
+import { axisTime, clockTime, plural, recordedTime, unpricedText, usd } from './present';
 import {
   groupSessionLanes,
   laneRows,
@@ -93,7 +94,7 @@ function Axis({ start, span, window }: { start: number; span: number; window: Da
         <span className="sr-only">: active spans on the fixed recent axis</span>
         {Array.from({ length: 5 }, (_, index) => (
           <span key={index} style={{ left: `${(index / 4) * 100}%` }} aria-hidden="true">
-            {clockTime(start + (span * index) / 4, window, index === 4)}
+            {axisTime(start + (span * index) / 4, window, index === 4)}
           </span>
         ))}
       </span>
@@ -295,7 +296,7 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
     const session = found(lane);
     const title = titleOf(lane);
     const created = parentOf(lane);
-    return `${lane.host} session ${lane.sessionId}, repository ${
+    return `${hostName(lane.host)} session ${lane.sessionId}, repository ${
       session?.repo ?? 'unknown'
     }, branch ${session?.branch ?? 'unknown'}${title ? `, titled ${title}` : ''}${
       created ? `, sub-session of ${created.name} (${created.parent.session_id})` : ''
@@ -346,7 +347,7 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
     }: ${cost ? shownCostText(cost) : 'cost unknown'}.`;
   };
   const absentText = (row: Extract<Row, { kind: 'absent' }>) =>
-    `Sub-sessions of ${row.parent.host} session ${row.parent.session_id}, which is not listed here: it is only named, with no numbers of its own. Its sub-sessions active in the last ${hours} hours are listed, with their own sub-sessions.${groupText(
+    `Sub-sessions of ${hostName(row.parent.host)} session ${row.parent.session_id}, which is not listed here: it is only named, with no numbers of its own. Its sub-sessions active in the last ${hours} hours are listed, with their own sub-sessions.${groupText(
       row,
     )}`;
   /** A cell that belongs to a returned session; an absent parent's is blank. */
@@ -649,18 +650,6 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
 export const laneCostDefinition = (hours: number) =>
   `Cost of the whole session, not just the last ${hours} hours. Σ is the session plus its sub-sessions; + means part is unpriced.`;
 
-/**
- * A lane amount: cents below $1,000, whole dollars from there, so the
- * column stays narrow. "<$0.01" for a positive amount below a cent.
- */
-const wholeDollars = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 0,
-});
-export const laneUsd = (value: number) =>
-  value >= 999.995 ? wholeDollars.format(value) : usd(value);
-
 /** Unpriced responses of one model for one reason, every tier merged. */
 interface UnpricedGap {
   model: string | null;
@@ -702,7 +691,7 @@ const unpricedGap = (gap: UnpricedGap, counted: boolean) => {
     return counted
       ? `${count}${many ? 'responses record' : 'response records'} no model`
       : 'no model recorded';
-  const model = gap.model ?? 'unknown model';
+  const model = gap.model ?? NO_MODEL;
   if (gap.reason === 'unknown_model')
     return `${count}${model} ${counted && many ? 'have' : 'has'} no published price`;
   const reason =
@@ -871,7 +860,7 @@ function LaneCost({ shown, note = '' }: { shown: ShownCost; note?: string }) {
   if (cost.total_usd !== null)
     return (
       <MetricCell
-        value={`${mark}${laneUsd(cost.total_usd)}`}
+        value={`${mark}${usd(cost.total_usd)}`}
         align="right"
         size={10.5}
         title={`${scope}${usd(cost.total_usd)} at public API prices.${assumed}${aside}`}
@@ -879,7 +868,7 @@ function LaneCost({ shown, note = '' }: { shown: ShownCost; note?: string }) {
     );
   return (
     <MetricCell
-      value={`${mark}${laneUsd(cost.priced_subtotal_usd)}+`}
+      value={`${mark}${usd(cost.priced_subtotal_usd)}+`}
       align="right"
       size={10.5}
       title={`${scope ? `${scope}at least` : 'At least'} ${usd(cost.priced_subtotal_usd)}: ${

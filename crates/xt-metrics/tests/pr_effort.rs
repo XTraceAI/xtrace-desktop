@@ -1,16 +1,17 @@
+mod activity_support;
 use jiff::{Timestamp, tz::TimeZone};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use xt_fixtures::{Fixture, TempDb};
 use xt_metrics::{
     COST_BASIS, CostSummary, DayEffort, EffortAssignment, EffortTotals, MetricsDb, ModelDayEffort,
-    PrEffortReport, PrFreshness, PriceCatalog, Window,
+    PrEffortReport, PrFreshness, PriceCatalog, TypingRate, Window,
 };
 use xt_store::{
     CanonicalRecord,
     pr_link::{
         PrConfidence, PrIdentity, PrLinkObservation, PrRefreshError, PrState, RefreshFailure,
-        RefreshOutcome, RefreshSuccess,
+        RefreshOrigin, RefreshOutcome, RefreshSuccess,
     },
 };
 
@@ -634,6 +635,15 @@ fn pr_effort_global_response_selection_precedes_session_and_window_grouping() {
         merged(&mut db, number, "2026-09-04T00:00:00Z", title);
     }
     let report = report(&db, false);
+    let shared = activity_support::matches_standalone(
+        &MetricsDb::open(db.path()).unwrap(),
+        window(),
+        TimeZone::UTC,
+        TypingRate::default(),
+        false,
+        &catalog(),
+    );
+    assert_eq!(shared.pr_effort, report);
     let late = group(&report, &ty("feat"));
     assert_eq!((late.sessions, late.cost.selected_observations), (1, 0));
     assert_eq!(dollars(&late.cost), None);
@@ -721,6 +731,15 @@ fn pr_effort_agent_time_splits_at_dst_and_midnight_with_parallel_sessions_adding
         .unwrap()
         .pr_effort(window, zone.clone(), false, &catalog())
         .unwrap();
+    let shared = activity_support::matches_standalone(
+        &MetricsDb::open(db.path()).unwrap(),
+        window,
+        zone.clone(),
+        TypingRate::default(),
+        false,
+        &catalog(),
+    );
+    assert_eq!(shared.pr_effort, report);
     reconcile(&db, window, zone, &report);
     let feat = group(&report, &ty("feat"));
     assert_eq!((feat.sessions, feat.agent_ms), (2, 2_400_000));
@@ -743,6 +762,62 @@ fn pr_effort_agent_time_splits_at_dst_and_midnight_with_parallel_sessions_adding
         [0, 300_000, 300_000]
     );
     assert_eq!(report.markers[0].date, "2026-11-01");
+}
+
+fn fail_manually(db: &mut TempDb, number: u64, at: i64, error: PrRefreshError) {
+    db.store_mut()
+        .record_pr_refresh_from(
+            &RefreshOutcome::Failure(RefreshFailure {
+                pull_request: PrIdentity::from_url(&url(number)).unwrap(),
+                attempted_at: at,
+                error,
+            }),
+            RefreshOrigin::Manual,
+        )
+        .unwrap();
+}
+
+#[test]
+fn pr_effort_counts_failures_a_manual_refresh_already_tried() {
+    let mut db = TempDb::empty().unwrap();
+    seed(
+        &mut db,
+        "s",
+        &[response("r", "2026-09-03T10:00:00Z", Some(9))],
+    );
+    for number in 1..=5 {
+        link(&mut db, "s", number, PrConfidence::Exact);
+    }
+    // 1: a manual failure, never refreshed.
+    fail_manually(&mut db, 1, 200, PrRefreshError::ExecutionFailed);
+    // 2: refreshed, then a manual failure, then an automatic one: still tried by hand.
+    merged(&mut db, 2, "2026-09-04T00:00:00Z", "feat: cached");
+    fail_manually(&mut db, 2, 200, PrRefreshError::ExecutionFailed);
+    fail(&mut db, 2, 300, PrRefreshError::Timeout);
+    // 3: only automatic failures.
+    fail(&mut db, 3, 200, PrRefreshError::ExecutionFailed);
+    // 4: a manual failure about the whole run (here a rate limit) does not
+    // count as tried.
+    fail_manually(&mut db, 4, 200, PrRefreshError::RateLimited);
+    // 5: a manual failure, then a success: nothing failed any more.
+    fail_manually(&mut db, 5, 200, PrRefreshError::InvalidResponse);
+    refresh(&mut db, 5, 300, PrState::Open, None, "fix: open", "main");
+    let freshness = report(&db, false).tile.freshness;
+    assert_eq!(
+        (
+            freshness.failed_never_refreshed,
+            freshness.manual_failed_never_refreshed,
+            freshness.failed_after_refresh,
+            freshness.manual_failed_after_refresh,
+            freshness.refreshed,
+        ),
+        (3, 1, 1, 1, 1)
+    );
+    // 6: a number GitHub said is not a pull request, tried by hand, is left
+    // out of every count rather than counted as tried.
+    link(&mut db, "s", 6, PrConfidence::Exact);
+    fail_manually(&mut db, 6, 200, PrRefreshError::NotFound);
+    assert_eq!(report(&db, false).tile.freshness, freshness);
 }
 
 #[test]
@@ -775,6 +850,69 @@ fn pr_effort_failed_refresh_keeps_cached_success_with_its_status() {
         serde_json::to_value(report.markers[0].freshness).unwrap(),
         json!({"state":"failed_after_refresh","error":"rate_limited"})
     );
+}
+
+/// A link GitHub said is not a pull request (the repository resolved, the
+/// number did not) is left out entirely: not merged, not unknown, not in any
+/// freshness count, and its session is assigned as if it had no link. Every
+/// other failure still makes the tile incomplete. A later success counts it.
+#[test]
+fn pr_effort_not_found_on_github_is_not_a_pull_request() {
+    let mut db = TempDb::empty().unwrap();
+    seed(
+        &mut db,
+        "s",
+        &[response("r", "2026-09-03T10:00:00Z", Some(9))],
+    );
+    link(&mut db, "s", 1, PrConfidence::Exact);
+    link(&mut db, "s", 999, PrConfidence::Exact);
+    merged(&mut db, 1, "2026-09-04T00:00:00Z", "feat: real");
+    fail(&mut db, 999, 200, PrRefreshError::NotFound);
+    let first = report(&db, false);
+    assert_eq!(first.tile.merged, Some(1));
+    assert_eq!(first.tile.unknown_facts, 0);
+    assert!(first.tile.complete);
+    let freshness = &first.tile.freshness;
+    assert_eq!(
+        (
+            freshness.refreshed,
+            freshness.failed_never_refreshed,
+            freshness.failed_after_refresh,
+            freshness.never_attempted,
+        ),
+        (1, 0, 0, 0)
+    );
+    // Only the real pull request decides the session's type.
+    assert_eq!(assignments(&first), [(ty("feat"), 1)]);
+    assert_eq!(first.markers.len(), 1);
+
+    // A repository gh could not see stays "could not be checked".
+    link(&mut db, "s", 19, PrConfidence::Exact);
+    fail(&mut db, 19, 200, PrRefreshError::ExecutionFailed);
+    let report_with_unknown = report(&db, false);
+    assert_eq!(report_with_unknown.tile.merged, None);
+    assert_eq!(report_with_unknown.tile.unknown_facts, 1);
+    assert_eq!(report_with_unknown.tile.freshness.failed_never_refreshed, 1);
+    assert_eq!(
+        assignments(&report_with_unknown),
+        [(EffortAssignment::Unresolved, 1)]
+    );
+
+    // GitHub later finds number 999: its facts count normally.
+    fail(&mut db, 19, 300, PrRefreshError::NotFound);
+    refresh(
+        &mut db,
+        999,
+        400,
+        PrState::Merged,
+        Some("2026-09-05T00:00:00Z"),
+        "fix: found later",
+        "main",
+    );
+    let found = report(&db, false);
+    assert_eq!(found.tile.merged, Some(2));
+    assert_eq!(found.tile.freshness.refreshed, 2);
+    assert_eq!(assignments(&found), [(EffortAssignment::Mixed, 1)]);
 }
 
 #[test]
@@ -1088,4 +1226,69 @@ fn pr_effort_hours_follow_the_range_model_not_the_day_model() {
             agent_ms: 600_000,
         }]
     );
+}
+
+/// One answer to "which model did this session use": the model the Sessions
+/// list names for a session is the model the Effort card gives its hours to,
+/// for metered responses and for work whose records name a model but carry no
+/// usage (Cursor without hook counters). 200 responses of one model and one of
+/// another name the first, with the other counted as one more model.
+#[test]
+fn the_sessions_list_and_the_effort_split_name_the_same_most_used_model() {
+    let mut db = TempDb::empty().unwrap();
+    let mut metered: Vec<_> = (0..200)
+        .map(|i| {
+            model_response(
+                &format!("m{i:03}"),
+                &format!("2026-09-02T10:{:02}:{:02}Z", i / 60, i % 60),
+                "effort-test",
+                1,
+            )
+        })
+        .collect();
+    metered.push(model_response(
+        "title",
+        "2026-09-02T10:04:00Z",
+        "title-model",
+        500,
+    ));
+    seed(&mut db, "metered", &metered);
+    let unmetered = |id: &str, ts: &str, model: &str| -> CanonicalRecord {
+        serde_json::from_value(json!({"uuid":id,"type":"assistant","timestamp":ts,
+            "message":{"role":"assistant","model":model}}))
+        .unwrap()
+    };
+    seed(
+        &mut db,
+        "unmetered",
+        &[
+            unmetered("u1", "2026-09-03T10:00:00Z", "z-model"),
+            unmetered("u2", "2026-09-03T10:05:00Z", "z-model"),
+            unmetered("u3", "2026-09-03T10:10:00Z", "a-model"),
+        ],
+    );
+    let report = report(&db, false);
+    let hours_model = |date: &str| -> Vec<Option<String>> {
+        report
+            .cohort
+            .by_day
+            .iter()
+            .find(|d| d.date == date)
+            .unwrap()
+            .models
+            .iter()
+            .filter(|m| m.agent_ms > 0)
+            .map(|m| m.model.clone())
+            .collect()
+    };
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    for (session, date, model) in [
+        ("metered", "2026-09-02", "effort-test"),
+        ("unmetered", "2026-09-03", "z-model"),
+    ] {
+        assert_eq!(hours_model(date), [Some(model.to_owned())], "{session}");
+        let row = metrics.session_exact(session).unwrap().unwrap();
+        assert_eq!(row.model.as_deref(), Some(model), "{session}");
+        assert_eq!(row.other_models, 1, "{session}");
+    }
 }

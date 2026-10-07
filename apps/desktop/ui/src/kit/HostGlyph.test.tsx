@@ -1,6 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import { HostGlyph } from './HostGlyph';
+import { hostName } from './hosts';
 
 afterEach(cleanup);
 
@@ -12,15 +13,17 @@ it('labels each known host explicitly with its own identity', () => {
       <HostGlyph host="cursor" />
     </>,
   );
-  for (const [label, file] of [
-    ['Claude', 'claude.svg'],
-    ['Codex', 'codex.webp'],
-    ['Cursor', 'cursor.png'],
+  // Each glyph is named as every screen names its host.
+  for (const [host, label, file] of [
+    ['claude', 'Claude Code', 'claude.svg'],
+    ['codex', 'Codex', 'codex.webp'],
+    ['cursor', 'Cursor', 'cursor.png'],
   ]) {
+    expect(hostName(host)).toBe(label);
     const glyph = screen.getByRole('img', { name: label });
     expect(glyph.title).toBe(label);
     expect(glyph.querySelector('img')?.getAttribute('src')).toBe(`/hosts/${file}`);
-    expect(glyph.getAttribute('data-host')).toBe(label.toLowerCase());
+    expect(glyph.getAttribute('data-host')).toBe(host);
   }
 });
 

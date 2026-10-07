@@ -102,7 +102,7 @@ describe('rows', () => {
     });
     expect(rowHandsOff(row('example/harbor', 9)).text).toMatch(/^Unknown: 1 linked session leaves/);
     expect(rowHandsOff(row('example/atlas', 103)).text).toMatch(
-      /1 session on an excluded surface not counted \(claude · desktop: 2 of 3 qualifying sessions/,
+      /1 session on an excluded surface not counted \(Claude Code · desktop: 2 of 3 qualifying sessions/,
     );
   });
 
@@ -112,7 +112,7 @@ describe('rows', () => {
     expect(mixed.value).toBeNull();
     expect(mixed.text).not.toMatch(/known absence/);
     expect(mixed.text).toBe(
-      'Unknown: no stretch among 1 measured linked session, and 1 session on an excluded surface is not counted (claude · desktop: 2 of 3 qualifying sessions have batch-stamped timestamps)',
+      'Unknown: no stretch among 1 measured linked session, and 1 session on an excluded surface is not counted (Claude Code · desktop: 2 of 3 qualifying sessions have batch-stamped timestamps)',
     );
     // Without exclusions the same absence is known.
     expect(rowHandsOff(row('example/harbor', 7)).text).toBe(
@@ -125,7 +125,7 @@ describe('rows', () => {
       hands_off: { ...desk.hands_off, n: null, median_min: null, unknown_sessions: 1 },
     });
     expect(unknown.text).toBe(
-      'Unknown: 1 linked session leaves a stretch boundary unknown; 1 session on an excluded surface not counted (claude · desktop: 2 of 3 qualifying sessions have batch-stamped timestamps)',
+      'Unknown: 1 linked session leaves a stretch boundary unknown; 1 session on an excluded surface not counted (Claude Code · desktop: 2 of 3 qualifying sessions have batch-stamped timestamps)',
     );
   });
 

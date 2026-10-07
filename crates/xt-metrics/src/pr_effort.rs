@@ -16,7 +16,9 @@
 //! `confirmed_only` is on. Only cached refresh facts are read: no GitHub call,
 //! SHA lookup, discovery or refresh happens here, and no age cutoff is applied
 //! to cached facts. A failed refresh after an earlier success keeps that
-//! success's facts; its status is reported alongside them.
+//! success's facts; its status is reported alongside them. A link to a number
+//! GitHub said is not a pull request (in a repository it could see, and never
+//! confirmed before) is left out of everything here, as if it were not stored.
 use crate::{
     CostSummary, Error, MetricsDb, PriceCatalog, Result, Window,
     cost::{self, Totals},
@@ -32,9 +34,17 @@ use xt_store::{
     timestamp::{self, InstantKey},
 };
 
-pub(crate) const LINK_QUERY: &str = "SELECT l.session_id,l.confidence,p.id,p.repo,p.number,
-       p.title,p.state,p.merged_at,p.head_ref_name,p.refreshed_at,p.last_attempted_at,p.refresh_error
-     FROM pr_links l JOIN pull_requests p ON p.id=l.pr_id";
+/// Every link except those to a number GitHub said is not a pull request
+/// (`xt_store::not_found_on_github_sql!`): such a link is not a pull request,
+/// so it is not counted, not unknown and not in any freshness count.
+pub(crate) const LINK_QUERY: &str = concat!(
+    "SELECT l.session_id,l.confidence,p.id,p.repo,p.number,
+       p.title,p.state,p.merged_at,p.head_ref_name,p.refreshed_at,p.last_attempted_at,p.refresh_error,
+       p.manual_failed_at
+     FROM pr_links l JOIN pull_requests p ON p.id=l.pr_id
+     WHERE NOT ",
+    xt_store::not_found_on_github_sql!()
+);
 
 // --- ticket-type classification ---------------------------------------------
 // The org's own vocabulary: a leading type token from the title
@@ -145,6 +155,12 @@ pub struct PrFreshnessSummary {
     pub refreshed: u64,
     pub failed_never_refreshed: u64,
     pub failed_after_refresh: u64,
+    /// Of `failed_never_refreshed`, those a manual refresh failed for since
+    /// their last success (`StoredPullRequest::manual_failed_at`).
+    pub manual_failed_never_refreshed: u64,
+    /// Of `failed_after_refresh`, those a manual refresh failed for since
+    /// their last success.
+    pub manual_failed_after_refresh: u64,
     /// Oldest last-successful refresh among those pull requests, UTC ms.
     pub oldest_refreshed_at: Option<i64>,
     /// Newest applied attempt, successful or not, UTC ms.
@@ -199,9 +215,10 @@ pub enum EffortAssignment {
 
 /// One model's part of one local day. Cost is the priced cost of the
 /// responses that named this model on the day; agent time is the time of the
-/// sessions whose most-used model over the whole window is this one. `model`
-/// is `None` for responses without a model name and for sessions with no
-/// response that names one.
+/// sessions whose most-used model over the whole window is this one, by the
+/// rule the Sessions list shows ([`xt_store::session_model`]). `model` is
+/// `None` for responses without a model name and for sessions whose
+/// in-window work names no model.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ModelDayEffort {
     pub model: Option<String>,
@@ -274,22 +291,16 @@ struct Accumulator {
     spans: ActiveSpanReport,
 }
 
-/// Per session, per named model: selected in-window responses and their
-/// recorded output tokens.
-type SessionModelUse = BTreeMap<String, BTreeMap<String, (u64, u64)>>;
+/// Per session: its in-window model uses.
+type SessionModelUse = BTreeMap<String, xt_store::session_model::ModelUses>;
 
-/// Each session's most-used model over the window: the most selected
-/// responses, then the most output tokens, then the first name. Sessions
-/// without a response that names a model are absent.
+/// Each session's most-used model over the window, by the one rule the
+/// Sessions list also shows ([`xt_store::session_model`]). Sessions whose
+/// in-window work names no model are absent.
 fn dominant_models(usage: &SessionModelUse) -> BTreeMap<String, String> {
     usage
         .iter()
-        .filter_map(|(session, models)| {
-            models
-                .iter()
-                .max_by(|(a_name, a), (b_name, b)| a.cmp(b).then_with(|| b_name.cmp(a_name)))
-                .map(|(model, _)| (session.clone(), model.clone()))
-        })
+        .filter_map(|(session, uses)| uses.most_used().map(|most| (session.clone(), most.model)))
         .collect()
 }
 
@@ -448,11 +459,21 @@ impl PrFreshnessSummary {
     /// Count one retained pull request's cached refresh status.
     pub(crate) fn observe(&mut self, stored: &StoredPullRequest) -> PrFreshness {
         let freshness = PrFreshness::from(stored.refresh_status());
+        // The one place a failed pull request is counted as one the user
+        // already tried by hand: storage keeps the mark only while the last
+        // attempt failed, and clears it on the next success.
+        let manual = u64::from(stored.manual_failed_at.is_some());
         match freshness {
             PrFreshness::NeverAttempted => self.never_attempted += 1,
             PrFreshness::Refreshed => self.refreshed += 1,
-            PrFreshness::FailedNeverRefreshed(_) => self.failed_never_refreshed += 1,
-            PrFreshness::FailedAfterRefresh(_) => self.failed_after_refresh += 1,
+            PrFreshness::FailedNeverRefreshed(_) => {
+                self.failed_never_refreshed += 1;
+                self.manual_failed_never_refreshed += manual;
+            }
+            PrFreshness::FailedAfterRefresh(_) => {
+                self.failed_after_refresh += 1;
+                self.manual_failed_after_refresh += manual;
+            }
         }
         if let Some(at) = stored.refreshed_at {
             self.oldest_refreshed_at = Some(self.oldest_refreshed_at.map_or(at, |old| old.min(at)));
@@ -514,6 +535,7 @@ impl MetricsDb {
                 refreshed_at: row.get(9)?,
                 last_attempted_at: row.get(10)?,
                 refresh_error: row.get(11)?,
+                manual_failed_at: row.get(12)?,
             };
             let merged_at = stored
                 .merged_at
@@ -590,15 +612,19 @@ impl MetricsDb {
         confirmed_only: bool,
         catalog: &PriceCatalog,
     ) -> Result<PrEffortReport> {
-        self.read_snapshot(|db| db.read_pr_effort(window, zone, confirmed_only, catalog))
+        self.read_snapshot(|db| db.read_pr_effort(window, zone, confirmed_only, catalog, None))
     }
 
-    fn read_pr_effort(
+    /// [`MetricsDb::pr_effort`] inside the caller's snapshot. `measured` is
+    /// this window's [`MetricsDb::active_spans`] already read in that same
+    /// snapshot; without it the spans are read here.
+    pub(crate) fn read_pr_effort(
         &self,
         window: Window,
         zone: TimeZone,
         confirmed_only: bool,
         catalog: &PriceCatalog,
+        measured: Option<&ActiveSpanReport>,
     ) -> Result<PrEffortReport> {
         let days = window.local_days(zone.clone())?;
         let start = InstantKey::from_millisecond(window.start_ms());
@@ -680,7 +706,15 @@ impl MetricsDb {
         };
         let mut cohort = Accumulator::new(days.len());
         let mut grouped = BTreeMap::<EffortAssignment, Accumulator>::new();
-        for span in self.active_spans(window)?.spans {
+        let read;
+        let spans = match measured {
+            Some(spans) => spans,
+            None => {
+                read = self.active_spans(window)?;
+                &read
+            }
+        };
+        for span in &spans.spans {
             let duration =
                 u64::try_from(span.end_ms - span.start_ms).map_err(|_| Error::CounterOverflow)?;
             let group = grouped
@@ -715,15 +749,11 @@ impl MetricsDb {
             let priced = observation.price(catalog)?;
             let day = day_ends.partition_point(|end| end <= &ts);
             if let Some(model) = observation.model() {
-                let entry = usage
-                    .entry(session.clone())
-                    .or_default()
-                    .entry(model.to_owned())
-                    .or_default();
-                entry.0 += 1;
-                entry.1 = entry
-                    .1
-                    .saturating_add(observation.output_tokens().unwrap_or(0));
+                usage.entry(session.clone()).or_default().add_responses(
+                    model,
+                    1,
+                    observation.output_tokens().unwrap_or(0),
+                );
             }
             let group = grouped
                 .entry(assignment_of(&session))
@@ -732,6 +762,33 @@ impl MetricsDb {
                 accumulator.sessions.insert(session.clone());
                 accumulator.push_cost(day, &observation, priced)?;
             }
+        }
+        drop(rows);
+        drop(statement);
+        // In-window assistant records that name a model but carry no usage,
+        // which the shared rule reads only when no response names a model.
+        let mut statement = self
+            .connection
+            .prepare(xt_store::session_model::UNMETERED_RECORDS_IN_WINDOW_SQL)?;
+        let mut rows = statement.query([window.start_ms(), window.candidate_end_ms()?])?;
+        while let Some(row) = rows.next()? {
+            let raw: String = row.get(2)?;
+            let ts = timestamp::parse(&raw)
+                .map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        2,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?
+                .0;
+            if ts < start || ts >= end {
+                continue;
+            }
+            usage
+                .entry(row.get(0)?)
+                .or_default()
+                .add_unmetered_records(&row.get::<_, String>(1)?, 1);
         }
         let dominant = dominant_models(&usage);
 

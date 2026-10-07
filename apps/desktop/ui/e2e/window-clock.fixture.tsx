@@ -60,6 +60,7 @@ if (new URLSearchParams(location.search).get('pages') === '3') {
           title: groups && id === PARENT ? 'Clock parent' : row.title,
           parent: child ? parent : null,
           known_child: child,
+          child_check: child ? ('child' as const) : ('checked' as const),
         };
       });
       if (pageReads > 3 && page === 2) rows.reverse();
@@ -69,7 +70,15 @@ if (new URLSearchParams(location.search).get('pages') === '3') {
         next: page < 2 ? String(page + 1) : null,
         referenced_parents:
           groups && page === 0
-            ? [{ session_id: PARENT, host: row.host, known_child: false, parent: null }]
+            ? [
+                {
+                  session_id: PARENT,
+                  host: row.host,
+                  known_child: false,
+                  parent: null,
+                  child_check: 'checked',
+                },
+              ]
             : [],
       };
     },

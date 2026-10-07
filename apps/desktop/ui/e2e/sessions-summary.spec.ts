@@ -9,7 +9,7 @@ import type { FixtureExport } from '../src/data/generated/FixtureExport';
  * label is clipped, no value or aside leaves its tile, and the list itself is
  * still on the page underneath.
  */
-const LABELS = ['Human messages', 'Output tokens', 'Agent minutes', 'Sessions / day'];
+const LABELS = ['Human messages', 'Output tokens', 'Agent time', 'Sessions / day'];
 const SCOPE =
   'The summary counts all indexed activity in the selected range; filters narrow only the table.';
 const SCOPE_LINE = 'Range: all indexed activity · filters: table only';
@@ -140,7 +140,8 @@ test('a positive below the shown scale reads as such and still fits', async ({ p
   await page
     .locator('.xt-sessions-tiles')
     .screenshot({ path: info.outputPath('sessions-tiles-small.png') });
-  expect(tiles[2].value).toBe('<0.1');
+  // Agent time is written as all agent time is; sessions per day on the one-decimal scale.
+  expect(tiles[2].value).toBe('<0.1m');
   expect(tiles[3].value).toBe('<0.1');
   // Absent counters are not an absence of output.
   expect(tiles[1].value).toContain('Output token counts are missing or incomplete');

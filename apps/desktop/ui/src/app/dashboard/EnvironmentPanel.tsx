@@ -5,6 +5,7 @@ import type { HookNames } from '../../data/generated/HookNames';
 import { useData } from '../../data/DataProvider';
 import { Button } from '../../kit/Button';
 import { DayStrip } from '../../kit/DayStrip';
+import { hostName } from '../../kit/hosts';
 import type { TimeRange } from '../../kit/TopBar';
 import { DashCard } from './DashCard';
 import { DetailDialog } from './DetailDialog';
@@ -269,7 +270,9 @@ function ReasonGist({
   return (
     <span className="xt-rule-context">
       {title}:{' '}
-      {items.map((item) => `${item.host} · ${unresolvedText[item.reason](item.calls)}`).join('; ')}
+      {items
+        .map((item) => `${hostName(item.host)} · ${unresolvedText[item.reason](item.calls)}`)
+        .join('; ')}
     </span>
   );
 }
@@ -285,7 +288,7 @@ function ReasonList({
     <ul className="xt-dash-list" aria-label={label}>
       {items.map((item) => (
         <li key={`${item.host}:${item.reason}`}>
-          {item.host} · {unresolvedText[item.reason](item.calls)}
+          {hostName(item.host)} · {unresolvedText[item.reason](item.calls)}
         </li>
       ))}
     </ul>
@@ -344,7 +347,8 @@ function IdentityItem({
   const badge = kindBadge(identity.kind);
   const text = identityText(identity);
   const surfaces = rowSurfaces(report, row);
-  const context = surfaces.length > 0 ? surfaces.join(', ') : `${row.host} · no surface in range`;
+  const context =
+    surfaces.length > 0 ? surfaces.join(', ') : `${hostName(row.host)} · no surface in range`;
   const kind = (
     <span className="xt-kind xt-control-tone" data-tone={badge.tone}>
       {badge.text}
@@ -358,7 +362,7 @@ function IdentityItem({
   );
   const strip = (
     <DayStrip
-      label={`${text.name}, ${row.host}: ${callsText(identity, row.strip_calls)} per local day, last 14 days`}
+      label={`${text.name}, ${hostName(row.host)}: ${callsText(identity, row.strip_calls)} per local day, last 14 days`}
       thresholds={STRIP_THRESHOLDS}
       days={row.strip.map((day) => ({ label: dayLabel(day.date), value: day.calls }))}
     />
@@ -375,7 +379,7 @@ function IdentityItem({
         <span className="xt-env-tool" title={full}>
           {name}
           {kind}
-          <span className="xt-env-host"> · {row.host}</span>
+          <span className="xt-env-host"> · {hostName(row.host)}</span>
         </span>
         {strip}
         {calls}
@@ -530,7 +534,7 @@ function ConfiguredDetails({ report }: { report: EnvironmentMetrics }) {
             {configured.map((item) => (
               <li key={`${item.host}:${item.source}:${item.name}`}>
                 <span>
-                  {item.host} · {componentKindText[item.kind]} · {item.name}
+                  {hostName(item.host)} · {componentKindText[item.kind]} · {item.name}
                 </span>
                 <span>
                   {configSourceText[item.source]} · {scopeText(item.scope)} ·{' '}
@@ -549,7 +553,7 @@ function ConfiguredDetails({ report }: { report: EnvironmentMetrics }) {
           {sources.map((item) => (
             <li key={`${item.source}:${item.scope}:${item.root_index}`}>
               <span>
-                {item.host} · {configSourceText[item.source]} ·{' '}
+                {hostName(item.host)} · {configSourceText[item.source]} ·{' '}
                 {scopeText(item.scope, item.root_index)}
               </span>
               <span>{statusText(item.status, item.source)}</span>
@@ -578,7 +582,7 @@ function ConfiguredDetails({ report }: { report: EnvironmentMetrics }) {
             {cache.map((item) => (
               <li key={`${item.source}:${item.scope}:${item.root_index}`}>
                 <span>
-                  {item.host} · {cacheSourceText[item.source]} ·{' '}
+                  {hostName(item.host)} · {cacheSourceText[item.source]} ·{' '}
                   {scopeText(item.scope, item.root_index)}
                 </span>
                 <span>{statusText(item.status, item.source)}</span>

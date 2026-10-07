@@ -1,9 +1,10 @@
+mod activity_support;
 use jiff::{Timestamp, tz::TimeZone};
 use rusqlite::Connection;
 use serde_json::json;
 use std::path::PathBuf;
 use xt_fixtures::{Fixture, TempDb};
-use xt_metrics::{DayHuman, HumanTime, MetricsDb, TypingRate, Window};
+use xt_metrics::{DayHuman, HumanTime, MetricsDb, PriceCatalog, TypingRate, Window};
 use xt_store::{CanonicalRecord, retention::RetentionMode};
 fn fixture(id: &str) -> Fixture {
     Fixture::load(
@@ -181,6 +182,16 @@ fn human_characters_count_same_instant_inputs_and_leap_boundaries() {
     let w = Window::new(ms("2026-09-07T23:59:59Z"), ms("2026-09-08T00:00:01Z")).unwrap();
     assert_eq!(query(&db, w).human_minutes_est, Some(0.005));
     assert_eq!(query(&db, w).agent_minutes, 900.0 / 60_000.0);
+    // The combined read keeps the leap event's exact membership too.
+    let shared = activity_support::matches_standalone(
+        &MetricsDb::open(db.path()).unwrap(),
+        w,
+        TimeZone::UTC,
+        TypingRate::default(),
+        false,
+        &PriceCatalog::bundled().unwrap(),
+    );
+    assert_eq!(shared.human.agent_minutes, 900.0 / 60_000.0);
 }
 #[test]
 fn human_characters_require_every_eligible_length() {

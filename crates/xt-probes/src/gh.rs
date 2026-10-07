@@ -24,7 +24,8 @@
 //!   a child that floods one of them can neither exhaust memory here nor
 //!   block on a full pipe. Stdout past [`Limits::max_stdout_bytes`] ends the
 //!   attempt as `output_too_large`; stderr past [`Limits::max_stderr_bytes`]
-//!   is discarded, because stderr is never parsed, reported or stored.
+//!   is discarded. Stderr is never reported or stored; it is only compared,
+//!   whole, with the one "pull request does not exist" line below.
 //! * A deadline, a cancellation and an oversized stdout all terminate the
 //!   child's whole process group and reap it, so a descendant that inherited
 //!   the pipes cannot keep the attempt alive. The child's exit is observed
@@ -33,11 +34,24 @@
 //!   termination signals, and it is given up exactly once, afterwards.
 //! * Failures are the conservative closed codes of [`PrRefreshError`]. A
 //!   process that ran and exited nonzero is `execution_failed`, whatever it
-//!   wrote, with one exception: exit code 4, which `gh help exit-codes`
-//!   documents as "authentication required", is `unauthorized`. That code is
-//!   read from the exit status alone; this client never guesses anything from
-//!   stderr text, and never produces "not found" or "rate limited". Those two
-//!   codes exist in storage for an owner that can establish them.
+//!   wrote, with two exceptions:
+//!   - exit code 4, which `gh help exit-codes` documents as "authentication
+//!     required", is `unauthorized`. That code is read from the exit status
+//!     alone.
+//!   - exit code 1 whose whole stderr is exactly the GraphQL answer that the
+//!     repository resolved but has no pull request with the requested number
+//!     is `not_found` ([`pull_request_missing_line`]). gh 2.90.0 prints, for
+//!     a visible repository without that pull request:
+//!     `GraphQL: Could not resolve to a PullRequest with the number of 999. (repository.pullRequest)`
+//!     The `(repository.pullRequest)` path says the `repository` field
+//!     resolved and only `pullRequest` did not. A repository gh cannot see —
+//!     missing, or private to another account — fails one level up instead,
+//!     `GraphQL: Could not resolve to a Repository with the name 'x/r'. (repository)`,
+//!     and stays `execution_failed`, as does any other wording, extra line or
+//!     truncated stderr.
+//!
+//!   This client never produces "rate limited"; that code exists in storage
+//!   for an owner that can establish it.
 //! * A response is accepted only in its exact documented shape, and only when
 //!   it names the pull request that was requested. Field rules are not
 //!   restated here: the parsed result is checked by
@@ -297,12 +311,50 @@ enum Exited {
     /// Exit code 4: `gh help exit-codes` documents it as "authentication
     /// required".
     NeedsAuthentication,
+    /// Exit code 1, gh's ordinary failure.
+    Error,
     /// Any other nonzero exit, or a death by signal.
     Failed,
 }
 
 /// gh's documented exit code for "authentication required".
 const GH_EXIT_AUTH: i32 = 4;
+/// gh's exit code for a command that failed (`gh help exit-codes`).
+const GH_EXIT_ERROR: i32 = 1;
+
+/// The exact stderr line gh writes when the repository resolved but has no
+/// pull request with this number (observed with gh 2.90.0 against a visible
+/// repository):
+///
+/// `GraphQL: Could not resolve to a PullRequest with the number of 999. (repository.pullRequest)`
+///
+/// A repository that does not resolve — missing, or private to an account
+/// other than the signed-in one — is reported at `(repository)` instead and
+/// never matches.
+pub fn pull_request_missing_line(number: u64) -> String {
+    format!(
+        "GraphQL: Could not resolve to a PullRequest with the number of {number}. (repository.pullRequest)"
+    )
+}
+
+/// Whether a failed run's stderr is exactly gh's "this repository has no such
+/// pull request" answer for the requested number, and nothing else. A
+/// truncated stderr is never judged.
+fn says_pull_request_missing(identity: &PrIdentity, stderr: &Stderr) -> bool {
+    !stderr.overflowed
+        && std::str::from_utf8(&stderr.kept).is_ok_and(|text| {
+            text.trim_end_matches(['\n', '\r']) == pull_request_missing_line(identity.number())
+        })
+}
+
+/// What a run wrote to stderr, kept only to compare with
+/// [`pull_request_missing_line`]; never reported or stored.
+#[derive(Default)]
+struct Stderr {
+    kept: Vec<u8>,
+    /// More was written than the bound kept.
+    overflowed: bool,
+}
 
 /// Turn one completed run into a typed outcome. Everything a response must
 /// satisfy beyond its own shape and identity is the storage layer's
@@ -312,6 +364,7 @@ fn interpret(
     attempted_at: i64,
     exited: Exited,
     stdout: &[u8],
+    stderr: &Stderr,
 ) -> RefreshOutcome {
     match exited {
         Exited::Success => {}
@@ -319,9 +372,14 @@ fn interpret(
         Exited::NeedsAuthentication => {
             return failure(identity, attempted_at, PrRefreshError::Unauthorized);
         }
+        // The repository resolved and GitHub says it has no pull request
+        // with this number.
+        Exited::Error if says_pull_request_missing(identity, stderr) => {
+            return failure(identity, attempted_at, PrRefreshError::NotFound);
+        }
         // The process ran and refused. Which refusal it was is not decidable
         // from its output here, so it is reported as one execution failure.
-        Exited::Failed => {
+        Exited::Error | Exited::Failed => {
             return failure(identity, attempted_at, PrRefreshError::ExecutionFailed);
         }
     }
@@ -398,7 +456,9 @@ mod unix {
         };
         match collect(child, client.limits(), cancel) {
             Err(error) => failure(identity, attempted_at, error),
-            Ok((exited, stdout)) => super::interpret(identity, attempted_at, exited, &stdout),
+            Ok((exited, stdout, stderr)) => {
+                super::interpret(identity, attempted_at, exited, &stdout, &stderr)
+            }
         }
     }
 
@@ -568,14 +628,14 @@ mod unix {
     }
 
     /// Await the child and its drains within the bounds. Returns how the
-    /// child exited and the retained stdout; a bound that ended
+    /// child exited and the retained stdout and stderr; a bound that ended
     /// the attempt returns its code instead, with the group terminated and
     /// the child reaped.
     fn collect(
         mut child: Child,
         limits: super::Limits,
         cancel: Option<&CancelFlag>,
-    ) -> Result<(super::Exited, Vec<u8>), PrRefreshError> {
+    ) -> Result<(super::Exited, Vec<u8>, super::Stderr), PrRefreshError> {
         // The leader's pid is also its process group's ID. Nothing below
         // reaps it — the poll observes its exit without consuming it — so
         // this ID stays reserved until the single reap at the end.
@@ -638,11 +698,15 @@ mod unix {
             Ok(status) if status.code() == Some(super::GH_EXIT_AUTH) => {
                 super::Exited::NeedsAuthentication
             }
+            Ok(status) if status.code() == Some(super::GH_EXIT_ERROR) => super::Exited::Error,
             _ => super::Exited::Failed,
         };
         let output = stdout.take();
-        drop(stderr.take());
-        Ok((exited, output))
+        let diagnostic = super::Stderr {
+            overflowed: stderr.overflowed(),
+            kept: stderr.take(),
+        };
+        Ok((exited, output, diagnostic))
     }
 
     /// Wait out the drains of a terminated group, then let them go. Only a

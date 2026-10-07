@@ -163,6 +163,7 @@ impl NativeIndex {
                 reason: "not verified: the index is disabled".into(),
             },
             hosts: Vec::new(),
+            needs_attention: false,
             reconciles: 0,
             files_scanned: 0,
         };
@@ -217,10 +218,15 @@ impl NativeIndex {
             python: PythonRuntime::Resolving,
             readers,
             hosts: HOSTS.iter().map(|host| pending(*host)).collect(),
+            needs_attention: false,
             reconciles: 0,
             files_scanned: 0,
         }));
-        publish(&lock(&status));
+        {
+            let mut current = lock(&status);
+            mark_attention(&mut current);
+            publish(&current);
+        }
         let producer = match pin {
             Ok(pin) => ProducerSource::Bundle {
                 pin,
@@ -278,6 +284,7 @@ impl NativeIndex {
                     }
                     TailEvent::SessionCreationsChanged { .. } => return,
                 }
+                mark_attention(&mut current);
                 publish(&current);
             }) as Box<dyn Fn(TailEvent) + Send>
         };
@@ -355,10 +362,41 @@ impl NativeIndex {
         let mut current = lock(&self.status);
         if current.phase != NativeIndexPhase::Stopped {
             current.phase = NativeIndexPhase::Stopped;
+            mark_attention(&mut current);
             (self.publish)(&current);
         }
         ended
     }
+}
+
+/// Whether a host's last scan leaves the local index short of that host: the
+/// one rule every screen reads (Sessions, sidebar, Welcome, Settings). A
+/// settled scan does not: `complete`, or `missing_source` (no local history
+/// to read is not a failure). A host the running scan has not reached yet is
+/// waiting, not a problem. Every other state is: a scan that read with gaps,
+/// could not run, failed or was cancelled, and a host left unscanned once no
+/// scan is running.
+pub fn host_needs_attention(state: NativeHostState, scanning: bool) -> bool {
+    match state {
+        NativeHostState::Complete | NativeHostState::MissingSource => false,
+        NativeHostState::Pending => !scanning,
+        NativeHostState::Incomplete
+        | NativeHostState::MissingRuntime
+        | NativeHostState::PinMismatch
+        | NativeHostState::ReaderFailed
+        | NativeHostState::Cancelled => true,
+    }
+}
+
+/// Set every host's `needs_attention` from its state and the phase, and the
+/// index's own flag from the hosts. Called after every change to the phase or
+/// the hosts, before the status is published.
+pub fn mark_attention(status: &mut NativeIndexStatus) {
+    let scanning = status.phase == NativeIndexPhase::Scanning;
+    for host in &mut status.hosts {
+        host.needs_attention = host_needs_attention(host.state, scanning);
+    }
+    status.needs_attention = status.hosts.iter().any(|host| host.needs_attention);
 }
 
 fn lock(status: &Mutex<NativeIndexStatus>) -> std::sync::MutexGuard<'_, NativeIndexStatus> {
@@ -371,6 +409,7 @@ fn pending(host: Host) -> NativeHostStatus {
     NativeHostStatus {
         host: host.as_str().to_owned(),
         state: NativeHostState::Pending,
+        needs_attention: false,
         detail: None,
         sessions_imported: 0,
         sessions_partial: 0,
@@ -818,5 +857,79 @@ mod skipped_details_tests {
                 .unwrap()
                 .contains("credential")
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const STATES: [NativeHostState; 8] = [
+        NativeHostState::Pending,
+        NativeHostState::Complete,
+        NativeHostState::Incomplete,
+        NativeHostState::MissingSource,
+        NativeHostState::MissingRuntime,
+        NativeHostState::PinMismatch,
+        NativeHostState::ReaderFailed,
+        NativeHostState::Cancelled,
+    ];
+
+    #[test]
+    fn only_settled_scans_and_hosts_waiting_on_a_running_scan_are_not_a_problem() {
+        for state in STATES {
+            let settled = matches!(
+                state,
+                NativeHostState::Complete | NativeHostState::MissingSource
+            );
+            let waiting = state == NativeHostState::Pending;
+            assert_eq!(host_needs_attention(state, true), !settled && !waiting);
+            assert_eq!(host_needs_attention(state, false), !settled, "{state:?}");
+        }
+    }
+
+    fn status(phase: NativeIndexPhase, states: &[NativeHostState]) -> NativeIndexStatus {
+        let mut status = NativeIndex::disabled("test", Arc::new(|_| {})).status();
+        status.phase = phase;
+        status.hosts = HOSTS
+            .iter()
+            .zip(states)
+            .map(|(host, state)| NativeHostStatus {
+                state: *state,
+                ..pending(*host)
+            })
+            .collect();
+        mark_attention(&mut status);
+        status
+    }
+
+    #[test]
+    fn the_index_needs_attention_exactly_when_one_of_its_hosts_does() {
+        use NativeHostState::*;
+        let settled = status(
+            NativeIndexPhase::Ready,
+            &[Complete, MissingSource, MissingSource],
+        );
+        assert!(!settled.needs_attention);
+        assert!(settled.hosts.iter().all(|host| !host.needs_attention));
+        let cancelled = status(
+            NativeIndexPhase::Ready,
+            &[Complete, Cancelled, MissingSource],
+        );
+        assert!(cancelled.needs_attention);
+        assert_eq!(
+            cancelled
+                .hosts
+                .iter()
+                .map(|host| host.needs_attention)
+                .collect::<Vec<_>>(),
+            [false, true, false]
+        );
+        // The same pending host is waiting while the scan runs, and a problem
+        // once the index stopped without reaching it.
+        let scanning = status(NativeIndexPhase::Scanning, &[Complete, Pending, Pending]);
+        assert!(!scanning.needs_attention);
+        let stopped = status(NativeIndexPhase::Stopped, &[Complete, Pending, Pending]);
+        assert!(stopped.needs_attention);
     }
 }

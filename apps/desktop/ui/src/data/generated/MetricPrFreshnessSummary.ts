@@ -5,6 +5,16 @@
  */
 export type MetricPrFreshnessSummary = { never_attempted: number, refreshed: number, failed_never_refreshed: number, failed_after_refresh: number, 
 /**
+ * Of `failed_never_refreshed`, those a manual refresh failed for since
+ * their last success. The Dashboard does not ask about these again.
+ */
+manual_failed_never_refreshed: number, 
+/**
+ * Of `failed_after_refresh`, those a manual refresh failed for since
+ * their last success.
+ */
+manual_failed_after_refresh: number, 
+/**
  * Oldest last-successful refresh among those pull requests, UTC ms.
  */
 oldest_refreshed_at: number | null, 

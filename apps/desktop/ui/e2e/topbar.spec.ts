@@ -22,7 +22,7 @@ test('controlled TopBar actions, both themes, minimum width and host glyph geome
     await topbar.screenshot({ path: info.outputPath(`topbar-${theme}.png`) });
     const row = page.getByTestId('size-16');
     for (const [label, file] of [
-      ['Claude', 'claude.svg'],
+      ['Claude Code', 'claude.svg'],
       ['Codex', 'codex.webp'],
       ['Cursor', 'cursor.png'],
     ]) {

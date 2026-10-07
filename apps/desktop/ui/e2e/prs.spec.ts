@@ -307,7 +307,7 @@ test('shows what a refresh made on the Dashboard stored, and starts none itself'
   // A fixture database starts with links only: nothing is cached, and nothing is guessed.
   for (const row of await rows.all()) {
     await expect(row).toContainText('Title not cached');
-    await expect(row).toContainText('never refreshed');
+    await expect(row).toContainText('not checked yet');
     await expect(row.locator('.xt-pr-state-word')).toHaveCount(0);
   }
   // The manual refresh stays where it lives. The way there is in the
@@ -322,7 +322,9 @@ test('shows what a refresh made on the Dashboard stored, and starts none itself'
   await dialog.getByRole('checkbox', { name: /#11/ }).check();
   await dialog.getByRole('checkbox', { name: /#12/ }).check();
   await dialog.getByRole('button', { name: 'Refresh 2 pull requests' }).click();
-  await expect(dialog.getByTestId('pr-refresh-report')).toContainText('1 refreshed, 1 failed');
+  await expect(dialog.getByTestId('pr-refresh-report')).toContainText(
+    '1 checked, 1 could not be checked',
+  );
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Pull requests', exact: true }).click();
   // The page opens on its report; the inventory is its other view.
@@ -331,9 +333,9 @@ test('shows what a refresh made on the Dashboard stored, and starts none itself'
   await expect(rows.nth(0)).toContainText('Synthetic fixture pull request 11');
   await expect(rows.nth(0)).toContainText('merged');
   await expect(rows.nth(0)).toContainText('+33');
-  await expect(rows.nth(0).locator('.xt-pr-cache-word')).toHaveText('refreshed');
+  await expect(rows.nth(0).locator('.xt-pr-cache-word')).toHaveText('checked');
   await expect(rows.nth(1)).toContainText('Title not cached');
-  await expect(rows.nth(1).locator('.xt-pr-cache-word')).toHaveText('failed · never refreshed');
+  await expect(rows.nth(1).locator('.xt-pr-cache-word')).toHaveText('could not be checked');
   await expect(rows.nth(1)).toContainText('rate limited');
-  await expect(rows.nth(2).locator('.xt-pr-cache-word')).toHaveText('never refreshed');
+  await expect(rows.nth(2).locator('.xt-pr-cache-word')).toHaveText('not checked yet');
 });

@@ -9,8 +9,8 @@ import {
 } from 'react';
 import type { DashboardMetrics } from '../../data/generated/DashboardMetrics';
 import { useSurfaceTheme } from '../../theme/ThemeProvider';
-import { plural } from './present';
-import { timelineRows, yourHoursText, type TimelineRow } from './overview';
+import { agentTime } from '../agent-duration';
+import { timelineRows, wholeDaysText, type TimelineRow } from './overview';
 import '../../styles/overview.css';
 
 /** The 7-day range's eight days fill the plot; longer ranges keep that row size and scroll. */
@@ -20,7 +20,7 @@ const MIN_ROW_PX = 28;
 const HOURS = ['00', '06', '12', '18', '24'];
 
 /**
- * "Your hours" as a 24-hour timeline: one row per reported local day, oldest
+ * Human time as a 24-hour timeline: one row per reported local day, oldest
  * first, each a whole day with its stretches drawn across its hours and its
  * total at the right. Rows keep the height eight rows have in the plot, so a
  * 14- or 30-day range scrolls instead of shrinking; the hour axis stays above
@@ -99,12 +99,12 @@ export function HumanTimeline({ report }: { report: DashboardMetrics }) {
     <div className="xt-effort xt-human" data-testid="human-timeline">
       <p className="xt-effort-headline" data-testid="effort-headline">
         <strong data-testid="effort-total">
-          {unknown ? 'your h unknown' : `${yourHoursText(human.active_ms!)} your h`}
+          {unknown ? 'human time unknown' : `${agentTime(human.active_ms!)} human`}
         </strong>
-        <span>last {plural(rows.length, 'day')}</span>
+        <span>{wholeDaysText(human.by_day)}</span>
         <small>
           {unknown
-            ? 'Could not tell which messages are yours.'
+            ? 'Could not tell which messages a person sent.'
             : `gaps over ${human.break_minutes} min count as breaks`}
         </small>
       </p>
@@ -122,7 +122,7 @@ export function HumanTimeline({ report }: { report: DashboardMetrics }) {
           ref={body}
           className="xt-human-body"
           role="list"
-          aria-label={`Your hours by day, ${rows.length} days, each from 00:00 to 24:00`}
+          aria-label={`Human time by day, ${rows.length} days, each from 00:00 to 24:00`}
           data-more-above={above || undefined}
           data-testid="human-timeline-body"
           onKeyDown={move}
@@ -242,7 +242,7 @@ function Row({
             </span>
             {row.bars.length === 0 && (
               <span className="xt-effort-tip-note">
-                {row.total === null ? 'Could not tell which messages are yours' : 'No messages'}
+                {row.total === null ? 'Could not tell which messages a person sent' : 'No messages'}
               </span>
             )}
             {row.bars.map((bar, index) => (

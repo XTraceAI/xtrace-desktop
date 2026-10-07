@@ -1,0 +1,1 @@
+- Show the Claude running indicator for newer Claude Code version numbers.

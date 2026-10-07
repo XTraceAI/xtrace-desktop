@@ -116,6 +116,13 @@ pub struct AccountProviderUsage {
     /// Unix seconds of the last successful provider read.
     #[ts(type = "number | null")]
     pub checked_at: Option<i64>,
+    /// Unix seconds when this reading becomes stale, from the app's one stale
+    /// rule (`account_usage::stale_at`), so the screen can mark it stale on
+    /// time without asking again. Absent when there is no read time. Never
+    /// saved with the reading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub stale_at: Option<i64>,
     pub windows: Vec<AccountUsageWindow>,
 }
 

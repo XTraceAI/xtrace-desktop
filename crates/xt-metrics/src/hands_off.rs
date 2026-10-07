@@ -12,7 +12,30 @@ use xt_store::timestamp::{self, InstantKey};
 
 pub(crate) const QUERY: &str =
     "SELECT session_id,host,surface,uuid,ts,ts_ms,type,is_human,tool_use_count,
-    confirmed_automated_input FROM v_session_events WHERE ts_ms>=?1 AND ts_ms<?2";
+    confirmed_automated_input,human_is_eligible FROM v_session_events WHERE ts_ms>=?1 AND ts_ms<?2";
+
+/// Who sent one event, as a stretch reads it: `(human, neutral)`.
+///
+/// A person's message is exactly what human messages count (M-02,
+/// `human_is_eligible`), the one rule human messages, human time and the
+/// typing estimate already read, so only a message counted as a person's
+/// starts a stretch. Any other input is neutral, as a confirmed automated
+/// input always was: one the human-message rule leaves out (a `claude -p`
+/// child's prompt, an input in an agent-created conversation) is the
+/// structure's input but not a person's. Agent events (structurally not an
+/// input) end stretches as before. An unknown answer where it matters stays
+/// unknown, never guessed from role.
+fn sender(person: Option<bool>, structural: Option<bool>, confirmed: bool) -> (Option<bool>, bool) {
+    if confirmed {
+        return (Some(false), true);
+    }
+    match (person, structural) {
+        (Some(true), _) => (Some(true), false),
+        (None, _) => (None, false),
+        (Some(false), Some(true)) => (Some(false), true),
+        (Some(false), structural) => (structural, false),
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ExcludedSurface {
@@ -45,10 +68,12 @@ pub(crate) struct Event {
     human: Option<bool>,
     tools: Option<u64>,
     health_record: bool,
-    /// A confirmed automated input. It is neutral to every stretch: it neither
-    /// starts nor ends one, cannot be an endpoint and says nothing about tool
-    /// presence. It still sits on the session's clock, so timestamp health and
-    /// a stretch's M-05 timeline keep it, as M-05 itself does.
+    /// An input that is not a person's message ([`sender`]): a confirmed
+    /// automated input, or one the human-message rule leaves out. It is
+    /// neutral to every stretch: it neither starts nor ends one, cannot be an
+    /// endpoint and says nothing about tool presence. It still sits on the
+    /// session's clock, so timestamp health and a stretch's M-05 timeline keep
+    /// it, as M-05 itself does.
     automated: bool,
 }
 
@@ -94,6 +119,7 @@ pub(crate) fn load(connection: &rusqlite::Connection, window: Window) -> Result<
             })
             .transpose()?;
         let kind: String = row.get(6)?;
+        let (human, automated) = sender(row.get(10)?, row.get(7)?, row.get(9)?);
         surfaces
             .entry((row.get(1)?, row.get(2)?))
             .or_default()
@@ -104,10 +130,10 @@ pub(crate) fn load(connection: &rusqlite::Connection, window: Window) -> Result<
                 uuid: row.get(3)?,
                 ts,
                 ms: row.get(5)?,
-                human: row.get(7)?,
+                human,
                 tools,
                 health_record: kind == "user" || kind == "assistant",
-                automated: row.get(9)?,
+                automated,
             });
     }
     drop(rows);

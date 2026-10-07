@@ -1,0 +1,1 @@
+- Reduce repeated Dashboard reads and reuse activity time spans across four reports.

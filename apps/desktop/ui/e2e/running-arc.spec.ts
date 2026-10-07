@@ -162,12 +162,26 @@ for (const host of ['claude', 'codex'] as const)
           await expect(
             page.getByRole('img', { name: `${label} · Running`, exact: true }),
           ).toHaveAttribute('title', `${runtime} · Running`);
+          // Dashboard idle rows keep their ordinary host glyph; textual live
+          // badges belong to other views. Address each synthetic row exactly.
+          const idleRow = (number: number) =>
+            page
+              .getByRole('table', { name: 'Session lanes', exact: true })
+              .getByRole('row')
+              .filter({
+                has: page.locator(
+                  `[data-visible-id="${host}-00000000-0000-4000-8000-${String(number).padStart(12, '0')}"]`,
+                ),
+              });
           await expect(
-            page.getByRole('status', { name: 'Claude Code · Idle', exact: true }),
+            idleRow(2).getByRole('img', {
+              name: host === 'claude' ? 'Codex' : 'Claude Code',
+              exact: true,
+            }),
           ).toHaveCount(1);
-          await expect(page.getByRole('status', { name: 'Codex · Idle', exact: true })).toHaveCount(
-            1,
-          );
+          await expect(idleRow(3).getByRole('img', { name: label, exact: true })).toHaveCount(1);
+          for (const number of [2, 3])
+            await expect(idleRow(number).locator('.xt-lane-live-host')).toHaveCount(0);
           await page.evaluate(async () => {
             await document.fonts.ready;
             await Promise.all([...document.querySelectorAll('img')].map((image) => image.decode()));

@@ -36,6 +36,8 @@ const tile = (
       refreshed: 0,
       failed_never_refreshed: 0,
       failed_after_refresh: 0,
+      manual_failed_never_refreshed: 0,
+      manual_failed_after_refresh: 0,
       oldest_refreshed_at: null,
       newest_attempted_at: null,
       ...freshness,
@@ -56,7 +58,7 @@ it('says how many were never checked instead of showing a zero', () => {
     value: null,
     placeholder: '32 PRs not checked yet',
     aside: undefined,
-    freshness: '32 PRs not checked yet.',
+    freshness: '32 PRs are not checked yet.',
   });
 });
 
@@ -69,7 +71,7 @@ it('says it is checking while an automatic run is going', () => {
   // It does not claim which ones it is checking: only the unchecked count.
   expect(view.placeholder).toBe('32 PRs not checked yet');
   expect(view.aside).toBe('checking…');
-  expect(view.freshness).toBe('Checking GitHub now… 32 PRs not checked yet.');
+  expect(view.freshness).toBe('Checking GitHub now… 32 PRs are not checked yet.');
 });
 
 it('shows the known merged count with how many are still not checked', () => {
@@ -85,7 +87,7 @@ it('shows the known merged count with how many are still not checked', () => {
     value: 5,
     incomplete: true,
     aside: '3 not checked yet',
-    freshness: 'Last checked Sep 7, 14:03. 3 PRs not checked yet.',
+    freshness: 'Last checked Sep 7, 2:03 PM. 3 PRs are not checked yet.',
   });
   expect(
     mergedTileView(
@@ -139,7 +141,7 @@ it('tells a failed check apart from one that never ran', () => {
   expect(view.placeholder).toBe('2 PRs not checked yet');
   expect(view.aside).toBe('1 could not be checked');
   expect(view.freshness).toBe(
-    '2 PRs not checked yet. 1 PR could not be checked; the last try failed. Click the red ! on the Effort card to check it again.',
+    '2 PRs are not checked yet. 1 PR could not be checked. The last try failed. Click the red ! on the Effort card to check it again.',
   );
   expect(
     mergedTileView(tile({ unknown_facts: 1 }, { failed_never_refreshed: 1 }), auto(), window)
@@ -156,7 +158,7 @@ it('a complete count is a number, and a paused or switched-off check says why', 
   expect(complete).toEqual({
     value: 4,
     aside: undefined,
-    freshness: 'Last checked Sep 7, 09:00.',
+    freshness: 'Last checked Sep 7, 9:00 AM.',
   });
   const missing = mergedTileView(
     tile({ unknown_facts: 2 }, { never_attempted: 2 }),
@@ -165,7 +167,7 @@ it('a complete count is a number, and a paused or switched-off check says why', 
   );
   expect(missing.aside).toBe('gh not found');
   expect(missing.freshness).toBe(
-    'XTrace could not run the GitHub CLI (gh), so it stopped checking. 2 PRs not checked yet. Install gh, then click the red ! on the Effort card to check again.',
+    'XTrace could not run the GitHub CLI (gh), so it stopped checking. 2 PRs are not checked yet. Install gh, then click the red ! on the Effort card to check again.',
   );
   const signedOut = mergedTileView(
     tile({ unknown_facts: 5 }, { never_attempted: 2, failed_never_refreshed: 3 }),
@@ -174,7 +176,7 @@ it('a complete count is a number, and a paused or switched-off check says why', 
   );
   expect(signedOut.aside).toBe('gh not signed in');
   expect(signedOut.freshness).toBe(
-    'The GitHub CLI (gh) is not signed in, so XTrace stopped checking. 2 PRs not checked yet. 3 PRs could not be checked; the last try failed. Run gh auth login, then click the red ! on the Effort card to check them again.',
+    'The GitHub CLI (gh) is not signed in, so XTrace stopped checking. 2 PRs are not checked yet. 3 PRs could not be checked. The last try failed. Run gh auth login, then click the red ! on the Effort card to check them again.',
   );
   expect(
     mergedTileView(
@@ -183,7 +185,7 @@ it('a complete count is a number, and a paused or switched-off check says why', 
       window,
     ).freshness,
   ).toBe(
-    '2 PRs not checked yet. Automatic checks are off. Click the red ! on the Effort card to check them.',
+    '2 PRs are not checked yet. Automatic checks are off. Click the red ! on the Effort card to check them.',
   );
   // Off, but every pull request already checked: nothing to point to.
   expect(
@@ -207,64 +209,75 @@ const counted = (counts: Partial<MetricMergedPrs['freshness']> = {}, noMergeTime
     },
     counts,
   );
-const none = { paused: null, couldNot: 0, stale: 0, unchecked: 0 };
+type Freshness = Partial<MetricMergedPrs['freshness']>;
+/** The red ! for these counts; it must be there. */
+const shown = (counts: Freshness, status: AutoCheck = auto(), noMergeTime = 0) =>
+  prAttention(counted(counts, noMergeTime), status)!;
+/** What the red ! names: its reason and its counts, without the tile's own. */
+const reason = (counts: Freshness, status: AutoCheck = auto()) => {
+  const attention = prAttention(counted(counts), status);
+  return attention && { paused: attention.paused, unchecked: attention.unchecked };
+};
 
 it('needs the user only for a failed check, a gh pause, or unchecked ones nothing will check', () => {
   // Not checked yet while automatic checks run: XTrace checks them by itself.
-  expect(prAttention(counted({ never_attempted: 4 }), auto())).toBeNull();
-  expect(prAttention(counted({ never_attempted: 4 }), auto({ checking: true }))).toBeNull();
+  expect(reason({ never_attempted: 4 })).toBeNull();
+  expect(reason({ never_attempted: 4 }, auto({ checking: true }))).toBeNull();
   // The status not known yet is not a reason either.
-  expect(prAttention(counted({ never_attempted: 4 }), undefined)).toBeNull();
-  expect(prAttention(counted({ refreshed: 9 }), auto())).toBeNull();
+  expect(reason({ never_attempted: 4 }, undefined)).toBeNull();
+  expect(reason({ refreshed: 9 })).toBeNull();
   // Merged without a merge time is not a failed check: checking again changes nothing.
   expect(prAttention(counted({ refreshed: 2 }, 1), auto())).toBeNull();
   // A failed last check, with or without earlier facts.
-  expect(prAttention(counted({ failed_never_refreshed: 2 }), auto())).toEqual({
-    ...none,
-    couldNot: 2,
-  });
-  expect(prAttention(counted({ failed_after_refresh: 1 }), auto())).toEqual({ ...none, stale: 1 });
+  expect(reason({ failed_never_refreshed: 2 })).toEqual({ paused: null, unchecked: 0 });
+  expect(reason({ failed_after_refresh: 1 })).toEqual({ paused: null, unchecked: 0 });
   // gh stopped the automatic check, whatever the counts.
-  expect(prAttention(counted({ refreshed: 3 }), auto({ paused: 'gh_signed_out' }))).toEqual({
-    ...none,
+  expect(reason({ refreshed: 3 }, auto({ paused: 'gh_signed_out' }))).toEqual({
     paused: 'gh_signed_out',
+    unchecked: 0,
   });
   // Off (or a source that never checks on its own) with some never checked.
-  expect(prAttention(counted({ never_attempted: 3 }), auto({ enabled: false }))).toEqual({
-    ...none,
+  expect(reason({ never_attempted: 3 }, auto({ enabled: false }))).toEqual({
+    paused: null,
     unchecked: 3,
   });
-  expect(prAttention(counted({ never_attempted: 3 }), null)?.unchecked).toBe(3);
-  expect(prAttention(counted({ refreshed: 3 }), auto({ enabled: false }))).toBeNull();
+  expect(reason({ never_attempted: 3 }, null)?.unchecked).toBe(3);
+  expect(reason({ refreshed: 3 }, auto({ enabled: false }))).toBeNull();
+  // Failed ones a manual refresh already met do not count; others still do.
+  expect(reason({ failed_never_refreshed: 1, manual_failed_never_refreshed: 1 })).toBeNull();
+  expect(reason({ failed_after_refresh: 1, manual_failed_after_refresh: 1 })).toBeNull();
+  expect(reason({ failed_never_refreshed: 2, manual_failed_never_refreshed: 1 })).not.toBeNull();
 });
 
 it('says in plain words what is wrong and what clicking does, with "it" for one', () => {
-  expect(prAttentionText({ ...none, couldNot: 2 })).toBe(
-    '2 pull requests could not be checked. Click to check them again.',
+  expect(prAttentionText(shown({ failed_never_refreshed: 2 }))).toBe(
+    '2 pull requests could not be checked. The last try failed. Click to check them again.',
   );
-  expect(prAttentionText({ ...none, couldNot: 1 })).toBe(
-    '1 pull request could not be checked. Click to check it again.',
+  expect(prAttentionText(shown({ failed_never_refreshed: 1 }))).toBe(
+    '1 pull request could not be checked. The last try failed. Click to check it again.',
   );
-  expect(prAttentionText({ ...none, stale: 1 })).toBe(
-    'The last check of 1 pull request failed; older facts are shown. Click to check it again.',
+  expect(prAttentionText(shown({ failed_after_refresh: 1 }))).toBe(
+    '1 pull request is stale after a failed check. Older facts are shown. Click to check it again.',
   );
-  expect(prAttentionText({ ...none, paused: 'gh_missing' })).toBe(
+  expect(prAttentionText(shown({ refreshed: 1 }, auto({ paused: 'gh_missing' })))).toBe(
     'XTrace could not run the GitHub CLI (gh), so it stopped checking. Install gh, then click to check again.',
   );
-  expect(prAttentionText({ ...none, paused: 'gh_signed_out', couldNot: 1 })).toBe(
-    'The GitHub CLI (gh) is not signed in, so XTrace stopped checking. 1 pull request could not be checked. Run gh auth login, then click to check it again.',
+  expect(
+    prAttentionText(shown({ failed_never_refreshed: 1 }, auto({ paused: 'gh_signed_out' }))),
+  ).toBe(
+    'The GitHub CLI (gh) is not signed in, so XTrace stopped checking. 1 pull request could not be checked. The last try failed. Run gh auth login, then click to check it again.',
   );
-  expect(prAttentionText({ ...none, unchecked: 1 })).toBe(
-    'Automatic checks are off and 1 pull request was never checked. Click to check it.',
+  expect(prAttentionText(shown({ never_attempted: 1 }, auto({ enabled: false })))).toBe(
+    'Automatic checks are off and 1 pull request is not checked yet. Click to check it.',
   );
-  expect(prAttentionText({ ...none, unchecked: 3 })).toBe(
-    'Automatic checks are off and 3 pull requests were never checked. Click to check them.',
+  expect(prAttentionText(shown({ never_attempted: 3 }, auto({ enabled: false })))).toBe(
+    'Automatic checks are off and 3 pull requests are not checked yet. Click to check them.',
   );
-  expect(prAttentionText({ ...none, couldNot: 2 }, 'dialog')).toBe(
-    '2 pull requests could not be checked. Choose them below and refresh them again.',
+  expect(prAttentionText(shown({ failed_never_refreshed: 2 }), 'dialog')).toBe(
+    '2 pull requests could not be checked. The last try failed. Choose them below and refresh them again.',
   );
-  expect(prAttentionText({ ...none, stale: 1 }, 'dialog')).toBe(
-    'The last check of 1 pull request failed; older facts are shown. Choose it below and refresh it again.',
+  expect(prAttentionText(shown({ failed_after_refresh: 1 }), 'dialog')).toBe(
+    '1 pull request is stale after a failed check. Older facts are shown. Choose it below and refresh it again.',
   );
 });
 
@@ -275,47 +288,182 @@ it('uses the same words for the same count on the tile and on the red !', () => 
     { known_merged: 2, unknown_facts: 2 },
     { refreshed: 3, failed_never_refreshed: 1, failed_after_refresh: 1 },
   );
-  expect(prCheckCounts(probe)).toEqual({ notChecked: 0, couldNot: 1, stale: 1, noMergeTime: 1 });
+  expect(prCheckCounts(probe)).toEqual({
+    notChecked: 0,
+    couldNot: 1,
+    stale: 1,
+    triedCouldNot: 0,
+    triedStale: 0,
+    noMergeTime: 1,
+  });
   const view = mergedTileView(probe, auto(), window);
   expect(view.aside).toBe('1 could not be checked');
   expect(view.freshness).toBe(
-    '1 PR could not be checked; the last try failed. The last check of 1 PR failed; older facts are shown. 1 PR merged with no merge time. Click the red ! on the Effort card to check them again.',
+    '1 PR could not be checked. The last try failed. 1 PR is stale after a failed check. Older facts are shown. 1 PR merged with no merge time. Click the red ! on the Effort card to check them again.',
   );
   expect(prAttentionText(prAttention(probe, auto())!)).toBe(
-    '1 pull request could not be checked. The last check of 1 pull request failed; older facts are shown. Click to check them again.',
+    '1 pull request could not be checked. The last try failed. 1 pull request is stale after a failed check. Older facts are shown. Click to check them again.',
   );
 });
 
 it('names what the tile tip points to, even when the only reason is a stale pull request', () => {
   const stale = counted({ refreshed: 2, failed_after_refresh: 1 });
   expect(mergedTileView(stale, auto(), window).freshness).toBe(
-    'The last check of 1 PR failed; older facts are shown. Click the red ! on the Effort card to check it again.',
+    '1 PR is stale after a failed check. Older facts are shown. Click the red ! on the Effort card to check it again.',
   );
-  expect(prAttentionPointer({ ...none, unchecked: 2 })).toBe(
+  expect(prAttentionPointer(shown({ never_attempted: 2 }, auto({ enabled: false })))).toBe(
     'Click the red ! on the Effort card to check them.',
   );
-  expect(prAttentionPointer({ ...none, paused: 'gh_missing' })).toBe(
+  expect(prAttentionPointer(shown({ refreshed: 1 }, auto({ paused: 'gh_missing' })))).toBe(
     'Install gh, then click the red ! on the Effort card to check again.',
   );
 });
 
-it('points to the red ! in the tile exactly when the red ! is shown', () => {
-  const cases: [MetricMergedPrs, AutoCheck][] = [
-    [counted({ never_attempted: 2 }), auto()],
-    [counted({ never_attempted: 2 }), auto({ checking: true })],
-    [counted({ never_attempted: 2 }), auto({ enabled: false })],
-    [counted({ never_attempted: 2 }), null],
-    [counted({ never_attempted: 2 }), undefined],
-    [counted({ refreshed: 2 }), auto({ enabled: false })],
-    [counted({ refreshed: 2 }, 1), auto()],
-    [counted({ refreshed: 1, failed_after_refresh: 1 }), auto()],
-    [counted({ failed_never_refreshed: 1 }), auto()],
-    [counted({ refreshed: 2 }), auto({ paused: 'gh_missing' })],
-    [counted({ never_attempted: 1 }), auto({ paused: 'gh_signed_out' })],
-  ];
-  for (const [input, status] of cases) {
-    const line = mergedTileView(input, status, window).freshness;
-    const shown = prAttention(input, status) !== null;
-    expect(line.includes('the red !'), line).toBe(shown);
+/**
+ * Every text for one state: the tile's tip, and (when the red ! is shown) its
+ * tip and the dialog's line. Each count and each pronoun in them must name
+ * the same pull requests.
+ */
+const CASES: {
+  counts: Freshness;
+  status: AutoCheck;
+  noMergeTime?: number;
+  tile: string;
+  tip?: string;
+  dialog?: string;
+}[] = [
+  { counts: { never_attempted: 2 }, status: auto(), tile: '2 PRs are not checked yet.' },
+  {
+    counts: { never_attempted: 2 },
+    status: auto({ checking: true }),
+    tile: 'Checking GitHub now… 2 PRs are not checked yet.',
+  },
+  {
+    counts: { never_attempted: 2 },
+    status: auto({ enabled: false }),
+    tile: '2 PRs are not checked yet. Automatic checks are off. Click the red ! on the Effort card to check them.',
+    tip: 'Automatic checks are off and 2 pull requests are not checked yet. Click to check them.',
+    dialog:
+      'Automatic checks are off and 2 pull requests are not checked yet. Choose them below and refresh them.',
+  },
+  {
+    counts: { never_attempted: 2 },
+    status: null,
+    tile: '2 PRs are not checked yet. Click the red ! on the Effort card to check them.',
+    tip: 'Automatic checks are off and 2 pull requests are not checked yet. Click to check them.',
+  },
+  { counts: { never_attempted: 2 }, status: undefined, tile: '2 PRs are not checked yet.' },
+  {
+    counts: { refreshed: 2 },
+    status: auto({ enabled: false }),
+    tile: 'Automatic checks are off.',
+  },
+  {
+    counts: { refreshed: 2 },
+    status: auto(),
+    noMergeTime: 1,
+    tile: '1 PR merged with no merge time.',
+  },
+  {
+    counts: { refreshed: 1, failed_after_refresh: 1 },
+    status: auto(),
+    tile: '1 PR is stale after a failed check. Older facts are shown. Click the red ! on the Effort card to check it again.',
+    tip: '1 pull request is stale after a failed check. Older facts are shown. Click to check it again.',
+  },
+  {
+    counts: { failed_never_refreshed: 1 },
+    status: auto(),
+    tile: '1 PR could not be checked. The last try failed. Click the red ! on the Effort card to check it again.',
+    tip: '1 pull request could not be checked. The last try failed. Click to check it again.',
+  },
+  {
+    counts: { refreshed: 2 },
+    status: auto({ paused: 'gh_missing' }),
+    tile: 'XTrace could not run the GitHub CLI (gh), so it stopped checking. Install gh, then click the red ! on the Effort card to check again.',
+    tip: 'XTrace could not run the GitHub CLI (gh), so it stopped checking. Install gh, then click to check again.',
+    // Nothing in particular is waiting: the dialog names what to choose.
+    dialog:
+      'XTrace could not run the GitHub CLI (gh), so it stopped checking. Install gh, then choose pull requests below and refresh them.',
+  },
+  {
+    counts: { never_attempted: 1 },
+    status: auto({ paused: 'gh_signed_out' }),
+    tile: 'The GitHub CLI (gh) is not signed in, so XTrace stopped checking. 1 PR is not checked yet. Run gh auth login, then click the red ! on the Effort card to check again.',
+  },
+  // Failures a manual refresh already met: listed with how many, no pointer.
+  {
+    counts: { failed_never_refreshed: 1, manual_failed_never_refreshed: 1 },
+    status: auto(),
+    tile: '1 PR could not be checked. The last try failed. Your own check of it failed too.',
+  },
+  {
+    counts: { refreshed: 1, failed_after_refresh: 2, manual_failed_after_refresh: 2 },
+    status: auto(),
+    tile: '2 PRs are stale after a failed check. Older facts are shown. Your own checks of both failed too.',
+  },
+  // Two failed, one of them already met by hand: the same two everywhere,
+  // and the pointer names the other one.
+  {
+    counts: { failed_never_refreshed: 2, manual_failed_never_refreshed: 1 },
+    status: auto(),
+    tile: '2 PRs could not be checked. The last try failed. 1 of them also failed when you checked it yourself. Click the red ! on the Effort card to check the other one again.',
+    tip: '2 pull requests could not be checked. The last try failed. 1 of them also failed when you checked it yourself. Click to check the other one again.',
+    dialog:
+      '2 pull requests could not be checked. The last try failed. 1 of them also failed when you checked it yourself. Choose the other one below and refresh it again.',
+  },
+  {
+    counts: { failed_never_refreshed: 4, manual_failed_never_refreshed: 2 },
+    status: auto(),
+    tile: '4 PRs could not be checked. The last try failed. 2 of them also failed when you checked them yourself. Click the red ! on the Effort card to check the other 2 again.',
+  },
+  {
+    counts: { refreshed: 1, failed_after_refresh: 3, manual_failed_after_refresh: 3 },
+    status: auto(),
+    tile: '3 PRs are stale after a failed check. Older facts are shown. Your own checks of all 3 failed too.',
+  },
+  {
+    counts: { failed_never_refreshed: 4, manual_failed_never_refreshed: 1 },
+    status: auto(),
+    tile: '4 PRs could not be checked. The last try failed. 1 of them also failed when you checked it yourself. Click the red ! on the Effort card to check the other 3 again.',
+    tip: '4 pull requests could not be checked. The last try failed. 1 of them also failed when you checked it yourself. Click to check the other 3 again.',
+    dialog:
+      '4 pull requests could not be checked. The last try failed. 1 of them also failed when you checked it yourself. Choose the other 3 below and refresh them again.',
+  },
+  {
+    counts: { failed_never_refreshed: 1, manual_failed_never_refreshed: 1 },
+    status: auto({ paused: 'gh_missing' }),
+    tile: 'XTrace could not run the GitHub CLI (gh), so it stopped checking. 1 PR could not be checked. The last try failed. Your own check of it failed too. Install gh, then click the red ! on the Effort card to check again.',
+    tip: 'XTrace could not run the GitHub CLI (gh), so it stopped checking. 1 pull request could not be checked. The last try failed. Your own check of it failed too. Install gh, then click to check again.',
+  },
+];
+
+it('says the same counts and pronouns on the tile, the red ! and the dialog, and points only when shown', () => {
+  for (const { counts, status, noMergeTime = 0, tile: line, tip, dialog } of CASES) {
+    const input = counted(counts, noMergeTime);
+    expect(mergedTileView(input, status, window).freshness, line).toBe(line);
+    const attention = prAttention(input, status);
+    // The pointer is said exactly when the red ! is shown.
+    expect(line.includes('the red !'), line).toBe(attention !== null);
+    if (tip) expect(prAttentionText(attention!)).toBe(tip);
+    if (dialog) expect(prAttentionText(attention!, 'dialog')).toBe(dialog);
   }
+});
+
+it('stops asking about a pull request a manual refresh already failed for', () => {
+  const tried = counted({
+    refreshed: 2,
+    failed_never_refreshed: 1,
+    failed_after_refresh: 1,
+    manual_failed_never_refreshed: 1,
+    manual_failed_after_refresh: 1,
+  });
+  expect(prAttention(tried, auto())).toBeNull();
+  // Still stated as failed in the tile's words, with nothing pointing to a red !.
+  expect(mergedTileView(tried, auto(), window).freshness).toBe(
+    '1 PR could not be checked. The last try failed. Your own check of it failed too. 1 PR is stale after a failed check. Older facts are shown. Your own check of it failed too.',
+  );
+  // The other reasons still stand: a gh pause, or another failure not yet tried by hand.
+  expect(reason({ refreshed: 1 }, auto({ paused: 'gh_signed_out' }))?.paused).toBe('gh_signed_out');
+  // Automatic checks off: a never-checked one still counts as before.
+  expect(reason({ never_attempted: 1 }, auto({ enabled: false }))?.unchecked).toBe(1);
 });

@@ -1,9 +1,12 @@
-import { count, hours } from '../kit/format';
+import { count, hours, UNMEASURED } from '../kit/format';
 import { continuous } from './metric-format';
 
 /**
- * The Sessions list's `agent min` cell, stated as hours and the minutes that
- * remain: 192.8 minutes reads `3h12.8m`, 124 minutes `2h04m`.
+ * Agent time, the one way the app writes it — the Sessions list, a session's
+ * own page and timeline, a pull request's sessions, the Dashboard's effort
+ * chart and its activity lanes — as hours and the minutes that remain:
+ * 192.8 minutes reads `3h12.8m`, 124 minutes `2h04m`. Prose uses the same
+ * value in words (`spoken`).
  *
  * Only the layout changes. The value is the row's own M-05 `agent_ms`, and it
  * is rounded exactly once, by the same one-decimal scale (`hours`) the column
@@ -35,6 +38,9 @@ const tenthsOf = (minutes: number) => Math.round(Number(hours(minutes).replace(/
 const unit = (value: string, one: string, many: string) => `${value} ${value === '1' ? one : many}`;
 
 export function agentDuration(agentMs: number): AgentDuration {
+  // Not a duration at all: said as unknown, never as `—hNaNm` or `-1h-1m`.
+  if (!Number.isFinite(agentMs) || agentMs < 0)
+    return { visible: UNMEASURED, spoken: 'not measured', exact: UNMEASURED };
   const exact = `${count(agentMs)} ms`;
   const minutes = agentMs / MS_PER_MINUTE;
   if (continuous(minutes) === '<0.1')
@@ -55,3 +61,6 @@ export function agentDuration(agentMs: number): AgentDuration {
     exact,
   };
 }
+
+/** Agent time as a compact label: `agentDuration(ms).visible`. */
+export const agentTime = (agentMs: number) => agentDuration(agentMs).visible;

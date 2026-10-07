@@ -80,6 +80,7 @@ function exportWith(reviewer = false, ordinary = ORDINARY.length): FixtureExport
             ? 'A saved sub-session title that is also far too long for a lane row'
             : null,
       automated_review: reviewer && session_id === KID_A,
+      child_check: parentOf[session_id] ? 'child' : 'checked',
       started_at_ms: report.lane_start_ms + index * 60 * minute,
       pr_links: index,
       inferred_pr_links: 0,
@@ -94,6 +95,22 @@ function exportWith(reviewer = false, ordinary = ORDINARY.length): FixtureExport
       },
       parent: parentOf[session_id] ?? null,
     }));
+    // The report identifies the verified creator without adding a lane or
+    // inventing any of its measurements: only its context is returned.
+    report.lane_sessions.push({
+      session_id: GONE,
+      host: 'codex',
+      repo: null,
+      branch: null,
+      title: null,
+      automated_review: false,
+      child_check: 'checked',
+      started_at_ms: null,
+      pr_links: null,
+      inferred_pr_links: null,
+      cost: null,
+      parent: null,
+    });
   }
   return out;
 }
@@ -284,23 +301,71 @@ for (const [width, height] of [
         `Open session ${KID_B}`,
         `Sub-session of Session 01a0eeee, open parent session ${GONE}`,
       ];
-      const tabs: (string | null)[] = [];
-      for (let step = 0; step < (browserName === 'webkit' ? 1 : 5); step += 1) {
+      const link = (name: string, index = 0) =>
+        table.getByRole('link', { name, exact: true }).nth(index);
+      const span = (sessionId: string, name: string) =>
+        table
+          .getByRole('row')
+          .filter({
+            has: page.locator(`[data-visible-id="${sessionId}"]`),
+          })
+          .getByRole('img', { name, exact: true });
+      // Intl's en-US day/time separator is "at" in WebKit and a comma
+      // in Chromium. The synthetic times and durations remain fixed literals.
+      const separator = browserName === 'webkit' ? ' at ' : ', ';
+      const firstSpan = span(
+        KID_A,
+        `Active span Sep 7${separator}10:30 PM – Sep 7${separator}11:15 PM, 45 minutes`,
+      );
+      const secondSpan = span(
+        KID_B,
+        `Active span Sep 7${separator}3:00 PM – Sep 7${separator}3:45 PM, 45 minutes`,
+      );
+      const ordinarySpan = span(
+        ORDINARY[0],
+        `Active span Sep 7${separator}9:00 PM – Sep 7${separator}9:45 PM, 45 minutes`,
+      );
+      const ordinaryCompactions = table
+        .getByRole('row')
+        .filter({
+          has: page.locator(`[data-visible-id="${ORDINARY[0]}"]`),
+        })
+        .locator('.xt-compaction');
+      await expect(ordinaryCompactions).toHaveAttribute(
+        'aria-label',
+        'Recorded compactions: unknown',
+      );
+      await expect(ordinaryCompactions).toHaveAttribute('tabindex', '0');
+      // Safari skips links in its default Tab order. Both browsers include
+      // each visible activity-span detail before reaching the next disclosure.
+      const stops =
+        browserName === 'webkit'
+          ? [firstSpan, secondSpan, ordinaryCompactions, ordinarySpan, present]
+          : [
+              link(listed[0]),
+              link(listed[1]),
+              link(listed[2]),
+              firstSpan,
+              link(listed[3]),
+              link(listed[4], 1),
+              secondSpan,
+              link(`Open session ${ORDINARY[0]}`),
+              ordinaryCompactions,
+              ordinarySpan,
+              present,
+            ];
+      for (const stop of stops) {
         await page.keyboard.press('Tab');
-        tabs.push(await page.evaluate(() => document.activeElement!.getAttribute('aria-label')));
+        await expect(stop).toBeFocused();
       }
+      await expect(present).toBeFocused();
       if (browserName === 'webkit') {
-        // WebKit, like Safari and the app's own web view by default, leaves
-        // links out of the Tab order — every lane link, grouped or not — so
-        // Tab moves to the next disclosure, and each listed link still takes
-        // focus.
-        expect(tabs).toEqual([`3 sub-sessions of ${PARENT_TITLE}`]);
         for (const [index, name] of listed.entries()) {
-          const link = table.getByRole('link', { name }).nth(index === 4 ? 1 : 0);
-          await link.focus();
-          await expect(link).toBeFocused();
+          const target = link(name, index === 4 ? 1 : 0);
+          await target.focus();
+          await expect(target).toBeFocused();
         }
-      } else expect(tabs).toEqual(listed);
+      }
 
       // Space opens the returned parent's group; its children follow it in
       // recency order, each its own row with its own values.
@@ -477,6 +542,8 @@ test('a verified automated reviewer keeps its own row and opens its own detail',
   expectFits(await measure(page));
   await reviewer.click();
   await expect(page).toHaveURL(new RegExp(`/sessions/${KID_A}\\?q=${KID_A}&host=codex&range=7d$`));
-  await page.getByRole('link', { name: 'All sessions' }).click();
-  await expect(page).toHaveURL(/\/sessions\?/);
+  const back = page.locator('a.xt-session-back');
+  await expect(back).toHaveAccessibleName('← All sessions');
+  await back.click();
+  await expect(page).toHaveURL(new RegExp(`/sessions\\?q=${KID_A}&host=codex&range=7d$`));
 });

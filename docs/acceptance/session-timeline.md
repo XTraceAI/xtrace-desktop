@@ -73,7 +73,10 @@ src/data/DataSource.test.ts` and `pnpm check`.
   time) it says its active time, labelled as active. Active time is the agent
   minutes rule (M-05) over the stretch's own records, so a long wait inside a
   stretch counts for none of it: a stretch can last an hour and be active for
-  one minute. Active time can be zero, and is then said as `0 s`.
+  one minute. Active time can be zero, and is then said as `0h00m`. The
+  length is hands-off time, written as every hands-off median is (`61 min`,
+  read aloud `61 minutes`); the active time is agent time, written as all agent
+  time is (`0h05m`, read aloud `5 minutes`).
 - **A count, or an honest unknown.** A measured stretch says `no repeats` or
   how many, and names the tool that repeated most **by its name and count
   only** — `Edit ×9`. A stretch whose calls could not all be counted says

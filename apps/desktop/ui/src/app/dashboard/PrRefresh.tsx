@@ -4,7 +4,6 @@ import { useId, useMemo, useRef, useState } from 'react';
 import { useData, usePrRefresh } from '../../data/DataProvider';
 import type { DashboardWindow } from '../../data/generated/DashboardWindow';
 import type { MetricMergedPrs } from '../../data/generated/MetricMergedPrs';
-import type { PrRefreshReport } from '../../data/generated/PrRefreshReport';
 import type { PrRow } from '../../data/generated/PrRow';
 import { queryKeys } from '../../data/query-client';
 import { Button } from '../../kit/Button';
@@ -16,6 +15,7 @@ import {
   prAttention,
   prAttentionText,
   prFreshnessText,
+  refreshReportText,
   rowStatusText,
   type AutoCheck,
 } from './pr-effort';
@@ -23,7 +23,7 @@ import { clockTime, plural } from './present';
 
 const DISCLOSURE = [
   'Refresh asks GitHub for each selected pull request’s title, state, merge time, size and head branch by running gh pr view with the GitHub CLI sign-in you already have. It only reads: nothing is written to GitHub, and no transcript content leaves this computer.',
-  `XTrace also checks on its own, the same way: pull requests it has not checked yet and ones that were still open, when you switch to XTrace or open the Dashboard, and about once an hour. Merged and closed ones are not checked again. Use this to check particular ones now. A batch takes up to ${REFRESH_LIMIT} pull requests, one at a time, and stops after 120 seconds, each request after 30. A failed check keeps the facts already stored and marks them stale.`,
+  `XTrace also checks on its own, the same way: pull requests it has not checked yet and ones that were still open, when you switch to XTrace or open the Dashboard, and about once an hour. Merged and closed ones are not checked again. A number GitHub says is not a pull request in a repository you can see, and never confirmed before, is marked not found on GitHub: it is listed here so you can check it again, but left out of every count and the Pull requests page, and checked again on its own only if a conversation mentions it again. A pull request GitHub confirmed before keeps its facts if a later check does not find it. Use this to check particular ones now. A batch takes up to ${REFRESH_LIMIT} pull requests, one at a time, and stops after 120 seconds, each request after 30. A failed check keeps the facts already stored and marks them stale.`,
 ];
 
 const stateText = (row: PrRow, window: DashboardWindow) =>
@@ -34,18 +34,6 @@ const stateText = (row: PrRow, window: DashboardWindow) =>
         ? `merged ${clockTime(Date.parse(row.merged_at), window)}`
         : 'merged, time unknown'
       : row.state;
-
-function reportText(report: PrRefreshReport) {
-  const parts = [
-    `${report.succeeded} refreshed`,
-    `${report.failed} failed`,
-    `${report.skipped} skipped`,
-  ];
-  if (report.unrecorded > 0) parts.push(`${report.unrecorded} not stored`);
-  return `Requested ${report.requested}: ${parts.join(', ')}.${
-    report.cancelled ? ' The batch was cancelled.' : ''
-  } ${report.committed ? 'Stored facts changed; the Dashboard reads them again.' : 'No stored facts changed.'}`;
-}
 
 const RUNNING_NAME = 'Refreshing pull-request facts…';
 const RUNNING_TIP =
@@ -85,16 +73,17 @@ export function PrRefresh({
   // Always in the header, so focus has somewhere to go when the red ! is gone.
   const slot = useRef<HTMLSpanElement>(null);
   // Read when the dialog closes: the red ! when it is still there; when a
-  // refresh cleared what it was for, it is gone, and focus returns to the
-  // control before it in the header (Details) instead of being dropped.
+  // refresh cleared what it was for, it is gone, and focus returns to the ⓘ
+  // beside the card's title instead of being dropped.
   const returnFocus = useMemo(
     () => ({
       get current(): HTMLElement | null {
         if (button.current?.isConnected) return button.current;
-        let before = slot.current?.previousElementSibling ?? null;
-        while (before && !(before instanceof HTMLButtonElement))
-          before = before.previousElementSibling;
-        return before;
+        return (
+          slot.current
+            ?.closest('.xt-dash-card-header')
+            ?.querySelector<HTMLElement>('.xt-dash-definition') ?? null
+        );
       },
     }),
     [],
@@ -257,7 +246,7 @@ export function PrRefresh({
                       {outcome && (
                         <span className="xt-pr-refresh-outcome">
                           {' '}
-                          · {outcomeText(outcome.outcome)}
+                          · {outcomeText(outcome.outcome, row)}
                         </span>
                       )}
                     </span>
@@ -309,7 +298,7 @@ export function PrRefresh({
         )}
         {report && !running && (
           <p role="status" className="xt-dash-line" data-testid="pr-refresh-report">
-            {reportText(report)}
+            {refreshReportText(report)}
           </p>
         )}
       </Modal>

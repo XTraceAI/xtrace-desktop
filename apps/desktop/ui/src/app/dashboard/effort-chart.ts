@@ -2,8 +2,12 @@ import type { MetricEffortDay } from '../../data/generated/MetricEffortDay';
 import type { MetricModelDayEffort } from '../../data/generated/MetricModelDayEffort';
 import type { MetricPrEffort } from '../../data/generated/MetricPrEffort';
 import type { MetricPrMarker } from '../../data/generated/MetricPrMarker';
-import { agentHours, costCell, markerFreshnessText, type BarMetric } from './pr-effort';
+import { calendarDay } from '../../kit/clock';
+import { agentTime } from '../agent-duration';
+import { evidenceWords } from '../pr-analytics';
+import { costCell, refreshStatusText, type BarMetric } from './pr-effort';
 import { plural, usd } from './present';
+import { NO_MODEL } from '../session-context';
 
 /**
  * The geometry of the M-19 chart, derived from the report and nothing else:
@@ -39,7 +43,7 @@ export const FULL_DAY_HOURS = 24;
 /** The 24 h line is drawn once the busiest day reaches half of it. */
 const REFERENCE_FROM_HOURS = 12;
 export const OVER_FULL_DAY = 'Above 24 h: agents ran at the same time';
-export const NO_MODEL = 'no model recorded';
+export { NO_MODEL };
 
 export type BarState = 'measured' | 'none' | 'unknown';
 
@@ -47,7 +51,7 @@ export type BarState = 'measured' | 'none' | 'unknown';
 export interface ModelPart {
   name: string;
   value: number;
-  /** The value in words: `12.3 h` or `$4.56`. */
+  /** The value in words: `12h18m` or `$4.56`. */
   text: string;
   /** Its share of the day's plotted total: `42%`, or `<1%`. */
   share: string;
@@ -89,7 +93,7 @@ export interface DayMarkers {
   text: string;
 }
 export interface EffortHeadline {
-  /** The range's total, e.g. `$14,066+` or `655 agent h`. */
+  /** The range's total, e.g. `$14,066+` or `655h12m agent`. */
   text: string;
   /** e.g. `last 30 days`. */
   range: string;
@@ -113,15 +117,11 @@ export interface EffortChart {
   markers: DayMarkers[];
 }
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-/** `2026-09-14` → `Sep 14`. */
-export const dayLabel = (date: string) => {
-  const [, month, day] = date.split('-');
-  return `${MONTHS[Number(month) - 1] ?? month} ${Number(day)}`;
-};
+/** `2026-09-14` → `Sep 14`, written as every other date in the app is. */
+export const dayLabel = (date: string) => calendarDay(date);
 
 export const markerText = (marker: MetricPrMarker) =>
-  `${marker.repository}#${marker.number} · ${marker.work_type ?? 'type unresolved'} · ${marker.confidence} link · ${markerFreshnessText(marker.freshness)}`;
+  `${marker.repository}#${marker.number} · ${marker.work_type ?? 'type unresolved'} · ${evidenceWords[marker.confidence]} link · ${refreshStatusText(marker.freshness)}`;
 
 /** Merge markers keyed by local merge day. */
 export function markersByDay(markers: readonly MetricPrMarker[]) {
@@ -159,21 +159,6 @@ export function scaleText(value: number, metric: BarMetric, unit: TimeUnit = HOU
   return value >= 1000 ? `$${trimmed(value / 1000)}k` : `$${trimmed(value)}`;
 }
 
-const wholeUsd = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 0,
-});
-/** The headline's dollars: whole from $100, cents below. */
-const bigUsd = (value: number) => (value >= 100 ? wholeUsd.format(value) : usd(value));
-/** The headline's hours: whole from 10 h, one decimal below. */
-const bigHours = (hours: number) =>
-  hours >= 10
-    ? Math.round(hours).toLocaleString('en-US')
-    : hours > 0 && hours < 0.05
-      ? '<0.1'
-      : (Math.round(hours * 10) / 10).toString();
-
 const modelName = (model: MetricModelDayEffort) => model.model ?? NO_MODEL;
 
 function shareText(value: number, total: number) {
@@ -192,7 +177,7 @@ function modelParts(day: MetricEffortDay, metric: BarMetric, total: number): Mod
       return {
         name: modelName(model),
         value,
-        text: metric === 'agent' ? agentHours(model.agent_ms) : usd(value),
+        text: metric === 'agent' ? agentTime(model.agent_ms) : usd(value),
         share: shareText(value, total),
       };
     })
@@ -228,7 +213,11 @@ function barName(bar: Omit<EffortBar, 'name'>) {
   return parts.join('. ');
 }
 
-export function effortChart(current: MetricPrEffort, metric: BarMetric): EffortChart {
+export function effortChart(
+  current: MetricPrEffort,
+  metric: BarMetric,
+  windowDays: number,
+): EffortChart {
   const days = current.cohort.by_day;
   const count = days.length;
   const byDay = markersByDay(current.markers);
@@ -245,7 +234,8 @@ export function effortChart(current: MetricPrEffort, metric: BarMetric): EffortC
         state: (measured ? 'measured' : 'none') as BarState,
         value: measured ? value : null,
         partial: false,
-        totalText: measured ? agentHours(day.agent_ms) : 'no agent time',
+        // A day with no agent time is a measured zero, written as one.
+        totalText: agentTime(day.agent_ms),
         models: modelParts(day, metric, value),
         unpriced: [],
         overFullDay: value > FULL_DAY_HOURS,
@@ -348,19 +338,30 @@ export function effortChart(current: MetricPrEffort, metric: BarMetric): EffortC
           }
         : null,
     unmeasured,
-    headline: headline(current, metric, bars),
+    headline: headline(current, metric, bars, windowDays),
     ticks: tickIndices(count),
     markers,
   };
 }
 
-function headline(current: MetricPrEffort, metric: BarMetric, bars: EffortBar[]): EffortHeadline {
+/**
+ * The selected range in a headline, e.g. `last 7 days`: the range the numbers
+ * cover, never the count of local-day buckets it touches (usually one more).
+ */
+export const rangeText = (days: number) => `last ${plural(days, 'day')}`;
+
+function headline(
+  current: MetricPrEffort,
+  metric: BarMetric,
+  bars: EffortBar[],
+  days: number,
+): EffortHeadline {
   const cohort = current.cohort;
-  const range = `last ${plural(cohort.by_day.length, 'day')}`;
+  const range = rangeText(days);
   if (metric === 'agent') {
     const over = bars.filter((bar) => bar.overFullDay).length;
     return {
-      text: `${bigHours(cohort.agent_ms / HOUR_MS)} agent h`,
+      text: `${agentTime(cohort.agent_ms)} agent`,
       range,
       note: over > 0 ? `${plural(over, 'day')} above 24 h` : null,
     };
@@ -370,7 +371,7 @@ function headline(current: MetricPrEffort, metric: BarMetric, bars: EffortBar[])
   return {
     text:
       cell.state === 'measured'
-        ? `${bigUsd(cell.value)}${unpriced > 0 ? '+' : ''}`
+        ? `${usd(cell.value)}${unpriced > 0 ? '+' : ''}`
         : cell.state === 'none'
           ? 'no usage'
           : 'cost unknown',

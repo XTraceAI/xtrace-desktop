@@ -48,8 +48,9 @@ M-09 suite passes unchanged.
 
 ## Each stretch
 
-`start_uuid` is the explicitly human record the stretch starts at; `end_uuid`
-the last explicitly non-human record before the next human, including a
+`start_uuid` is the person's message (M-02's human-message rule, as in
+[hands-off.md](hands-off.md)) the stretch starts at; `end_uuid` the last
+explicitly non-human record before the next person's message, including a
 tool-result carrier. `start` and `end` are those records' exact native
 timestamps as stored. `duration_ms` is M-09's own duration and is **not**
 recomputed from the two spellings.

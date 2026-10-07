@@ -22,21 +22,28 @@ export function DefinitionInfo({
   return (
     <RulePopover ruleId={ruleId} context={context} text={text}>
       <button type="button" className="xt-dash-definition" aria-label={`${name} definition`}>
-        <svg
-          width={12}
-          height={12}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-          strokeLinecap="round"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 11v6M12 7.5v.01" />
-        </svg>
+        <InfoIcon />
       </button>
     </RulePopover>
+  );
+}
+
+/** The small circled "i" every card's definition control draws. */
+export function InfoIcon() {
+  return (
+    <svg
+      width={12}
+      height={12}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v6M12 7.5v.01" />
+    </svg>
   );
 }

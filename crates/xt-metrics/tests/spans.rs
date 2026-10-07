@@ -500,3 +500,56 @@ fn spans_by_day_keeps_sub_millisecond_and_zero_duration_days_measured() {
         ("2026-09-05".into(), 1)
     );
 }
+
+#[test]
+fn the_last_day_alone_matches_that_days_bar_in_a_longer_range() {
+    let mut db = TempDb::empty().unwrap();
+    // One span over midnight (23:50 → 00:10), a span that ends before
+    // midnight, and a span that starts exactly one gap before it.
+    seed(
+        &mut db,
+        "over",
+        &[
+            record("o1", "2026-09-07T23:50:00Z"),
+            record("o2", "2026-09-08T00:10:00Z"),
+        ],
+    );
+    seed(
+        &mut db,
+        "before",
+        &[
+            record("b1", "2026-09-07T23:00:00Z"),
+            record("b2", "2026-09-07T23:05:00Z"),
+        ],
+    );
+    seed(
+        &mut db,
+        "edge",
+        &[
+            record("e1", "2026-09-07T23:40:00Z"),
+            record("e2", "2026-09-08T00:00:00Z"),
+            record("e3", "2026-09-08T00:15:00Z"),
+        ],
+    );
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    let now = ms("2026-09-08T09:00:00Z");
+    let today = Window::new(ms("2026-09-08T00:00:00Z"), now).unwrap();
+    let (day, spans) = metrics.active_last_day(today, TimeZone::UTC).unwrap();
+    // 10 minutes of "over" and 15 of "edge"; "before" ended before midnight.
+    assert_eq!(day.date, "2026-09-08");
+    assert_eq!((day.start_ms, day.end_ms), (today.start_ms(), now));
+    assert_eq!(day.active_ms, 25 * 60_000);
+    let mut sessions: Vec<_> = spans.iter().map(|s| s.session_id.as_str()).collect();
+    sessions.sort_unstable();
+    assert_eq!(sessions, ["edge", "over"]);
+    // The same day's bar in a seven-day range.
+    let range = Window::new(now - 7 * 86_400_000, now).unwrap();
+    let bar = metrics
+        .active_spans(range)
+        .unwrap()
+        .by_day(range, TimeZone::UTC)
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(bar, day);
+}

@@ -230,7 +230,7 @@ it('reads when it mounts after the window was already shown', async () => {
   mount(source);
   await flush();
   expect(source.today).toHaveBeenCalledTimes(1);
-  expect(screen.getByTestId('tray-observed').textContent).toBe('Sun, Sep 20 · as of 08:00');
+  expect(screen.getByTestId('tray-observed').textContent).toBe('Sun, Sep 20 · as of 8:00 AM');
 });
 
 it('a show while its listeners are still registering is seen by the snapshot taken after', async () => {
@@ -362,7 +362,7 @@ it('states measured, partial, incomplete and none-recorded figures as they are',
     within(output).getByText('$41.27 API-equivalent · 412 of 412 responses priced'),
   ).toBeTruthy();
   const agent = tile('Today’s agent hours');
-  expect(agent.textContent).toContain('5.7h');
+  expect(agent.textContent).toContain('5h42m');
   expect(within(agent).getByText('across 7 sessions')).toBeTruthy();
 
   const reopen = async (next: TodaySummary) => {
@@ -404,7 +404,7 @@ it('states measured, partial, incomplete and none-recorded figures as they are',
   expect(screen.getByText('Cost — · nothing to price')).toBeTruthy();
   expect(tile('Today’s agent hours').textContent).toContain('0h');
   expect(screen.getByText('No agent activity recorded today')).toBeTruthy();
-  expect(screen.getByTestId('tray-observed').textContent).toBe('Tue, Sep 8 · as of 00:00');
+  expect(screen.getByTestId('tray-observed').textContent).toBe('Tue, Sep 8 · as of 12:00 AM');
 });
 
 it('says what it cannot know instead of inventing it', async () => {

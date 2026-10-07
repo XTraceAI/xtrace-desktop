@@ -9,11 +9,14 @@ import {
 } from './sidebar-index-status';
 
 // Synthetic statuses only: no local history, registry or receipt is read.
-const host = (name: string, state: NativeHostState, detail: string | null = null) => ({
-  host: name,
-  state,
-  detail,
-});
+// `needs_attention` is the app's answer; these statuses set it as the app
+// would for a host not waiting on a running scan, unless a case says otherwise.
+const host = (
+  name: string,
+  state: NativeHostState,
+  detail: string | null = null,
+  needs_attention = state !== 'complete' && state !== 'missing_source',
+) => ({ host: name, state, needs_attention, detail });
 const facts = (
   phase: SidebarIndexFacts['phase'],
   freshness: SidebarIndexFacts['freshness'],
@@ -170,32 +173,32 @@ describe('host scans qualify a ready index', () => {
       tone: 'attention',
     });
     expect(shown.notes).toEqual([
-      'Last scan not complete for claude (incomplete), codex (reader failed). The index may be incomplete or out of date for those hosts.',
+      'Last scan not complete for Claude Code (read with gaps), Codex (reader failed). The index may be incomplete or out of date for those hosts.',
     ]);
     expect(shown.hosts).toEqual([
-      { host: 'claude', state: 'Incomplete', attention: true },
+      { host: 'Claude Code', state: 'Read with gaps', attention: true },
       {
-        host: 'codex',
+        host: 'Codex',
         state: 'Reader failed',
         attention: true,
         reason: 'reader exited with status 1',
       },
-      { host: 'cursor', state: 'Complete' },
+      { host: 'Cursor', state: 'Read' },
     ]);
   });
 
   it.each([
-    ['missing_runtime', 'Python runtime missing'],
-    ['pin_mismatch', 'Reader pin mismatch'],
-    ['cancelled', 'Cancelled'],
-    ['pending', 'Not scanned yet'],
+    ['missing_runtime', 'Needs Python 3'],
+    ['pin_mismatch', 'Reader not verified'],
+    ['cancelled', 'Stopped before finishing'],
+    ['pending', 'Not read yet'],
   ] as const)('qualifies a ready index whose host is %s', (state, words) => {
     const shown = sidebarIndexStatus({
       status: facts(ready, { freshness: 'unknown' }, [host('codex', state)]),
       ...heard,
     });
     expect(shown).toMatchObject({ label: 'partial', title: 'Ready · partial', tone: 'attention' });
-    expect(shown.hosts).toEqual([{ host: 'codex', state: words, attention: true }]);
+    expect(shown.hosts).toEqual([{ host: 'Codex', state: words, attention: true }]);
   });
 
   it('shows an absent source as its own neutral fact, not a reader failure', () => {
@@ -206,22 +209,42 @@ describe('host scans qualify a ready index', () => {
     expect(shown).toMatchObject({ label: 'updating', tone: 'live' });
     expect(shown.notes).toBeUndefined();
     expect(shown.hosts).toEqual([
-      { host: 'claude', state: 'Complete' },
-      { host: 'cursor', state: 'No local history found' },
+      { host: 'Claude Code', state: 'Read' },
+      { host: 'Cursor', state: 'No local history found' },
     ]);
   });
 
   it('treats hosts the initial scan has not reached as waiting, not as gaps', () => {
     const shown = sidebarIndexStatus({
       status: facts({ phase: 'scanning' }, { freshness: 'unknown' }, [
-        host('claude', 'pending'),
-        host('codex', 'pending'),
+        host('claude', 'pending', null, false),
+        host('codex', 'pending', null, false),
       ]),
       ...heard,
     });
     expect(shown).toMatchObject({ label: 'scanning', tone: 'idle' });
     expect(shown.notes).toBeUndefined();
     expect(shown.hosts.every((row) => row.attention === undefined)).toBe(true);
+    expect(shown.hosts.map((row) => row.state)).toEqual([
+      'Waiting to be read',
+      'Waiting to be read',
+    ]);
+  });
+
+  it('reads whether a host is a problem from the app, never from the state', () => {
+    // The app decides `needs_attention`; the sidebar only words it. A flag the
+    // app did not set is not raised here, and one it set is not dropped.
+    const shown = sidebarIndexStatus({
+      status: facts(ready, live, [
+        host('claude', 'complete', null, true),
+        host('codex', 'reader_failed', null, false),
+      ]),
+      ...heard,
+    });
+    expect(shown).toMatchObject({ label: 'partial', tone: 'attention' });
+    expect(shown.notes?.[0]).toContain('Claude Code (read)');
+    expect(shown.notes?.[0]).not.toContain('Codex');
+    expect(shown.hosts.map((row) => row.attention)).toEqual([true, undefined]);
   });
 
   it('says a failed scan may leave the index short, never that stored history is missing', () => {
@@ -231,7 +254,7 @@ describe('host scans qualify a ready index', () => {
       ...heard,
     });
     expect(shown.notes).toEqual([
-      'Last scan not complete for codex (reader failed). The index may be incomplete or out of date for that host.',
+      'Last scan not complete for Codex (reader failed). The index may be incomplete or out of date for that host.',
     ]);
     expect(JSON.stringify(shown)).not.toMatch(/is missing|are missing|was lost|not indexed/i);
   });
@@ -244,7 +267,7 @@ describe('host scans qualify a ready index', () => {
       ...heard,
     });
     expect(shown.label).toBe('degraded');
-    expect(shown.notes?.[0]).toContain('claude (incomplete)');
+    expect(shown.notes?.[0]).toContain('Claude Code (read with gaps)');
   });
 });
 
@@ -400,6 +423,7 @@ it('narrows a full status to the facts the sidebar shows', () => {
       {
         host: 'claude',
         state: 'pending',
+        needs_attention: false,
         detail: null,
         sessions_imported: 4,
         sessions_partial: 1,
@@ -411,12 +435,13 @@ it('narrows a full status to the facts the sidebar shows', () => {
         diagnostics: 1,
       },
     ],
+    needs_attention: false,
     reconciles: 7,
     files_scanned: 41,
   };
   expect(sidebarIndexFacts(status)).toEqual({
     phase: { phase: 'scanning' },
     freshness: { freshness: 'unknown' },
-    hosts: [{ host: 'claude', state: 'pending', detail: null }],
+    hosts: [{ host: 'claude', state: 'pending', needs_attention: false, detail: null }],
   });
 });

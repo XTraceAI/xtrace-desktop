@@ -441,3 +441,86 @@ fn hands_off_open_probes_actual_query_and_writer_restores_view() {
         assert_eq!(query(&db).n, Some(5));
     }
 }
+
+/// Only a message a person typed starts a stretch: hands-off reads the same
+/// rule human messages count (M-02). A `claude -p` child launched by another
+/// session has a prompt the structure calls an input, but the human-message
+/// rule counts it as no person's, so it starts no stretch; its parent's
+/// stretch is unchanged, and the Sessions column and the Dashboard agree.
+#[test]
+fn a_claude_print_childs_prompt_starts_no_stretch_and_its_parent_is_unchanged() {
+    let mut db = TempDb::empty().unwrap();
+    for (id, rows) in [
+        (
+            "parent",
+            vec![
+                record("p-h", "2026-09-07T12:00:00Z", true, false),
+                record("p-a", "2026-09-07T12:03:00Z", false, true),
+            ],
+        ),
+        (
+            "child",
+            vec![
+                record("c-prompt", "2026-09-07T12:01:00Z", true, false),
+                record("c-a1", "2026-09-07T12:02:00Z", false, true),
+                record("c-a2", "2026-09-07T12:05:00Z", false, true),
+            ],
+        ),
+    ] {
+        let mut session = SessionMeta::new(id, "claude", SessionSource::Fixture);
+        session.native_session_id = Some(format!("{id}-native"));
+        db.store_mut().upsert_session(&session, false).unwrap();
+        db.store_mut().upsert_records(id, &rows, false).unwrap();
+    }
+    let read = |db: &TempDb| {
+        let metrics = MetricsDb::open(db.path()).unwrap();
+        (
+            metrics.hands_off(window()).unwrap(),
+            metrics
+                .session_hands_off(window(), &["parent", "child"])
+                .unwrap(),
+            metrics
+                .counts(window(), xt_metrics::TypingRate::default())
+                .unwrap()
+                .human_messages,
+        )
+    };
+    // Before anything says who launched it, the child's prompt is counted as
+    // a person's message and starts a four-minute stretch.
+    let (before, _, messages) = read(&db);
+    assert_eq!((before.n, messages), (Some(2), Some(2)));
+    // The child's recorded origin: the parent session launched it.
+    db.store_mut()
+        .import_human_session_origins(&xt_store::human_input::OriginManifest {
+            version: 1,
+            sessions: vec![xt_store::human_input::SessionOrigin {
+                session_id: "child".into(),
+                host: xt_store::Host::Claude,
+                native_session_id: "child-native".into(),
+                parent_host: xt_store::Host::Claude,
+                parent_native_session_id: "parent-native".into(),
+                method: "explicit_session_id".into(),
+                evidence_id: "audit".into(),
+                launch_id: "call".into(),
+            }],
+        })
+        .unwrap();
+    let (after, sessions, messages) = read(&db);
+    assert_eq!(messages, Some(1));
+    assert_eq!(after.n, Some(1));
+    assert_eq!(after.median_min, Some(3.0));
+    assert_eq!(
+        sessions["parent"],
+        xt_metrics::SessionHandsOff::Measured {
+            n: 1,
+            median_min: Some(3.0)
+        }
+    );
+    assert_eq!(
+        sessions["child"],
+        xt_metrics::SessionHandsOff::Measured {
+            n: 0,
+            median_min: None
+        }
+    );
+}

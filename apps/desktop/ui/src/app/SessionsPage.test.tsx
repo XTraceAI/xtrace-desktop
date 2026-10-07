@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { DataSource } from '../data/DataSource';
 import { DataProvider } from '../data/DataProvider';
 import { FixtureDataSource } from '../data/FixtureDataSource';
+import type { NativeHostState } from '../data/generated/NativeHostState';
 import type { NativeIndexStatus } from '../data/generated/NativeIndexStatus';
 import type { FixtureExport } from '../data/generated/FixtureExport';
 import type { LiveSessionSnapshot } from '../data/generated/LiveSessionSnapshot';
@@ -12,6 +13,7 @@ import { events } from '../data/ipc-names';
 import { ThemeProvider } from '../theme/ThemeProvider';
 import { AppRoutes } from './AppRoutes';
 import { SessionsPage } from './SessionsPage';
+import { useNativeIndexStatus } from './useAppInfo';
 
 /** Pull-request refresh is not exercised by this test. */
 const unavailable = async (): Promise<never> => {
@@ -135,7 +137,7 @@ it("shows each session's window measurements and keeps a real zero apart from an
   // Agent time as hours and remaining minutes, with the exact measurement.
   expect(rowFor('00000000').getByText('0h23m')).toBeTruthy();
   expect(rowFor('00000000').getByText('23 minutes, exactly 1,380,000 ms')).toBeTruthy();
-  expect(rowFor('00000000').getByText('3')).toBeTruthy();
+  expect(rowFor('00000000').getByText('3 min')).toBeTruthy();
   expect(rowFor('00000000').getByText(/median of 5 stretches/)).toBeTruthy();
   // The quiet window reports zeros, never an em dash, for what it measured;
   // no stretch is no median, not a zero-minute one.
@@ -158,7 +160,7 @@ it("shows each session's window measurements and keeps a real zero apart from an
 it.each([
   ['Human messages', 'M-02'],
   ['Tool calls', 'M-17'],
-  ['Agent minutes', 'M-05'],
+  ['Agent time', 'M-05'],
   ['Hands-off median minutes', 'M-09'],
   ['Output tokens', 'M-04'],
 ] as const)('opens the %s definition from its keyboard-reachable header', async (label, ruleId) => {
@@ -330,7 +332,7 @@ it('keeps indexed rows visible with a warning when native indexing is disabled',
   expect(document.activeElement).toBe(flag);
 });
 
-it.each(['initial scan', 'pending host', 'degraded watcher'] as const)(
+it.each(['initial scan', 'host left unscanned', 'degraded watcher'] as const)(
   'warns during %s and clears after a healthy status event',
   async (scenario) => {
     const source = new FixtureDataSource(fixture as FixtureExport);
@@ -342,6 +344,7 @@ it.each(['initial scan', 'pending host', 'degraded watcher'] as const)(
         {
           host: 'claude',
           state: 'complete',
+          needs_attention: false,
           detail: null,
           sessions_imported: 1,
           sessions_partial: 0,
@@ -353,13 +356,17 @@ it.each(['initial scan', 'pending host', 'degraded watcher'] as const)(
           diagnostics: 0,
         },
       ],
+      needs_attention: false,
     };
     let status = structuredClone(complete);
     if (scenario === 'initial scan') {
       status.phase = { phase: 'scanning' };
       status.hosts = [];
-    } else if (scenario === 'pending host') {
+    } else if (scenario === 'host left unscanned') {
+      // No scan is running, so the app reports the unscanned host as a problem.
       status.hosts[0].state = 'pending';
+      status.hosts[0].needs_attention = true;
+      status.needs_attention = true;
     } else {
       status.freshness = { freshness: 'degraded', reason: 'watcher stopped' };
     }
@@ -371,15 +378,21 @@ it.each(['initial scan', 'pending host', 'degraded watcher'] as const)(
         </DataProvider>
       </MemoryRouter>,
     );
-    const state = scenario === 'degraded watcher' ? 'Updates interrupted' : 'Indexing';
+    const [state, sentence] = {
+      'initial scan': ['Indexing', /^Indexing: History is still being indexed/],
+      'host left unscanned': [
+        'History incomplete',
+        /^History incomplete: Some history could not be fully indexed/,
+      ],
+      'degraded watcher': [
+        'Updates interrupted',
+        /^Updates interrupted: Live indexing is interrupted/,
+      ],
+    }[scenario] as [string, RegExp];
     const flag = await screen.findByRole('button', { name: `History limits: ${state}` });
     expect(await screen.findByText('Session 00000000')).toBeTruthy();
     fireEvent.focus(flag);
-    expect((await screen.findByRole('tooltip')).textContent).toMatch(
-      scenario === 'degraded watcher'
-        ? /^Updates interrupted: Live indexing is interrupted/
-        : /^Indexing: History is still being indexed/,
-    );
+    expect((await screen.findByRole('tooltip')).textContent).toMatch(sentence);
     fireEvent.blur(flag);
     status = complete;
     act(() => source.emit(events.nativeIndexStatus));
@@ -460,7 +473,7 @@ it('leads a row with a saved title or its identity, never an invented one', asyn
         branch: 'feat/navigation',
       },
       { ...row, id: 'known-2', repo: 'C:\\code\\atlas', branch: null },
-      { ...row, id: 'known-3', repo: null, branch: 'main' },
+      { ...row, id: 'known-3', repo: null, branch: 'main', model: 'model-a', other_models: 2 },
       { ...row, id: 'known-4', repo: null, branch: null, model: null },
     ],
   }));
@@ -491,7 +504,10 @@ it('leads a row with a saved title or its identity, never an invented one', asyn
   expect(meta('known-2').getAttribute('title')).toBe('C:\\code\\atlas · Unknown branch');
   expect(meta('known-3').textContent).toContain('Unknown repository');
   expect(meta('known-3').textContent).toContain('main');
-  expect(meta('known-4').textContent).toContain('Unknown model');
+  expect(meta('known-4').textContent).toContain('no model recorded');
+  // The most-used model Rust chose leads; other models are counted, not named.
+  expect(meta('known-3').textContent).toContain('model-a +2 more');
+  expect(meta('known-3').textContent).not.toContain('Multiple models');
   const headers = screen.getAllByRole('columnheader').map((cell) => cell.textContent);
   expect(headers).toContain('session · repo · branch');
 });
@@ -1269,7 +1285,7 @@ it('summarises the whole range above the list, independently of its filters', as
   // tokens rather than the 1,100-token range total the list's column sums.
   expect(tile('Output tokens').textContent).toContain('150');
   // M-05 reports 0.383 hours; the tile states that same span in minutes.
-  expect(tile('Agent minutes').textContent).toContain('23');
+  expect(tile('Agent time').textContent).toContain('23');
   // M-16's own mean, and the busiest of the very day buckets it divides by.
   expect(tile('Sessions / day').textContent).toContain('0.1');
   expect(tile('Sessions / day').textContent).toContain('max 1');
@@ -1294,7 +1310,7 @@ it('summarises the whole range above the list, independently of its filters', as
   expect(dashboard).toHaveBeenCalledTimes(reads);
   expect(dashboard.mock.calls).toEqual(dashboard.mock.calls.map(() => [7]));
   expect(tile('Human messages').textContent).toContain('5');
-  expect(tile('Agent minutes').textContent).toContain('23');
+  expect(tile('Agent time').textContent).toContain('23');
   expect(tile('Output tokens').textContent).toContain('150');
 });
 
@@ -1325,9 +1341,9 @@ it('shows measured output when the range total is not, and a zero that was measu
   // conversion, and the report's own reason (one this app has no plain
   // wording for) is what the tile gives, as a sentence.
   expect(
-    within(tile('Agent minutes')).getByText('Unmeasured: Active spans are unmeasured.'),
+    within(tile('Agent time')).getByText('Unmeasured: Active spans are unmeasured.'),
   ).toBeTruthy();
-  expect(tile('Agent minutes').textContent).not.toContain('0');
+  expect(tile('Agent time').textContent).not.toContain('0');
 });
 
 it('drops the busiest day when the report carries no buckets', async () => {
@@ -1392,7 +1408,7 @@ it('keeps the session list working when the range summary cannot be read', async
   await screen.findByText(/the session list below is unaffected/);
   expect(screen.queryByText(/backend-specific detail/)).toBeNull();
   // No tile stands a zero in for a metric that was never read.
-  for (const label of ['Human messages', 'Output tokens', 'Agent minutes', 'Sessions / day']) {
+  for (const label of ['Human messages', 'Output tokens', 'Agent time', 'Sessions / day']) {
     expect(
       within(tile(label)).getByText('Unmeasured: Range metrics could not be loaded'),
     ).toBeTruthy();
@@ -1414,7 +1430,7 @@ it('never stands a zero in for a summary it has not finished reading', async () 
     </MemoryRouter>,
   );
   expect(await screen.findByText('Session 00000000')).toBeTruthy();
-  for (const label of ['Human messages', 'Output tokens', 'Agent minutes', 'Sessions / day']) {
+  for (const label of ['Human messages', 'Output tokens', 'Agent time', 'Sessions / day']) {
     expect(
       within(tile(label)).getByText('Unmeasured: Range metrics are still being read'),
     ).toBeTruthy();
@@ -1445,8 +1461,8 @@ it.each([
   await screen.findByText('Session 00000000');
   await waitFor(() => expect(within(tile('Sessions / day')).getByText(shown)).toBeTruthy());
   expect(within(tile('Sessions / day')).queryByText(/^Unmeasured/)).toBeNull();
-  // Agent minutes reads on the same scale and is stated the same way.
-  expect(within(tile('Agent minutes')).getByText('<0.1')).toBeTruthy();
+  // Agent time is written as all agent time is: a positive below a tenth of a minute.
+  expect(within(tile('Agent time')).getByText('<0.1m')).toBeTruthy();
 });
 
 it('stops showing values it can no longer confirm when a refresh of a loaded report fails', async () => {
@@ -1476,7 +1492,7 @@ it('stops showing values it can no longer confirm when a refresh of a loaded rep
   await screen.findByText(/the session list below is unaffected/, undefined, { timeout: 3000 });
   // The held report is no longer confirmed, so nothing from it is shown as
   // though it were: not a value, not a change, not the busiest day.
-  for (const label of ['Human messages', 'Output tokens', 'Agent minutes', 'Sessions / day']) {
+  for (const label of ['Human messages', 'Output tokens', 'Agent time', 'Sessions / day']) {
     expect(
       within(tile(label)).getByText('Unmeasured: Range metrics could not be loaded'),
     ).toBeTruthy();
@@ -1718,7 +1734,7 @@ it('flags untimed indexed history in the heading, independently of its filters',
     within(dialog)
       .getAllByRole('listitem')
       .map((item) => item.textContent),
-  ).toEqual(['claude · cli8 records', 'cursor · unknown surface4 records']);
+  ).toEqual(['Claude Code · cli8 records', 'Cursor · unknown surface4 records']);
   expect(within(dialog).queryByRole('link', { name: 'View indexing status' })).toBeNull();
   fireEvent.keyDown(dialog, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -1816,6 +1832,7 @@ it.each([
           {
             host: 'claude',
             state: 'incomplete',
+            needs_attention: true,
             detail: null,
             sessions_imported: 1,
             sessions_partial: 1,
@@ -1827,6 +1844,7 @@ it.each([
             diagnostics: 1,
           },
         ],
+        needs_attention: true,
       };
       vi.spyOn(source, 'nativeIndexStatus').mockImplementation(async () => status);
     }
@@ -1925,7 +1943,7 @@ it('states why a hands-off median is absent in plain words, leaving the rule ID 
   for (const [id, reason] of [
     ['no-stretch', 'No hands-off stretch in this window, so there is no median'],
     ['own-unknown', 'A record in this window leaves a stretch boundary or its tool use unknown'],
-    ['excluded', 'Excluded: claude raw-batched timestamps are too coarse (3 of 4 sessions)'],
+    ['excluded', 'Excluded: Claude Code · raw-batched timestamps are too coarse (3 of 4 sessions)'],
   ] as const) {
     const expand = screen.getByRole('button', { name: `Expand ${id}` });
     fireEvent.click(expand);
@@ -1951,6 +1969,7 @@ it('states an incomplete index and untimed history together in one compact row',
       {
         host: 'claude',
         state: 'incomplete',
+        needs_attention: true,
         detail: null,
         sessions_imported: 1,
         sessions_partial: 1,
@@ -1962,6 +1981,7 @@ it('states an incomplete index and untimed history together in one compact row',
         diagnostics: 1,
       },
     ],
+    needs_attention: true,
   }));
   vi.spyOn(source, 'dashboard').mockImplementation(async (days) => {
     const report = f1Report(days);
@@ -2044,6 +2064,7 @@ it.each([
       {
         host: 'claude',
         state: 'incomplete',
+        needs_attention: true,
         detail: null,
         sessions_imported: 1,
         sessions_partial: 1,
@@ -2055,6 +2076,7 @@ it.each([
         diagnostics: 1,
       },
     ],
+    needs_attention: true,
   };
   vi.spyOn(source, 'nativeIndexStatus').mockImplementation(async () => status);
   render(
@@ -2068,6 +2090,58 @@ it.each([
   expect(await screen.findByRole('button', { name: `History limits: ${state}` })).toBeTruthy();
   expect(screen.getAllByRole('button', { name: /^History limits/ })).toHaveLength(1);
 });
+
+it.each([
+  // The findings' example: Cursor not installed is settled, so no flag.
+  ['a host with no local history', 'missing_source', false, null],
+  ['a cancelled host scan', 'cancelled', true, 'History incomplete'],
+] as const)(
+  'flags %s exactly when the app says it needs attention',
+  async (_case, state, needsAttention, flag) => {
+    const source = new FixtureDataSource(fixture as FixtureExport);
+    const host = (name: string, hostState: NativeHostState, attention: boolean) => ({
+      host: name,
+      state: hostState,
+      needs_attention: attention,
+      detail: null,
+      sessions_imported: 1,
+      sessions_partial: 0,
+      sessions_skipped: 0,
+      skipped_conversations: [],
+      skipped_conversations_omitted: 0,
+      records_new: 25,
+      records_enriched: 0,
+      diagnostics: 0,
+    });
+    vi.spyOn(source, 'nativeIndexStatus').mockImplementation(async () => ({
+      ...(fixture as FixtureExport).native_index,
+      phase: { phase: 'ready' },
+      freshness: { freshness: 'live' },
+      hosts: [host('claude', 'complete', false), host('cursor', state, needsAttention)],
+      needs_attention: needsAttention,
+    }));
+    render(
+      <MemoryRouter>
+        <DataProvider source={source}>
+          <SessionsPage />
+          <IndexRead />
+        </DataProvider>
+      </MemoryRouter>,
+    );
+    await screen.findByText('Session 00000000');
+    // The page renders from the same cached status read as this probe, so
+    // once the probe shows the read, the page has rendered it too.
+    await screen.findByText(`index read: ${needsAttention}`);
+    if (flag) expect(screen.getByRole('button', { name: `History limits: ${flag}` })).toBeTruthy();
+    else expect(screen.queryByRole('button', { name: /^History limits/ })).toBeNull();
+  },
+);
+
+/** Shows when the shared index status query has answered, and its overall flag. */
+function IndexRead() {
+  const index = useNativeIndexStatus();
+  return index.data ? <p>{`index read: ${index.data.needs_attention}`}</p> : null;
+}
 
 it('keeps the index flag on the unsupported pull-request view without reading the range', async () => {
   const source = new FixtureDataSource(fixture as FixtureExport);

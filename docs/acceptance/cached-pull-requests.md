@@ -52,14 +52,16 @@ unmerged:
 | linked_sessions         | the count (retained links, all confidences, all time); `0` is shown as `0`                                             |                                                               |
 
 The identity `owner/repo#number` is text, never a link; the canonical URL is
-the tooltip. The cache status column uses the refresh dialog's wording and the
-shared `refreshErrorText` codes: `never refreshed`; `refreshed` with its time;
-`failed · never refreshed` with the code and the attempt time;
-`stale · last refresh failed` with the code and the time of the facts that are
-still shown, beside them, exactly as stored. `refreshed` is toned `info`, never
+the tooltip. The cache status column uses the app's one check-status wording
+(`refreshStateLabel` / `refreshStatusWords`, the same words as the Merged PRs
+tile, the refresh dialog, the effort chart and the PRs report) and the shared
+`refreshErrorText` codes: `not checked yet`; `checked` with its time;
+`could not be checked` with the code and the attempt time; `stale after a
+failed check` with the code and the time of the facts that are
+still shown, beside them, exactly as stored. `checked` is toned `info`, never
 `success`: storage applies no age policy and the page claims no freshness.
-Times are this Mac's local zone in the Sessions list's day-and-24-hour form,
-with the year, because cached facts have no age limit; there is no report
+Times are this Mac's local zone, written by the app's one clock format (this
+Mac's locale and 12- or 24-hour setting) with the day and the year, because cached facts have no age limit; there is no report
 window on this page and none is fabricated to borrow a zone from. A stored
 instant a `Date` cannot hold is stated as unreadable, not thrown on.
 

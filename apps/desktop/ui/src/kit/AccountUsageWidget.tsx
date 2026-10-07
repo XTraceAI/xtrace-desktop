@@ -6,6 +6,8 @@ import type { AccountUsageIssue } from '../data/generated/AccountUsageIssue';
 import type { AccountUsageDay } from '../data/generated/AccountUsageDay';
 import type { AccountUsageWindow } from '../data/generated/AccountUsageWindow';
 import { useSurfaceTheme } from '../theme/ThemeProvider';
+import { clock } from './clock';
+import { UNMEASURED } from './format';
 import { HostGlyph } from './HostGlyph';
 import { Icon } from './icons';
 import '../styles/metrics.css';
@@ -24,16 +26,37 @@ const issueLabels: Record<AccountUsageIssue, string> = {
   reading: 'Reading…',
 };
 
-/** Do not round a small positive balance into a false zero. */
-export function remainingLabel(usedPercent: number): string {
-  if (usedPercent === 0) return '100% remaining';
-  if (usedPercent === 100) return '0% remaining';
+/**
+ * The percent remaining as shown everywhere (header, rows and chart labels).
+ * Do not round a small positive balance into a false zero, nor a small use
+ * into a false 100%.
+ */
+export function remainingPercent(usedPercent: number): string {
+  if (usedPercent === 0) return '100%';
+  if (usedPercent === 100) return '0%';
   const remaining = 100 - usedPercent;
   // Absorb only subtraction noise before checking the tenth-percent boundary.
   const normalized = remaining + Number.EPSILON * 100;
-  if (normalized < 0.1) return '<0.1% remaining';
+  if (normalized < 0.1) return '<0.1%';
   const shown = Math.min(99.9, Math.floor(normalized * 10) / 10);
-  return `${Number.isInteger(shown) ? shown : shown.toFixed(1)}% remaining`;
+  return `${Number.isInteger(shown) ? shown : shown.toFixed(1)}%`;
+}
+
+export function remainingLabel(usedPercent: number): string {
+  return `${remainingPercent(usedPercent)} remaining`;
+}
+
+/**
+ * Whether a reading is stale: the app says so, or the time the app gave for
+ * it to turn stale has come. The app decides both from one rule.
+ */
+export function isStale(provider: AccountProviderUsage, now: number = Date.now()): boolean {
+  return (
+    provider.state === 'stale' ||
+    (provider.stale_at !== undefined &&
+      Number.isFinite(provider.stale_at) &&
+      now >= provider.stale_at * 1000)
+  );
 }
 
 export function limitingWindow(windows: AccountUsageWindow[]): AccountUsageWindow | undefined {
@@ -71,30 +94,13 @@ export function shortTime(seconds: number, now: number = Date.now()): string | n
   // Provider instants can land just before a minute boundary. Round only the
   // displayed time; expiry checks keep the provider's exact instant.
   const date = new Date(Math.round(exact.getTime() / minuteMs) * minuteMs);
-  // Drop ":00" only from a 12-hour clock ("8 PM"); "20:00" stays whole.
-  const parts = new Intl.DateTimeFormat(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  }).formatToParts(date);
-  const twelveHour = parts.some((part) => part.type === 'dayPeriod');
-  const time = parts
-    .filter(
-      (part, index) =>
-        !twelveHour ||
-        date.getMinutes() !== 0 ||
-        !(
-          part.type === 'minute' ||
-          (part.type === 'literal' && parts[index + 1]?.type === 'minute')
-        ),
-    )
-    .map((part) => part.value)
-    .join('')
-    .replace(/\s+/g, ' ');
+  const ms = date.getTime();
+  // The app's one clock format; ":00" is dropped only from a 12-hour clock
+  // ("8 PM"), and "20:00" stays whole.
   const days = Math.round((localDay(date) - localDay(new Date(now))) / 86_400_000);
-  if (days === 0) return `today ${time}`;
-  if (Math.abs(days) <= 6)
-    return `${new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(date)} ${time}`;
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
+  if (days === 0) return `today ${clock(ms, { shortHour: true })}`;
+  if (Math.abs(days) <= 6) return clock(ms, { date: 'weekday', shortHour: true });
+  return clock(ms, { date: 'day', time: false });
 }
 
 export function resetLabel(seconds: number | null): string {
@@ -139,7 +145,7 @@ export function paceLabel(
   if (runOut)
     return { text: `${prefix ? `${prefix} runs` : 'Runs'} out ~${runOut}`, warning: true };
   if (!Number.isFinite(pace.projected_percent_at_reset)) return null;
-  const projected = Math.min(100, Math.round(pace.projected_percent_at_reset));
+  const projected = projectedUsed(pace.projected_percent_at_reset);
   const where = window.used_percent < pace.expected_percent ? 'behind' : 'on';
   const lead = prefix ? `${prefix} ${where}` : where[0].toUpperCase() + where.slice(1);
   return {
@@ -165,6 +171,12 @@ export function paceGapLabel(window: AccountUsageWindow): string | null {
 }
 
 const clampPercent = (value: number) => Math.min(100, Math.max(0, value));
+
+/**
+ * The projected percent used at the reset, rounded once: "~50% used by reset"
+ * and the screen reader's "about 50% left" (100 minus it) read this one value.
+ */
+const projectedUsed = (projected: number) => clampPercent(Math.round(projected));
 
 /**
  * The summary bar's fill against the even-use mark. A bar that stops short of
@@ -286,7 +298,7 @@ export function burndownSummary(window: AccountUsageWindow): string {
   if (runOut) parts.push(`At this pace it runs out ${runOut}.`);
   else if (pace && window.pace)
     parts.push(
-      `At this pace about ${Math.round(100 - clampPercent(window.pace.projected_percent_at_reset))}% is left at the reset.`,
+      `At this pace about ${100 - projectedUsed(window.pace.projected_percent_at_reset)}% is left at the reset.`,
     );
   return parts.join(' ');
 }
@@ -441,7 +453,7 @@ function Burndown({ window }: { window: AccountUsageWindow }) {
             textAnchor={latestLabel.anchor}
             aria-hidden="true"
           >
-            {`${Math.round(100 - clampPercent(last.used_percent))}%`}
+            {remainingPercent(clampPercent(last.used_percent))}
           </text>
         )}
         {runOutAt !== null && (
@@ -554,13 +566,14 @@ export function weekDays(
  * The number over a day's bar, in percentage points of the week (the
  * heading says so; the % sign is left out to fit a narrow box): "5", "≥5"
  * for a lower bound, "<1" for a trace, ">30" for a day over the box's
- * scale. A lower bound under 1 point says nothing, so it reads "–".
+ * scale. A lower bound under 1 point says nothing, so it reads "—", as a
+ * day with no reading does.
  */
 export function dayValueLabel(day: AccountUsageDay): string | null {
   const points = day.used_points;
   if (points === null || !Number.isFinite(points)) return null;
   if (points > dailyBoxPoints) return `>${dailyBoxPoints}`;
-  if (day.partial) return points < 1 ? '–' : `≥${Math.floor(points)}`;
+  if (day.partial) return points < 1 ? UNMEASURED : `≥${Math.floor(points)}`;
   if (points > 0 && points < 1) return '<1';
   return `${Math.round(points)}`;
 }
@@ -603,7 +616,7 @@ function DailyChart({ days, resetsAt }: { days: AccountUsageDay[]; resetsAt: num
               ? 0
               : Math.max(8, (Math.min(points, dailyBoxPoints) / dailyBoxPoints) * 100);
           const value =
-            day.kind === 'known' ? dayValueLabel(day) : day.kind === 'unknown' ? '–' : null;
+            day.kind === 'known' ? dayValueLabel(day) : day.kind === 'unknown' ? UNMEASURED : null;
           const className = [
             `is-${day.kind}`,
             day.kind === 'known' && day.partial ? 'is-partial' : null,
@@ -633,14 +646,22 @@ function DailyChart({ days, resetsAt }: { days: AccountUsageDay[]; resetsAt: num
 
 const maxTimeoutMs = 2_147_483_647;
 
-/** One UI wakeup for the next reported reset; this never reads a provider. */
+/**
+ * One UI wakeup for the next reported reset or the next time a reading turns
+ * stale; this never reads a provider.
+ */
 function useResetWakeup(usage: AccountUsage | undefined, failed: boolean) {
   const [wakeups, setWakeups] = useState(0);
   useEffect(() => {
     if (failed || !usage) return;
     const now = Date.now();
-    const nextReset = [usage.claude, usage.codex]
-      .filter((provider) => provider.state === 'available' || provider.state === 'stale')
+    const readable = [usage.claude, usage.codex].filter(
+      (provider) => provider.state === 'available' || provider.state === 'stale',
+    );
+    const nextStale = readable
+      .map((provider) => (provider.stale_at ?? Number.NaN) * 1000)
+      .filter((at) => Number.isFinite(at) && at > now);
+    const nextReset = readable
       .flatMap((provider) => provider.windows)
       .filter(
         (window) =>
@@ -652,10 +673,12 @@ function useResetWakeup(usage: AccountUsage | undefined, failed: boolean) {
           !Number.isNaN(new Date(window.resets_at * 1000).getTime()) &&
           window.resets_at * 1000 > now,
       )
-      .reduce<number | null>((earliest, window) => {
-        const reset = window.resets_at! * 1000;
-        return earliest === null || reset < earliest ? reset : earliest;
-      }, null);
+      .map((window) => window.resets_at! * 1000)
+      .concat(nextStale)
+      .reduce<number | null>(
+        (earliest, at) => (earliest === null || at < earliest ? at : earliest),
+        null,
+      );
     if (nextReset === null) return;
     const delay = Math.min(maxTimeoutMs, Math.max(1, Math.ceil(nextReset - now)));
     const timer = window.setTimeout(() => setWakeups((count) => count + 1), delay);
@@ -744,6 +767,7 @@ function Provider({
       )
     : [];
   const issue = provider?.issue ? issueLabels[provider.issue] : undefined;
+  const stale = provider ? isStale(provider) : false;
   const status = !provider
     ? 'Reading…'
     : provider.issue === 'not_fetched' ||
@@ -752,8 +776,8 @@ function Provider({
       : resetPassed
         ? 'Reset passed · Refresh for current limits'
         : main
-          ? `${remainingLabel(main.used_percent)} · ${windowTitle(main)}${main.used_percent === 100 ? ' · limit reached' : ''}${provider.state === 'stale' ? ' · stale' : ''}`
-          : provider.state === 'stale'
+          ? `${remainingLabel(main.used_percent)} · ${windowTitle(main)}${main.used_percent === 100 ? ' · limit reached' : ''}${stale ? ' · stale' : ''}`
+          : stale
             ? 'Usage stale'
             : provider.state === 'failed'
               ? 'Usage failed'
@@ -766,7 +790,6 @@ function Provider({
     provider?.checked_at === null || provider?.checked_at === undefined
       ? null
       : new Date(provider.checked_at * 1000);
-  const stale = provider?.state === 'stale';
   const age = ageLabel(provider?.checked_at ?? null, stale);
   const readAt =
     provider?.checked_at === null || provider?.checked_at === undefined
@@ -819,7 +842,7 @@ function Provider({
         aria-describedby={main ? (gap ? `${describedBy} ${gapId}` : describedBy) : undefined}
       >
         <span className="xt-host-glyph" aria-hidden="true">
-          <HostGlyph host={host} />
+          <HostGlyph host={host} label={label} />
         </span>
         <span className="xt-account-name">{label}</span>
         <span className="xt-account-value">

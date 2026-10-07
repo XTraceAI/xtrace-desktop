@@ -7,7 +7,7 @@ import { COMPACTION_CAUTION, COMPACTION_MEANING } from '../session-compactions';
 import { laneCostDefinition, laneDefinition, PR_MEANING } from './ActivityLanes';
 import { EFFORT_CONTEXT } from './DashboardPage';
 import { MERGED_COUNTS, mergedUnknown } from './OverviewCard';
-import { prAttentionPointer } from './pr-effort';
+import { prAttention, prAttentionPointer } from './pr-effort';
 import { DELTA_HIDDEN, excludedNote, plainReason, plainReasons } from './present';
 
 /** The longest note a definition popover adds after the rule's summary. */
@@ -20,7 +20,22 @@ it('keeps every note a definition adds short and free of rule codes', () => {
     laneDefinition(hours48),
     laneCostDefinition(48),
     EFFORT_CONTEXT,
-    prAttentionPointer({ paused: 'gh_signed_out', couldNot: 2, stale: 1_234, unchecked: 0 }),
+    prAttentionPointer(
+      prAttention(
+        {
+          unknown_facts: 2,
+          freshness: {
+            never_attempted: 0,
+            refreshed: 0,
+            failed_never_refreshed: 2,
+            failed_after_refresh: 1_234,
+            manual_failed_never_refreshed: 1,
+            manual_failed_after_refresh: 0,
+          },
+        } as MetricMergedPrs,
+        { enabled: true, checking: false, paused: 'gh_signed_out', last_finished_at_ms: null },
+      )!,
+    ),
     MERGED_COUNTS,
     mergedUnknown({ unknown_facts: 1_234 } as MetricMergedPrs),
     DELTA_HIDDEN,

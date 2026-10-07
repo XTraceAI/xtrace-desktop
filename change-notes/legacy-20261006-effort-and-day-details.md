@@ -1,0 +1,1 @@
+- Clarify that Leverage and Human time cover whole days, open details from Effort info, and remove the Highest on takeaway.

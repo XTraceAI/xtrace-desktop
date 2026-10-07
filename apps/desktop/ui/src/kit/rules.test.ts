@@ -51,13 +51,23 @@ it('states confirmed automated inputs as neutral without proving unmatched input
   expect(rules['M-09']).toContain('It still counts as a user record for timestamp health');
 });
 
-it('defines leverage as agent hours divided by your hours, not typing time', () => {
-  expect(rules['M-08']).toContain('Leverage = agent hours (M-05) ÷ your hours');
+it('starts hands-off stretches only at messages counted as a person’s, keeping turns structural', () => {
+  expect(rules['M-02']).toContain(
+    'Hands-off stretch boundaries (M-09) follow this human-message rule',
+  );
+  expect(rules['M-02']).toContain(
+    'Agent-side turn boundaries (M-03) keep the existing structural classification',
+  );
+  expect(rules['M-09']).toContain("any other input M-02 does not count as a person's message");
+});
+
+it('defines leverage as agent hours divided by human time, not typing time', () => {
+  expect(rules['M-08']).toContain('Leverage = agent hours (M-05) ÷ human time');
   expect(rules['M-08']).toContain(
-    'Agent hours and your hours both cover the same whole local days',
+    'Agent hours and human time both cover the same whole local days',
   );
   expect(rules['M-08']).not.toContain('M-07');
-  expect(ruleSummary('M-08')).toContain('Agent hours divided by your hours');
+  expect(ruleSummary('M-08')).toContain('Agent hours divided by human time');
 });
 
 it('gives every rule one short plain-language summary without contract codes or jargon', () => {

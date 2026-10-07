@@ -48,6 +48,7 @@ function withSessions(count: number): FixtureExport {
         branch: 'main',
         title: `Synthetic resize session ${index}`,
         automated_review: false,
+        child_check: 'checked',
         started_at_ms: lane.start_ms,
         pr_links: 0,
         inferred_pr_links: 0,

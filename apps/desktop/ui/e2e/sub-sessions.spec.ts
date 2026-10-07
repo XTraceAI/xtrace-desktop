@@ -57,6 +57,8 @@ function exportWith(related: boolean): FixtureExport {
         unpriced: [],
       },
       parent: null,
+      child_check: extra.parent ? 'child' : 'checked',
+      known_child: Boolean(extra.parent),
       ...extra,
       automated_review: extra.automated_review ?? false,
     });
@@ -90,6 +92,8 @@ function exportWith(related: boolean): FixtureExport {
       repo: LONG_REPO,
       branch: 'feature/a-long-branch-name-for-layout-checks',
       parent: null,
+      child_check: extra.parent ? 'child' : 'checked',
+      known_child: Boolean(extra.parent),
       ...extra,
     });
     page.rows = [

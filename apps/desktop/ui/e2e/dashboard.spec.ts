@@ -158,8 +158,13 @@ for (const { width, height } of sizes)
       // belongs to, with real data readable and nothing clipped, and the page
       // under it keeps its geometry.
       for (const [card, trigger, title, probe] of [
-        ['Effort', /^Details$/, METHOD, page.getByRole('group', { name: 'Output tokens per day' })],
-        ['Effort', /^Details$/, METHOD, page.getByTestId('cost-total')],
+        [
+          'Effort',
+          /^Effort definition$/,
+          METHOD,
+          page.getByRole('group', { name: 'Output tokens per day' }),
+        ],
+        ['Effort', /^Effort definition$/, METHOD, page.getByTestId('cost-total')],
         ['Sessions', /^Coverage/, 'Coverage', page.getByTestId('usage-coverage')],
       ] as const) {
         await page
@@ -208,8 +213,8 @@ test('range presets update the Dashboard while account usage stays separate', as
     await range.getByRole('radio', { name: `${days}d` }).click();
     await expect(range.getByRole('radio', { name: `${days}d` })).toBeChecked();
     await expect(usage).toContainText('Usage source unavailable');
-    // The daily chart is in Effort's Details, one dialog away, and follows the range.
-    await page.getByRole('button', { name: 'Details', exact: true }).click();
+    // The daily chart is behind Effort's ⓘ, one dialog away, and follows the range.
+    await page.getByRole('button', { name: 'Effort definition', exact: true }).click();
     await expect(bars).toHaveCount(reports[days].days.length);
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -288,12 +293,7 @@ for (const scheme of ['light', 'dark'] as const)
           .filter((name) => labels.some((label) => name === `${label} definition`))
           .map((name) => name.replace(/ definition$/, '')),
       ).toEqual(labels);
-      for (const name of [
-        'Effort definition',
-        'Details',
-        'Overview definition',
-        'Sessions definition',
-      ])
+      for (const name of ['Effort definition', 'Overview definition', 'Sessions definition'])
         expect(order).toContain(name);
       expect(order.some((name) => name.startsWith('Coverage'))).toBe(true);
       expect(order.join(' | ')).not.toMatch(

@@ -36,6 +36,7 @@ for (const report of contextual.dashboards) {
     repo,
     branch,
     title: null,
+    child_check: 'checked',
     started_at_ms: null,
     pr_links: 0,
     inferred_pr_links: 0,
@@ -265,7 +266,7 @@ for (const [width, height] of [
         ['2', false],
       ]);
       // A start years before the axis reads as itself; unknown stays a dash.
-      expect(measured.rows[0].started).toMatch(/^Dec 31(,| at) 23:59$/);
+      expect(measured.rows[0].started).toMatch(/^Dec 31(,| at) 11:59 PM$/);
       expect(measured.rows[2].started).toBe('—');
       // A partial cost, a measured zero and an unknown one stay distinguishable.
       expect(measured.rows.map((row) => row.cost)).toEqual(['$1,234+', '$0.00', '—']);

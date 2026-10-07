@@ -7,4 +7,11 @@ export type AccountProviderUsage = { state: AccountUsageState, issue: AccountUsa
 /**
  * Unix seconds of the last successful provider read.
  */
-checked_at: number | null, windows: Array<AccountUsageWindow>, };
+checked_at: number | null, 
+/**
+ * Unix seconds when this reading becomes stale, from the app's one stale
+ * rule (`account_usage::stale_at`), so the screen can mark it stale on
+ * time without asking again. Absent when there is no read time. Never
+ * saved with the reading.
+ */
+stale_at?: number, windows: Array<AccountUsageWindow>, };

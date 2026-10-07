@@ -77,11 +77,12 @@ const notification = (text: DashboardAutomaticText): DashboardSpanAutomatic => (
 });
 
 describe('spanDuration', () => {
-  it('states a length in minutes or hours, and a single event as one', () => {
+  it('states a length as all agent time is written, and a single event as one', () => {
     expect(spanDuration(0, 0)).toBe('single event');
-    expect(spanDuration(0, 30_000)).toBe('<1 min');
-    expect(spanDuration(0, 23 * 60_000)).toBe('23 min');
-    expect(spanDuration(0, 150 * 60_000)).toBe('2.5 h');
+    expect(spanDuration(0, 2_000)).toBe('<0.1m');
+    expect(spanDuration(0, 30_000)).toBe('0h00.5m');
+    expect(spanDuration(0, 23 * 60_000)).toBe('0h23m');
+    expect(spanDuration(0, 150 * 60_000)).toBe('2h30m');
   });
 });
 
@@ -90,13 +91,15 @@ it('opens a bubble on hover with the span’s name, length, start, tool, output 
   const span = await waitFor(bar);
   // The bar is a named mark with no native title doubling the bubble.
   expect(span.getAttribute('title')).toBeNull();
-  expect(span.getAttribute('aria-label')).toBe('Active span Sep 7, 12:00 – Sep 7, 12:23, 23 min');
+  expect(span.getAttribute('aria-label')).toBe(
+    'Active span Sep 7, 12:00 PM – Sep 7, 12:23 PM, 23 minutes',
+  );
   fireEvent.mouseEnter(span);
   fireEvent.mouseMove(span);
   const bubble = await screen.findByRole('tooltip');
   expect(bubble.querySelector('.xt-span-bubble-name')!.textContent).toBe('Session 00000000');
-  expect(bubble.querySelector('.xt-span-bubble-duration')!.textContent).toBe('23 min');
-  expect(bubble.querySelector('time')!.textContent).toBe('12:00');
+  expect(bubble.querySelector('.xt-span-bubble-duration')!.textContent).toBe('0h23m');
+  expect(bubble.querySelector('time')!.textContent).toBe('12:00 PM');
   // The fixture's own answer, read through the native command at export.
   await waitFor(() =>
     expect(bubble.querySelector('.xt-span-bubble-tool')?.textContent).toBe('Read'),
@@ -346,7 +349,7 @@ it('keeps an open bubble open while a live span grows', async () => {
   expect(bar()).toBe(span);
   expect(span.hasAttribute('data-popup-open')).toBe(true);
   const bubble = screen.getByRole('tooltip');
-  expect(bubble.querySelector('.xt-span-bubble-duration')!.textContent).toBe('28 min');
+  expect(bubble.querySelector('.xt-span-bubble-duration')!.textContent).toBe('0h28m');
   // The grown span is read for itself, with the earlier answer shown meanwhile.
   expect(bubble.textContent).toContain('WebFetch');
   await waitFor(() =>

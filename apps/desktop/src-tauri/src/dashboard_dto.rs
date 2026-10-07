@@ -107,8 +107,8 @@ pub struct MetricTile {
 pub struct DashboardTiles {
     pub agent_hours: MetricTile,
     pub agent_hours_per_day: MetricTile,
-    /// Agent hours divided by "your hours" ([`DashboardHumanHours`]) over the
-    /// window; unknown when your hours are zero or unknown.
+    /// Agent hours divided by human time ([`DashboardHumanHours`]) over the
+    /// window; unknown when human time is zero or unknown.
     pub leverage: MetricTile,
     pub human_hours_est: MetricTile,
     pub concurrency_max: MetricTile,
@@ -191,7 +191,7 @@ pub struct MetricHumanStretch {
     pub end_ms: i64,
 }
 
-/// One local day of "your hours": its stretches in time order and their
+/// One local day of human time: its stretches in time order and their
 /// total; both unknown on every day when a message's classification is.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MetricHumanHoursDay {
@@ -209,7 +209,7 @@ pub struct MetricHumanHoursDay {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MetricHumanHours {
     pub break_minutes: u32,
-    /// The first local midnight of the whole days your hours cover.
+    /// The first local midnight of the whole days human time covers.
     #[ts(type = "number")]
     pub start_ms: i64,
     /// The local midnight after the last of those days.
@@ -234,7 +234,7 @@ pub struct DashboardHumanHours {
 }
 
 /// One whole local day of leverage (M-08): that day's agent hours (M-05)
-/// divided by its own hours of yours. `value` is `null` when your hours are
+/// divided by its own human time. `value` is `null` when human time is
 /// zero or unknown.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct MetricLeverageDay {
@@ -252,7 +252,10 @@ pub struct MetricLeverageDay {
 
 /// Leverage's two sides over the whole local days of `human_hours`: the
 /// agent hours `tiles.leverage` divides, for both periods, and each day's
-/// own leverage (the same days as `human_hours.current.by_day`).
+/// own leverage (the same days as `human_hours.current.by_day`). These agent
+/// hours are whole days, so they are not the rolling `tiles.agent_hours`:
+/// a range that starts mid-day adds the rest of its first day. Every screen
+/// that sets agent hours beside human time reads them from here.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct DashboardLeverage {
     /// Agent hours over the whole days of `human_hours.current`.
@@ -328,8 +331,9 @@ pub struct DashboardLaneSession {
     pub automated_review: bool,
     /// The session start in UTC milliseconds, whether or not it falls inside
     /// the lane window: the start the host recorded, or, for a Claude session
-    /// (Claude Code records no start), its earliest imported message. `null`
-    /// when neither is known; never the first returned span.
+    /// (Claude Code records no start), its own earliest message, never one
+    /// copied from a session it was forked from. `null` when neither is
+    /// known; never the first returned span.
     #[ts(type = "number | null")]
     pub started_at_ms: Option<i64>,
     /// Recorded session → pull request links: distinct canonical pull requests

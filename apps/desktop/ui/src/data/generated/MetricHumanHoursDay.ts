@@ -2,7 +2,7 @@
 import type { MetricHumanStretch } from "./MetricHumanStretch";
 
 /**
- * One local day of "your hours": its stretches in time order and their
+ * One local day of human time: its stretches in time order and their
  * total; both unknown on every day when a message's classification is.
  */
 export type MetricHumanHoursDay = { date: string, start_ms: number, end_ms: number, active_ms: number | null, stretches: Array<MetricHumanStretch>, };

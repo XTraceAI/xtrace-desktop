@@ -12,6 +12,7 @@ import type { NativeIndexStatus } from '../src/data/generated/NativeIndexStatus'
 const host = (name: string, patch: Partial<NativeHostStatus> = {}): NativeHostStatus => ({
   host: name,
   state: 'pending',
+  needs_attention: false,
   detail: null,
   sessions_imported: 0,
   sessions_partial: 0,
@@ -37,6 +38,7 @@ const states: Record<string, NativeIndexStatus> = {
     freshness: { freshness: 'unknown' },
     python: { state: 'resolving' },
     hosts: ['claude', 'codex', 'cursor'].map((name) => host(name)),
+    needs_attention: false,
     reconciles: 0,
     files_scanned: 128,
   },
@@ -59,14 +61,21 @@ const states: Record<string, NativeIndexStatus> = {
         records_new: 1_234_567,
         diagnostics: 4,
         detail: 'some transcript lines could not be parsed and were skipped',
+        needs_attention: true,
       }),
-      host('codex', { state: 'missing_runtime', detail: 'python3 was not found' }),
+      host('codex', {
+        state: 'missing_runtime',
+        detail: 'python3 was not found',
+        needs_attention: true,
+      }),
       host('cursor', {
         state: 'reader_failed',
+        needs_attention: true,
         detail:
           'the bundled reader exited with status 1 before it reported any session from this history',
       }),
     ],
+    needs_attention: true,
   },
   missing: {
     ...base,
@@ -76,6 +85,7 @@ const states: Record<string, NativeIndexStatus> = {
       host('codex', { state: 'missing_source' }),
       host('cursor', { state: 'missing_source' }),
     ],
+    needs_attention: false,
   },
   disabled: fixture.native_index as NativeIndexStatus,
 };

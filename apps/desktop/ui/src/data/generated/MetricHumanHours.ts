@@ -6,7 +6,7 @@ import type { MetricHumanHoursDay } from "./MetricHumanHoursDay";
  */
 export type MetricHumanHours = { break_minutes: number, 
 /**
- * The first local midnight of the whole days your hours cover.
+ * The first local midnight of the whole days human time covers.
  */
 start_ms: number, 
 /**

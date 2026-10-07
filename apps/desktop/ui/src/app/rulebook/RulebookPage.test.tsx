@@ -276,7 +276,7 @@ it('shows a loaded snapshot’s exact counts, window, groups and timeline', asyn
     synthetic.loaded().latest_fires[0]!.fired_at,
   );
   expect(within(fires[0]!).getByText('version 1')).toBeTruthy();
-  expect(within(fires[0]!).getByText('claude · Bash · pre_tool_use')).toBeTruthy();
+  expect(within(fires[0]!).getByText('Claude Code · Bash · pre_tool_use')).toBeTruthy();
   expect(within(fires[1]!).getByText('gate')).toBeTruthy();
   expect(within(fires[2]!).getByText('version draft')).toBeTruthy();
   expect(within(fires[2]!).getByText('none recorded')).toBeTruthy();

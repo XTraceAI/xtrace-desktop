@@ -8,7 +8,9 @@
 //!   holds the slot is cancelled and given a bounded time to stop.
 //! * **Automatic.** [`PrRefreshService::auto_check`] picks the linked pull
 //!   requests that were never checked, or were last seen open (merged and
-//!   closed ones are final and never checked again automatically), and runs
+//!   closed ones are final and never checked again automatically, nor are
+//!   numbers GitHub said are not pull requests unless a conversation mentions
+//!   them again), and runs
 //!   them through the same batch. The app calls it when its window gains
 //!   focus, when the Dashboard is shown and about once an hour
 //!   ([`AutoCheckWorker`]). A run that finished within [`AUTO_QUIET`] is not
@@ -66,6 +68,8 @@ use std::{
     time::{Duration, Instant},
 };
 use xt_probes::gh::{AttemptClock, CancelFlag, GhClient, GhClientError, Limits, SystemClock};
+/// Who started an attempt; the fixture exporter names it too.
+pub use xt_store::pr_link::RefreshOrigin;
 use xt_store::{
     Store,
     pr_link::{
@@ -280,11 +284,17 @@ pub struct AutoSelection {
 /// Choose what an automatic run checks, from one storage snapshot.
 ///
 /// Only pull requests a session still links are considered. Merged and closed
-/// ones are final and never chosen. One with no attempt at all is due now;
+/// ones are final and never chosen. A number GitHub said is not a pull request
+/// in a repository it could see is chosen once more only when a conversation
+/// mentioned it after that answer (a link's `last_seen_at` is later than the
+/// answer) and its last check is [`AUTO_RECHECK_AFTER`] old: the pull
+/// request may have been opened since. Otherwise it is
+/// never chosen, since checking again could only find an unrelated pull
+/// request that later took that number. One with no attempt at all is due now;
 /// one whose last success said open, or whose last attempt failed, is due
 /// once its last attempt is [`AUTO_RECHECK_AFTER`] old. Ones whose last
 /// attempt failed come last, so a few pull requests gh cannot open (another
-/// account's repository, a deleted one) never crowd out the rest. `tried` excludes the
+/// account's repository, an outage) never crowd out the rest. `tried` excludes the
 /// IDs this run already attempted, so a result storage did not apply cannot
 /// make a run pick the same pull request twice.
 pub fn auto_selection(
@@ -302,6 +312,22 @@ pub fn auto_selection(
             continue;
         }
         if matches!(stored.state, Some(PrState::Merged | PrState::Closed)) {
+            continue;
+        }
+        if stored.not_found_on_github() {
+            // Mentioned again after GitHub's answer: one more check, with the
+            // other failed ones, once the usual hour since the last check has
+            // passed. That check moves `last_attempted_at` past a mention in
+            // the past, so it is not chosen again until another one. A mention
+            // stamped in the future (another machine's clock) stays later than
+            // every check until its time comes, so the hour is what bounds it:
+            // at most one check an hour meanwhile.
+            if let (Some(seen), Some(at)) = (row.last_linked_at, stored.last_attempted_at)
+                && seen > at
+                && now_ms.saturating_sub(at) >= recheck
+            {
+                failed.push((at, stored.id));
+            }
             continue;
         }
         match stored.last_attempted_at {
@@ -502,7 +528,7 @@ impl PrRefreshService {
         self.resume_auto();
         self.refresh_into(RefreshStorage {
             targets: &|| state.pr_refresh_targets(ids),
-            record: &|outcome| state.record_pr_refresh(outcome),
+            record: &|outcome| state.record_pr_refresh(outcome, RefreshOrigin::Manual),
         })
     }
 
@@ -769,7 +795,7 @@ impl PrRefreshService {
             let outcome = self.batch(
                 RefreshStorage {
                     targets: &|| state.pr_refresh_targets(&ids),
-                    record: &|outcome| state.record_pr_refresh(outcome),
+                    record: &|outcome| state.record_pr_refresh(outcome, RefreshOrigin::Automatic),
                 },
                 Some(&run),
             );
@@ -897,7 +923,12 @@ pub fn fixture_reports(
             targets: &|| {
                 crate::state::pr_refresh_targets(&snapshot, &ids).map_err(StateError::PrEncoding)
             },
-            record: &|outcome| Ok(store.borrow_mut().record_pr_refresh(outcome)?),
+            // The export stands in for the user's own refresh from the dialog.
+            record: &|outcome| {
+                Ok(store
+                    .borrow_mut()
+                    .record_pr_refresh_from(outcome, RefreshOrigin::Manual)?)
+            },
         })?;
     let after = store
         .borrow()
@@ -940,7 +971,7 @@ type RunTrack = Arc<Mutex<RunState>>;
 /// * Before anything in the run has succeeded, [`AUTO_GIVE_UP_AFTER`] other
 ///   failures stop the run without pausing: a cost cap for an offline host
 ///   or a broken gh. Once one attempt has succeeded, a failure is that pull
-///   request's own (deleted, another account's repository) and never stops
+///   request's own (another account's repository, an outage) and never stops
 ///   the others.
 /// * A failure the run's own cancellation caused counts for nothing.
 fn automatic_attempt(inner: Attempt, run: RunTrack) -> Attempt {
@@ -949,17 +980,26 @@ fn automatic_attempt(inner: Attempt, run: RunTrack) -> Attempt {
         let mut run = lock(&run);
         let (reason, stop) = match &outcome {
             Err(_) => (Some(PrAutoCheckPause::GhMissing), false),
-            Ok(RefreshOutcome::Failure(failure)) => match failure.error {
-                PrRefreshError::Unauthorized => (Some(PrAutoCheckPause::GhSignedOut), true),
-                PrRefreshError::Unavailable => (Some(PrAutoCheckPause::GhMissing), true),
-                PrRefreshError::RateLimited => (None, true),
-                PrRefreshError::Cancelled => (None, false),
-                _ => {
-                    if !run.succeeded {
-                        run.failures += 1;
-                    }
-                    (None, !run.succeeded && run.failures >= AUTO_GIVE_UP_AFTER)
+            // The same split as the manual mark: a failure about the whole
+            // run pauses or stops it; one about this pull request never does.
+            Ok(RefreshOutcome::Failure(failure)) if !failure.error.about_this_pull_request() => {
+                match failure.error {
+                    PrRefreshError::Unauthorized => (Some(PrAutoCheckPause::GhSignedOut), true),
+                    PrRefreshError::Unavailable => (Some(PrAutoCheckPause::GhMissing), true),
+                    PrRefreshError::RateLimited => (None, true),
+                    PrRefreshError::Cancelled => (None, false),
+                    // A timeout: temporary, but before anything has succeeded
+                    // it may be an offline host, so it counts toward giving up.
+                    _ => give_up(&mut run),
                 }
+            }
+            Ok(RefreshOutcome::Failure(failure)) => match failure.error {
+                // GitHub answered for this pull request: the GitHub CLI works,
+                // so this is no sign of an offline host or a broken gh.
+                PrRefreshError::NotFound => (None, false),
+                // Before anything has succeeded, a failure gh cannot explain
+                // may still be a broken gh, so it counts toward giving up.
+                _ => give_up(&mut run),
             },
             Ok(RefreshOutcome::Success(_)) => {
                 run.succeeded = true;
@@ -974,6 +1014,15 @@ fn automatic_attempt(inner: Attempt, run: RunTrack) -> Attempt {
         }
         outcome
     })
+}
+
+/// Count a failure toward [`AUTO_GIVE_UP_AFTER`] while nothing in the run has
+/// succeeded; returns no pause, and whether the run should stop.
+fn give_up(run: &mut RunState) -> (Option<PrAutoCheckPause>, bool) {
+    if !run.succeeded {
+        run.failures += 1;
+    }
+    (None, !run.succeeded && run.failures >= AUTO_GIVE_UP_AFTER)
 }
 
 /// Marks an automatic run finished on every outcome, including a panic, and

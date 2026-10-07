@@ -16,7 +16,9 @@ workspace). The caller supplies the end/now; the query never reads the clock.
 without multiplying records by source receipts or native copied-context rows.
 Metadata, judge sessions and the synthetic model are excluded; unknown fields
 remain null and sidechains remain included. `v_session_events` additionally
-requires a timestamp. Window predicates use the existing indexed `ts_ms` column,
+requires a timestamp. `v_records` and `v_human_inputs` both read the internal
+`v_record_metadata`, which joins each record with its session and its stored
+input facts once and decides Human eligibility in one place. Window predicates use the existing indexed `ts_ms` column,
 not session start, file modification time or a derived timestamp.
 
 ## Boundary evidence

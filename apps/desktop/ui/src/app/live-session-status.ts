@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../data/DataProvider';
 import type { LiveSessionSnapshot } from '../data/generated/LiveSessionSnapshot';
+import { HOST_NAMES } from '../kit/hosts';
 
 export type LiveSessionStatus = LiveSessionSnapshot['states'][number]['status'];
 export const LIVE_SESSION_LIMIT = 16;
 export const LIVE_SESSION_POLL_MS = 2000;
 
 export const LIVE_SESSION_HOSTS = {
-  claude: { label: 'Claude Code', source: 'Claude Code runtime' },
-  codex: { label: 'Codex', source: 'Codex desktop runtime' },
+  claude: { label: HOST_NAMES.claude, source: `${HOST_NAMES.claude} runtime` },
+  codex: { label: HOST_NAMES.codex, source: `${HOST_NAMES.codex} desktop runtime` },
 };
 export type LiveSessionHost = keyof typeof LIVE_SESSION_HOSTS;
 export function isLiveSessionHost(host: string): host is LiveSessionHost {

@@ -21,6 +21,7 @@ export function DashCard({
   definition,
   className = '',
   layered = false,
+  info,
   actions,
   children,
 }: {
@@ -35,6 +36,11 @@ export function DashCard({
   className?: string;
   /** The title row on the canvas, the children in an inset surface panel. */
   layered?: boolean;
+  /**
+   * Drawn in place of the plain definition control beside the title, for a
+   * card whose ⓘ also opens a dialog of its own.
+   */
+  info?: ReactNode;
   /** Controls at the header's end, after the title and its definition. */
   actions?: ReactNode;
   children: ReactNode;
@@ -49,7 +55,7 @@ export function DashCard({
     >
       <header className="xt-dash-card-header">
         <h2 id={id}>{title}</h2>
-        <DefinitionInfo ruleId={rule} name={title} context={context} text={definition} />
+        {info ?? <DefinitionInfo ruleId={rule} name={title} context={context} text={definition} />}
         {actions && <span className="xt-dash-card-end">{actions}</span>}
       </header>
       {layered ? <div className="xt-section-panel">{children}</div> : children}

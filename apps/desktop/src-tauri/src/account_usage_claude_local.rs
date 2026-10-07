@@ -88,6 +88,7 @@ impl CachedUsage {
             state: AccountUsageState::Available,
             issue: None,
             checked_at: Some(self.fetched_at_ms.div_euclid(1000)),
+            stale_at: None,
             windows: self.windows,
         }
     }

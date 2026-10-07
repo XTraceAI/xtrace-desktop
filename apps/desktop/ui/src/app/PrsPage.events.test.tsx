@@ -161,7 +161,7 @@ it('follows a first read that began before a committed refresh with one that beg
   // Exactly one read after the stale one, and its rows are the ones shown.
   expect(list).toHaveBeenCalledTimes(2);
   expect(names()).toEqual([titled11, untitled[1], titled13]);
-  expect(cells()[1]![4]).toMatch(/^failed · never refreshedrate limited · tried /);
+  expect(cells()[1]![4]).toMatch(/^could not be checkedrate limited · tried /);
   await settle(5000);
   expect(list).toHaveBeenCalledTimes(2);
   expect(refresh).not.toHaveBeenCalled();

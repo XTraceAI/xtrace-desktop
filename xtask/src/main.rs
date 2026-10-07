@@ -5,7 +5,7 @@ use std::{
 use xt_fixtures::{Fixture, FixtureId, FixtureStatus};
 use xtrace_desktop::{
     dto::{FixturePrEffortState, PrRef},
-    pr_refresh::{PrRefreshService, RefreshStorage},
+    pr_refresh::{PrRefreshService, RefreshOrigin, RefreshStorage},
     state::{StateError, pr_refresh_targets},
 };
 
@@ -49,7 +49,12 @@ fn pr_effort_states(
                 targets: &|| {
                     pr_refresh_targets(&snapshot, &selection).map_err(StateError::PrEncoding)
                 },
-                record: &|outcome| Ok(store.borrow_mut().record_pr_refresh(outcome)?),
+                // Each state is what the user's own refresh from the dialog leaves.
+                record: &|outcome| {
+                    Ok(store
+                        .borrow_mut()
+                        .record_pr_refresh_from(outcome, RefreshOrigin::Manual)?)
+                },
             })?;
         }
         states.push(FixturePrEffortState {
@@ -279,6 +284,7 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                         reason: "not verified: the index is disabled".into(),
                     },
                     hosts: Vec::new(),
+                    needs_attention: false,
                     reconciles: 0,
                     files_scanned: 0,
                 },

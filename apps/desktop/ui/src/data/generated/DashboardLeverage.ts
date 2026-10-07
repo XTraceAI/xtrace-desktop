@@ -4,7 +4,10 @@ import type { MetricLeverageDay } from "./MetricLeverageDay";
 /**
  * Leverage's two sides over the whole local days of `human_hours`: the
  * agent hours `tiles.leverage` divides, for both periods, and each day's
- * own leverage (the same days as `human_hours.current.by_day`).
+ * own leverage (the same days as `human_hours.current.by_day`). These agent
+ * hours are whole days, so they are not the rolling `tiles.agent_hours`:
+ * a range that starts mid-day adds the rest of its first day. Every screen
+ * that sets agent hours beside human time reads them from here.
  */
 export type DashboardLeverage = { 
 /**

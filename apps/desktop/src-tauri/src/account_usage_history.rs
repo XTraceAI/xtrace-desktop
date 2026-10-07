@@ -529,6 +529,7 @@ mod tests {
             state: AccountUsageState::Available,
             issue: None,
             checked_at: Some(at),
+            stale_at: None,
             windows,
         }
     }

@@ -4,8 +4,9 @@ import { useNavigate } from 'react-router';
 import { useData } from '../../data/DataProvider';
 import type { TodaySummary } from '../../data/generated/TodaySummary';
 import { queryKeys } from '../../data/query-client';
+import { calendarDay, clock } from '../../kit/clock';
 import { tokens, UNMEASURED } from '../../kit/format';
-import { continuous } from '../metric-format';
+import { agentTime } from '../agent-duration';
 import { plural, usd } from '../dashboard/present';
 import { LiveUpdatesNotice } from '../LiveUpdatesNotice';
 import '../../styles/tray.css';
@@ -17,29 +18,16 @@ const MAX_DELAY = 2 ** 31 - 1;
 const zoneOf = (summary: TodaySummary) => {
   if (summary.timezone === 'system-local') return undefined;
   try {
-    new Intl.DateTimeFormat('en-US', { timeZone: summary.timezone });
+    new Intl.DateTimeFormat(undefined, { timeZone: summary.timezone });
     return summary.timezone;
   } catch {
     return undefined;
   }
 };
 const observedAt = (summary: TodaySummary) =>
-  new Intl.DateTimeFormat('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-    timeZone: zoneOf(summary),
-  }).format(summary.observed_ms);
+  clock(summary.observed_ms, { timeZone: zoneOf(summary) });
 /** The report's own local date, never re-derived from this machine's clock. */
-const dateLabel = (summary: TodaySummary) => {
-  const [year, month, day] = summary.date.split('-').map(Number);
-  return new Intl.DateTimeFormat('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-  }).format(Date.UTC(year, month - 1, day));
-};
+const dateLabel = (summary: TodaySummary) => calendarDay(summary.date, 'weekday-day');
 
 export function outputText(summary: TodaySummary) {
   const { output } = summary;
@@ -80,7 +68,7 @@ export function costText(summary: TodaySummary) {
 export function agentText(summary: TodaySummary) {
   const { agent } = summary;
   return {
-    value: continuous(agent.active_ms / 3_600_000),
+    value: agentTime(agent.active_ms),
     meta:
       agent.sessions === 0
         ? 'No agent activity recorded today'
@@ -177,10 +165,7 @@ function Today() {
         </section>
         <section className="xt-tray-card xt-tray-tile" aria-label="Today’s agent hours">
           <span className="xt-tray-label">Today · agent</span>
-          <span className="xt-tray-value">
-            {agent.value}
-            <span className="xt-tray-unit">h</span>
-          </span>
+          <span className="xt-tray-value">{agent.value}</span>
           <span className="xt-tray-meta">{agent.meta}</span>
         </section>
       </div>
@@ -194,8 +179,8 @@ function Today() {
       </section>
       <p className="xt-tray-footnote">
         Since local midnight,{' '}
-        {data.timezone === 'system-local' ? 'system time zone' : data.timezone}. Agent hours count
-        today’s events only.
+        {data.timezone === 'system-local' ? 'system time zone' : data.timezone}. Agent hours match
+        today’s bar on the Dashboard: work that ran past midnight counts from midnight.
       </p>
     </>
   );

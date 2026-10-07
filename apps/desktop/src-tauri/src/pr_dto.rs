@@ -81,8 +81,18 @@ impl From<PrRefreshError> for PrRefreshErrorCode {
 pub enum PrRefreshStatusReport {
     NeverAttempted,
     Refreshed,
-    FailedNeverRefreshed { error: PrRefreshErrorCode },
-    FailedAfterRefresh { error: PrRefreshErrorCode },
+    FailedNeverRefreshed {
+        error: PrRefreshErrorCode,
+    },
+    FailedAfterRefresh {
+        error: PrRefreshErrorCode,
+    },
+    /// GitHub answered that this number is not a pull request in a repository
+    /// it could see, and never confirmed it before
+    /// (`StoredPullRequest::not_found_on_github`). It is not counted or shown
+    /// as a pull request; only the refresh dialog lists it, for a check by
+    /// hand.
+    NotFoundOnGithub,
 }
 
 impl From<PrRefreshStatus> for PrRefreshStatusReport {
@@ -188,7 +198,11 @@ impl PrRow {
             head_ref_name: stored.head_ref_name.clone(),
             refreshed_at_ms: instant(stored.refreshed_at)?,
             last_attempted_at_ms: instant(stored.last_attempted_at)?,
-            status: stored.refresh_status().into(),
+            status: if stored.not_found_on_github() {
+                PrRefreshStatusReport::NotFoundOnGithub
+            } else {
+                stored.refresh_status().into()
+            },
         })
     }
 }

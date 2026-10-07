@@ -41,7 +41,9 @@ minisign-verify = "=0.2.5"
 url = "=2.5.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSView", "NSWindow"] }
+objc2 = "=0.6.4"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSResponder", "NSView", "NSWindow"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString"] }
 
 [dev-dependencies]
 # Tests only: creating a stored pull request that no session links any more,

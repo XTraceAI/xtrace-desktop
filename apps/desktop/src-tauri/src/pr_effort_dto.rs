@@ -37,6 +37,14 @@ pub struct MetricPrFreshnessSummary {
     pub failed_never_refreshed: u64,
     #[ts(type = "number")]
     pub failed_after_refresh: u64,
+    /// Of `failed_never_refreshed`, those a manual refresh failed for since
+    /// their last success. The Dashboard does not ask about these again.
+    #[ts(type = "number")]
+    pub manual_failed_never_refreshed: u64,
+    /// Of `failed_after_refresh`, those a manual refresh failed for since
+    /// their last success.
+    #[ts(type = "number")]
+    pub manual_failed_after_refresh: u64,
     /// Oldest last-successful refresh among those pull requests, UTC ms.
     #[ts(type = "number | null")]
     pub oldest_refreshed_at: Option<i64>,
@@ -116,9 +124,12 @@ pub struct MetricEffortCost {
 
 /// One model's part of one local day. Cost is the priced cost of the
 /// responses that named this model on the day; agent time is the time of the
-/// sessions whose most-used model over the window is this one. `model` is
-/// `null` for responses without a model name and for sessions with no
-/// response that names one.
+/// sessions whose most-used model over the window is this one, by the rule
+/// the Sessions list also shows (`xt_store::session_model`): most selected
+/// responses, then most output tokens, then the first name; a session with no
+/// response that names a model is judged by its assistant records that name
+/// one and carry no usage. `model` is `null` for responses without a model
+/// name and for sessions whose in-window work names no model.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MetricModelDayEffort {
     pub model: Option<String>,

@@ -13,6 +13,12 @@ import type { ReaderBundle } from "./ReaderBundle";
  */
 export type NativeIndexStatus = { phase: NativeIndexPhase, freshness: NativeFreshness, python: PythonRuntime, readers: ReaderBundle, hosts: Array<NativeHostStatus>, 
 /**
+ * Some host's last scan needs attention (see
+ * [`NativeHostStatus::needs_attention`]). The one answer every screen
+ * reads to say the local index is short of a host.
+ */
+needs_attention: boolean, 
+/**
  * Reconciliations completed: the initial scan, then one per change burst.
  */
 reconciles: number, 

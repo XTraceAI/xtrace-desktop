@@ -250,7 +250,7 @@
   margin-right: 6px;
 }
 
-/* ---- Effort: your hours as a 24-hour timeline ---- */
+/* ---- Effort: human time as a 24-hour timeline ---- */
 .xt-human-plot {
   display: flex;
   flex: 1 1 auto;

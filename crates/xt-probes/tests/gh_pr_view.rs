@@ -678,6 +678,90 @@ fn a_process_that_ran_and_failed_is_one_execution_failure() {
     }
 }
 
+/// gh's own answer when the repository resolves but has no pull request with
+/// that number, copied from gh 2.90.0 run against a visible repository:
+/// `gh pr view https://github.com/XTraceAI/agent-plugins/pull/999 --json ...`
+/// exits 1 and writes exactly this line to stderr. Only that exact line, for
+/// the requested number, is "not found".
+const MISSING_PR_42: &str =
+    "GraphQL: Could not resolve to a PullRequest with the number of 42. (repository.pullRequest)";
+
+#[test]
+fn a_missing_pull_request_in_a_visible_repository_is_not_found() {
+    let directory = TempDir::new().unwrap();
+    let missing = fixture(
+        directory.path(),
+        "gh-missing-pr",
+        &format!("printf '%s\\n' '{MISSING_PR_42}' 1>&2\nexit 1"),
+    );
+    let outcome = run(&missing, short(10_000));
+    assert_eq!(code(&outcome), PrRefreshError::NotFound);
+    // The stderr text is compared, never carried.
+    assert!(!format!("{outcome:?}").contains("GraphQL"));
+    assert_eq!(
+        xt_probes::gh::pull_request_missing_line(42),
+        MISSING_PR_42,
+        "the parsed line is the one gh prints",
+    );
+}
+
+#[test]
+fn anything_but_the_exact_missing_pull_request_answer_stays_an_execution_failure() {
+    let directory = TempDir::new().unwrap();
+    let cases = [
+        // The repository itself did not resolve: missing, or private to an
+        // account other than the signed-in one. gh 2.90.0, verbatim.
+        (
+            "repository-missing",
+            "printf '%s\\n' \"GraphQL: Could not resolve to a Repository with the name 'x/r'. (repository)\" 1>&2\nexit 1".to_owned(),
+        ),
+        // Another pull request's number.
+        (
+            "other-number",
+            "printf '%s\\n' 'GraphQL: Could not resolve to a PullRequest with the number of 43. (repository.pullRequest)' 1>&2\nexit 1".to_owned(),
+        ),
+        // The right line plus anything else.
+        (
+            "extra-line",
+            format!("printf '%s\\nsomething else\\n' '{MISSING_PR_42}' 1>&2\nexit 1"),
+        ),
+        // The right line with another exit status.
+        (
+            "exit-2",
+            format!("printf '%s\\n' '{MISSING_PR_42}' 1>&2\nexit 2"),
+        ),
+        // The right line on stdout rather than stderr.
+        (
+            "on-stdout",
+            format!("printf '%s\\n' '{MISSING_PR_42}'\nexit 1"),
+        ),
+    ];
+    for (name, body) in cases {
+        let executable = fixture(directory.path(), name, &body);
+        assert_eq!(
+            code(&run(&executable, short(10_000))),
+            PrRefreshError::ExecutionFailed,
+            "{name} should be one execution failure",
+        );
+    }
+    // The right line followed by more than the stderr bound keeps: the kept
+    // part alone would match, but a truncated stderr is never judged.
+    let truncated = fixture(
+        directory.path(),
+        "truncated",
+        &format!("printf '%s\\n%s\\n' '{MISSING_PR_42}' 'xxxxxxxxxxxxxxxx' 1>&2\nexit 1"),
+    );
+    let limits = Limits {
+        deadline: Duration::from_secs(10),
+        max_stderr_bytes: MISSING_PR_42.len() + 1,
+        ..Limits::default()
+    };
+    assert_eq!(
+        code(&run(&truncated, limits)),
+        PrRefreshError::ExecutionFailed
+    );
+}
+
 /// gh documents exit code 4 as "authentication required" (`gh help
 /// exit-codes`); that exit status, and nothing it writes, is unauthorized.
 /// Any other nonzero exit stays one execution failure, whatever it says.

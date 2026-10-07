@@ -137,7 +137,7 @@ it('shows the exhausted weekly limit above the unused session and keeps capture 
   expect(screen.getByText('Codex · desktop').parentElement?.textContent).toContain('Not capturing');
   expect(screen.getByText('Codex · cli').parentElement?.textContent).toContain('Capturing');
   expect(screen.getByText('Codex · new-surface').parentElement?.textContent).toContain('Unknown');
-  expect(screen.getByText('Legacy host · Unknown surface')).toBeTruthy();
+  expect(screen.getByText('Legacy host · unknown surface')).toBeTruthy();
   expect(screen.queryByText(/up to date/i)).toBeNull();
 });
 
@@ -196,8 +196,8 @@ const updating: LocalIndexStatus = {
   tone: 'live',
   summary: 'The local index is ready and changes are reconciled as they happen.',
   hosts: [
-    { host: 'claude', state: 'Complete' },
-    { host: 'cursor', state: 'No local history found' },
+    { host: 'Claude Code', state: 'Complete' },
+    { host: 'Cursor', state: 'No local history found' },
   ],
 };
 const openIndex = async () => {
@@ -216,9 +216,11 @@ it('describes the local index on the status row and keeps the plugin receiver a 
   const panel = await openIndex();
   expect(within(panel).getByText('Updating').className).toContain('xt-index-live');
   expect(within(panel).getByText(updating.summary)).toBeTruthy();
-  expect(within(panel).getByText('claude').parentElement?.textContent).toBe('claudeComplete');
-  expect(within(panel).getByText('cursor').parentElement?.textContent).toBe(
-    'cursorNo local history found',
+  expect(within(panel).getByText('Claude Code').parentElement?.textContent).toBe(
+    'Claude CodeComplete',
+  );
+  expect(within(panel).getByText('Cursor').parentElement?.textContent).toBe(
+    'CursorNo local history found',
   );
   expect(within(panel).getByText('Plugin receiver').parentElement?.textContent).toBe(
     'Plugin receiverOff',
@@ -242,12 +244,12 @@ it('shows every qualification in full and marks only the host scans the caller f
         tone: 'attention',
         summary: 'The local index is ready and changes are reconciled as they happen.',
         notes: [
-          'Last scan not complete for codex (reader failed).',
+          'Last scan not complete for Codex (reader failed).',
           'Live updates are unavailable.',
         ],
         hosts: [
-          { host: 'claude', state: 'Complete' },
-          { host: 'codex', state: 'Reader failed', attention: true, reason: 'synthetic reason' },
+          { host: 'Claude Code', state: 'Complete' },
+          { host: 'Codex', state: 'Reader failed', attention: true, reason: 'synthetic reason' },
         ],
       }}
     />,
@@ -258,7 +260,7 @@ it('shows every qualification in full and marks only the host scans the caller f
   expect(trigger.textContent).toBe('index · partial?');
   expect(trigger.querySelector('i')?.className).toBe('xt-status-attention');
   const panel = await openIndex();
-  expect(within(panel).getByText('Last scan not complete for codex (reader failed).')).toBeTruthy();
+  expect(within(panel).getByText('Last scan not complete for Codex (reader failed).')).toBeTruthy();
   expect(within(panel).getByText('Live updates are unavailable.')).toBeTruthy();
   expect(within(panel).getByText('Reader failed').className).toBe('xt-index-attention');
   expect(within(panel).getByText('Complete').className).toBe('');

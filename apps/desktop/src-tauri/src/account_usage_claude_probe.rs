@@ -61,14 +61,17 @@ pub(super) fn read_local(paths: &ClaudeUsagePaths) -> AccountProviderUsage {
 }
 
 /// A saved reading older than this is not taken as the source of a panel
-/// that shows the same numbers.
+/// that shows the same numbers. Claude Code shows its saved copy in place of
+/// a failed fetch only while the copy is under an hour old.
 const SAME_READING_WINDOW_MS: i64 = 60 * 60 * 1000;
 
 /// Claude Code's saved reading when this probe made it fetch, or when the
 /// panel shows exactly that saved reading (`/usage` shows its saved copy when
-/// it fetched recently): either way the reading's own fetch time is the read
-/// time. Otherwise the panel's numbers, read at the moment the panel showed
-/// them: they differ from the saved copy, so they are what Claude Code
+/// it fetched recently, or for up to an hour when a fetch failed): either way
+/// the reading's own fetch time is the read time, never the panel's, whatever
+/// its age; the one stale rule (`account_usage::stale_at`) then marks an old
+/// copy stale. Otherwise the panel's numbers, read at the moment the panel
+/// showed them: they differ from the saved copy, so they are what Claude Code
 /// reported at that moment.
 fn result_from(outcome: ProbeOutcome, cached: Option<CachedUsage>) -> AccountProviderUsage {
     let cached = match cached {
@@ -840,6 +843,22 @@ mod tests {
         // A side missing the session (or the week) cannot be matched.
         let week_only = cached(saved_at, 41.0);
         assert_eq!(at(week_only), Some(PANEL_MS / 1000));
+    }
+
+    /// A panel showing Claude Code's saved copy keeps the copy's own fetch
+    /// time, however old, never the panel's time; the stale rule then marks
+    /// an old copy stale. Such a read succeeds.
+    #[test]
+    fn panel_showing_an_old_saved_reading_keeps_its_own_time() {
+        let text = "Current session\n██ 30% used\nCurrent week (all models)\n██ 41% used";
+        for age in [crate::account_usage::STALE_AFTER_SECS - 1, 50 * 60] {
+            let read = result_from(
+                outcome(panel(text, PANEL_MS), None),
+                saved(PANEL_MS - age * 1000, 30.0, 41.0),
+            );
+            assert_eq!(read.state, AccountUsageState::Available);
+            assert_eq!(read.checked_at, Some(PANEL_MS / 1000 - age));
+        }
     }
 
     #[test]

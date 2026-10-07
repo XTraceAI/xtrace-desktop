@@ -3,8 +3,9 @@
 use jiff::{Timestamp, tz::TimeZone};
 use rusqlite::Connection;
 use serde_json::{Value, json};
+mod activity_support;
 use xt_fixtures::TempDb;
-use xt_metrics::{MetricsDb, TypingRate, Window};
+use xt_metrics::{MetricsDb, PriceCatalog, TypingRate, Window};
 use xt_store::{
     CanonicalRecord, Host, SessionMeta, SessionSource, Store,
     creation::{CreationDisposition, CreationEvidence, CreationWitness, SessionCreationProof},
@@ -85,6 +86,17 @@ fn missing_role_stays_unknown_and_readable_after_origin_or_relation() {
             .human_time(window(), TypingRate::default(), TimeZone::UTC)
             .unwrap();
         assert_eq!(before_time.human_minutes_est, None);
+        let shared = activity_support::matches_standalone(
+            &metrics,
+            window(),
+            TimeZone::UTC,
+            TypingRate::default(),
+            false,
+            &PriceCatalog::bundled().unwrap(),
+        );
+        // Unknown human input stays unknown beside the known agent time.
+        assert_eq!(shared.human, before_time);
+        assert_eq!(shared.spans.active_ms, 60_000);
         assume(db.store_mut(), relation);
         // A missing role cannot establish that this is a user input. The
         // exclusion flag is false, but classification/length stay unknown.

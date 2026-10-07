@@ -52,7 +52,7 @@ is missing. No signing keys are created by the app or these instructions.
 The repository `XTraceAI/xtrace-desktop` is now public, so its GitHub Releases
 feed needs no authentication. The configured endpoint is
 `https://github.com/XTraceAI/xtrace-desktop/releases/latest/download/latest.json`.
-The public endpoint is live and v0.1.1 has been published. Preparing v0.1.2
+The public endpoint is live and v0.1.2 has been published. Preparing v0.1.3
 in source does not publish that version or change the feed. `latest.json` must not offer an update before its real archive and
 signature assets are available. Never embed credentials in the app or URL.
 
@@ -80,10 +80,10 @@ remove that variable from the command's environment and pass its local file path
 explicitly:
 
 ```sh
-env -u TAURI_SIGNING_PRIVATE_KEY pnpm tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY" --app-version "0.1.2" "/absolute/path/to/XTrace Desktop.app.tar.gz"
+env -u TAURI_SIGNING_PRIVATE_KEY pnpm tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY" --app-version "0.1.3" "/absolute/path/to/XTrace Desktop.app.tar.gz"
 ```
 
-Replace `0.1.2` with the app's exact release version and the archive path with the
+Replace `0.1.3` with the app's exact release version and the archive path with the
 final archive to sign. The shell expands the key path before `env` removes the
 variable for the signer. Keep `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the local
 environment: empty for an unprotected key, or securely supplied for a protected
@@ -115,9 +115,9 @@ Before publishing, perform this sequence:
 See the [official updater guide](https://v2.tauri.app/plugin/updater/) and the
 [pinned updater source](https://github.com/tauri-apps/plugins-workspace/tree/updater-v2.12.0/plugins/updater).
 This source change configures the public release endpoint and trusted public
-key. It does not publish v0.1.2 or change the existing feed; release packaging and
+key. It does not publish v0.1.3 or change the existing feed; release packaging and
 publication remain manual.
 
-## Beta 0.1.2 limitation
+## Beta 0.1.3 limitation
 
 Some nested Guardian review conversations may appear under the root conversation rather than their immediate parent. This beta does not change those existing links.

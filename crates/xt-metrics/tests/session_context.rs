@@ -99,3 +99,35 @@ fn context_carries_saved_title_native_start_and_recorded_link_counts() {
         );
     }
 }
+
+/// The Dashboard's "recorded pull request links" count leaves out a number
+/// GitHub said is not a pull request, and agrees with the Sessions page.
+#[test]
+fn context_counts_leave_out_numbers_github_says_are_not_pull_requests() {
+    use xt_store::pr_link::{PrRefreshError, RefreshFailure, RefreshOutcome};
+    let mut db = TempDb::empty().unwrap();
+    let store = db.store_mut();
+    session(store, "s", Some(1), None);
+    link(store, "s", 7, PrConfidence::Exact);
+    link(store, "s", 999, PrConfidence::Inferred);
+    link(store, "s", 19, PrConfidence::Inferred);
+    for (number, error) in [
+        (999, PrRefreshError::NotFound),
+        (19, PrRefreshError::ExecutionFailed),
+    ] {
+        store
+            .record_pr_refresh(&RefreshOutcome::Failure(RefreshFailure {
+                pull_request: PrIdentity::from_parts("example/atlas", number).unwrap(),
+                attempted_at: 10,
+                error,
+            }))
+            .unwrap();
+    }
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    let row = &metrics.session_context(&["s"]).unwrap()[0];
+    assert_eq!((row.pr_links, row.inferred_pr_links), (2, 1));
+    let listed = metrics
+        .sessions_page_filtered(&SessionFilter::default(), None)
+        .unwrap();
+    assert_eq!(listed[0].pr_links.len(), 2);
+}

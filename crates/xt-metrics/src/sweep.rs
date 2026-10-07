@@ -17,7 +17,7 @@ impl MetricsDb {
     }
 }
 
-fn sweep(spans: &[ActiveSpan]) -> Result<Concurrency> {
+pub(crate) fn sweep(spans: &[ActiveSpan]) -> Result<Concurrency> {
     let mut points = Vec::new();
     for span in spans.iter().filter(|s| s.start_ms < s.end_ms) {
         points.push((span.start_ms, 1_i8));

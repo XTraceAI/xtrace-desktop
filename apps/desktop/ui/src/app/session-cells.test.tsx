@@ -36,10 +36,12 @@ it('keeps an idle member measured at zero agent time, never unmeasured', () => {
 
 it('states a hands-off median with its sample, and why one is absent', () => {
   const { container } = render(<HandsOff row={byId('s-alpha')} />);
-  expect(container.textContent).toMatch(/minutes, median of 3 stretches/);
+  expect(container.textContent).toMatch(/min median of 3 stretches/);
   const desk = byId('s-desk');
   expect(desk.hands_off.state).toBe('unmeasured');
-  expect(handsOffReason(desk)).toMatch(/^Excluded: claude desktop timestamps are too coarse/);
+  expect(handsOffReason(desk)).toMatch(
+    /^Excluded: Claude Code · desktop timestamps are too coarse/,
+  );
   const tools = byId('s-tools');
   expect(handsOffReason(tools)).toBe('No hands-off stretch in this window, so there is no median');
 });

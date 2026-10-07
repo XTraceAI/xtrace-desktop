@@ -14,6 +14,7 @@ import type { NativeIndexStatus } from '../src/data/generated/NativeIndexStatus'
 const scan = (host: string, state: NativeHostState, imported: number) => ({
   host,
   state,
+  needs_attention: state !== 'complete',
   detail: null,
   sessions_imported: imported,
   sessions_partial: 0,
@@ -34,6 +35,7 @@ const status: NativeIndexStatus = {
     scan('codex', 'incomplete', 1),
     scan('cursor', 'complete', 4),
   ],
+  needs_attention: true,
   reconciles: 2,
   files_scanned: 3,
 };
@@ -100,7 +102,7 @@ for (const scheme of ['dark', 'light'] as const)
     const list = page.getByTestId('native-index');
     const note = page.getByTestId('native-index-scope');
     await expect(note).toHaveText(
-      "Complete and incomplete describe each host's last scan of the sources this index reads, not all of that host's history. Conversations kept only in the Cursor IDE's database are not read, so they are not in Cursor's counts.",
+      "“Read” and “Read with gaps” describe each host's last scan of the sources this index reads, not all of that host's history. Conversations kept only in the Cursor IDE's database are not read, so they are not in Cursor's counts.",
     );
     // The reported rows are unchanged.
     expect(await list.locator('dd').allTextContents()).toEqual([
@@ -108,9 +110,9 @@ for (const scheme of ['dark', 'light'] as const)
       'Live: changes are reconciled as they happen',
       '/synthetic/python3',
       `Bundled memhub 0.0.0 at ${'0'.repeat(12)}`,
-      'complete · 2 imported, 0 partial, 0 skipped, 3 new records, 0 enriched',
-      'incomplete · 1 imported, 0 partial, 0 skipped, 3 new records, 0 enriched',
-      'complete · 4 imported, 0 partial, 0 skipped, 3 new records, 0 enriched',
+      'Read · 2 imported, 0 partial, 0 skipped, 3 new records, 0 enriched',
+      'Read with gaps · 1 imported, 0 partial, 0 skipped, 3 new records, 0 enriched',
+      'Read · 4 imported, 0 partial, 0 skipped, 3 new records, 0 enriched',
     ]);
     await note.scrollIntoViewIfNeeded();
     await expect(note).toBeInViewport();

@@ -87,7 +87,7 @@ export interface TypingSpeedControls {
   openTest(): Promise<void>;
 }
 /**
- * The saved break length "your hours" read, in whole minutes: two messages
+ * The saved break length "human time" read, in whole minutes: two messages
  * you sent at most this far apart join one stretch. The app database owns the
  * bounds and the default; nothing is measured here.
  */

@@ -17,9 +17,9 @@ import { SectionCard } from '../../kit/SectionCard';
 import { plainReason, rangeDays } from '../dashboard/present';
 import { DefinitionInfo } from '../dashboard/DefinitionInfo';
 import { useSelectedRange } from '../dashboard/range';
-import { continuous } from '../metric-format';
+import { agentTime } from '../agent-duration';
 import { evidenceWords } from '../session-cells';
-import { contextLead, contextTitle } from '../session-context';
+import { contextLead, contextTitle, modelLabel } from '../session-context';
 import { listState } from '../session-search';
 import { SessionTimeline, type TimelineQuery } from './SessionTimeline';
 import { SessionTranscript } from './SessionTranscript';
@@ -79,13 +79,10 @@ const MEASURES: {
   },
   {
     key: 'agent',
-    label: 'Agent minutes',
+    label: 'Agent time',
     rule: 'M-05',
-    value: (row) => {
-      const metrics = indexed(row);
-      return metrics ? metrics.agent_ms / 60000 : null;
-    },
-    format: continuous,
+    value: (row) => indexed(row)?.agent_ms,
+    format: agentTime,
     reason: 'This session is not indexed, so nothing was measured',
   },
 ];
@@ -383,7 +380,7 @@ export function SessionDetailPage() {
               {row && (
                 <>
                   <span aria-hidden="true"> · </span>
-                  <span>{row.model ?? 'Unknown model'}</span>
+                  <span>{modelLabel(row.model, row.other_models)}</span>
                 </>
               )}
             </p>

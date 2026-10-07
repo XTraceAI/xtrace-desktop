@@ -1,4 +1,4 @@
-import { hours } from '../kit/format';
+import { hours, UNMEASURED } from '../kit/format';
 
 /**
  * How this app states a continuous measurement — an hour count, a ratio, a
@@ -21,3 +21,22 @@ const SHOWN_SCALE = 0.05;
 
 export const continuous = (value: number): string =>
   value > 0 && value < SHOWN_SCALE ? '<0.1' : hours(value);
+
+/**
+ * Hands-off time (M-09), the one way it is written wherever it is shown — a
+ * stretch's length on a session's timeline, a session's or a pull request's
+ * median, the Dashboard's median, p90 and daily line: minutes on the shared
+ * scale, `3.2 min`. It is its own quantity, so it is never written as agent
+ * time (`0h03m`). Not measured reads `—`.
+ */
+export const handsOffTime = (minutes: number): string =>
+  Number.isFinite(minutes) && minutes >= 0 ? `${continuous(minutes)} min` : UNMEASURED;
+
+/** The same value read aloud: `3.2 minutes`, `1 minute`. */
+export const handsOffSpoken = (minutes: number): string => {
+  if (!(Number.isFinite(minutes) && minutes >= 0)) return 'not measured';
+  const shown = continuous(minutes);
+  return shown === '<0.1'
+    ? 'less than 0.1 minutes'
+    : `${shown} ${shown === '1' ? 'minute' : 'minutes'}`;
+};

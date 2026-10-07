@@ -1,0 +1,93 @@
+{
+  "commit": "92b54b4a7f27d44f31cf0e1318bf39d4ca33656e",
+  "files": [
+    {
+      "file": "0001_canonical.sql",
+      "sha256": "85cb6f63364cfb21a00f9076a0f65a7b4d47b0ebb0f3bab1953f2e8aead1f217"
+    },
+    {
+      "file": "0002_ingest.sql",
+      "sha256": "500a51940f46adf4202569bb43225837846e01c0e0a5b5c56dcb074ad1a819e2"
+    },
+    {
+      "file": "0003_native_checkpoints.sql",
+      "sha256": "a6b98b981debce7209164d6024dcdcc5de067c5bc1821094f9d3234111a5f6a3"
+    },
+    {
+      "file": "0004_native_record_copies.sql",
+      "sha256": "bc28849faadf03091276aff9581eff20315154f8318f21778a12bcd8d1a346ce"
+    },
+    {
+      "file": "0005_human_classification_replay.sql",
+      "sha256": "7cd610b6e70e025646a63957a1fda5a6f17c806bee8a188ed7e939a55d505143"
+    },
+    {
+      "file": "0006_structural_tool_kinds.sql",
+      "sha256": "29cb344d9afeb1e14fd66899a02f69fe35eee2fb89d72b517374356bf42b1104"
+    },
+    {
+      "file": "0007_native_pr_witnesses.sql",
+      "sha256": "522a7de4bee61ecf3b9f830a5dc51e1b0f336f0855e8d8da2eec83fe1f83cf57"
+    },
+    {
+      "file": "0008_pr_refresh_status.sql",
+      "sha256": "0c6baa7df6e51cd5cf579d58821e0319b1024946b8fec737787ceca6be26fa98"
+    },
+    {
+      "file": "0009_repeat_group_keys.sql",
+      "sha256": "ca7caff47c14e3324245624f3143ca95e45529e72273244fcbb6b86627006427"
+    },
+    {
+      "file": "0010_confirmed_automated_inputs.sql",
+      "sha256": "20d15254490daba3d4415de8c97dfade312f98f616e9ab7981da15b63a2e1e4f"
+    },
+    {
+      "file": "0011_session_creation_relations.sql",
+      "sha256": "cdd38ff8d2ba0068e035adb41ee1fde41b13a174640fcd2273c52ab9e98f4af9"
+    },
+    {
+      "file": "0012_guardian_turn_inputs.sql",
+      "sha256": "353f2c6570dbe1f4e4cfc7220236b4a7f55f8287fd1f206b27b929a92893ca41"
+    },
+    {
+      "file": "0013_injected_context_inputs.sql",
+      "sha256": "02c34bc7a49b7abb3cbba72c3eede84760af3a291fff64c8c36035ba77fe83fb"
+    },
+    {
+      "file": "0014_human_input_estimate.sql",
+      "sha256": "e6a21899d8202f86f0d2009869aa5e1ee877db117087e9fe3418d3a271de4f90"
+    },
+    {
+      "file": "0015_claude_launch_creations.sql",
+      "sha256": "215ee18c5ad3d1cb9ca8dccb66e417945079caff9b2859916b681dae2021575f"
+    },
+    {
+      "file": "0016_task_notification_inputs.sql",
+      "sha256": "99354a115c8e6cf4991e88694eaf459aa0f12df11513f7790832ecb397b8e6e9"
+    },
+    {
+      "file": "0017_record_previews.sql",
+      "sha256": "34cd8ac5ac36b0ba391fb0d3e1004909fee93209c48df98f3b67411cf7c2582f"
+    },
+    {
+      "file": "0018_session_child_facts.sql",
+      "sha256": "331a8ecf093b727f04a5dddcd3ab00d403101c92c32a846325e39b0b349df043"
+    },
+    {
+      "file": "0019_claude_launch_binding_witnesses.sql",
+      "sha256": "f25df83d84f549cf0faa3bd40b7d91239d5c3b2fb155f062abae2da50ad70bc8"
+    },
+    {
+      "file": "0020_codex_cli_launch_children.sql",
+      "sha256": "5bce8cdeb0717a54c9d49486f740e4f49e4f0801713014944d5bcbe0e9e6e0e9"
+    },
+    {
+      "file": "0021_tool_sent_inputs.sql",
+      "sha256": "af7b13fb61cc7ffa924169c66a2fcf86409d8bb90e29866d19790b4394bb5416"
+    },
+    {
+      "file": "0022_session_child_checks.sql",
+      "sha256": "adac33a6535bd59d7336832f66ee325ec6ccf14bfceacae6d1b4391b07d8f043"
+    }
+  ]
+}

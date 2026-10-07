@@ -9,17 +9,11 @@ import { count } from '../../kit/format';
 import { HostGlyph } from '../../kit/HostGlyph';
 import { MetricCell } from '../../kit/MetricCell';
 import { SectionCard } from '../../kit/SectionCard';
+import { hostScanText } from '../index-host-state';
 import { freshnessText } from '../native-index-text';
 import { useDbCounts, useNativeIndexStatus } from '../useAppInfo';
 import { completeWelcome } from './welcome-completion';
-import {
-  attentionCount,
-  hostName,
-  hostOutcome,
-  phasePill,
-  plural,
-  readerNote,
-} from './welcome-text';
+import { attentionCount, hostName, phasePill, plural, readerNote } from './welcome-text';
 import '../../styles/welcome.css';
 
 const TITLE = 'Welcome to XTrace';
@@ -198,7 +192,7 @@ function Sources({ status }: { status: NativeIndexStatus }) {
     <div className="xt-welcome-sources">
       <ul className="xt-welcome-hosts" aria-label="Local history sources">
         {status.hosts.map((host) => (
-          <HostCard key={host.host} host={host} scanning={status.phase.phase === 'scanning'} />
+          <HostCard key={host.host} host={host} />
         ))}
       </ul>
       <dl className="xt-welcome-dl xt-welcome-runtime">
@@ -221,12 +215,9 @@ function Sources({ status }: { status: NativeIndexStatus }) {
   );
 }
 
-function HostCard({ host, scanning }: { host: NativeHostStatus; scanning: boolean }) {
+function HostCard({ host }: { host: NativeHostStatus }) {
   const name = hostName(host.host);
-  const outcome =
-    host.state === 'pending' && scanning
-      ? { label: 'Waiting to be read', tone: 'accent' as const }
-      : hostOutcome[host.state];
+  const outcome = hostScanText(host);
   const read = host.state === 'complete' || host.state === 'incomplete';
   return (
     <li className="xt-welcome-host" aria-label={`${name}: ${outcome.label}`}>

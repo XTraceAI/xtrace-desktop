@@ -72,8 +72,8 @@ it('names every host and surface it counted and leaves an unstated surface unkno
     .getByRole('list', { name: 'Untimed indexed history by host and surface' })
     .querySelectorAll('li');
   expect([...rows].map((row) => row.textContent)).toEqual([
-    'claude · cli4 records',
-    'cursor · unknown surface3 records',
+    'Claude Code · cli4 records',
+    'Cursor · unknown surface3 records',
   ]);
 });
 
@@ -88,7 +88,7 @@ it('reports one record in the singular and keeps the total equal to its rows', (
   render(<UntimedNotice untimed={untimed(1545, rows)} />);
   expect(screen.getByTestId('untimed-count').textContent).toContain('1,545 records');
   const listed = [...screen.getByRole('list').querySelectorAll('li')].map((row) => row.textContent);
-  expect(listed).toEqual(['claude · cli1,200 records', 'claude · desktop345 records']);
+  expect(listed).toEqual(['Claude Code · cli1,200 records', 'Claude Code · desktop345 records']);
 });
 
 it('draws the same line inline, as one item in a page status row', () => {

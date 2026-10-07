@@ -22,7 +22,7 @@ export const ruleSummaries: Record<RuleId, string> = {
   'M-01':
     'Only activity inside the selected range counts, even for sessions that started before it.',
   'M-02':
-    'Messages counted as yours. Tool results, system notes and inputs proven to come from another agent are left out.',
+    'Messages a person sent. Tool results, system notes and inputs proven to come from another agent are left out.',
   'M-03': 'One agent turn is everything an agent does between two of your messages.',
   'M-04':
     'Tokens used by each model response, counted once, and what they would cost at public API prices.',
@@ -33,7 +33,7 @@ export const ruleSummaries: Record<RuleId, string> = {
   'M-07':
     'An estimate of your typing time: the length of your messages, including pasted text, at your saved typing speed.',
   'M-08':
-    'Agent hours divided by your hours: the time from each message you sent an agent to the next, when they are at most the break length apart.',
+    'Agent hours divided by human time: the time from each message you sent an agent to the next, when they are at most the break length apart.',
   'M-09':
     'How long an agent works on its own, using tools, after each of your messages before you step in again.',
   'M-10': 'The model that wrote the most output in the selected range.',

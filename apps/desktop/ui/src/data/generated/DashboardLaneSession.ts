@@ -34,8 +34,9 @@ automated_review: boolean,
 /**
  * The session start in UTC milliseconds, whether or not it falls inside
  * the lane window: the start the host recorded, or, for a Claude session
- * (Claude Code records no start), its earliest imported message. `null`
- * when neither is known; never the first returned span.
+ * (Claude Code records no start), its own earliest message, never one
+ * copied from a session it was forked from. `null` when neither is
+ * known; never the first returned span.
  */
 started_at_ms: number | null, 
 /**

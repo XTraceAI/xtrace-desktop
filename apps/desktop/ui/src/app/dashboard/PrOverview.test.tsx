@@ -25,6 +25,7 @@ import {
   type SectionSpec,
 } from './pr-effort.synthetic';
 import { DELTA_HIDDEN } from './present';
+import { EFFORT_CONTEXT } from './DashboardPage';
 
 // JSON imports widen literal unions; the export is the generated shape.
 const exported = fixture as FixtureExport;
@@ -121,9 +122,9 @@ const barred = () =>
     .filter((node) => node.querySelector('.xt-effort-bar'))
     .map((node) => node.getAttribute('data-date'));
 const measure = (name: 'agent h' | 'human h' | 'cost') => screen.getByRole('radio', { name });
-/** Opens the Details dialog from the card's header: the notes and the daily values. */
+/** Opens the dialog behind Effort's ⓘ: the definition, the notes and the daily values. */
 async function method() {
-  fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Effort definition' }));
   return screen.findByRole('dialog', { name: 'How effort is counted · daily values' });
 }
 
@@ -134,9 +135,9 @@ it('F19: one shared session counts once, on its event day, beside two merge mark
   expect(tile().textContent).not.toContain('unknown');
   // No legend of assignments: one total and one bar per day.
   expect(effort().querySelector('.xt-effort-legend')).toBeNull();
-  expect(total()).toBe('0.5 agent h');
+  expect(total()).toBe('0h30m agent');
   expect(within(effort()).getByTestId('effort-headline').textContent).toBe(
-    '0.5 agent hlast 7 days',
+    '0h30m agentlast 7 days',
   );
   // Merge markers are deduplicated per pull request, on their own merge days;
   // each is that day's count, with every pull request's facts in its name.
@@ -144,7 +145,7 @@ it('F19: one shared session counts once, on its event day, beside two merge mark
   expect(day(/^2026-09-06: 1 merged pull request · xtrace\/app#2 · fix/).textContent).toBe('1');
   expect(screen.getByTestId('effort-marker-count').textContent).toBe('2 PRs');
   expect(barred()).toEqual(['2026-09-03']);
-  expect(day('2026-09-03: 0.5 h. synthetic-model 0.5 h (100%)')).toBeTruthy();
+  expect(day('2026-09-03: 0h30m. synthetic-model 0h30m (100%)')).toBeTruthy();
   fireEvent.click(measure('cost'));
   // The card shows no line of session totals above the chart.
   expect(screen.queryByTestId('effort-cohort')).toBeNull();
@@ -173,6 +174,9 @@ it('confirmed only: an inferred link is gone before the tile and the markers', a
   expect(screen.queryByTestId('effort-notes')).toBeNull();
   const dialog = await method();
   expect(within(dialog).getByTestId('effort-notes').textContent).toContain('confirmed links');
+  expect(within(dialog).getByTestId('effort-notes').textContent).toContain(
+    'The whole-day columns run from midnight to midnight, as human time and leverage do',
+  );
   // The daily table scrolls inside a named region that takes keyboard focus,
   // one row per day with both measures and the merged numbers, and no model.
   const region = within(dialog).getByRole('region', {
@@ -184,21 +188,31 @@ it('confirmed only: an inferred link is gone before the tile and the markers', a
     within(table)
       .getAllByRole('columnheader')
       .map((cell) => cell.textContent),
-  ).toEqual(['Day', 'Agent h', 'Your h', 'Cost', 'Merged']);
+  ).toEqual([
+    'Day',
+    'Agent time',
+    'Cost',
+    'Merged',
+    'Whole day: agent time',
+    'Whole day: human time',
+  ]);
   expect(
     within(table)
       .getAllByRole('row')
       .slice(1)
       .map((row) => row.textContent),
   ).toEqual([
-    // Your hours are F1's: its five messages on Sep 7.
-    '2026-09-010 h0 hno usagenone',
-    '2026-09-020 h0 hno usagenone',
-    '2026-09-030.5 h0 h$2.50none',
-    '2026-09-040 h0 hno usagenone',
-    '2026-09-050 h0 hno usage#1',
-    '2026-09-060 h0 hno usagenone',
-    '2026-09-070 h0.3 hno usagenone',
+    // The range's bars (synthetic here), then the whole-day pair leverage
+    // divides: F1's own agent hours and its five messages on Sep 7.
+    // Each day is named as the chart names it, and both whole-day columns
+    // are written as all agent time is.
+    'Sep 10h00mno usagenone0h00m0h00m',
+    'Sep 20h00mno usagenone0h00m0h00m',
+    'Sep 30h30m$2.50none0h00m0h00m',
+    'Sep 40h00mno usagenone0h00m0h00m',
+    'Sep 50h00mno usage#10h00m0h00m',
+    'Sep 60h00mno usagenone0h00m0h00m',
+    'Sep 70h00mno usagenone0h23m0h20m',
   ]);
   fireEvent.keyDown(dialog, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -212,10 +226,10 @@ it('unknown facts: the known merged count is shown with how many are not checked
   expect(tile().textContent).toBe('Merged PRs1so far1 not checked yet');
   // An unresolved session's effort is in the day totals like any other's; the
   // card draws no type, so no unresolved-type triangle is in its header.
-  expect(total()).toBe('1 agent h');
+  expect(total()).toBe('1h00m agent');
   expect(screen.queryByTestId('effort-unresolved')).toBeNull();
   expect(await statusLine()).toContain(
-    'Confirmed-linked pull requests: 1 refreshed, 1 never refreshed',
+    'Confirmed-linked pull requests: 1 checked, 1 not checked yet',
   );
 });
 
@@ -257,7 +271,7 @@ it('partial pricing is explicit: a priced subtotal with a +, the unpriced respon
   expect(barred()).toEqual(['2026-09-03']);
   // Agent time is measured for the same cohort whatever the pricing says.
   fireEvent.click(measure('agent h'));
-  expect(total()).toBe('0.5 agent h');
+  expect(total()).toBe('0h30m agent');
   expect(effort().querySelector('[data-testid="effort-partial"]')).toBeNull();
 });
 
@@ -310,10 +324,10 @@ it('hovering or focusing a day opens its card with every model and its share', a
   await loaded();
   expect(within(effort()).getByTestId('effort-reference').textContent).toBe('24 h');
   expect(within(effort()).getByTestId('effort-headline').textContent).toBe(
-    '26 agent hlast 7 days1 day above 24 h',
+    '26h00m agentlast 7 days1 day above 24 h',
   );
   const busy = day(
-    '2026-09-05: 26 h. gpt-6-astra 20 h (77%), claude-opus-5-5 6 h (23%). Above 24 h: agents ran at the same time',
+    '2026-09-05: 26h00m. gpt-6-astra 20h00m (77%), claude-opus-5-5 6h00m (23%). Above 24 h: agents ran at the same time',
   );
   fireEvent.focus(busy);
   fireEvent.pointerEnter(busy);
@@ -323,7 +337,7 @@ it('hovering or focusing a day opens its card with every model and its share', a
     within(card)
       .getAllByTestId('effort-day-model')
       .map((row) => row.textContent),
-  ).toEqual(['gpt-6-astra20 h77%', 'claude-opus-5-56 h23%']);
+  ).toEqual(['gpt-6-astra20h00m77%', 'claude-opus-5-56h00m23%']);
   expect(card.textContent).toContain('Sep 5');
   expect(card.textContent).toContain('Above 24 h: agents ran at the same time');
 });
@@ -413,10 +427,10 @@ it('refreshes a selection, updates the Dashboard after a commit, and replays a r
   fireEvent.click(start());
   const report = await within(dialog()).findByTestId('pr-refresh-report');
   expect(report.textContent).toBe(
-    'Requested 1: 1 refreshed, 0 failed, 0 skipped. Stored facts changed; the Dashboard reads them again.',
+    'Requested 1: 1 checked, 0 could not be checked, 0 skipped. Stored facts changed; the Dashboard reads them again.',
   );
   await waitFor(() => expect(dashboard.mock.calls.length).toBeGreaterThan(before));
-  expect(within(dialog()).getByText(/Refreshed · saved/)).toBeTruthy();
+  expect(within(dialog()).getByText(/Checked · saved/)).toBeTruthy();
   // Repeat: the fixture stamps every attempt with its pinned instant, so the
   // same result is unchanged, nothing commits and the Dashboard is not re-read.
   // The selection is kept after a batch, so the same pull request goes again.
@@ -425,10 +439,10 @@ it('refreshes a selection, updates the Dashboard after a commit, and replays a r
   fireEvent.click(start());
   await waitFor(() =>
     expect(within(dialog()).getByTestId('pr-refresh-report').textContent).toBe(
-      'Requested 1: 1 refreshed, 0 failed, 0 skipped. No stored facts changed.',
+      'Requested 1: 1 checked, 0 could not be checked, 0 skipped. No stored facts changed.',
     ),
   );
-  expect(within(dialog()).getByText(/Refreshed · unchanged/)).toBeTruthy();
+  expect(within(dialog()).getByText(/Checked · unchanged/)).toBeTruthy();
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
   });
@@ -447,18 +461,27 @@ it('a partial failure keeps earlier facts, and the whole refresh shows what the 
     );
   fireEvent.click(start());
   expect((await within(dialog()).findByTestId('pr-refresh-report')).textContent).toBe(
-    'Requested 3: 2 refreshed, 1 failed, 0 skipped. Stored facts changed; the Dashboard reads them again.',
+    'Requested 3: 2 checked, 1 could not be checked, 0 skipped. Stored facts changed; the Dashboard reads them again.',
   );
-  expect(within(dialog()).getByText(/Failed: rate limited; earlier facts are kept/)).toBeTruthy();
+  expect(
+    within(dialog()).getByText(/Could not be checked: rate limited; earlier facts are kept/),
+  ).toBeTruthy();
   await waitFor(() =>
-    expect(within(dialog()).getByText(/failed \(rate limited\); never refreshed/)).toBeTruthy(),
+    expect(within(dialog()).getByText(/could not be checked \(rate limited\)/)).toBeTruthy(),
   );
   fireEvent.keyDown(dialog(), { key: 'Escape' });
   // #12's check failed, so it is not "not checked": it could not be checked.
   // #11 was checked, so the known zero shows, marked incomplete.
   await waitFor(() => expect(tile().textContent).toContain('0so far1 could not be checked'));
+  // #12 hit GitHub's rate limit: that is about the whole run and temporary,
+  // so the manual refresh does not mark it as tried, and the red ! still asks.
+  await waitFor(() => expect(attentionMark()!.dataset.state).toBe('attention'));
+  const tip = await mergedTip();
+  expect(tip).toContain(
+    '1 PR could not be checked. The last try failed. Click the red ! on the Effort card to check it again.',
+  );
   expect(await statusLine()).toContain(
-    'Confirmed-linked pull requests: 1 refreshed, 1 failed, never refreshed',
+    'Confirmed-linked pull requests: 1 checked, 1 could not be checked',
   );
 });
 
@@ -495,6 +518,69 @@ const cancelledReport = (ids: number[]): PrRefreshReport => ({
     pull_request: rows(25)[id - 1]!.pull_request,
     outcome: { outcome: 'skipped', reason: 'cancelled' },
   })),
+});
+
+it('lists a not-found number for a check by hand and words its result apart from a confirmed one', async () => {
+  const facts = Date.UTC(2026, 8, 6);
+  const [missing, confirmed] = rows(2);
+  const listed: PrRow[] = [
+    { ...missing!, last_attempted_at_ms: facts, status: { status: 'not_found_on_github' } },
+    {
+      ...confirmed!,
+      title: 'feat: confirmed once',
+      state: 'open',
+      refreshed_at_ms: facts,
+      last_attempted_at_ms: facts,
+      status: { status: 'refreshed' },
+    },
+  ];
+  const notFound = {
+    outcome: 'failed',
+    error: 'not_found',
+    persistence: { persistence: 'recorded', write: 'applied' },
+  } as const;
+  const source = ghMissing(
+    nativeSource(sectioned(NO_LINKS), {
+      pullRequests: async () => ({ rows: listed }),
+      refreshPullRequests: async (ids) => ({
+        requested: ids.length,
+        attempted: ids.length,
+        succeeded: 0,
+        failed: ids.length,
+        skipped: 0,
+        unrecorded: 0,
+        cancelled: false,
+        committed: true,
+        rows: ids.map((id) => ({
+          id,
+          pull_request: listed[id - 1]!.pull_request,
+          outcome: notFound,
+        })),
+      }),
+    }),
+  );
+  mount(source);
+  await loaded();
+  fireEvent.click(await refreshButton());
+  const boxes = await within(dialog()).findAllByRole('checkbox');
+  expect(boxes).toHaveLength(2);
+  expect(
+    within(dialog()).getByText(/not found on GitHub \(checked .*\); not counted as a pull request/),
+  ).toBeTruthy();
+  // Only never-confirmed numbers are said to be left out.
+  expect(dialog().textContent).toContain('never confirmed before, is marked not found on GitHub');
+  expect(dialog().textContent).toContain('A pull request GitHub confirmed before keeps its facts');
+  for (const box of boxes) fireEvent.click(box);
+  fireEvent.click(start());
+  expect((await within(dialog()).findByTestId('pr-refresh-report')).textContent).toBe(
+    'Requested 2: 0 checked, 0 could not be checked, 2 not found on GitHub, 0 skipped. Stored facts changed; the Dashboard reads them again.',
+  );
+  expect(
+    within(dialog()).getByText(/Not found on GitHub; not counted as a pull request · saved/),
+  ).toBeTruthy();
+  expect(
+    within(dialog()).getByText(/Not found on GitHub; earlier facts kept · saved/),
+  ).toBeTruthy();
 });
 
 it('selects at most twenty pull requests and sends exactly those', async () => {
@@ -555,7 +641,7 @@ it('cancels a running batch and reports what it skipped', async () => {
   );
   await act(async () => finish(cancelledReport([1, 2])));
   expect((await within(dialog()).findByTestId('pr-refresh-report')).textContent).toBe(
-    'Requested 2: 0 refreshed, 0 failed, 2 skipped. The batch was cancelled. No stored facts changed.',
+    'Requested 2: 0 checked, 0 could not be checked, 2 skipped. The batch was cancelled. No stored facts changed.',
   );
   expect(within(dialog()).getAllByText(/Skipped: cancelled before it ran/)).toHaveLength(2);
   expect(source.dashboard).toHaveBeenCalledTimes(reads);
@@ -604,9 +690,9 @@ it('a stale row keeps its cached facts and says the last refresh failed', async 
   const item = (
     await within(dialog()).findByRole('checkbox', { name: /#100 · feat: kept/ })
   ).closest('li')!;
-  expect(item.textContent).toContain('merged Sep 5, 12:00');
+  expect(item.textContent).toContain('merged Sep 5, 12:00 PM');
   expect(item.textContent).toContain(
-    'stale: last refresh failed (rate limited); facts from Sep 6, 00:00',
+    'stale after a failed check (rate limited); facts from Sep 6, 12:00 AM',
   );
 });
 
@@ -641,7 +727,7 @@ it('refreshing only the exact link #11 shows the state Rust read for exactly tha
   // #11 was checked, so the known zero shows, marked incomplete.
   await waitFor(() => expect(tile().textContent).toContain('0so far1 not checked yet'));
   expect(await statusLine()).toContain(
-    'Confirmed-linked pull requests: 1 refreshed, 1 never refreshed',
+    'Confirmed-linked pull requests: 1 checked, 1 not checked yet',
   );
 });
 
@@ -698,7 +784,7 @@ it('keeps a running batch, its Cancel and its result across a range change and a
   expect(screen.queryByRole('button', { name: RUNNING })).toBeNull();
   fireEvent.click(await refreshButton());
   expect((await within(dialog()).findByTestId('pr-refresh-report')).textContent).toBe(
-    'Requested 2: 0 refreshed, 0 failed, 2 skipped. The batch was cancelled. No stored facts changed.',
+    'Requested 2: 0 checked, 0 could not be checked, 2 skipped. The batch was cancelled. No stored facts changed.',
   );
   expect(source.refreshPullRequests).toHaveBeenCalledOnce();
 });
@@ -763,7 +849,7 @@ it('asks the app to check GitHub when the Dashboard is shown, and says so while 
   await loaded();
   expect(source.prAutoCheck.request).toHaveBeenCalledOnce();
   await waitFor(() => expect(tile().textContent).toBe('Merged PRs2 PRs not checked yetchecking…'));
-  expect(await mergedTip()).toContain('Checking GitHub now… 2 PRs not checked yet.');
+  expect(await mergedTip()).toContain('Checking GitHub now… 2 PRs are not checked yet.');
   // The automatic check is the app's own; no manual batch starts.
   expect(source.refreshPullRequests).not.toHaveBeenCalled();
   expect(source.pullRequests).not.toHaveBeenCalled();
@@ -777,7 +863,7 @@ it('the Merged PRs tip says in plain words what it counts and how fresh it is', 
   expect(text).toContain(
     'Pull requests your agent sessions opened or pushed to, and how many of them merged on GitHub in this range. XTrace checks GitHub using your gh sign-in; it only reads.',
   );
-  expect(text).toContain('2 PRs not checked yet.');
+  expect(text).toContain('2 PRs are not checked yet.');
   // None of the rule's technical wording is in this tile's tip.
   expect(text).not.toMatch(/unions|confirmed_only|whole-linked-session|cached|gh pr view/);
   // The Effort card keeps the rule's own summary in its definition.
@@ -794,7 +880,7 @@ it('a paused check says why in plain words, without an error', async () => {
     expect(tile().textContent).toBe('Merged PRs2 PRs not checked yetgh not signed in'),
   );
   expect(await mergedTip()).toContain(
-    'The GitHub CLI (gh) is not signed in, so XTrace stopped checking. 2 PRs not checked yet. Run gh auth login, then click the red ! on the Effort card to check again.',
+    'The GitHub CLI (gh) is not signed in, so XTrace stopped checking. 2 PRs are not checked yet. Run gh auth login, then click the red ! on the Effort card to check again.',
   );
   expect(screen.queryByRole('alert')).toBeNull();
 });
@@ -829,9 +915,14 @@ it('shows no red ! and no status line when nothing needs the user', async () => 
   );
   // Nor does the tile's tip point to a red ! that is not there.
   expect(await mergedTip()).not.toContain('red !');
-  // Details holds the per-day table under its new name.
-  expect(screen.queryByRole('button', { name: 'Method' })).toBeNull();
-  expect(await method()).toBeTruthy();
+  // The ⓘ beside the title opens the per-day table; there is no separate button.
+  for (const name of ['Method', 'Details'])
+    expect(screen.queryByRole('button', { name })).toBeNull();
+  const opened = await method();
+  // The ⓘ's short definition opens the dialog, before the notes and the table.
+  expect(within(opened).getByTestId('effort-definition').textContent).toBe(
+    `${ruleSummary('M-19')} ${EFFORT_CONTEXT}`,
+  );
 });
 
 it('shows the red ! with a plain tip when a check failed, and opens the refresh dialog', async () => {
@@ -844,6 +935,8 @@ it('shows the red ! with a plain tip when a check failed, and opens the refresh 
         refreshed: 1,
         failed_never_refreshed: 1,
         failed_after_refresh: 1,
+        manual_failed_never_refreshed: 0,
+        manual_failed_after_refresh: 0,
         oldest_refreshed_at: null,
         newest_attempted_at: null,
       },
@@ -858,18 +951,18 @@ it('shows the red ! with a plain tip when a check failed, and opens the refresh 
   await loaded();
   const button = await refreshButton();
   expect(button.dataset.state).toBe('attention');
-  // It sits in the Effort card's header, after Details.
+  // It sits in the Effort card's header, with the ⓘ.
   const header = button.closest('.xt-dash-card-actions, header')!;
-  expect(header.contains(screen.getByRole('button', { name: 'Details' }))).toBe(true);
+  expect(header.contains(screen.getByRole('button', { name: 'Effort definition' }))).toBe(true);
   // One never had facts, one kept older ones: each is named in the tile's words.
   expect(await attentionTip()).toBe(
-    '1 pull request could not be checked. The last check of 1 pull request failed; older facts are shown. Click to check them again.',
+    '1 pull request could not be checked. The last try failed. 1 pull request is stale after a failed check. Older facts are shown. Click to check them again.',
   );
   fireEvent.click(button);
   const opened = await screen.findByRole('dialog', { name: 'Refresh pull-request facts' });
   // The status line that used to sit under the chart opens the dialog.
   expect(within(opened).getByTestId('pr-refresh').textContent).toBe(
-    'Confirmed-linked pull requests: 1 refreshed, 1 stale after a failed refresh, 1 failed, never refreshed. 1 pull request could not be checked. The last check of 1 pull request failed; older facts are shown. Choose them below and refresh them again.',
+    'Confirmed-linked pull requests: 1 checked, 1 stale after a failed check, 1 could not be checked. 1 pull request could not be checked. The last try failed. 1 pull request is stale after a failed check. Older facts are shown. Choose them below and refresh them again.',
   );
   expect(source.pullRequests).toHaveBeenCalledOnce();
 });
@@ -886,12 +979,12 @@ it('shows the red ! when automatic checks are off and some were never checked', 
   mount(autoChecked(autoStatus({ enabled: false })));
   await loaded();
   expect(await attentionTip()).toBe(
-    'Automatic checks are off and 2 pull requests were never checked. Click to check them.',
+    'Automatic checks are off and 2 pull requests are not checked yet. Click to check them.',
   );
   expect(await mergedTip()).toContain('Click the red ! on the Effort card to check them.');
 });
 
-it('returns focus to Details when a refresh cleared what the red ! was for', async () => {
+it('returns focus to the ⓘ when a refresh cleared what the red ! was for', async () => {
   const failed: SectionSpec = {
     ...NO_LINKS,
     tile: {
@@ -901,6 +994,8 @@ it('returns focus to Details when a refresh cleared what the red ! was for', asy
         refreshed: 0,
         failed_never_refreshed: 0,
         failed_after_refresh: 1,
+        manual_failed_never_refreshed: 0,
+        manual_failed_after_refresh: 0,
         oldest_refreshed_at: null,
         newest_attempted_at: null,
       },
@@ -941,6 +1036,74 @@ it('returns focus to Details when a refresh cleared what the red ! was for', asy
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(attentionMark()).toBeNull();
   await waitFor(() =>
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Details' })),
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Effort definition' })),
   );
+});
+
+it('stops asking once the user’s own check fails for the pull request itself, and returns focus to the ⓘ', async () => {
+  const freshness = (manual: number) => ({
+    never_attempted: 0,
+    refreshed: 0,
+    failed_never_refreshed: 1,
+    failed_after_refresh: 0,
+    manual_failed_never_refreshed: manual,
+    manual_failed_after_refresh: 0,
+    oldest_refreshed_at: null,
+    newest_attempted_at: null,
+  });
+  // Rust reads storage again after the batch: the same failure, now also
+  // counted as tried by hand (`gh pr view` failed for this pull request).
+  let spec: SectionSpec = { ...NO_LINKS, tile: { known_merged: 0, freshness: freshness(0) } };
+  const status = autoStatus();
+  const source = {
+    ...nativeSource((days) => sectioned(spec)(days), {
+      pullRequests: async () => ({ rows: rows(1) }),
+      refreshPullRequests: async (ids): Promise<PrRefreshReport> => {
+        spec = { ...NO_LINKS, tile: { known_merged: 0, freshness: freshness(1) } };
+        return {
+          requested: ids.length,
+          attempted: ids.length,
+          succeeded: 0,
+          failed: ids.length,
+          skipped: 0,
+          unrecorded: 0,
+          cancelled: false,
+          committed: true,
+          rows: ids.map((id) => ({
+            id,
+            pull_request: rows(1)[0]!.pull_request,
+            outcome: {
+              outcome: 'failed',
+              error: 'execution_failed',
+              persistence: { persistence: 'recorded', write: 'applied' },
+            },
+          })),
+        };
+      },
+    }),
+    prAutoCheck: { status: vi.fn(async () => status), request: vi.fn(async () => status) },
+  };
+  mount(source);
+  await loaded();
+  const button = await refreshButton();
+  button.focus();
+  fireEvent.click(button);
+  fireEvent.click(await within(dialog()).findByRole('checkbox', { name: /#100/ }));
+  fireEvent.click(start());
+  await within(dialog()).findByTestId('pr-refresh-report');
+  // The re-read report counts it as tried by hand: nothing is left for the red !.
+  await waitFor(() => expect(attentionMark()!.dataset.state).toBe('open'));
+  fireEvent.keyDown(dialog(), { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(attentionMark()).toBeNull();
+  await waitFor(() =>
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Effort definition' })),
+  );
+  // The tile still says it failed, and that the user's own check failed too,
+  // with no pointer to a red ! that is not there.
+  const tip = await mergedTip();
+  expect(tip).toContain(
+    '1 PR could not be checked. The last try failed. Your own check of it failed too.',
+  );
+  expect(tip).not.toContain('red !');
 });

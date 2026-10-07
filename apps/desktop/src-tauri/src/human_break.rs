@@ -1,10 +1,10 @@
-//! Settings over the store's saved break length for "your hours". Whole
+//! Settings over the store's saved break length for human time. Whole
 //! minutes cross IPC as a plain integer; the store owns the bounds, the
 //! default and the committed read-back. The Dashboard reads the same value.
 use crate::state::{AppState, StateError};
 use xt_store::human_break::HumanBreak;
 
-/// The break length the Dashboard's "your hours" read.
+/// The break length the Dashboard's human time read.
 pub(crate) fn break_length(saved: HumanBreak) -> Result<xt_metrics::BreakLength, StateError> {
     Ok(xt_metrics::BreakLength::new(saved.minutes())?)
 }

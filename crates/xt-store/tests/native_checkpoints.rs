@@ -15,7 +15,7 @@ use xt_store::{
 /// are unapplied and what migrations 8 to 13 added is gone again.
 fn rewind_before(sql: &Connection, version: u32) {
     sql.execute_batch(&format!(
-        "DELETE FROM schema_version WHERE version>={version};
+        "ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DELETE FROM schema_version WHERE version>={version};
          ALTER TABLE pull_requests DROP COLUMN refresh_error;
          ALTER TABLE pull_requests DROP COLUMN last_attempted_at;
          ALTER TABLE tool_uses DROP COLUMN group_key;
@@ -246,7 +246,7 @@ fn migration_5_clears_only_transcript_checkpoints_once() {
         .collect::<Vec<_>>();
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 22);
+    assert_eq!(store.schema_version().unwrap(), 23);
     assert!(
         store
             .native_checkpoint(SessionSource::Transcript, transcript_key)
@@ -262,14 +262,14 @@ fn migration_5_clears_only_transcript_checkpoints_once() {
     drop(store);
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 22);
+        assert_eq!(store.schema_version().unwrap(), 23);
         assert_eq!(
             store
                 .native_checkpoint(SessionSource::Transcript, transcript_key)
                 .unwrap(),
             Some(recreated.clone())
         );
-        assert_eq!(count("SELECT count(*) FROM schema_version"), 22);
+        assert_eq!(count("SELECT count(*) FROM schema_version"), 23);
     }
 }
 
@@ -354,7 +354,7 @@ fn migration_6_resets_transcripts_once_and_keeps_everything_else() {
         .collect::<Vec<_>>();
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 22);
+    assert_eq!(store.schema_version().unwrap(), 23);
     assert!(
         store
             .native_checkpoint(SessionSource::Transcript, transcript_key)
@@ -374,14 +374,14 @@ fn migration_6_resets_transcripts_once_and_keeps_everything_else() {
     drop(store);
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 22);
+        assert_eq!(store.schema_version().unwrap(), 23);
         assert_eq!(
             store
                 .native_checkpoint(SessionSource::Transcript, transcript_key)
                 .unwrap(),
             Some(recreated.clone())
         );
-        assert_eq!(count("SELECT count(*) FROM schema_version"), 22);
+        assert_eq!(count("SELECT count(*) FROM schema_version"), 23);
     }
 }
 
@@ -482,7 +482,7 @@ fn migration_7_resets_transcripts_once_and_keeps_everything_else() {
         .collect::<Vec<_>>();
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 22);
+    assert_eq!(store.schema_version().unwrap(), 23);
     assert!(
         store
             .native_checkpoint(SessionSource::Transcript, transcript_key)
@@ -508,14 +508,14 @@ fn migration_7_resets_transcripts_once_and_keeps_everything_else() {
     drop(store);
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 22);
+        assert_eq!(store.schema_version().unwrap(), 23);
         assert_eq!(
             store
                 .native_checkpoint(SessionSource::Transcript, transcript_key)
                 .unwrap(),
             Some(recreated.clone())
         );
-        assert_eq!(count("SELECT count(*) FROM schema_version"), 22);
+        assert_eq!(count("SELECT count(*) FROM schema_version"), 23);
         assert_eq!(tables.map(snapshot), before);
     }
 }

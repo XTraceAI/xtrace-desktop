@@ -3,8 +3,10 @@ import { useId, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router';
 import { StatePill } from '../../kit/Badge';
 import { Button } from '../../kit/Button';
+import { clock, isInstant } from '../../kit/clock';
 import { DataTable, MonoCell, NumCell, type Column } from '../../kit/DataTable';
 import { count } from '../../kit/format';
+import { hostName } from '../../kit/hosts';
 import { SectionCard } from '../../kit/SectionCard';
 import { StatTile } from '../../kit/StatTile';
 import { useSurfaceTheme } from '../../theme/ThemeProvider';
@@ -225,18 +227,10 @@ function ReadBar({
   );
 }
 
-const local = new Intl.DateTimeFormat('en-US', {
-  month: 'short',
-  day: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hourCycle: 'h23',
-});
 /** A row's instant in local time; the recorded value stays one hover away. */
 const localTime = (value: string) => {
   const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? value : local.format(parsed);
+  return isInstant(parsed) ? clock(parsed, { date: 'day', seconds: true }) : value;
 };
 /** A returned instant exactly as recorded. */
 function Instant({ value }: { value: string }) {
@@ -335,7 +329,7 @@ const recordedVersion = ({ rule_version: recorded }: RuleActivityFire) =>
       ? `${recorded.value} (label)`
       : recorded.value;
 const context = (fire: RuleActivityFire) =>
-  [fire.host, fire.tool, fire.hook_phase].filter(Boolean).join(' · ');
+  [fire.host && hostName(fire.host), fire.tool, fire.hook_phase].filter(Boolean).join(' · ');
 const timelineColumns = (loaded: Loaded): readonly Column<RuleActivityFire>[] => {
   const position = positions(loaded);
   const row = new Map(loaded.latest_fires.map((fire, index) => [fire.fire_id, index + 1]));

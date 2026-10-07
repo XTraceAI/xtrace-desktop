@@ -34,6 +34,7 @@ mod rule_activity_dto;
 pub mod session_compactions;
 mod session_source_dto;
 pub mod session_titles;
+pub mod startup_failure;
 pub mod state;
 pub mod today;
 pub mod transcript_dto;
@@ -659,7 +660,7 @@ async fn set_typing_speed(app: tauri::AppHandle, wpm: u32) -> Result<u32, String
 }
 
 /// Minutes between two of your messages that still count as one stretch of
-/// "your hours"; 60 when nothing was saved.
+/// human time; 60 when nothing was saved.
 #[tauri::command]
 async fn human_break(app: tauri::AppHandle) -> Result<u32, String> {
     read_on_worker(app, |state| state.human_break()).await
@@ -715,155 +716,227 @@ async fn purge_stored_content(app: tauri::AppHandle) -> Result<privacy::ContentP
     .await
 }
 
+/// Starts the app's services over the database startup selects. An error
+/// here is shown to the person by `fail_setup`, never handed to Tauri, which
+/// would end the app with a panic and nothing on screen.
+fn start(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    updates::setup(app.handle())?;
+    let options = state::StartupOptions::parse(
+        std::env::var_os("XTRACE_DATA_DIR").map(Into::into),
+        std::env::var_os("XTRACE_FIXTURE"),
+        std::env::args().skip(1),
+    )?
+    .with_native_environment(
+        std::env::var_os("XTRACE_NATIVE_HOME"),
+        std::env::var_os("XTRACE_PYTHON"),
+    )?
+    .with_github_cli(std::env::var_os(gh_cli::GH_ENV))?;
+    let python = options.python.clone();
+    let github_cli = options.github_cli.clone();
+    let state = state::AppState::build(
+        options,
+        || {
+            app.path()
+                .app_data_dir()
+                .map_err(|_| state::StateError::InvalidOption)
+        },
+        || {
+            app.path()
+                .home_dir()
+                .map_err(|_| state::StateError::InvalidOption)
+        },
+    )?;
+    let publish: native_index::Publish = {
+        let handle = app.handle().clone();
+        Arc::new(move |status: &dto::NativeIndexStatus| {
+            // A window not open yet, or already gone, drops the event;
+            // the status remains queryable.
+            let _ = handle.emit(NATIVE_INDEX_EVENT, status);
+        })
+    };
+    let creations: native_index::PublishCreations = {
+        let handle = app.handle().clone();
+        Arc::new(move || {
+            // A window not open yet, or already gone, drops the event;
+            // the relations stay queryable.
+            let _ = handle.emit(SESSION_CREATIONS_EVENT, ());
+        })
+    };
+    let index = match (state.database_path(), state.native_home()) {
+        // Fixture startup never selects live data: nothing is indexed.
+        (Some(db), Some(home)) => native_index::NativeIndex::start_with_creations(
+            native_index::NativeIndexOptions {
+                home: home.to_path_buf(),
+                db: db.to_path_buf(),
+                bundle: app
+                    .path()
+                    .resource_dir()
+                    .map_err(|_| state::StateError::InvalidOption)?
+                    .join(native_index::BUNDLE_RESOURCE),
+                python,
+            },
+            publish,
+            creations,
+        ),
+        _ => {
+            native_index::NativeIndex::disabled("fixture mode uses a disposable database", publish)
+        }
+    };
+    let refreshed: pr_refresh::Publish = {
+        let handle = app.handle().clone();
+        Arc::new(move || {
+            // A window not open yet, or already gone, drops the event;
+            // the refreshed rows stay queryable.
+            let _ = handle.emit(PR_REFRESH_EVENT, ());
+        })
+    };
+    // Fixture startup never selects live data and never resolves or
+    // runs the GitHub CLI: its refresh is synthetic, deterministic and
+    // stamped with the fixture's own instant, over the disposable
+    // database.
+    let refresh = match state.fixture_now_ms() {
+        Some(now_ms) => pr_refresh::PrRefreshService::fixture(now_ms, refreshed),
+        None => pr_refresh::PrRefreshService::production(github_cli, refreshed),
+    };
+    let auto_checked: pr_refresh::Publish = {
+        let handle = app.handle().clone();
+        Arc::new(move || {
+            let _ = handle.emit(PR_AUTO_CHECK_EVENT, ());
+        })
+    };
+    let refresh = refresh.with_auto_publish(auto_checked);
+    // The automatic check reads GitHub through the same service, so in
+    // fixture mode it is the same synthetic source and never runs the
+    // GitHub CLI. It runs on one background thread: on window focus,
+    // when the Dashboard is shown and about once an hour.
+    let auto_off = std::env::var_os(PR_AUTO_CHECK_ENV).is_some_and(|value| value == "off");
+    let (refresh, auto_worker) = if auto_off {
+        (
+            refresh.without_auto_check(),
+            pr_refresh::AutoCheckWorker::disabled(),
+        )
+    } else {
+        let handle = app.handle().clone();
+        let worker = pr_refresh::AutoCheckWorker::start(pr_refresh::AUTO_INTERVAL, move || {
+            let (Some(state), Some(refresh)) = (
+                handle.try_state::<state::AppState>(),
+                handle.try_state::<pr_refresh::PrRefreshService>(),
+            ) else {
+                return true;
+            };
+            !matches!(refresh.auto_check(&state), pr_refresh::AutoRun::Stopped)
+        });
+        (refresh, worker)
+    };
+    // The default rulebook source under the native home startup
+    // selected; none in fixture mode. Nothing is read until a view
+    // asks.
+    app.manage(rule_activity::RuleActivityService::new(state.native_home()));
+    // Live startup reads Claude usage automatically through the user's
+    // own Claude Code, from a probe folder in the app's data folder.
+    // Fixture startup never starts a probe.
+    let info = state.app_info();
+    let usage = match (info.fixture.is_some(), app.path().home_dir()) {
+        (false, Ok(home)) if !info.data_dir.is_empty() => {
+            account_usage::AccountUsageService::with_claude_local(
+                account_usage_claude_local::ClaudeUsagePaths::new(
+                    std::path::Path::new(&info.data_dir),
+                    &home,
+                    std::env::var_os("CLAUDE_CONFIG_DIR").map(Into::into),
+                ),
+            )
+        }
+        _ => account_usage::AccountUsageService::default(),
+    };
+    let usage = Arc::new(usage);
+    usage.start_automatic();
+    app.manage(state);
+    app.manage(usage);
+    app.manage(index);
+    app.manage(transcript_reads::TranscriptReads::default());
+    app.manage(session_titles::TitleReads::default());
+    app.manage(session_compactions::CompactionReads::default());
+    app.manage(dashboard::SpanDetailReads::default());
+    app.manage(hook_names::HookNameReads::default());
+    app.manage(refresh);
+    app.manage(auto_worker);
+    tray::setup(app)?;
+    Ok(())
+}
+
+/// A failed start: the main window is hidden, whatever started before the
+/// failure is stopped as quitting stops it, and the alert is shown before the
+/// app exits with a non-zero status. Setup runs on the main thread, where the
+/// alert must run.
+fn fail_setup(app: &tauri::App, error: &(dyn std::error::Error + 'static)) -> ! {
+    if let Some(window) = app.get_webview_window(tray::MAIN_LABEL) {
+        let _ = window.hide();
+    }
+    let failure = startup_failure::message(error);
+    stop_services(app.handle());
+    app.handle().cleanup_before_exit();
+    startup_failure::exit(&failure)
+}
+
+/// Stops every service in the order quitting needs, each one only if it was
+/// started.
+fn stop_services(app: &tauri::AppHandle) {
+    // Open transcript reads end first: each is cancelled, and
+    // this waits (within its bound) until each has returned — a
+    // pinned reader one started killed with its group and reaped
+    // by its supervisor. The process exits as soon as this handler
+    // returns, so without the wait a reader could outlive the app.
+    if let Some(reads) = app.try_state::<transcript_reads::TranscriptReads>() {
+        reads.shutdown();
+    }
+    // Title reads start no process; each ends at its next chunk.
+    if let Some(reads) = app.try_state::<session_titles::TitleReads>() {
+        reads.shutdown();
+    }
+    if let Some(reads) = app.try_state::<session_compactions::CompactionReads>() {
+        reads.shutdown();
+    }
+    // A span read may run a pinned reader, as a transcript open does.
+    if let Some(reads) = app.try_state::<dashboard::SpanDetailReads>() {
+        reads.shutdown();
+    }
+    if let Some(reads) = app.try_state::<hook_names::HookNameReads>() {
+        reads.shutdown();
+    }
+    // A rule activity read starts no process and holds no
+    // database; it is cancelled and waited for within its bound.
+    if let Some(service) = app.try_state::<rule_activity::RuleActivityService>() {
+        service.close();
+    }
+    // Every worker stops before the database closes. A refresh in
+    // progress is cancelled next, so its child is killed and its
+    // last result persisted while storage is still open; storage
+    // refuses a write after it closes either way.
+    if let Some(worker) = app.try_state::<pr_refresh::AutoCheckWorker>() {
+        worker.stop();
+    }
+    if let Some(refresh) = app.try_state::<pr_refresh::PrRefreshService>() {
+        refresh.shutdown();
+    }
+    // The index stops before the database closes: its scan is
+    // cancelled, a running reader killed and reaped, within a bound.
+    if let Some(index) = app.try_state::<native_index::NativeIndex>() {
+        index.shutdown();
+    }
+    if let Some(state) = app.try_state::<state::AppState>() {
+        state.shutdown();
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             tray::show_main(app);
         }))
         .setup(|app| {
-            updates::setup(app.handle())?;
-            let options = state::StartupOptions::parse(
-                std::env::var_os("XTRACE_DATA_DIR").map(Into::into),
-                std::env::var_os("XTRACE_FIXTURE"),
-                std::env::args().skip(1),
-            )?
-            .with_native_environment(
-                std::env::var_os("XTRACE_NATIVE_HOME"),
-                std::env::var_os("XTRACE_PYTHON"),
-            )?
-            .with_github_cli(std::env::var_os(gh_cli::GH_ENV))?;
-            let python = options.python.clone();
-            let github_cli = options.github_cli.clone();
-            let state = state::AppState::build(
-                options,
-                || {
-                    app.path()
-                        .app_data_dir()
-                        .map_err(|_| state::StateError::InvalidOption)
-                },
-                || {
-                    app.path()
-                        .home_dir()
-                        .map_err(|_| state::StateError::InvalidOption)
-                },
-            )?;
-            let publish: native_index::Publish = {
-                let handle = app.handle().clone();
-                Arc::new(move |status: &dto::NativeIndexStatus| {
-                    // A window not open yet, or already gone, drops the event;
-                    // the status remains queryable.
-                    let _ = handle.emit(NATIVE_INDEX_EVENT, status);
-                })
-            };
-            let creations: native_index::PublishCreations = {
-                let handle = app.handle().clone();
-                Arc::new(move || {
-                    // A window not open yet, or already gone, drops the event;
-                    // the relations stay queryable.
-                    let _ = handle.emit(SESSION_CREATIONS_EVENT, ());
-                })
-            };
-            let index = match (state.database_path(), state.native_home()) {
-                // Fixture startup never selects live data: nothing is indexed.
-                (Some(db), Some(home)) => native_index::NativeIndex::start_with_creations(
-                    native_index::NativeIndexOptions {
-                        home: home.to_path_buf(),
-                        db: db.to_path_buf(),
-                        bundle: app
-                            .path()
-                            .resource_dir()
-                            .map_err(|_| state::StateError::InvalidOption)?
-                            .join(native_index::BUNDLE_RESOURCE),
-                        python,
-                    },
-                    publish,
-                    creations,
-                ),
-                _ => native_index::NativeIndex::disabled(
-                    "fixture mode uses a disposable database",
-                    publish,
-                ),
-            };
-            let refreshed: pr_refresh::Publish = {
-                let handle = app.handle().clone();
-                Arc::new(move || {
-                    // A window not open yet, or already gone, drops the event;
-                    // the refreshed rows stay queryable.
-                    let _ = handle.emit(PR_REFRESH_EVENT, ());
-                })
-            };
-            // Fixture startup never selects live data and never resolves or
-            // runs the GitHub CLI: its refresh is synthetic, deterministic and
-            // stamped with the fixture's own instant, over the disposable
-            // database.
-            let refresh = match state.fixture_now_ms() {
-                Some(now_ms) => pr_refresh::PrRefreshService::fixture(now_ms, refreshed),
-                None => pr_refresh::PrRefreshService::production(github_cli, refreshed),
-            };
-            let auto_checked: pr_refresh::Publish = {
-                let handle = app.handle().clone();
-                Arc::new(move || {
-                    let _ = handle.emit(PR_AUTO_CHECK_EVENT, ());
-                })
-            };
-            let refresh = refresh.with_auto_publish(auto_checked);
-            // The automatic check reads GitHub through the same service, so in
-            // fixture mode it is the same synthetic source and never runs the
-            // GitHub CLI. It runs on one background thread: on window focus,
-            // when the Dashboard is shown and about once an hour.
-            let auto_off = std::env::var_os(PR_AUTO_CHECK_ENV).is_some_and(|value| value == "off");
-            let (refresh, auto_worker) = if auto_off {
-                (
-                    refresh.without_auto_check(),
-                    pr_refresh::AutoCheckWorker::disabled(),
-                )
-            } else {
-                let handle = app.handle().clone();
-                let worker =
-                    pr_refresh::AutoCheckWorker::start(pr_refresh::AUTO_INTERVAL, move || {
-                        let (Some(state), Some(refresh)) = (
-                            handle.try_state::<state::AppState>(),
-                            handle.try_state::<pr_refresh::PrRefreshService>(),
-                        ) else {
-                            return true;
-                        };
-                        !matches!(refresh.auto_check(&state), pr_refresh::AutoRun::Stopped)
-                    });
-                (refresh, worker)
-            };
-            // The default rulebook source under the native home startup
-            // selected; none in fixture mode. Nothing is read until a view
-            // asks.
-            app.manage(rule_activity::RuleActivityService::new(state.native_home()));
-            // Live startup reads Claude usage automatically through the user's
-            // own Claude Code, from a probe folder in the app's data folder.
-            // Fixture startup never starts a probe.
-            let info = state.app_info();
-            let usage = match (info.fixture.is_some(), app.path().home_dir()) {
-                (false, Ok(home)) if !info.data_dir.is_empty() => {
-                    account_usage::AccountUsageService::with_claude_local(
-                        account_usage_claude_local::ClaudeUsagePaths::new(
-                            std::path::Path::new(&info.data_dir),
-                            &home,
-                            std::env::var_os("CLAUDE_CONFIG_DIR").map(Into::into),
-                        ),
-                    )
-                }
-                _ => account_usage::AccountUsageService::default(),
-            };
-            let usage = Arc::new(usage);
-            usage.start_automatic();
-            app.manage(state);
-            app.manage(usage);
-            app.manage(index);
-            app.manage(transcript_reads::TranscriptReads::default());
-            app.manage(session_titles::TitleReads::default());
-            app.manage(session_compactions::CompactionReads::default());
-            app.manage(dashboard::SpanDetailReads::default());
-            app.manage(hook_names::HookNameReads::default());
-            app.manage(refresh);
-            app.manage(auto_worker);
-            tray::setup(app)?;
+            if let Err(error) = start(app) {
+                fail_setup(app, error.as_ref());
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -930,7 +1003,7 @@ pub fn run() {
             set_human_break
         ])
         .build(tauri::generate_context!())
-        .expect("Could not start XTrace Desktop")
+        .unwrap_or_else(|error| startup_failure::exit(&startup_failure::message(&error)))
         .run(|app, event| {
             // The Dock icon brings the main window back: one that is minimized
             // or, with the menu-bar item on, one its close button hid. With
@@ -941,51 +1014,7 @@ pub fn run() {
                 tray::show_main(app);
             }
             if matches!(event, tauri::RunEvent::Exit) {
-                // Open transcript reads end first: each is cancelled, and
-                // this waits (within its bound) until each has returned — a
-                // pinned reader one started killed with its group and reaped
-                // by its supervisor. The process exits as soon as this handler
-                // returns, so without the wait a reader could outlive the app.
-                if let Some(reads) = app.try_state::<transcript_reads::TranscriptReads>() {
-                    reads.shutdown();
-                }
-                // Title reads start no process; each ends at its next chunk.
-                if let Some(reads) = app.try_state::<session_titles::TitleReads>() {
-                    reads.shutdown();
-                }
-                if let Some(reads) = app.try_state::<session_compactions::CompactionReads>() {
-                    reads.shutdown();
-                }
-                // A span read may run a pinned reader, as a transcript open does.
-                if let Some(reads) = app.try_state::<dashboard::SpanDetailReads>() {
-                    reads.shutdown();
-                }
-                if let Some(reads) = app.try_state::<hook_names::HookNameReads>() {
-                    reads.shutdown();
-                }
-                // A rule activity read starts no process and holds no
-                // database; it is cancelled and waited for within its bound.
-                if let Some(service) = app.try_state::<rule_activity::RuleActivityService>() {
-                    service.close();
-                }
-                // Every worker stops before the database closes. A refresh in
-                // progress is cancelled next, so its child is killed and its
-                // last result persisted while storage is still open; storage
-                // refuses a write after it closes either way.
-                if let Some(worker) = app.try_state::<pr_refresh::AutoCheckWorker>() {
-                    worker.stop();
-                }
-                if let Some(refresh) = app.try_state::<pr_refresh::PrRefreshService>() {
-                    refresh.shutdown();
-                }
-                // The index stops before the database closes: its scan is
-                // cancelled, a running reader killed and reaped, within a bound.
-                if let Some(index) = app.try_state::<native_index::NativeIndex>() {
-                    index.shutdown();
-                }
-                if let Some(state) = app.try_state::<state::AppState>() {
-                    state.shutdown();
-                }
+                stop_services(app);
             }
         });
 }

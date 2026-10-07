@@ -2,7 +2,7 @@
 
 /**
  * One whole local day of leverage (M-08): that day's agent hours (M-05)
- * divided by its own hours of yours. `value` is `null` when your hours are
+ * divided by its own human time. `value` is `null` when human time is
  * zero or unknown.
  */
 export type MetricLeverageDay = { date: string, start_ms: number, end_ms: number, agent_ms: number, human_ms: number | null, value: number | null, };

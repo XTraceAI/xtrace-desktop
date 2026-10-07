@@ -108,7 +108,9 @@ test('re-reads the Dashboard route once at its due time and keeps range, focus a
 
   await page.clock.fastForward(60_000);
   const after = await settled(page);
-  expect(began(before, after)).toEqual({ dashboard: 1, tokensByHost: 1, environment: 1 });
+  expect(began(before, after)).toEqual({ dashboard: 1, tokensByHost: 1 });
+  // The Dashboard mounts Overview, not Environment; an inactive query is not refetched.
+  expect(after.environment).toBe(before.environment);
   await expect(range.getByRole('radio', { name: '14d' })).toBeChecked();
   await expect(range.getByRole('radio', { name: '14d' })).toBeFocused();
   await expect(page.getByTestId('report-period')).toBeVisible();
@@ -121,11 +123,9 @@ test('re-reads the Dashboard route once at its due time and keeps range, focus a
   expect(began(after, await settled(page))).toEqual({});
   await setVisibility(page, 'visible');
   await focusWindow(page);
-  expect(began(after, await settled(page))).toEqual({
-    dashboard: 1,
-    tokensByHost: 1,
-    environment: 1,
-  });
+  const shown = await settled(page);
+  expect(began(after, shown)).toEqual({ dashboard: 1, tokensByHost: 1 });
+  expect(shown.environment).toBe(after.environment);
 });
 
 test('re-reads the Sessions summary, host tokens and loaded list page together', async ({

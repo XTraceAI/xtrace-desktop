@@ -19,12 +19,15 @@ export function RulePopover({
   ruleId,
   context,
   text,
+  closeOnClick = false,
   children,
 }: {
   ruleId: RuleId;
   context?: string;
   /** Plain words shown instead of the rule's own definition. */
   text?: string;
+  /** True when clicking the trigger opens something else (a dialog). */
+  closeOnClick?: boolean;
   children: ReactElement;
 }) {
   const id = useId();
@@ -36,7 +39,7 @@ export function RulePopover({
         tabIndex={0}
         aria-describedby={id}
         delay={RULE_OPEN_DELAY_MS}
-        closeOnClick={false}
+        closeOnClick={closeOnClick}
       />
       <Tooltip.Portal data-theme={theme}>
         <Tooltip.Positioner

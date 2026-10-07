@@ -272,7 +272,7 @@ fn migration_9_leaves_older_rows_unknown_and_asks_for_no_replay() {
     // a retained tool input that migration 9 must not read.
     let sql = Connection::open(&path).unwrap();
     sql.execute_batch(
-        "DELETE FROM schema_version WHERE version>=9;
+        "ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DELETE FROM schema_version WHERE version>=9;
          ALTER TABLE tool_uses DROP COLUMN group_key;
          ALTER TABLE tool_uses DROP COLUMN group_version;
          ALTER TABLE tool_uses DROP COLUMN group_conflict;
@@ -314,7 +314,7 @@ fn migration_9_leaves_older_rows_unknown_and_asks_for_no_replay() {
 
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 22);
+        assert_eq!(store.schema_version().unwrap(), 23);
         // Migration 9 asks for nothing to be read again: the records, the
         // session and the cursors are exactly as they were.
         assert_eq!(

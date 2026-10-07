@@ -7,11 +7,20 @@ import type { MetricInventory } from '../../data/generated/MetricInventory';
 import type { MetricTile } from '../../data/generated/MetricTile';
 import type { MetricUnpricedReason } from '../../data/generated/MetricUnpricedReason';
 import type { MetricUsageGap } from '../../data/generated/MetricUsageGap';
+import { clock, dayRange } from '../../kit/clock';
 import type { ControlTone } from '../../kit/control-tone';
+import { surfaceLabel } from '../../kit/hosts';
 import { rules, type RuleId } from '../../kit/rules';
 import type { TimeRange } from '../../kit/TopBar';
 
 /** Presentation only: every value here was calculated by the Rust report. */
+
+/**
+ * Money and a host's surface are each written in one place (the kit's `usd`
+ * and `surfaceLabel`); they are re-exported here for the report's screens.
+ */
+export { usd } from '../../kit/format';
+export { surfaceLabel };
 
 export const rangeDays: Record<TimeRange, 7 | 14 | 30> = { '7d': 7, '14d': 14, '30d': 30 };
 
@@ -29,15 +38,6 @@ export const tileDelta = (tile: MetricTile): number | undefined =>
 export const ruleId = (id: string, fallback: RuleId): RuleId =>
   Object.hasOwn(rules, id) ? (id as RuleId) : fallback;
 
-const usdFormat = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-export const usd = (value: number) =>
-  value > 0 && value < 0.005 ? '<$0.01' : usdFormat.format(Object.is(value, -0) ? 0 : value);
-
 export const plural = (count: number, one: string, many = `${one}s`) =>
   `${count.toLocaleString('en-US')} ${count === 1 ? one : many}`;
 
@@ -45,52 +45,40 @@ export const plural = (count: number, one: string, many = `${one}s`) =>
 export const zoneOf = (window: DashboardWindow) => {
   if (window.timezone === 'system-local') return undefined;
   try {
-    new Intl.DateTimeFormat('en-US', { timeZone: window.timezone });
+    new Intl.DateTimeFormat(undefined, { timeZone: window.timezone });
     return window.timezone;
   } catch {
     return undefined;
   }
 };
 export function windowLabel(window: DashboardWindow) {
-  const timeZone = zoneOf(window);
-  const date = new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone,
-  });
   // end_ms is exclusive: the last included instant is one millisecond earlier.
-  return date.formatRange(window.start_ms, Math.max(window.start_ms, window.end_ms - 1));
+  return dayRange(window.start_ms, window.end_ms - 1, zoneOf(window));
 }
 export const zoneLabel = (window: DashboardWindow) =>
   window.timezone === 'system-local' ? 'system time zone' : window.timezone;
 
+/** An instant in the report's zone, with its day unless `withDate` is false. */
 export function clockTime(ms: number, window: DashboardWindow, withDate = true) {
-  return new Intl.DateTimeFormat('en-US', {
-    month: withDate ? 'short' : undefined,
-    day: withDate ? 'numeric' : undefined,
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
+  return clock(ms, { date: withDate ? 'day' : 'none', timeZone: zoneOf(window) });
+}
+
+/**
+ * A chart axis tick: the same clock, with `:00` left off a whole hour on a
+ * 12-hour clock (`12 PM`) so quarter ticks clear each other in a narrow column.
+ */
+export function axisTime(ms: number, window: DashboardWindow, withDate = false) {
+  return clock(ms, {
+    date: withDate ? 'day' : 'none',
     timeZone: zoneOf(window),
-  }).format(ms);
+    shortHour: true,
+  });
 }
 
 /** An instant in full — year, date, time and the report zone — for a title. */
 export function recordedTime(ms: number, window: DashboardWindow) {
-  return `${new Intl.DateTimeFormat('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-    timeZone: zoneOf(window),
-  }).format(ms)} (${zoneLabel(window)})`;
+  return `${clock(ms, { date: 'year', timeZone: zoneOf(window) })} (${zoneLabel(window)})`;
 }
-
-export const surfaceLabel = (host: string, surface: string | null) =>
-  `${host} · ${surface ?? 'unknown surface'}`;
 
 export const excludedSurfaceText = (item: MetricExcludedSurface) =>
   `${surfaceLabel(item.host, item.surface)}: ${item.degenerate_sessions} of ${plural(item.qualifying_sessions, 'qualifying session')} have batch-stamped timestamps`;
@@ -168,8 +156,8 @@ export const DELTA_HIDDEN =
 export const plainReasons: Record<string, string> = {
   'Agent time is unmeasured': 'Agent time could not be measured in this range.',
   'Human classification or required typing length is unmeasured':
-    'Could not tell which messages are yours or how long they were.',
-  'Human classification is unmeasured': 'Could not tell which messages are yours.',
+    'Could not tell which messages a person sent or how long they were.',
+  'Human classification is unmeasured': 'Could not tell which messages a person sent.',
   'No positive-duration active spans': 'No measurable agent activity in this range.',
   'No measurable eligible hands-off stretches':
     'No stretch where an agent worked on its own in this range.',
@@ -179,8 +167,8 @@ export const plainReasons: Record<string, string> = {
   'Selected usage is absent or unpriced; see cost reasons':
     'Some usage has no price; the cost details say why.',
   'Rule-fire data is unavailable': 'Rule fire data is not available.',
-  "Your hours are unknown: a message's sender is not classified":
-    'Could not tell which messages are yours, so your hours are unknown.',
+  "Human time is unknown: a message's sender is not classified":
+    'Could not tell which messages a person sent, so human time is unknown.',
   'You sent no messages to agents in this range': 'You sent no messages to agents in this range.',
 };
 

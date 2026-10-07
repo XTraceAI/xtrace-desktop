@@ -5,4 +5,4 @@ import type { PrRefreshErrorCode } from "./PrRefreshErrorCode";
  * Facts derived from the stored refresh columns alone; no age or staleness
  * policy is applied here or in storage.
  */
-export type PrRefreshStatusReport = { "status": "never_attempted" } | { "status": "refreshed" } | { "status": "failed_never_refreshed", error: PrRefreshErrorCode, } | { "status": "failed_after_refresh", error: PrRefreshErrorCode, };
+export type PrRefreshStatusReport = { "status": "never_attempted" } | { "status": "refreshed" } | { "status": "failed_never_refreshed", error: PrRefreshErrorCode, } | { "status": "failed_after_refresh", error: PrRefreshErrorCode, } | { "status": "not_found_on_github" };

@@ -34,6 +34,7 @@ import type { SourceBlock } from '../../data/generated/SourceBlock';
 import type { SourcePayload } from '../../data/generated/SourcePayload';
 import type { SourceRecord } from '../../data/generated/SourceRecord';
 import type { SourceResultPart } from '../../data/generated/SourceResultPart';
+import { clock, isInstant } from '../../kit/clock';
 import type {
   ToolOutcome,
   TranscriptBlock,
@@ -205,14 +206,11 @@ export function partialNote(
 /** A recorded instant, worded in the reader's own zone. */
 function at(iso: string | null): TranscriptRecord['at'] {
   if (!iso) return null;
-  const when = new Date(iso);
+  const when = new Date(iso).getTime();
   // A record carries what it carries. Rather than print `Invalid Date`, a time
   // this app cannot read is no time at all — the record still renders.
-  if (Number.isNaN(when.getTime())) return null;
-  return {
-    iso,
-    label: when.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
-  };
+  if (!isInstant(when)) return null;
+  return { iso, label: clock(when) };
 }
 
 function payload(value: SourcePayload): TranscriptPayload {

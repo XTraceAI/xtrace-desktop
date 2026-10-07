@@ -293,6 +293,17 @@ columns to `pull_requests` and changes no existing row or checkpoint.
   `OPEN`/`CLOSED`/`MERGED`; additions and deletions are nonnegative; `MERGED`
   requires an RFC3339 `merged_at` of at most 64 bytes and `OPEN`/`CLOSED` forbid
   one. Every refresh-owned field of a success is required.
+- `Store::record_pr_refresh_from(&RefreshOutcome, RefreshOrigin)` is the same
+  write for an attempt the caller names as `Manual` or `Automatic`;
+  `record_pr_refresh` is the automatic one. Migration 23 adds the nullable
+  `manual_failed_at`: a newer manual failure sets it to the attempt when the
+  failure is about that pull request (`not_found`, `execution_failed`,
+  `invalid_response`, `output_too_large`;
+  `PrRefreshError::about_this_pull_request`, the same rule the automatic check
+  uses to pause or stop a run), any
+  other newer failure keeps it, and a newer success clears it. A schema CHECK
+  allows it only while `refresh_error` is set and no later than
+  `last_attempted_at`.
 - Refresh columns: `refreshed_at` is the last successful refresh,
   `last_attempted_at` the newest applied attempt and `refresh_error` its typed
   failure code (`unavailable`, `timeout`, `cancelled`, `output_too_large`,
@@ -302,7 +313,11 @@ columns to `pull_requests` and changes no existing row or checkpoint.
   `merged_at`, `additions`, `deletions` and `head_ref_name`, sets
   `refreshed_at` and `last_attempted_at` to the attempt and clears the error. A
   newer failure sets only `last_attempted_at` and the error, keeping the last
-  successful metadata and `refreshed_at`. An attempt older than the stored one
+  successful metadata and `refreshed_at`. A row whose error is `not_found`
+  and that was never refreshed is "not found on GitHub"
+  (`StoredPullRequest::not_found_on_github`, and `not_found_on_github_sql!()`
+  for SQL readers): the link readers, the Sessions page's links, PR filter and
+  link counts, and the metrics link read leave it out. An attempt older than the stored one
   (or than a pre-8 `refreshed_at`) returns `RefreshWrite::Stale` and writes
   nothing. At an equal attempt time an exactly identical result is
   `RefreshWrite::Unchanged`; any differing success or failure is a conflict error

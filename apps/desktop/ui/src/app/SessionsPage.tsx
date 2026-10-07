@@ -27,7 +27,9 @@ import { Search } from '../kit/Search';
 import { Button } from '../kit/Button';
 import { SectionCard } from '../kit/SectionCard';
 import { MetricCell } from '../kit/MetricCell';
+import { clock, isInstant } from '../kit/clock';
 import { count, tokens as formatTokens } from '../kit/format';
+import { hostName } from '../kit/hosts';
 import {
   absentKey,
   groupSessionLanes,
@@ -45,8 +47,8 @@ import {
 import { plural, rangeDays } from './dashboard/present';
 import { useSelectedRange } from './dashboard/range';
 import { agentDuration } from './agent-duration';
-import { continuous } from './metric-format';
-import { contextTitle, displayTitle, repoName, shortId } from './session-context';
+import { handsOffTime } from './metric-format';
+import { contextTitle, displayTitle, modelLabel, repoName, shortId } from './session-context';
 import {
   formatHosts,
   parseHosts,
@@ -56,7 +58,6 @@ import {
   sessionHosts,
   sessionHref,
   sessionParams,
-  type SessionHost,
 } from './session-search';
 import { RangeIssueFlag, SessionsIssueFlag, type IndexIssue } from './SessionsIssues';
 import { SessionsSummary, SUMMARY_SCOPE, SUMMARY_SCOPE_SHORT } from './SessionsSummary';
@@ -86,12 +87,7 @@ import {
 } from './session-cells';
 import '../styles/sessions.css';
 
-const hostLabels: Record<SessionHost, string> = {
-  claude: 'Claude Code',
-  codex: 'Codex',
-  cursor: 'Cursor',
-};
-const hostOptions = sessionHosts.map((id) => ({ id, label: hostLabels[id] }));
+const hostOptions = sessionHosts.map((id) => ({ id, label: hostName(id) }));
 const RECENT_SESSION_LIMIT = 8;
 
 /**
@@ -166,15 +162,10 @@ const unresolvedIn =
     );
   };
 
-/** Native start, as the reference states it: day and 24-hour time. */
-const startedFormat: Intl.DateTimeFormatOptions = {
-  month: 'short',
-  day: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23',
-};
-const recordedFormat: Intl.DateTimeFormatOptions = { ...startedFormat, year: 'numeric' };
+/** Native start, as every instant in the app is written: day and time; the year in full. */
+const startedText = (ms: number) => clock(ms, { date: 'day' });
+const recordedText = (ms: number) =>
+  isInstant(ms) ? clock(ms, { date: 'year' }) : 'an unreadable time';
 
 /** One link's own evidence in words, so an inferred link never reads as exact. */
 const linkLabel = (link: SessionPrLink) =>
@@ -325,7 +316,7 @@ const buildColumns = (
             </span>
           )}
           <span aria-hidden="true"> · </span>
-          <span>{row.model ?? 'Unknown model'}</span>
+          <span>{modelLabel(row.model, row.other_models)}</span>
           {row.has_conflict && (
             // Kept in the row, not only in its details: the index holds
             // observations of this session that disagree.
@@ -408,9 +399,9 @@ const buildColumns = (
   {
     key: 'started',
     // The start the host recorded. Claude Code records none, so a Claude
-    // session shows its earliest imported message instead (for a forked
-    // session that can be a message copied from its parent). Other hosts with
-    // no recorded start stay unknown.
+    // session shows its own first event instead, the one sessions per day
+    // counts it on (never a message a fork copied from its parent). Other
+    // hosts with no recorded start stay unknown.
     header: (
       <span title="When the session began: the start its host recorded, or for Claude Code its earliest message.">
         started
@@ -427,9 +418,9 @@ const buildColumns = (
         <time
           className="xt-session-mono"
           dateTime={new Date(row.started_at_ms).toISOString()}
-          title={new Date(row.started_at_ms).toLocaleString(undefined, recordedFormat)}
+          title={recordedText(row.started_at_ms)}
         >
-          {new Date(row.started_at_ms).toLocaleString(undefined, startedFormat)}
+          {startedText(row.started_at_ms)}
         </time>
       ),
     ),
@@ -469,7 +460,7 @@ const buildColumns = (
   },
   {
     key: 'agent',
-    header: <MetricHeader label="agent min" name="Agent minutes" ruleId="M-05" />,
+    header: <MetricHeader label="agent" name="Agent time" ruleId="M-05" />,
     width: '64px',
     align: 'right',
     render: onSession((row) => <AgentTime row={row} />),
@@ -514,9 +505,7 @@ function SessionDetails({ row }: { row: SessionRow }) {
         <dt>First recorded</dt>
         <dd>
           {row.first_ts ? (
-            <time dateTime={row.first_ts}>
-              {new Date(row.first_ts).toLocaleString(undefined, recordedFormat)}
-            </time>
+            <time dateTime={row.first_ts}>{recordedText(Date.parse(row.first_ts))}</time>
           ) : (
             '—'
           )}{' '}
@@ -567,7 +556,7 @@ function SessionDetails({ row }: { row: SessionRow }) {
         <dt>Hands-off</dt>
         <dd>
           {handsOff.state === 'measured' && handsOff.median_min !== null
-            ? `median ${continuous(handsOff.median_min)} min over ${handsOff.n} ${
+            ? `median ${handsOffTime(handsOff.median_min)} over ${handsOff.n} ${
                 handsOff.n === 1 ? 'stretch' : 'stretches'
               }`
             : handsOffReason(row)}
@@ -678,7 +667,7 @@ function RecentIndexedActivity({
                       <li key={row.key} data-group="absent">
                         <span className="xt-sessions-recent-state">
                           <span className="xt-sessions-recent-host">
-                            {hostLabels[row.parent.host as SessionHost] ?? row.parent.host}
+                            {hostName(row.parent.host)}
                           </span>
                         </span>
                         <span className="xt-session-title-line">
@@ -709,7 +698,7 @@ function RecentIndexedActivity({
                     hostTitle(lane.sessionId) ?? saved?.title ?? null,
                     saved?.automated_review ?? false,
                   );
-                  const host = hostLabels[lane.host as SessionHost] ?? lane.host;
+                  const host = hostName(lane.host);
                   return (
                     <li
                       key={lane.key}
@@ -749,8 +738,7 @@ function RecentIndexedActivity({
                         )}
                       </span>
                       <time dateTime={new Date(lane.lastMs).toISOString()}>
-                        Last recorded{' '}
-                        {new Date(lane.lastMs).toLocaleString(undefined, recordedFormat)}
+                        Last recorded {recordedText(lane.lastMs)}
                       </time>
                     </li>
                   );
@@ -1107,9 +1095,10 @@ export function SessionsPage() {
     () => buildColumns(params, hostTitle, nameParent, compaction, observe, liveStatus, toggleGroup),
     [params, hostTitle, nameParent, compaction, observe, liveStatus, toggleGroup],
   );
-  const incomplete = index.data?.hosts.some((h) => h.state !== 'complete');
-  const scanning =
-    index.data?.phase.phase === 'scanning' || index.data?.hosts.some((h) => h.state === 'pending');
+  // Whether a host's scan is a problem is the app's one answer, shared with
+  // the sidebar, Welcome and Settings; a host waiting on the running scan is not.
+  const incomplete = index.data?.needs_attention;
+  const scanning = index.data?.phase.phase === 'scanning';
   const degraded = index.data?.freshness.freshness === 'degraded';
   const indexUnavailable =
     source.kind === 'native' &&

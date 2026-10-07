@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import fixture from '../../../fixtures/F1.json';
 import type { DashboardMetrics } from '../../data/generated/DashboardMetrics';
 import type { DashboardWindow } from '../../data/generated/DashboardWindow';
@@ -13,10 +13,24 @@ import {
   handsOffTakeaway,
   latestMerged,
   leverageByDay,
-  leverageTakeaway,
   mergedTakeaway,
+  leverageSpanText,
+  previousWholeDaysText,
   timelineRows,
+  wholeDaysText,
 } from './overview';
+
+// Set the test Mac's default locale explicitly; production still reads its own.
+const NativeDateTimeFormat = Intl.DateTimeFormat;
+beforeEach(() => {
+  class TestDateTimeFormat extends NativeDateTimeFormat {
+    constructor(locales?: Intl.LocalesArgument, options?: Intl.DateTimeFormatOptions) {
+      super(locales ?? 'en-US', options);
+    }
+  }
+  vi.stubGlobal('Intl', Object.assign(Object.create(Intl), { DateTimeFormat: TestDateTimeFormat }));
+});
+afterEach(() => vi.unstubAllGlobals());
 
 const H = 3_600_000;
 const report = () =>
@@ -57,13 +71,13 @@ it('draws a twenty-minute fall fold as two ten-minute pieces with one name and u
   expect(row!.fold).toBe(true);
   expect(row!.bars).toHaveLength(1);
   const bar = row!.bars[0]!;
-  expect(bar.text).toBe('01:50 PDT → 01:10 PST — 20 min');
+  expect(bar.text).toBe('1:50 AM PDT → 1:10 AM PST — 20 min');
   expect(bar.pieces).toHaveLength(2);
   expect(bar.pieces!.map((piece) => piece.lane)).toEqual([0, 1]);
   expect(bar.pieces![0]!.left * 24).toBeCloseTo(1 + 50 / 60);
   expect(bar.pieces![1]!.left * 24).toBe(1);
   for (const piece of bar.pieces!) expect(piece.width * 24 * 60).toBeCloseTo(10);
-  expect(row!.total).toBe('0.3 h');
+  expect(row!.total).toBe('0h20m');
   expect(day).toEqual(before);
 });
 
@@ -86,8 +100,8 @@ it('keeps long overlapping fold pieces and independent repeated-hour messages on
   expect(row!.bars[1]!.tick).toBe(true);
   expect(row!.bars[1]!.pieces![0]!.lane).toBe(1);
   expect(row!.bars[1]!.pieces![0]!.width).toBe(0);
-  expect(row!.bars[1]!.text).toBe('01:15 PST');
-  expect(row!.total).toBe('3 h');
+  expect(row!.bars[1]!.text).toBe('1:15 AM PST');
+  expect(row!.total).toBe('3h00m');
 });
 
 it('leaves spring missing hours empty and keeps elapsed widths at an exact transition endpoint', () => {
@@ -107,7 +121,7 @@ it('leaves spring missing hours empty and keeps elapsed widths at an exact trans
   expect(after!.width * 24 * 60).toBeCloseTo(10);
   expect(row!.bars[1]!.pieces).toHaveLength(1);
   expect(row!.bars[1]!.pieces![0]!.width * 24 * 60).toBeCloseTo(10);
-  expect(row!.bars[0]!.text).toBe('01:50 PST → 03:10 PDT — 20 min');
+  expect(row!.bars[0]!.text).toBe('1:50 AM PST → 3:10 AM PDT — 20 min');
 });
 
 it('ends the first fold track at its old clock and preserves midnight cuts', () => {
@@ -125,7 +139,7 @@ it('ends the first fold track at its old clock and preserves midnight cuts', () 
   expect(row!.bars[0]!.pieces).toHaveLength(1);
   expect(row!.bars[1]!.pieces![0]!.left * 24).toBe(23);
   expect(row!.bars[1]!.pieces![0]!.width * 24).toBe(1);
-  expect(row!.bars[1]!.text).toContain('24:00 PST');
+  expect(row!.bars[1]!.text).toContain('12:00 AM PST');
 });
 
 it('draws the report’s own leverage for each day, with a gap where it has none', () => {
@@ -138,29 +152,10 @@ it('draws the report’s own leverage for each day, with a gap where it has none
     value: [3, null, null][index]!,
   }));
   expect(leverageByDay(r)).toEqual([
-    { date: r.leverage.by_day[0]!.date, value: 3, yoursMs: 2 * H },
-    { date: r.leverage.by_day[1]!.date, value: null, yoursMs: 0 },
-    { date: r.leverage.by_day[2]!.date, value: null, yoursMs: null },
+    { date: r.leverage.by_day[0]!.date, value: 3 },
+    { date: r.leverage.by_day[1]!.date, value: null },
+    { date: r.leverage.by_day[2]!.date, value: null },
   ]);
-  expect(leverageTakeaway(leverageByDay(r))).toBe('Highest on Sep 1: 3 agent h for each of yours.');
-  expect(leverageTakeaway([{ date: '2026-09-01', value: null, yoursMs: null }])).toBeNull();
-});
-
-it('names the highest-leverage day only among days with at least half an hour of yours', () => {
-  const day = (date: string, value: number, minutes: number) => ({
-    date,
-    value,
-    yoursMs: minutes * 60_000,
-  });
-  // Five minutes of yours and 4 agent hours is 48×: not a takeaway.
-  expect(
-    leverageTakeaway([
-      day('2026-09-01', 48, 5),
-      day('2026-09-02', 6, 30),
-      day('2026-09-03', 4, 90),
-    ]),
-  ).toBe('Highest on Sep 2: 6 agent h for each of yours.');
-  expect(leverageTakeaway([day('2026-09-01', 48, 5), day('2026-09-02', 20, 29)])).toBeNull();
 });
 
 it('names the day with the most sessions at once and the longest hands-off median', () => {
@@ -185,7 +180,7 @@ it('names the day with the most sessions at once and the longest hands-off media
   expect(handsOffTakeaway(r)).toBeNull();
 });
 
-it('places a stretch on its local clock, and a piece cut at midnight ends at 24:00', () => {
+it('places a stretch on its local clock, and a piece cut at midnight ends at midnight', () => {
   expect(clockHours(midnight + 13.5 * H, utc)).toBe(13.5);
   expect(clockHours(midnight + 24 * H, utc, true)).toBe(24);
   expect(clockHours(midnight + 24 * H, utc)).toBe(0);
@@ -204,12 +199,12 @@ it('places a stretch on its local clock, and a piece cut at midnight ends at 24:
   const [row] = timelineRows([day], utc);
   expect(row!.label).toBe('Sep 28');
   expect(row!.weekend).toBe(false);
-  expect(row!.total).toBe('1.5 h');
+  expect(row!.total).toBe('1h30m');
   expect(row!.bars).toEqual([
-    { left: 9 / 24, width: 0, tick: true, text: '09:00' },
-    { left: 22.5 / 24, width: 1.5 / 24, tick: false, text: '22:30–24:00' },
+    { left: 9 / 24, width: 0, tick: true, text: '9:00 AM' },
+    { left: 22.5 / 24, width: 1.5 / 24, tick: false, text: '10:30 PM–12:00 AM' },
   ]);
-  expect(row!.name).toBe('Sep 28: 1.5 h; one message at 09:00, 22:30–24:00');
+  expect(row!.name).toBe('Sep 28: 1 hour 30 minutes; one message at 9:00 AM, 10:30 PM–12:00 AM');
 });
 
 it('says a day with no time, no messages or unknown classification as such', () => {
@@ -228,8 +223,9 @@ it('says a day with no time, no messages or unknown classification as such', () 
     utc,
   );
   expect(rows.map((row) => [row.weekend, row.total, row.name])).toEqual([
-    [true, '–', 'Oct 3: no messages'],
-    [true, '–', 'Oct 4: no time between messages; one message at 01:00'],
+    // A measured zero reads as zero; only an unknown day has no total.
+    [true, '0h00m', 'Oct 3: no messages'],
+    [true, '0h00m', 'Oct 4: no time between messages; one message at 1:00 AM'],
     [false, null, 'Oct 5: unknown'],
   ]);
 });
@@ -271,4 +267,25 @@ it('says what the Merged PRs list shows, without promising hours it has not read
     'No pull request merged in this range.',
   );
   expect(mergedTakeaway({ merged: 0, shown: 0, complete: false, list: 'read' })).toBeNull();
+});
+
+it('names the whole days a your-hours number covers', () => {
+  expect(wholeDaysText([{ date: '2026-09-28' }, { date: '2026-10-05' }])).toBe(
+    'Sep 28–Oct 5, whole days',
+  );
+  expect(wholeDaysText([{ date: '2026-09-28' }])).toBe('Sep 28, whole days');
+  expect(wholeDaysText([])).toBe('whole days');
+});
+
+it('names what a whole-day change compares with from the days it covers', () => {
+  // A 7-day range that starts mid-day covers eight whole days.
+  const eight = ['09-28', '09-29', '09-30', '10-01', '10-02', '10-03', '10-04', '10-05'].map(
+    (day) => ({ date: `2026-${day}` }),
+  );
+  expect(previousWholeDaysText(eight)).toBe('the previous 8 whole days');
+  expect(previousWholeDaysText([{ date: '2026-09-28' }])).toBe('the previous 1 whole day');
+  expect(leverageSpanText(eight)).toBe(
+    'Both sides cover Sep 28–Oct 5, whole days. Its change compares with the previous 8 whole days.',
+  );
+  expect(leverageSpanText([])).toBeUndefined();
 });

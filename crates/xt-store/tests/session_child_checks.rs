@@ -445,12 +445,12 @@ fn a_schema_21_index_upgrades_with_every_session_unchecked_and_its_rows_kept() {
         let connection = sql(&directory);
         connection
             .execute_batch(
-                "DROP TABLE session_child_checks;
+                "ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DROP TABLE session_child_checks;
                  ALTER TABLE claude_launch_groups DROP COLUMN unfinished_starts;
                  ALTER TABLE claude_launch_candidates DROP COLUMN child_check_complete;
                  ALTER TABLE claude_launch_candidates DROP COLUMN launch_check_fingerprint;
                  ALTER TABLE claude_launch_staged_candidates DROP COLUMN launch_check_fingerprint;
-                 DELETE FROM schema_version WHERE version=22;",
+                 DELETE FROM schema_version WHERE version>=22;",
             )
             .unwrap();
     }
@@ -465,7 +465,7 @@ fn a_schema_21_index_upgrades_with_every_session_unchecked_and_its_rows_kept() {
     };
     let before = counts(&sql(&directory));
     let store = Store::open(path(&directory)).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 22);
+    assert_eq!(store.schema_version().unwrap(), 23);
     assert_eq!(counts(&sql(&directory)), before);
     let rows: i64 = sql(&directory)
         .query_row(

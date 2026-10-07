@@ -38,9 +38,14 @@ afterEach(() => {
 const unavailable = async (): Promise<never> => {
   throw new Error('Pull requests are not part of this test.');
 };
-const scanned = (host: string, state: NativeIndexStatus['hosts'][number]['state']) => ({
+const scanned = (
+  host: string,
+  state: NativeIndexStatus['hosts'][number]['state'],
+  needs_attention = false,
+) => ({
   host,
   state,
+  needs_attention,
   detail: null,
   sessions_imported: 1,
   sessions_partial: 0,
@@ -58,6 +63,7 @@ const updating: NativeIndexStatus = {
   python: { state: 'available', path: '/synthetic/python3' },
   readers: { state: 'verified', commit: '0'.repeat(40), plugin_version: '0.0.0' },
   hosts: [scanned('claude', 'complete')],
+  needs_attention: false,
   reconciles: 1,
   files_scanned: 1,
 };
@@ -155,7 +161,7 @@ it('describes the local index, not the off receiver, from one read with no repor
   expect(within(panel).getByText('Plugin delivery').parentElement?.textContent).toBe(
     'Plugin deliveryUnknown',
   );
-  expect(within(panel).getByText('claude').parentElement?.textContent).toBe('claudeComplete');
+  expect(within(panel).getByText('Claude Code').parentElement?.textContent).toBe('Claude CodeRead');
   expect(panel.textContent).not.toMatch(/capturing|install|47421|:\d/i);
   // One status read. No Dashboard, Environment or counts request is made for
   // the sidebar, and only the runtime's own listeners exist.
@@ -221,7 +227,8 @@ it('follows the status event through the shared query, with one read per change'
   status = {
     ...updating,
     freshness: { freshness: 'degraded', reason: 'watcher lost' },
-    hosts: [scanned('claude', 'complete'), scanned('codex', 'reader_failed')],
+    hosts: [scanned('claude', 'complete'), scanned('codex', 'reader_failed', true)],
+    needs_attention: true,
   };
   await act(async () => {
     send(events.nativeIndexStatus, status);
@@ -236,7 +243,7 @@ it('follows the status event through the shared query, with one read per change'
   const panel = await openPanel();
   expect(within(panel).getByText('Updates interrupted')).toBeTruthy();
   expect(
-    within(panel).getByText(/Last scan not complete for codex \(reader failed\)/),
+    within(panel).getByText(/Last scan not complete for Codex \(reader failed\)/),
   ).toBeTruthy();
 });
 

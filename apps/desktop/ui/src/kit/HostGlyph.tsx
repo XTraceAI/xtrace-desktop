@@ -1,9 +1,10 @@
+import { HOST_NAMES } from './hosts';
 import '../styles/topbar.css';
 
 const knownHosts = {
-  claude: { label: 'Claude', image: 'claude.svg' },
-  codex: { label: 'Codex', image: 'codex.webp' },
-  cursor: { label: 'Cursor', image: 'cursor.png' },
+  claude: { label: HOST_NAMES.claude, image: 'claude.svg' },
+  codex: { label: HOST_NAMES.codex, image: 'codex.webp' },
+  cursor: { label: HOST_NAMES.cursor, image: 'cursor.png' },
 };
 
 export interface HostGlyphProps {
@@ -11,12 +12,17 @@ export interface HostGlyphProps {
   host?: string | null;
   size?: 16 | 18 | 20 | 30;
   stacked?: boolean;
+  /**
+   * The name to give the glyph where the text beside it names the host
+   * differently on purpose (the usage widget's "Claude" account).
+   */
+  label?: string;
 }
 
-export function HostGlyph({ host, size = 16, stacked = false }: HostGlyphProps) {
+export function HostGlyph({ host, size = 16, stacked = false, label: named }: HostGlyphProps) {
   const known =
     host && Object.hasOwn(knownHosts, host) ? knownHosts[host as keyof typeof knownHosts] : null;
-  const label = known?.label ?? (host?.trim() ? `Unknown host: ${host}` : 'Unknown host');
+  const label = named ?? known?.label ?? (host?.trim() ? `Unknown host: ${host}` : 'Unknown host');
   return (
     <span
       className="xt-host-glyph-mark"

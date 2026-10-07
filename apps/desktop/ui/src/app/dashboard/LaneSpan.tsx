@@ -13,24 +13,21 @@ import type { SessionSourceReason } from '../../data/generated/SessionSourceReas
 import { queryKeys } from '../../data/query-client';
 import { tokens as formatTokens } from '../../kit/format';
 import { useSurfaceTheme } from '../../theme/ThemeProvider';
+import { agentDuration } from '../agent-duration';
 import { clockTime, plural, recordedTime } from './present';
 import '../../styles/span-bubble.css';
 
-const MINUTE = 60_000;
 let reads = 0;
-const HOUR = 60 * MINUTE;
-const oneDecimal = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
 
 /**
- * A span's length from its two endpoints, as the bar draws it. A span of one
- * event has no length, and says so rather than reading as zero minutes.
+ * A span's length from its two endpoints, as the bar draws it, written as all
+ * agent time is (`3h12.8m`; `spoken`: in words). A span of one event has no length, and says so
+ * rather than reading as zero minutes.
  */
-export function spanDuration(startMs: number, endMs: number): string {
+export function spanDuration(startMs: number, endMs: number, spoken = false): string {
   const length = Math.max(0, endMs - startMs);
   if (length === 0) return 'single event';
-  if (length < MINUTE) return '<1 min';
-  if (length < HOUR) return `${Math.round(length / MINUTE)} min`;
-  return `${oneDecimal.format(length / HOUR)} h`;
+  return spoken ? agentDuration(length).spoken : agentDuration(length).visible;
 }
 
 const toolText = (tool: DashboardSpanTool) =>
@@ -263,7 +260,8 @@ export function LaneSpan({
   };
   const duration = spanDuration(span.start_ms, span.end_ms);
   const start = clockTime(span.start_ms, window, false);
-  const label = `Active span ${clockTime(span.start_ms, window)} – ${clockTime(span.end_ms, window)}, ${duration}`;
+  // Read aloud in words, as the timeline's stretches are; the bubble shows the short form.
+  const label = `Active span ${clockTime(span.start_ms, window)} – ${clockTime(span.end_ms, window)}, ${spanDuration(span.start_ms, span.end_ms, true)}`;
   return (
     <Tooltip.Root open={open} onOpenChange={onOpenChange} disableHoverablePopup>
       <Tooltip.Trigger

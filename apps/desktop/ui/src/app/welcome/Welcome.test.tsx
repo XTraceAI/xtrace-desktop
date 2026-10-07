@@ -23,6 +23,7 @@ afterEach(() => {
 const host = (name: string, patch: Partial<NativeHostStatus> = {}): NativeHostStatus => ({
   host: name,
   state: 'pending',
+  needs_attention: false,
   detail: null,
   sessions_imported: 0,
   sessions_partial: 0,
@@ -44,6 +45,7 @@ const ready: NativeIndexStatus = {
     host('codex', { state: 'missing_source', detail: 'no Codex history under this home' }),
     host('cursor', { state: 'missing_source' }),
   ],
+  needs_attention: false,
   reconciles: 1,
   files_scanned: 212,
 };
@@ -295,10 +297,20 @@ it('shows each source outcome without install, connection or capture claims', as
           skipped_conversations_omitted: 0,
           records_new: 880,
           diagnostics: 3,
+          needs_attention: true,
         }),
-        host('codex', { state: 'missing_runtime', detail: 'python3 was not found' }),
-        host('cursor', { state: 'reader_failed', detail: 'the reader exited with status 1' }),
+        host('codex', {
+          state: 'missing_runtime',
+          detail: 'python3 was not found',
+          needs_attention: true,
+        }),
+        host('cursor', {
+          state: 'reader_failed',
+          detail: 'the reader exited with status 1',
+          needs_attention: true,
+        }),
       ],
+      needs_attention: true,
     },
   });
   mount('/first-launch', source);
@@ -307,7 +319,7 @@ it('shows each source outcome without install, connection or capture claims', as
   expect(screen.getByText('Ready with problems')).toBeTruthy();
   expect(screen.getByTestId('welcome-phase').textContent).toContain('3 sources reported a problem');
   expect(
-    within(list).getByRole('listitem', { name: 'Claude: Read with gaps' }).textContent,
+    within(list).getByRole('listitem', { name: 'Claude Code: Read with gaps' }).textContent,
   ).toContain('40 · 2 partial · 1 skipped');
   expect(within(list).getByRole('listitem', { name: 'Codex: Needs Python 3' })).toBeTruthy();
   expect(
@@ -374,4 +386,30 @@ it('adds no polling of its own once the status is settled', async () => {
   } finally {
     vi.useRealTimers();
   }
+});
+
+it('counts and colours the problem sources the app reports, including a cancelled scan', async () => {
+  // The app decides which scans need attention (a cancelled scan does; no
+  // local history does not); Welcome counts and words exactly those.
+  const { source } = nativeSource({
+    status: {
+      ...ready,
+      hosts: [
+        host('claude', { state: 'complete' }),
+        host('codex', { state: 'cancelled', needs_attention: true }),
+        host('cursor', { state: 'missing_source' }),
+      ],
+      needs_attention: true,
+    },
+  });
+  mount('/first-launch', source);
+  const list = await screen.findByRole('list', { name: 'Local history sources' });
+  expect(screen.getByText('Ready with problems')).toBeTruthy();
+  expect(screen.getByTestId('welcome-phase').textContent).toContain('1 source reported a problem');
+  expect(
+    within(list).getByRole('listitem', { name: 'Codex: Stopped before finishing' }),
+  ).toBeTruthy();
+  expect(
+    within(list).getByRole('listitem', { name: 'Cursor: No local history found' }),
+  ).toBeTruthy();
 });

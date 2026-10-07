@@ -23,6 +23,7 @@ export function DetailDialog({
   rule,
   meta,
   className = '',
+  triggerBase = 'xt-dash-link-button',
   triggerClassName = '',
   open: controlled,
   onOpenChange,
@@ -39,6 +40,12 @@ export function DetailDialog({
   /** Scope or version, read beside the title. */
   meta?: ReactNode;
   className?: string;
+  /**
+   * The trigger's own look: the compact text control by default. A trigger
+   * drawn as another control (Effort's ⓘ) passes '' and its own class, so no
+   * text-control style reaches it.
+   */
+  triggerBase?: string;
   triggerClassName?: string;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -59,7 +66,7 @@ export function DetailDialog({
           type="button"
           // Explicit, as the kit's buttons are: WebKit tabs past a button without it.
           tabIndex={0}
-          className={`xt-dash-link-button ${triggerClassName}`}
+          className={[triggerBase, triggerClassName].filter(Boolean).join(' ')}
           aria-label={label}
           aria-haspopup="dialog"
           aria-expanded={open}

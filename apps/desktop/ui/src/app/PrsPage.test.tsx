@@ -46,7 +46,7 @@ const never = (number: number) => [
   NO_STATE,
   NO_SIZE,
   '1',
-  'never refreshed',
+  'not checked yet',
 ];
 
 // --- what the page is, and is not ---------------------------------------------
@@ -137,21 +137,21 @@ const refreshed11 = [
   `merged${shown(PINNED)}`,
   '+33 additions −11 deletions',
   '1',
-  `refreshed${shown(PINNED)}`,
+  `checked${shown(PINNED)}`,
 ];
 const failed12 = [
   'Title not cachedocto-org/xtrace-fixture#12',
   NO_STATE,
   NO_SIZE,
   '1',
-  `failed · never refreshedrate limited · tried ${shown(PINNED)}`,
+  `could not be checkedrate limited · tried ${shown(PINNED)}`,
 ];
 const refreshed13 = [
   'Synthetic fixture pull request 13octo-org/xtrace-fixture#13 ⑂ fixture/pull-13',
   'open',
   '+39 additions −13 deletions',
   '1',
-  `refreshed${shown(PINNED)}`,
+  `checked${shown(PINNED)}`,
 ];
 
 for (const state of [
@@ -289,14 +289,14 @@ it('keeps a cached zero apart from an unknown, and an unknown state apart from o
     'open',
     '+0 additions −0 deletions',
     '0',
-    `refreshed${shown(at)}`,
+    `checked${shown(at)}`,
   ]);
   expect(unknown).toEqual([
     'Title not cachedxtrace/app#102',
     NO_STATE,
     NO_SIZE,
     '1,204',
-    'never refreshed',
+    'not checked yet',
   ]);
   expect(closed![1]).toBe('closed');
   expect(closed![2]).toBe('+5 additions −— deletions not cached');
@@ -403,14 +403,14 @@ it('states all four refresh statuses, keeping earlier facts beside a later failu
   mount(source);
   await loaded('feat: kept');
   const [neverRow, fresh, failed, stale] = cells();
-  expect(neverRow![4]).toBe('never refreshed');
-  expect(fresh![4]).toBe(`refreshed${shown(facts)}`);
+  expect(neverRow![4]).toBe('not checked yet');
+  expect(fresh![4]).toBe(`checked${shown(facts)}`);
   expect(failed).toEqual([
     'Title not cachedxtrace/app#103',
     NO_STATE,
     NO_SIZE,
     '1',
-    `failed · never refreshednot authorized; sign in with gh auth login · tried ${shown(tried)}`,
+    `could not be checkednot authorized; sign in with gh auth login · tried ${shown(tried)}`,
   ]);
   // The earlier successful facts are all still there, beside the failure.
   expect(stale).toEqual([
@@ -418,7 +418,7 @@ it('states all four refresh statuses, keeping earlier facts beside a later failu
     `merged${shown(Date.parse('2026-09-05T12:00:00Z'))}`,
     '+120 additions −4 deletions',
     '1',
-    `stale · last refresh failedrate limited · facts from ${shown(facts)}`,
+    `stale after a failed checkrate limited · facts from ${shown(facts)}`,
   ]);
   const body = within(table()).getAllByRole('row').slice(1);
   // Instants are machine-readable whatever zone formats them.
@@ -433,6 +433,22 @@ it('states all four refresh statuses, keeping earlier facts beside a later failu
   expect(body[2]!.querySelector('.xt-pr-meta')!.getAttribute('title')).toBe(
     'https://github.com/xtrace/app/pull/103',
   );
+  expectLocalReadsOnly(source);
+});
+
+it('leaves out a number GitHub says is not a pull request, from the rows and the count', async () => {
+  const tried = Date.parse('2026-09-07T00:00:00Z');
+  const source = trappedSource(async () => ({
+    rows: [
+      prRow(1, { title: 'feat: real' }),
+      prRow(2, { last_attempted_at_ms: tried, status: { status: 'not_found_on_github' } }),
+    ],
+  }));
+  mount(source);
+  await loaded('feat: real');
+  expect(cells()).toHaveLength(1);
+  expect(screen.queryByText(/xtrace\/app#102/)).toBeNull();
+  expect(meta()).toContain('1 pull request indexed');
   expectLocalReadsOnly(source);
 });
 
@@ -454,8 +470,8 @@ it('survives stored values it cannot read without throwing or guessing', async (
   await loaded('feat: odd');
   const [odd, untimed] = cells();
   expect(odd![1]).toBe('mergednot-a-time');
-  expect(odd![4]).toBe('refreshedan unreadable time');
-  expect(untimed![4]).toBe('stale · last refresh failedtimed out · facts from an unknown time');
+  expect(odd![4]).toBe('checkedan unreadable time');
+  expect(untimed![4]).toBe('stale after a failed checktimed out · facts from an unknown time');
 });
 
 // --- empty, failure and retry ----------------------------------------------------

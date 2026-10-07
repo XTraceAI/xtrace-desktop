@@ -3,10 +3,10 @@
 ## Native integration and final checks
 
 Claude status now comes from its local macOS session registry, not new hooks or
-recent-activity timestamps. The adapter supports the verified Claude Code
-versions `2.1.280` and `2.1.284` and the `interactive` and `bg` record kinds.
-Other versions, missing records, ambiguous identities and failed verification
-return Unknown. The native index must identify the exact unique user session,
+recent-activity timestamps. The adapter accepts well-formed numeric Claude Code versions and the
+`interactive` and `bg` record kinds. Versions must be 1 to 32 bytes of
+dot-separated numbers. Malformed versions, missing records, ambiguous
+identities and failed verification return Unknown. The native index must identify the exact unique user session,
 with matching host, saved session ID and native session ID. Saved metadata
 conflicts, such as different branch names, do not block live status for Claude
 or Codex and their conflict flags remain saved. Host/native ID/kind mismatches
@@ -278,3 +278,15 @@ Production behavior and every other assertion in both test files remain unchange
 No test process from this follow-up remains running.
 Independent combined review was still pending then;
 this full UI pass is not native or installed-app verification.
+
+## Numeric Claude Code versions
+
+The version field no longer pins individual Claude Code releases. The adapter
+accepts numeric versions such as `2.1.288` and `3.0.0`; it rejects empty parts,
+letters, spaces and strings longer than 32 bytes. The other record checks,
+process-start checks, waiting-reason mapping and all-or-nothing scan remain.
+Unknown fields, including `bridgeSessionId` and `hostSessionId`, are ignored.
+
+Synthetic native tests cover supported numeric versions, nine malformed
+versions, the version parser, and a busy `2.1.288` record with unknown fields.
+This section describes the source contract; release checks are separate.

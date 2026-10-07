@@ -6,8 +6,16 @@ snapshot. Exact native instants determine half-open window membership and sessio
 chronology; equal instants use UUID order. Missing timestamps cannot be assigned
 to a window, as in the other event metrics. This is not a source-coverage report.
 
-A segment starts with an explicitly human record and ends at its last explicitly
-non-human record before the next human, including tool-result carriers. It must
+A segment starts with a person's message and ends at its last explicitly
+non-human record before the next person's message, including tool-result
+carriers. A person's message is exactly what human messages count (M-02,
+`human_is_eligible`), the same rule human messages, human time and the typing
+estimate read: an input that rule leaves out, such as the prompt of a
+`claude -p` child or any input in an agent-created conversation, is neutral
+like a confirmed automated input. It neither starts nor ends a stretch, so a
+child session started by another agent has no stretch of its own, and its
+parent's stretches are unchanged. Assistant turns (M-03) keep the structural
+classification. It must
 contain at least one known tool call and a positive duration. Leading agent
 records, unanswered humans, no-tool segments and nonpositive durations do not
 contribute. Duration uses the stored POSIX millisecond projection; a leap-adjacent

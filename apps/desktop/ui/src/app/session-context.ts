@@ -30,3 +30,15 @@ export const contextLead = (repo: string | null, branch: string | null) =>
 /** The whole stored context, for a title and for assistive technology. */
 export const contextTitle = (repo: string | null, branch: string | null) =>
   `${repo ?? 'Unknown repository'} · ${branch ?? 'Unknown branch'}`;
+
+/** What every page says where a session's or a response's work named no model. */
+export const NO_MODEL = 'no model recorded';
+
+/**
+ * The model a session used most, as the index chose it (the same model the
+ * Dashboard gives its hours to), with how many other models it also used:
+ * `opus +1 more`. A session that named no model says so, in the Effort card's
+ * words.
+ */
+export const modelLabel = (model: string | null, otherModels: number) =>
+  model === null ? NO_MODEL : otherModels > 0 ? `${model} +${otherModels} more` : model;

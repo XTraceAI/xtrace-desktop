@@ -3,6 +3,7 @@ import type { AccountUsage } from '../data/generated/AccountUsage';
 import type { LocalUpdateControls } from '../data/DataSource';
 import { AccountUsageWidget } from './AccountUsageWidget';
 import { BrandMark } from './BrandMark';
+import { surfaceLabel } from './hosts';
 import { HubPopover } from './HubPopover';
 import { LocalUpdatesPopover } from './LocalUpdatesPopover';
 import { createPopoverHandle, Popover, PopoverTrigger } from './Popover';
@@ -21,7 +22,7 @@ export interface SurfaceStatus {
 }
 /** One host's last scan, worded by the caller. It is never plugin capture coverage. */
 export interface LocalIndexHost {
-  /** Host identifier as reported, such as `claude`. */
+  /** The host's display name (`hostName`), such as `Claude Code`. */
   host: string;
   state: string;
   /** A last scan the caller wants noticed; nothing is inferred from `state`. */
@@ -147,9 +148,7 @@ export function Sidebar({
       };
   const surfaceRows = surfaces.map((surface) => (
     <div className="xt-surface-row" key={JSON.stringify([surface.host, surface.surface])}>
-      <span>
-        {surface.host} · {surface.surface ?? 'Unknown surface'}
-      </span>
+      <span>{surfaceLabel(surface.host, surface.surface)}</span>
       <span className={`xt-capture-${surface.status}`}>{surfaceLabels[surface.status]}</span>
       {surface.reason && <small>{surface.reason}</small>}
     </div>

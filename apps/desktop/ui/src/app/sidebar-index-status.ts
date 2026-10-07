@@ -1,8 +1,9 @@
-import type { NativeHostState } from '../data/generated/NativeHostState';
 import type { NativeHostStatus } from '../data/generated/NativeHostStatus';
 import type { NativeIndexStatus } from '../data/generated/NativeIndexStatus';
 import type { SubscriptionState } from '../data/subscribe-invalidation';
 import type { LocalIndexHost, LocalIndexStatus, SidebarProps } from '../kit/Sidebar';
+import { hostName } from '../kit/hosts';
+import { hostScanText } from './index-host-state';
 
 /**
  * What the sidebar says about the local index: display words over the typed
@@ -13,7 +14,7 @@ import type { LocalIndexHost, LocalIndexStatus, SidebarProps } from '../kit/Side
 
 /** The facts the sidebar shows. Counts, paths and reader pins stay in Settings. */
 export type SidebarIndexFacts = Pick<NativeIndexStatus, 'phase' | 'freshness'> & {
-  hosts: Pick<NativeHostStatus, 'host' | 'state' | 'detail'>[];
+  hosts: Pick<NativeHostStatus, 'host' | 'state' | 'needs_attention' | 'detail'>[];
 };
 
 /**
@@ -23,42 +24,35 @@ export type SidebarIndexFacts = Pick<NativeIndexStatus, 'phase' | 'freshness'> &
 export const sidebarIndexFacts = (status: NativeIndexStatus): SidebarIndexFacts => ({
   phase: status.phase,
   freshness: status.freshness,
-  hosts: status.hosts.map(({ host, state, detail }) => ({ host, state, detail })),
+  hosts: status.hosts.map(({ host, state, needs_attention, detail }) => ({
+    host,
+    state,
+    needs_attention,
+    detail,
+  })),
 });
 
-/** A host's last scan, in words. `complete` describes that scan alone. */
-const hostStates: Record<NativeHostState, string> = {
-  pending: 'Not scanned yet',
-  complete: 'Complete',
-  incomplete: 'Incomplete',
-  // No source is not a failure: the host may simply have no local history.
-  missing_source: 'No local history found',
-  missing_runtime: 'Python runtime missing',
-  pin_mismatch: 'Reader pin mismatch',
-  reader_failed: 'Reader failed',
-  cancelled: 'Cancelled',
-};
-
-/** Last scans that finished, or found nothing to read: neither qualifies the index. */
-const settledScans: readonly NativeHostState[] = ['complete', 'missing_source'];
-
-/** One host's row, and whether its last scan leaves the index short of that host. */
+/**
+ * One host's row, and whether its last scan leaves the index short of that
+ * host: the app's own `needs_attention`, never re-decided here.
+ */
 const hostScan = (
   host: SidebarIndexFacts['hosts'][number],
-  scanning: boolean,
 ): { row: LocalIndexHost; open: boolean } => {
-  // While the initial scan runs, a host it has not reached is simply waiting.
-  const open = !settledScans.includes(host.state) && !(scanning && host.state === 'pending');
+  const open = host.needs_attention;
   return {
     row: {
-      host: host.host,
-      state: hostStates[host.state],
+      host: hostName(host.host),
+      state: hostScanText(host).label,
       ...(open && { attention: true }),
       ...(host.detail && { reason: host.detail }),
     },
     open,
   };
 };
+
+/** A label inside a sentence: its first letter lowered, the rest (“Python”) kept. */
+const inSentence = (label: string) => label.charAt(0).toLowerCase() + label.slice(1);
 
 type Described = Pick<LocalIndexStatus, 'label' | 'title' | 'tone' | 'summary'>;
 
@@ -164,7 +158,7 @@ export function sidebarIndexStatus({
           summary: 'Reading the local index status.',
           hosts: [],
         };
-  const scans = status.hosts.map((host) => hostScan(host, status.phase.phase === 'scanning'));
+  const scans = status.hosts.map(hostScan);
   const open = scans.filter((scan) => scan.open).map((scan) => scan.row);
   const described = describe(status, open.length > 0);
   const notes: string[] = [];
@@ -173,7 +167,7 @@ export function sidebarIndexStatus({
   if (open.length > 0)
     notes.push(
       `Last scan not complete for ${open
-        .map((row) => `${row.host} (${row.state.toLowerCase()})`)
+        .map((row) => `${row.host} (${inSentence(row.state)})`)
         .join(', ')}. The index may be incomplete or out of date for ${
         open.length === 1 ? 'that host' : 'those hosts'
       }.`,

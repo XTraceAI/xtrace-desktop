@@ -1,0 +1,1 @@
+- Stop repeating a failed GitHub check for the same PR and keep the failure visible.

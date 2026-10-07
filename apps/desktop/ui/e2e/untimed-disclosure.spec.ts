@@ -108,9 +108,9 @@ for (const [width, height] of [
         );
         await expect(rows).toBeVisible();
         await expect(rows.getByRole('listitem')).toHaveText([
-          'claude · cli1,204 records',
-          'claude · desktop806 records',
-          'cursor · unknown surface308 records',
+          'Claude Code · cli1,204 records',
+          'Claude Code · desktop806 records',
+          'Cursor · unknown surface308 records',
         ]);
 
         // Readable where it is drawn: inside its own box, in the viewport, on

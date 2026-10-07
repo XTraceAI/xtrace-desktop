@@ -7,6 +7,92 @@
 //! future writes; explicit purge is a separate transaction.
 //! The connection is private so consumers cannot bypass the canonical writer.
 
+// The read rules the shared views and per-session reads both use. Each is
+// written once here; `views.rs` builds `v_records`, `v_usage_records` and
+// `v_response_usage` from them and `session_model.rs` reads the same text.
+// Macros, not constants, because SQL text is assembled with `concat!`.
+
+/// The work events every metric reads: a user session's non-meta record that
+/// is not a `<synthetic>` row, for a record aliased `r` joined to its session
+/// aliased `s`, or for the aliases given (the same alias twice for a row that
+/// carries both). It is `v_records`' `WHERE` (and so `v_session_events`',
+/// which adds only a stored timestamp).
+macro_rules! work_record_sql {
+    () => {
+        work_record_sql!(r, s)
+    };
+    ($record:ident, $session:ident) => {
+        concat!(
+            stringify!($record),
+            ".is_meta=0 AND ",
+            stringify!($session),
+            ".kind='user' AND (",
+            stringify!($record),
+            ".model IS NULL OR ",
+            stringify!($record),
+            ".model<>'<synthetic>')"
+        )
+    };
+}
+
+/// A common table `whitespace(chars)`: Unicode White_Space, matching Rust
+/// `str::trim` used for blank input.
+macro_rules! whitespace_sql {
+    () => {
+        "whitespace(chars) AS (
+    -- Unicode White_Space, matching Rust str::trim used for blank input.
+    SELECT char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)
+)"
+    };
+}
+
+/// Whether a usage record is a keyed Claude response: non-blank message and
+/// request IDs. Needs `host`, `api_message_id`, `request_id` and
+/// [`whitespace_sql`]'s `chars` in scope.
+macro_rules! response_keyed_sql {
+    () => {
+        "host='claude' AND trim(api_message_id,chars)<>''
+    AND trim(request_id,chars)<>''"
+    };
+}
+
+/// Every assistant work record on the base tables, aliased `r`, `s` and `u`,
+/// with its usage observation when one exists (`u.uuid` is `NULL` when none
+/// does). Records with one are `v_usage_records`' rows, without that view's
+/// classification joins, which never drop or repeat a record.
+macro_rules! assistant_work_rows_sql {
+    () => {
+        concat!(
+            "records r JOIN sessions s ON s.session_id=r.session_id LEFT JOIN usage u ON u.uuid=r.uuid
+    WHERE r.type='assistant' AND ",
+            work_record_sql!()
+        )
+    };
+}
+
+/// Whether the usage record aliased `t` (with `host`, `api_message_id`,
+/// `request_id`, `ts`, `uuid` and `response_keyed`) is a selected response
+/// (M-04): an unkeyed record is its own response; a keyed response counts
+/// only its latest snapshot, judged against every stored snapshot of the same
+/// response across all history, by exact instant and then UUID.
+macro_rules! response_selected_sql {
+    () => {
+        concat!(
+            "coalesce(t.response_keyed,0)=0 OR NOT EXISTS (
+    -- The caller can restrict candidate timestamps through records_ts, while
+    -- successors are checked across all history through records_response.
+    SELECT 1 FROM ",
+            assistant_work_rows_sql!(),
+            "
+      AND u.uuid IS NOT NULL AND s.host=t.host AND r.api_message_id=t.api_message_id AND r.request_id=t.request_id
+      -- Later by exact instant, then by UUID. One spelling is one instant, so
+      -- the comparator runs only when the spellings differ.
+      AND (CASE WHEN r.ts IS t.ts THEN 0 ELSE xt_timestamp_cmp(r.ts,t.ts) END,r.uuid)>(0,t.uuid)
+)"
+        )
+    };
+}
+
 pub mod batch;
 pub mod child_check;
 pub mod child_fact;
@@ -29,11 +115,13 @@ pub mod repeat_key;
 pub mod retention;
 mod server_settings;
 pub mod session_list;
+pub mod session_model;
 mod task_notification;
 pub mod timestamp;
 pub mod tool_sent;
 pub mod tool_use;
 pub mod typing_speed;
+pub mod views;
 mod write;
 
 pub use model::{
@@ -55,6 +143,10 @@ pub enum Error {
     InvalidInput(&'static str),
     #[error("The database migration history is incompatible with this build")]
     IncompatibleSchema,
+    /// The database applied migrations this build does not have under the
+    /// same numbers. The message names what differs.
+    #[error("The database migration history does not match this build: {0}")]
+    MigrationHistory(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -83,7 +175,16 @@ impl Store {
     }
 
     fn configure(connection: Connection, file_backed: bool) -> Result<Self> {
-        timestamp::register_sqlite(&connection)?;
+        Self::prepare_connection(&connection, file_backed)?;
+        let mut store = Self { connection };
+        store.migrate()?;
+        Ok(store)
+    }
+
+    /// Connection settings every store connection uses before migrating. The
+    /// migration runner reuses them for its in-memory reference database.
+    fn prepare_connection(connection: &Connection, file_backed: bool) -> Result<()> {
+        timestamp::register_sqlite(connection)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         if file_backed {
@@ -104,9 +205,7 @@ impl Store {
         if file_backed {
             connection.pragma_update(None, "fullfsync", "ON")?;
         }
-        let mut store = Self { connection };
-        store.migrate()?;
-        Ok(store)
+        Ok(())
     }
 }
 

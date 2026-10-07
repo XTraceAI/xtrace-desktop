@@ -1,36 +1,13 @@
 import type { NativeHostStatus } from '../../data/generated/NativeHostStatus';
-import type { NativeHostState } from '../../data/generated/NativeHostState';
 import type { NativeIndexStatus } from '../../data/generated/NativeIndexStatus';
 import type { ControlTone } from '../../kit/control-tone';
 
-const names: Record<string, string> = { claude: 'Claude', codex: 'Codex', cursor: 'Cursor' };
-export const hostName = (host: string) => names[host] ?? host;
+/** A host's display name is the app's one name for it (the kit's `hostName`). */
+export { hostName } from '../../kit/hosts';
 
-/**
- * What the last scan of one host's local history did. These are outcomes of
- * reading files on this Mac: none of them says whether an agent is installed,
- * connected or capturing now.
- */
-export const hostOutcome: Record<NativeHostState, { label: string; tone: ControlTone }> = {
-  pending: { label: 'Not read yet', tone: 'meta' },
-  complete: { label: 'Read', tone: 'success' },
-  incomplete: { label: 'Read with gaps', tone: 'warning' },
-  missing_source: { label: 'No local history found', tone: 'meta' },
-  missing_runtime: { label: 'Needs Python 3', tone: 'warning' },
-  pin_mismatch: { label: 'Reader not verified', tone: 'danger' },
-  reader_failed: { label: 'Reader failed', tone: 'danger' },
-  cancelled: { label: 'Stopped before finishing', tone: 'meta' },
-};
-
-const needsAttention: ReadonlySet<NativeHostState> = new Set([
-  'incomplete',
-  'missing_runtime',
-  'pin_mismatch',
-  'reader_failed',
-]);
-/** Hosts whose last scan left history unread or partly read. */
+/** Hosts whose last scan needs attention, as the app decides it (`needs_attention`). */
 export const attentionCount = (hosts: readonly NativeHostStatus[]) =>
-  hosts.filter((host) => needsAttention.has(host.state)).length;
+  hosts.filter((host) => host.needs_attention).length;
 
 /** How a source's history is read; Claude transcripts need no interpreter. */
 export const readerNote = (host: string) =>
@@ -43,7 +20,7 @@ export function phasePill(status: NativeIndexStatus): { label: string; tone: Con
     case 'scanning':
       return { label: 'Scanning', tone: 'accent' };
     case 'ready':
-      return attentionCount(status.hosts) > 0
+      return status.needs_attention
         ? { label: 'Ready with problems', tone: 'warning' }
         : { label: 'Ready', tone: 'success' };
     case 'disabled':

@@ -1,0 +1,1 @@
+- Refuse data whose saved database migration history does not match the app build.

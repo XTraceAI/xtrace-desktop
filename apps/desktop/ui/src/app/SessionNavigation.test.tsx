@@ -227,7 +227,7 @@ it('opens a Dashboard session by name, and offers the list that holds it', async
   fireEvent.click(backLink());
   await screen.findByRole('heading', { name: 'Sessions' });
   expect(searchBox().value).toBe(ATLAS);
-  expect(selectedHosts()).toEqual(['Claude']);
+  expect(selectedHosts()).toEqual(['Claude Code']);
   const named = await screen.findByText('Session 11111111');
   const row = named.closest('[role="row"]')!;
   // The row opens the same session, and says so in full.
@@ -279,7 +279,7 @@ it('keeps a session ID that carries path and query punctuation intact', async ()
   expect(await screen.findByText(AWKWARD)).toBeTruthy();
   // No repository or branch is known, and nothing is invented to fill the line.
   expect(screen.getByRole('heading', { name: 'Unknown repository' })).toBeTruthy();
-  expect(screen.getByText('Unknown model')).toBeTruthy();
+  expect(screen.getByText('no model recorded')).toBeTruthy();
 });
 
 it('says plainly when an opened session is not in the index, and shows no transcript', async () => {
@@ -322,7 +322,7 @@ it('restores a followed list with back and forward', async () => {
   await screen.findByRole('heading', { name: 'Sessions' });
   // The filters come back from the address, not from anything kept in memory.
   await waitFor(() => expect(searchBox().value).toBe(ATLAS));
-  expect(selectedHosts()).toEqual(['Claude']);
+  expect(selectedHosts()).toEqual(['Claude Code']);
   fireEvent.click(screen.getByRole('button', { name: 'history forward' }));
   await screen.findByRole('heading', { name: 'atlas · feat/navigation' });
 });
@@ -351,7 +351,7 @@ it('ignores an unusable host or range in the address without breaking the filter
   await waitFor(() =>
     expect(calls.at(-1)).toEqual({ search: 'atlas', hosts: null, withPrs: false, days: 7 }),
   );
-  expect(selectedHosts()).toEqual(['Claude', 'Codex', 'Cursor']);
+  expect(selectedHosts()).toEqual(['Claude Code', 'Codex', 'Cursor']);
   expect(screen.getByRole('radio', { name: '7d' }).getAttribute('aria-checked')).toBe('true');
   expect(await screen.findByText('Session 11111111')).toBeTruthy();
   // The filters still work by hand from there: unchecking Claude leaves a
@@ -380,7 +380,7 @@ it('carries a host set and the pull-request filter into a session and back again
       days: 7,
     }),
   );
-  expect(selectedHosts()).toEqual(['Claude', 'Codex']);
+  expect(selectedHosts()).toEqual(['Claude Code', 'Codex']);
   const toggle = screen.getByRole('switch', { name: 'With PRs only' });
   expect(toggle.getAttribute('aria-checked')).toBe('true');
   const open = await screen.findByRole('link', { name: `Open session ${ATLAS}` });
@@ -392,7 +392,7 @@ it('carries a host set and the pull-request filter into a session and back again
   expect(backLink().getAttribute('href')).toBe('/sessions?host=claude%2Ccodex&with_prs=1&range=7d');
   fireEvent.click(backLink());
   await screen.findByRole('heading', { name: 'Sessions' });
-  expect(selectedHosts()).toEqual(['Claude', 'Codex']);
+  expect(selectedHosts()).toEqual(['Claude Code', 'Codex']);
   expect(screen.getByRole('switch', { name: 'With PRs only' }).getAttribute('aria-checked')).toBe(
     'true',
   );

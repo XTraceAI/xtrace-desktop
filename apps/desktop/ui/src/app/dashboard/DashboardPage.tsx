@@ -102,8 +102,8 @@ export function DashboardPage() {
  * and a double-click or Enter on a boundary puts its default back. The
  * report's agent/human hours and rule fires are not drawn here. Nothing here
  * is a page to scroll: every further row, day, table and explanation opens
- * over the page from the card it belongs to — tokens and cost from Effort's
- * Details, coverage and untimed history from Sessions — or on the full
+ * over the page from the card it belongs to — tokens and cost from the ⓘ
+ * beside Effort's title, coverage and untimed history from Sessions — or on the full
  * Sessions view. The index's state is the sidebar's and Settings'.
  */
 function DashboardReport({
@@ -167,12 +167,20 @@ function DashboardReport({
           context={EFFORT_CONTEXT}
           className="xt-effort-card"
           layered
+          info={
+            <EffortMethod
+              report={report}
+              metric={effortMetric}
+              rule="M-19"
+              context={EFFORT_CONTEXT}
+              {...method}
+            >
+              <UsageMeasurements report={report} />
+            </EffortMethod>
+          }
           actions={
             <>
               <EffortMetricToggle value={effortMetric} onChange={onEffortMetric} />
-              <EffortMethod report={report} metric={effortMetric} {...method}>
-                <UsageMeasurements report={report} />
-              </EffortMethod>
               <PrRefresh window={report.window} tile={prTile} auto={autoCheck} />
             </>
           }

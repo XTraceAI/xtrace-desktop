@@ -96,6 +96,10 @@ pub struct NativeIndexStatus {
     pub python: PythonRuntime,
     pub readers: ReaderBundle,
     pub hosts: Vec<NativeHostStatus>,
+    /// Some host's last scan needs attention (see
+    /// [`NativeHostStatus::needs_attention`]). The one answer every screen
+    /// reads to say the local index is short of a host.
+    pub needs_attention: bool,
     /// Reconciliations completed: the initial scan, then one per change burst.
     pub reconciles: u32,
     /// Claude transcripts read so far by the initial scan (progress while scanning).
@@ -158,6 +162,12 @@ pub struct NativeHostStatus {
     /// `claude`, `codex` or `cursor`.
     pub host: String,
     pub state: NativeHostState,
+    /// This host's last scan leaves the index short of it. Settled scans
+    /// (`complete`, and `missing_source`: no local history to read) and a
+    /// host still waiting while the scan runs (`pending` during `scanning`)
+    /// do not; every other state does, `cancelled` included. Decided once,
+    /// in `native_index::mark_attention`, for every screen.
+    pub needs_attention: bool,
     pub detail: Option<String>,
     pub sessions_imported: u32,
     pub sessions_partial: u32,
@@ -371,13 +381,21 @@ pub struct SessionRow {
     /// Verified native Guardian header; a display hint, never a saved title.
     pub automated_review: bool,
     /// The session start in UTC milliseconds: the start the host recorded, or,
-    /// for a Claude session (Claude Code records no start), its earliest
-    /// imported message. `null` when neither is known.
+    /// for a Claude session (Claude Code records no start), its own earliest
+    /// message, never one copied from a session it was forked from (the same
+    /// first event sessions per day counts it on). `null` when neither is
+    /// known.
     #[ts(type = "number | null")]
     pub started_at_ms: Option<i64>,
     pub repo: Option<String>,
     pub branch: Option<String>,
+    /// The model the session used most over its whole history: most selected
+    /// responses, then most output tokens, then the first name (the rule the
+    /// Dashboard's effort-by-model split uses). `null` when none named one.
     pub model: Option<String>,
+    /// How many other models the session's work named besides `model`.
+    #[ts(type = "number")]
+    pub other_models: u64,
     /// Earliest visible work record, including inherited copies.
     pub first_ts: Option<String>,
     #[ts(type = "number")]
@@ -516,6 +534,7 @@ fn session_row_from(
         repo: summary.repo,
         branch: summary.branch,
         model: summary.model,
+        other_models: summary.other_models,
         first_ts: summary.first_ts,
         record_count: summary.record_count,
         has_conflict: summary.has_conflict,

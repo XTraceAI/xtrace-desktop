@@ -9,13 +9,22 @@ use std::{
 };
 use xt_store::{
     Store,
-    pr_link::{LinkedPullRequest, RefreshOutcome, RefreshWrite},
+    pr_link::{LinkedPullRequest, RefreshOrigin, RefreshOutcome, RefreshWrite},
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum StateError {
     #[error("application storage operation failed")]
     Store(#[from] xt_store::Error),
+    /// Startup could not open the database file, or the store refused it as
+    /// written by another build and left it unchanged. The path is kept for
+    /// the startup alert, never shown by the Display.
+    #[error("application database could not be opened")]
+    OpenDatabase {
+        path: PathBuf,
+        #[source]
+        source: xt_store::Error,
+    },
     #[error("application data directory is unavailable")]
     Io(#[from] std::io::Error),
     #[error("fixture mode requires a debug build with the fixtures feature")]
@@ -294,7 +303,10 @@ impl AppState {
         xt_ingest::native::validate_index_destination(&db_path, &native_home)
             .map_err(StateError::IndexDestination)?;
         std::fs::create_dir_all(&data_dir)?;
-        let store = Store::open(&db_path)?;
+        let store = Store::open(&db_path).map_err(|source| StateError::OpenDatabase {
+            path: db_path.clone(),
+            source,
+        })?;
         Self::from_store(
             store,
             data_dir,
@@ -1234,7 +1246,9 @@ impl AppState {
     }
 
     /// The stored pull requests a session still links, in repository then
-    /// number order, with the refresh status storage already holds.
+    /// number order, with the refresh status storage already holds. Numbers
+    /// GitHub said are not pull requests are listed with the status
+    /// `not_found_on_github`.
     pub fn pr_list(&self) -> Result<PrList, StateError> {
         pr_list(self.pull_request_snapshot()?).map_err(StateError::PrEncoding)
     }
@@ -1264,15 +1278,20 @@ impl AppState {
         ))
     }
 
-    /// Persist one refresh result. The lock is reacquired for this write only,
-    /// and a database already closed writes nothing and says so.
-    pub fn record_pr_refresh(&self, outcome: &RefreshOutcome) -> Result<RefreshWrite, StateError> {
+    /// Persist one refresh result of the given origin (a manual failure marks
+    /// the pull request; see `RefreshOrigin`). The lock is reacquired for this
+    /// write only, and a database already closed writes nothing and says so.
+    pub fn record_pr_refresh(
+        &self,
+        outcome: &RefreshOutcome,
+        origin: RefreshOrigin,
+    ) -> Result<RefreshWrite, StateError> {
         Ok(self
             .admit()?
             .as_mut()
             .ok_or(StateError::Closed)?
             .store
-            .record_pr_refresh(outcome)?)
+            .record_pr_refresh_from(outcome, origin)?)
     }
 
     /// Tauri exits the process without dropping managed state. Close resources
@@ -1303,6 +1322,9 @@ impl AppState {
 /// The listed rows of one snapshot: the pull requests a session still links,
 /// in the order storage read them.
 pub fn pr_list(snapshot: Vec<LinkedPullRequest>) -> Result<PrList, &'static str> {
+    // A number GitHub said is not a pull request stays listed, with its own
+    // status, so the refresh dialog can offer it for a check by hand; the
+    // Pull requests page leaves it out.
     let rows = snapshot
         .iter()
         .filter(|row| row.linked_sessions > 0)

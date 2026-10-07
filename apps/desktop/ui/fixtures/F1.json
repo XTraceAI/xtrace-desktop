@@ -4,7 +4,7 @@
     "version": "0.1.0",
     "data_dir": "fixture://F1",
     "fixture": "F1",
-    "schema_version": 22,
+    "schema_version": 23,
     "listening": false,
     "had_indexed_history_at_startup": true
   },
@@ -30,6 +30,7 @@
       "reason": "not verified: the index is disabled"
     },
     "hosts": [],
+    "needs_attention": false,
     "reconciles": 0,
     "files_scanned": 0
   },
@@ -52,6 +53,7 @@
           "repo": null,
           "branch": null,
           "model": "fixture-model-v1",
+          "other_models": 0,
           "first_ts": "2026-09-07T12:00:00Z",
           "record_count": 25,
           "has_conflict": false,
@@ -129,6 +131,7 @@
           "repo": null,
           "branch": null,
           "model": "fixture-model-v1",
+          "other_models": 0,
           "first_ts": "2026-09-07T12:00:00Z",
           "record_count": 25,
           "has_conflict": false,
@@ -206,6 +209,7 @@
           "repo": null,
           "branch": null,
           "model": "fixture-model-v1",
+          "other_models": 0,
           "first_ts": "2026-09-07T12:00:00Z",
           "record_count": 25,
           "has_conflict": false,
@@ -651,7 +655,7 @@
           "unit": "ratio",
           "rule_id": "M-08",
           "reason": null,
-          "note": "Agent hours divided by your hours, both over the same whole local days. Your hours run from each message you sent to the next one when they are at most 60 minutes apart.",
+          "note": "Agent hours divided by human time, both over the same whole local days. Human time runs from each message you sent to the next one when they are at most 60 minutes apart.",
           "current_n": 1,
           "previous_n": 0,
           "sample_unit": "sessions",
@@ -1188,6 +1192,8 @@
               "refreshed": 0,
               "failed_never_refreshed": 0,
               "failed_after_refresh": 0,
+              "manual_failed_never_refreshed": 0,
+              "manual_failed_after_refresh": 0,
               "oldest_refreshed_at": null,
               "newest_attempted_at": null
             }
@@ -1510,6 +1516,8 @@
             "refreshed": 0,
             "failed_never_refreshed": 0,
             "failed_after_refresh": 0,
+            "manual_failed_never_refreshed": 0,
+            "manual_failed_after_refresh": 0,
             "oldest_refreshed_at": null,
             "newest_attempted_at": null
           }
@@ -1826,7 +1834,7 @@
           "unit": "ratio",
           "rule_id": "M-08",
           "reason": null,
-          "note": "Agent hours divided by your hours, both over the same whole local days. Your hours run from each message you sent to the next one when they are at most 60 minutes apart.",
+          "note": "Agent hours divided by human time, both over the same whole local days. Human time runs from each message you sent to the next one when they are at most 60 minutes apart.",
           "current_n": 1,
           "previous_n": 0,
           "sample_unit": "sessions",
@@ -2524,6 +2532,8 @@
               "refreshed": 0,
               "failed_never_refreshed": 0,
               "failed_after_refresh": 0,
+              "manual_failed_never_refreshed": 0,
+              "manual_failed_after_refresh": 0,
               "oldest_refreshed_at": null,
               "newest_attempted_at": null
             }
@@ -3070,6 +3080,8 @@
             "refreshed": 0,
             "failed_never_refreshed": 0,
             "failed_after_refresh": 0,
+            "manual_failed_never_refreshed": 0,
+            "manual_failed_after_refresh": 0,
             "oldest_refreshed_at": null,
             "newest_attempted_at": null
           }
@@ -3596,7 +3608,7 @@
           "unit": "ratio",
           "rule_id": "M-08",
           "reason": null,
-          "note": "Agent hours divided by your hours, both over the same whole local days. Your hours run from each message you sent to the next one when they are at most 60 minutes apart.",
+          "note": "Agent hours divided by human time, both over the same whole local days. Human time runs from each message you sent to the next one when they are at most 60 minutes apart.",
           "current_n": 1,
           "previous_n": 0,
           "sample_unit": "sessions",
@@ -4662,6 +4674,8 @@
               "refreshed": 0,
               "failed_never_refreshed": 0,
               "failed_after_refresh": 0,
+              "manual_failed_never_refreshed": 0,
+              "manual_failed_after_refresh": 0,
               "oldest_refreshed_at": null,
               "newest_attempted_at": null
             }
@@ -5720,6 +5734,8 @@
             "refreshed": 0,
             "failed_never_refreshed": 0,
             "failed_after_refresh": 0,
+            "manual_failed_never_refreshed": 0,
+            "manual_failed_after_refresh": 0,
             "oldest_refreshed_at": null,
             "newest_attempted_at": null
           }
@@ -8001,6 +8017,8 @@
                   "refreshed": 1,
                   "failed_never_refreshed": 0,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": 1788825600000,
                   "newest_attempted_at": 1788825600000
                 }
@@ -8323,6 +8341,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -8361,6 +8381,8 @@
                   "refreshed": 1,
                   "failed_never_refreshed": 0,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": 1788825600000,
                   "newest_attempted_at": 1788825600000
                 }
@@ -8907,6 +8929,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -8945,6 +8969,8 @@
                   "refreshed": 1,
                   "failed_never_refreshed": 0,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": 1788825600000,
                   "newest_attempted_at": 1788825600000
                 }
@@ -10003,6 +10029,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -10032,6 +10060,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -10109,6 +10139,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -10186,6 +10218,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -10263,6 +10297,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -10340,6 +10376,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -10417,6 +10455,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -10517,6 +10557,8 @@
                   "refreshed": 0,
                   "failed_never_refreshed": 1,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": null,
                   "newest_attempted_at": 1788825600000
                 }
@@ -10839,6 +10881,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -10877,6 +10921,8 @@
                   "refreshed": 0,
                   "failed_never_refreshed": 1,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": null,
                   "newest_attempted_at": 1788825600000
                 }
@@ -11423,6 +11469,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -11461,6 +11509,8 @@
                   "refreshed": 0,
                   "failed_never_refreshed": 1,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": null,
                   "newest_attempted_at": 1788825600000
                 }
@@ -12519,6 +12569,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -12548,6 +12600,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -12625,6 +12679,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -12702,6 +12758,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -12779,6 +12837,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -12856,6 +12916,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -12933,6 +12995,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -13039,6 +13103,8 @@
                   "refreshed": 1,
                   "failed_never_refreshed": 1,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": 1788825600000,
                   "newest_attempted_at": 1788825600000
                 }
@@ -13361,6 +13427,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -13399,6 +13467,8 @@
                   "refreshed": 1,
                   "failed_never_refreshed": 1,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": 1788825600000,
                   "newest_attempted_at": 1788825600000
                 }
@@ -13945,6 +14015,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -13983,6 +14055,8 @@
                   "refreshed": 1,
                   "failed_never_refreshed": 1,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": 1788825600000,
                   "newest_attempted_at": 1788825600000
                 }
@@ -15041,6 +15115,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -15070,6 +15146,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -15147,6 +15225,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -15224,6 +15304,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -15301,6 +15383,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -15378,6 +15462,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -15455,6 +15541,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -15555,6 +15643,8 @@
                   "refreshed": 0,
                   "failed_never_refreshed": 0,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": null,
                   "newest_attempted_at": null
                 }
@@ -15877,6 +15967,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": null
               }
@@ -15915,6 +16007,8 @@
                   "refreshed": 0,
                   "failed_never_refreshed": 0,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": null,
                   "newest_attempted_at": null
                 }
@@ -16461,6 +16555,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": null
               }
@@ -16499,6 +16595,8 @@
                   "refreshed": 0,
                   "failed_never_refreshed": 0,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": null,
                   "newest_attempted_at": null
                 }
@@ -17557,6 +17655,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": null
               }
@@ -17586,6 +17686,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -17663,6 +17765,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": null
               }
@@ -17740,6 +17844,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -17817,6 +17923,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": null
               }
@@ -17894,6 +18002,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -17971,6 +18081,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": null
               }
@@ -18077,6 +18189,8 @@
                   "refreshed": 1,
                   "failed_never_refreshed": 0,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": 1788825600000,
                   "newest_attempted_at": 1788825600000
                 }
@@ -18399,6 +18513,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -18437,6 +18553,8 @@
                   "refreshed": 1,
                   "failed_never_refreshed": 0,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": 1788825600000,
                   "newest_attempted_at": 1788825600000
                 }
@@ -18983,6 +19101,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -19021,6 +19141,8 @@
                   "refreshed": 1,
                   "failed_never_refreshed": 0,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": 1788825600000,
                   "newest_attempted_at": 1788825600000
                 }
@@ -20079,6 +20201,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -20108,6 +20232,8 @@
                 "refreshed": 2,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -20185,6 +20311,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -20262,6 +20390,8 @@
                 "refreshed": 2,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -20339,6 +20469,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -20416,6 +20548,8 @@
                 "refreshed": 2,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -20493,6 +20627,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 0,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -20599,6 +20735,8 @@
                   "refreshed": 0,
                   "failed_never_refreshed": 1,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": null,
                   "newest_attempted_at": 1788825600000
                 }
@@ -20921,6 +21059,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -20959,6 +21099,8 @@
                   "refreshed": 0,
                   "failed_never_refreshed": 1,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": null,
                   "newest_attempted_at": 1788825600000
                 }
@@ -21505,6 +21647,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -21543,6 +21687,8 @@
                   "refreshed": 0,
                   "failed_never_refreshed": 1,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": null,
                   "newest_attempted_at": 1788825600000
                 }
@@ -22601,6 +22747,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -22630,6 +22778,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -22707,6 +22857,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -22784,6 +22936,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -22861,6 +23015,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -22938,6 +23094,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -23015,6 +23173,8 @@
                 "refreshed": 0,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": null,
                 "newest_attempted_at": 1788825600000
               }
@@ -23127,6 +23287,8 @@
                   "refreshed": 1,
                   "failed_never_refreshed": 1,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": 1788825600000,
                   "newest_attempted_at": 1788825600000
                 }
@@ -23449,6 +23611,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -23487,6 +23651,8 @@
                   "refreshed": 1,
                   "failed_never_refreshed": 1,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": 1788825600000,
                   "newest_attempted_at": 1788825600000
                 }
@@ -24033,6 +24199,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -24071,6 +24239,8 @@
                   "refreshed": 1,
                   "failed_never_refreshed": 1,
                   "failed_after_refresh": 0,
+                  "manual_failed_never_refreshed": 0,
+                  "manual_failed_after_refresh": 0,
                   "oldest_refreshed_at": 1788825600000,
                   "newest_attempted_at": 1788825600000
                 }
@@ -25129,6 +25299,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -25158,6 +25330,8 @@
                 "refreshed": 2,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -25235,6 +25409,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -25312,6 +25488,8 @@
                 "refreshed": 2,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -25389,6 +25567,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -25466,6 +25646,8 @@
                 "refreshed": 2,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -25543,6 +25725,8 @@
                 "refreshed": 1,
                 "failed_never_refreshed": 1,
                 "failed_after_refresh": 0,
+                "manual_failed_never_refreshed": 0,
+                "manual_failed_after_refresh": 0,
                 "oldest_refreshed_at": 1788825600000,
                 "newest_attempted_at": 1788825600000
               }
@@ -25624,6 +25808,8 @@
             "refreshed": 0,
             "failed_never_refreshed": 0,
             "failed_after_refresh": 0,
+            "manual_failed_never_refreshed": 0,
+            "manual_failed_after_refresh": 0,
             "oldest_refreshed_at": null,
             "newest_attempted_at": null
           }
@@ -25701,6 +25887,8 @@
             "refreshed": 0,
             "failed_never_refreshed": 0,
             "failed_after_refresh": 0,
+            "manual_failed_never_refreshed": 0,
+            "manual_failed_after_refresh": 0,
             "oldest_refreshed_at": null,
             "newest_attempted_at": null
           }
@@ -25778,6 +25966,8 @@
             "refreshed": 0,
             "failed_never_refreshed": 0,
             "failed_after_refresh": 0,
+            "manual_failed_never_refreshed": 0,
+            "manual_failed_after_refresh": 0,
             "oldest_refreshed_at": null,
             "newest_attempted_at": null
           }
@@ -25855,6 +26045,8 @@
             "refreshed": 0,
             "failed_never_refreshed": 0,
             "failed_after_refresh": 0,
+            "manual_failed_never_refreshed": 0,
+            "manual_failed_after_refresh": 0,
             "oldest_refreshed_at": null,
             "newest_attempted_at": null
           }
@@ -25932,6 +26124,8 @@
             "refreshed": 0,
             "failed_never_refreshed": 0,
             "failed_after_refresh": 0,
+            "manual_failed_never_refreshed": 0,
+            "manual_failed_after_refresh": 0,
             "oldest_refreshed_at": null,
             "newest_attempted_at": null
           }
@@ -26009,6 +26203,8 @@
             "refreshed": 0,
             "failed_never_refreshed": 0,
             "failed_after_refresh": 0,
+            "manual_failed_never_refreshed": 0,
+            "manual_failed_after_refresh": 0,
             "oldest_refreshed_at": null,
             "newest_attempted_at": null
           }
@@ -26091,6 +26287,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,
@@ -26175,6 +26372,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,
@@ -26259,6 +26457,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,
@@ -26343,6 +26542,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,
@@ -26427,6 +26627,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,
@@ -26511,6 +26712,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,
@@ -26595,6 +26797,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,
@@ -26679,6 +26882,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,
@@ -26763,6 +26967,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,
@@ -26847,6 +27052,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,
@@ -26931,6 +27137,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,
@@ -27015,6 +27222,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,
@@ -27099,6 +27307,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,
@@ -27202,6 +27411,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,
@@ -27305,6 +27515,7 @@
             "repo": null,
             "branch": null,
             "model": "fixture-model-v1",
+            "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
             "record_count": 25,
             "has_conflict": false,

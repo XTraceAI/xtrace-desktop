@@ -109,6 +109,8 @@ fn indexes_a_synthetic_home_publishes_typed_status_and_reconciles_appends() {
             .iter()
             .all(|h| h.state == NativeHostState::Pending)
     );
+    // Hosts the running scan has not reached are waiting, not a problem.
+    assert!(!first.needs_attention && first.hosts.iter().all(|h| !h.needs_attention));
     let pin: serde_json::Value = serde_json::from_str(PIN).unwrap();
     assert_eq!(
         first.readers,
@@ -131,7 +133,13 @@ fn indexes_a_synthetic_home_publishes_typed_status_and_reconciles_appends() {
         // before the runtime).
         let reader = host(&ready, name);
         assert_eq!(reader.state, NativeHostState::MissingSource, "{reader:?}");
+        // No local history to read is settled, not a problem.
+        assert!(!reader.needs_attention, "{reader:?}");
     }
+    assert!(
+        !claude.needs_attention && !ready.needs_attention,
+        "{ready:?}"
+    );
     assert!(
         matches!(
             ready.python,
@@ -287,6 +295,8 @@ fn a_missing_interpreter_and_a_missing_bundle_are_reported_while_claude_indexes(
     // interpreter reports the runtime, explicitly.
     assert_eq!(codex.state, NativeHostState::MissingRuntime, "{codex:?}");
     assert!(codex.detail.as_deref().unwrap().contains("python"));
+    assert!(codex.needs_attention && ready.needs_attention, "{ready:?}");
+    assert!(!host(&ready, "claude").needs_attention);
     assert!(index.shutdown());
 }
 
@@ -435,6 +445,7 @@ fn an_unreadable_project_directory_is_reported_by_the_index_status() {
     assert_eq!(claude.state, NativeHostState::Incomplete, "{ready:?}");
     assert_eq!((claude.sessions_imported, claude.records_new), (1, 2));
     assert!(claude.diagnostics >= 1, "{claude:?}");
+    assert!(claude.needs_attention && ready.needs_attention, "{ready:?}");
     assert!(index.shutdown());
 }
 
@@ -450,6 +461,7 @@ fn the_compiled_pin_parses_and_the_status_serializes_with_tagged_variants() {
     assert_eq!(value["python"]["state"], "missing");
     assert_eq!(value["readers"]["state"], "unavailable");
     assert_eq!(value["hosts"], json!([]));
+    assert_eq!(value["needs_attention"], json!(false));
 }
 
 /// Runs in a child process of this test binary (see the test below), where

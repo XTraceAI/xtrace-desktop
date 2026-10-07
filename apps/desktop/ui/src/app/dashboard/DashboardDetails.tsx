@@ -5,6 +5,7 @@ import type { MetricUsageSummary } from '../../data/generated/MetricUsageSummary
 import { StatePill } from '../../kit/Badge';
 import { percent, tokens as formatTokens } from '../../kit/format';
 import { MetricCell } from '../../kit/MetricCell';
+import { gatePercentText, gateVerdict } from '../pr-analytics';
 import { DefinitionInfo } from './DefinitionInfo';
 import { DetailDialog } from './DetailDialog';
 import {
@@ -21,6 +22,7 @@ import {
 } from './present';
 import { TokenDayChart } from './TokenDayChart';
 import { UntimedBody, untimedSummary } from './UntimedNotice';
+import { NO_MODEL } from '../session-context';
 
 /** The measurement detail a viewer has open, if any. */
 export type DetailKey = 'method' | 'coverage';
@@ -42,7 +44,7 @@ export function useDetail(key: DetailKey) {
 
 /**
  * The range's recorded tokens and their API-equivalent cost, as two titled
- * sections of the Effort card's Details dialog: output is one of the card's
+ * sections of the dialog behind the Effort card's ⓘ: output is one of the card's
  * measures, and both are the same selected usage. Each keeps its definition
  * and its scope beside its title, and the cost is never read as a total when
  * part of the usage could not be priced.
@@ -207,7 +209,7 @@ function CostBody({ report }: { report: DashboardMetrics }) {
           {cost.unpriced.map((item, index) => (
             <li key={index}>
               <span>
-                {item.model ?? 'unknown model'} · {item.service_tier ?? 'no service tier'}
+                {item.model ?? NO_MODEL} · {item.service_tier ?? 'no service tier'}
               </span>
               <span>
                 {unpricedText[item.reason]} · {plural(item.observations, 'response')}
@@ -265,13 +267,8 @@ function CoverageBody({ report }: { report: DashboardMetrics }) {
           </ul>
         )}
         <p className="xt-dash-note" data-testid="usage-gate">
-          Fixed trailing 14 days: <MetricCell value={fromPoints(gate.pct)} format={percent} /> of{' '}
-          {plural(gate.eligible_sessions, 'eligible session')} measured ·{' '}
-          {gate.passes === null
-            ? 'gate unknown'
-            : gate.passes
-              ? 'meets the 90% gate'
-              : 'below the 90% gate'}
+          Fixed trailing 14 days: <MetricCell value={gate.pct} format={gatePercentText} /> of{' '}
+          {plural(gate.eligible_sessions, 'eligible session')} measured · {gateVerdict(gate.passes)}
           {gate.excluded_surfaces.length > 0 &&
             ` · excluded: ${gate.excluded_surfaces.map((item) => surfaceLabel(item.host, item.surface)).join(', ')}`}
         </p>

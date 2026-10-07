@@ -1,9 +1,10 @@
+import { surfaceLabel } from '../kit/hosts';
 import { MetricCell } from '../kit/MetricCell';
 import { RulePopover } from '../kit/RulePopover';
 import type { RuleId } from '../kit/rules';
 import type { SessionRow } from '../data/generated/SessionRow';
 import { agentDuration } from './agent-duration';
-import { continuous } from './metric-format';
+import { handsOffTime } from './metric-format';
 import { displayTitle, shortId } from './session-context';
 
 /**
@@ -50,7 +51,8 @@ export function MetricHeader({
 export const sessionName = (row: SessionRow) =>
   displayTitle(row.title, row.automated_review) ?? `Session ${shortId(row.id)}`;
 
-export const evidenceWords = { exact: 'exact', sha: 'commit', inferred: 'inferred' } as const;
+/** A link's evidence in words; one wording, kept beside the PRs report's other words. */
+export { evidenceWords } from './pr-analytics';
 
 /** Why a hands-off median is not shown, in the M-09 contract's own terms. */
 export function handsOffReason(row: SessionRow): string {
@@ -61,7 +63,7 @@ export function handsOffReason(row: SessionRow): string {
     case 'unmeasured': {
       const surface = handsOff.excluded_surface;
       return surface
-        ? `Excluded: ${surface.host}${surface.surface ? ` ${surface.surface}` : ''} timestamps are too coarse (${surface.degenerate_sessions} of ${surface.qualifying_sessions} sessions)`
+        ? `Excluded: ${surfaceLabel(surface.host, surface.surface)} timestamps are too coarse (${surface.degenerate_sessions} of ${surface.qualifying_sessions} sessions)`
         : 'A record in this window leaves a stretch boundary or its tool use unknown';
     }
     case 'measured':
@@ -73,7 +75,7 @@ export function HandsOff({ row }: { row: SessionRow }) {
   const handsOff = row.hands_off;
   const median = handsOff.state === 'measured' ? handsOff.median_min : null;
   const cell = (
-    <MetricCell value={median} format={continuous} align="right" reason={handsOffReason(row)} />
+    <MetricCell value={median} format={handsOffTime} align="right" reason={handsOffReason(row)} />
   );
   return handsOff.state === 'measured' && median !== null ? (
     <span
@@ -83,7 +85,7 @@ export function HandsOff({ row }: { row: SessionRow }) {
       {cell}
       <span className="sr-only">
         {' '}
-        minutes, median of {handsOff.n} {handsOff.n === 1 ? 'stretch' : 'stretches'}
+        median of {handsOff.n} {handsOff.n === 1 ? 'stretch' : 'stretches'}
       </span>
     </span>
   ) : (

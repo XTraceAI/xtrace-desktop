@@ -139,9 +139,10 @@ fn read_observation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Observation> {
     })
 }
 impl Observation {
-    /// The recorded model name; `None` when absent or blank, as pricing treats it.
+    /// The recorded model name; `None` when absent or blank, by the one rule
+    /// pricing and the most-used model share ([`xt_store::session_model::named_model`]).
     pub(crate) fn model(&self) -> Option<&str> {
-        self.model.as_deref().filter(|s| !s.trim().is_empty())
+        xt_store::session_model::named_model(self.model.as_deref())
     }
     /// The recorded output-token counter, when present.
     pub(crate) fn output_tokens(&self) -> Option<u64> {
@@ -150,7 +151,7 @@ impl Observation {
     pub(crate) fn price(&self, catalog: &PriceCatalog) -> Result<Outcome> {
         use UnpricedReason::*;
         let unpriced = |reason| Ok(Outcome::Unpriced(reason));
-        let Some(name) = self.model.as_deref().filter(|s| !s.trim().is_empty()) else {
+        let Some(name) = self.model() else {
             return unpriced(MissingModel);
         };
         let Some(model) = catalog.model(name) else {

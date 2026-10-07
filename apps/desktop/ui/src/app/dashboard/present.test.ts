@@ -17,10 +17,16 @@ it('converts report percentage points to formatter fractions exactly once', () =
   expect(tileDelta({ ...tile, delta: { ...tile.delta, suppressed: true } })).toBeUndefined();
 });
 
-it('formats API-equivalent dollars without inventing precision', () => {
+it('formats API-equivalent dollars: cents below $100, whole dollars from $100', () => {
   expect(usd(0)).toBe('$0.00');
+  expect(usd(-0)).toBe('$0.00');
   expect(usd(0.001)).toBe('<$0.01');
-  expect(usd(1234.567)).toBe('$1,234.57');
+  expect(usd(12.4)).toBe('$12.40');
+  expect(usd(99.99)).toBe('$99.99');
+  // A value that would round to $100.00 is already whole dollars.
+  expect(usd(99.995)).toBe('$100');
+  expect(usd(250.4)).toBe('$250');
+  expect(usd(1234.567)).toBe('$1,235');
 });
 
 it('falls back to a known rule definition and system zone labels', () => {

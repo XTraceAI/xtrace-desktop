@@ -20,10 +20,22 @@ title: string | null,
 automated_review: boolean, 
 /**
  * The session start in UTC milliseconds: the start the host recorded, or,
- * for a Claude session (Claude Code records no start), its earliest
- * imported message. `null` when neither is known.
+ * for a Claude session (Claude Code records no start), its own earliest
+ * message, never one copied from a session it was forked from (the same
+ * first event sessions per day counts it on). `null` when neither is
+ * known.
  */
-started_at_ms: number | null, repo: string | null, branch: string | null, model: string | null, 
+started_at_ms: number | null, repo: string | null, branch: string | null, 
+/**
+ * The model the session used most over its whole history: most selected
+ * responses, then most output tokens, then the first name (the rule the
+ * Dashboard's effort-by-model split uses). `null` when none named one.
+ */
+model: string | null, 
+/**
+ * How many other models the session's work named besides `model`.
+ */
+other_models: number, 
 /**
  * Earliest visible work record, including inherited copies.
  */

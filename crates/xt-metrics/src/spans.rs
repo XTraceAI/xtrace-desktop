@@ -154,4 +154,36 @@ impl MetricsDb {
         }
         Ok(ActiveSpanReport { spans, active_ms })
     }
+
+    /// Agent time on the last local day of `window`, measured exactly as a
+    /// longer range's day bars measure that day: spans are folded with the
+    /// events of up to one gap before `window` too (a span joins an earlier
+    /// event only within the gap, so no older event can change them), then
+    /// [`ActiveSpanReport::by_day`] splits them at local midnight. A span
+    /// that began before the day counts from the day's start. Returns that
+    /// day and the spans that reach into it.
+    pub fn active_last_day(
+        &self,
+        window: Window,
+        zone: TimeZone,
+    ) -> Result<(DayActive, Vec<ActiveSpan>)> {
+        let read = Window::new(
+            window
+                .start_ms()
+                .checked_sub(MAX_GAP_MS)
+                .ok_or(Error::InvalidWindow)?,
+            window.end_ms(),
+        )?;
+        let report = self.active_spans(read)?;
+        let day = report
+            .by_day(read, zone)?
+            .pop()
+            .ok_or(Error::InvalidWindow)?;
+        let spans = report
+            .spans
+            .into_iter()
+            .filter(|span| span.end_ms >= day.start_ms)
+            .collect();
+        Ok((day, spans))
+    }
 }

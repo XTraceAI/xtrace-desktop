@@ -14,11 +14,13 @@ import { events } from '../data/ipc-names';
 import { queryKeys } from '../data/query-client';
 import { eventPrefixes } from '../data/subscribe-invalidation';
 import { Button } from '../kit/Button';
+import { hostName } from '../kit/hosts';
 import { MetricCell } from '../kit/MetricCell';
 import { Modal, ModalClose } from '../kit/Modal';
 import { SectionCard } from '../kit/SectionCard';
 import { Toggle } from '../kit/Toggle';
 import { useTheme, type ThemePreference } from '../theme/ThemeProvider';
+import { hostScanText } from './index-host-state';
 import { freshnessText, phaseText } from './native-index-text';
 import { useAppInfo, useDbCounts, useNativeIndexStatus } from './useAppInfo';
 import '../styles/settings.css';
@@ -368,11 +370,11 @@ export function parseBreakMinutes(text: string): number | null {
   return minutes >= MIN_BREAK_MINUTES && minutes <= MAX_BREAK_MINUTES ? minutes : null;
 }
 
-/** The saved break length the Dashboard's "your hours" read. */
+/** The saved break length the Dashboard's human time reads. */
 function BreakLength({ controls }: { controls?: HumanBreakControls }) {
   const hintId = useId();
   return (
-    <SectionCard title="Your hours">
+    <SectionCard title="Human time">
       {controls ? (
         <SavedNumberControl
           hintId={hintId}
@@ -401,7 +403,7 @@ function BreakLength({ controls }: { controls?: HumanBreakControls }) {
         </p>
       )}
       <p id={hintId} className="xt-settings-note">
-        Your hours on the Dashboard come from the times you sent messages to agents, in every
+        Human time on the Dashboard comes from the times you sent messages to agents, in every
         conversation and tool. When two of your messages are at most this many minutes apart, the
         time between them counts. A longer gap, like lunch or sleep, counts as a break. A message on
         its own adds no time.
@@ -621,7 +623,7 @@ function NativeIndex() {
 
 const hostText = (host: NativeIndexStatus['hosts'][number]) => {
   const parts = [
-    host.state,
+    hostScanText(host).label,
     `${host.sessions_imported} imported, ${host.sessions_partial} partial, ${host.sessions_skipped} skipped, ${host.records_new} new records, ${host.records_enriched} enriched`,
   ];
   if (host.diagnostics > 0)
@@ -639,8 +641,8 @@ function HostScanScope({ hosts }: { hosts: NativeIndexStatus['hosts'] }) {
   if (hosts.length === 0) return null;
   return (
     <p className="xt-settings-note" data-testid="native-index-scope">
-      Complete and incomplete describe each host&apos;s last scan of the sources this index reads,
-      not all of that host&apos;s history.
+      &ldquo;Read&rdquo; and &ldquo;Read with gaps&rdquo; describe each host&apos;s last scan of the
+      sources this index reads, not all of that host&apos;s history.
       {hosts.some((host) => host.host === 'cursor') &&
         " Conversations kept only in the Cursor IDE's database are not read, so they are not in Cursor's counts."}
     </p>
@@ -671,7 +673,7 @@ function NativeIndexSummary({ status }: { status: NativeIndexStatus }) {
       </dd>
       {status.hosts.map((host) => (
         <Fragment key={host.host}>
-          <dt>{host.host}</dt>
+          <dt>{hostName(host.host)}</dt>
           <dd>
             <span>{hostText(host)}</span>
             <SkippedConversations host={host} />

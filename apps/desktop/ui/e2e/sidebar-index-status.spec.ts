@@ -12,9 +12,16 @@ import type { NativeIndexStatus } from '../src/data/generated/NativeIndexStatus'
  * window, and nothing about a plugin is inferred from the index or the other
  * way round.
  */
-const scan = (host: string, state: NativeHostState, detail: string | null = null) => ({
+const scan = (
+  host: string,
+  state: NativeHostState,
+  detail: string | null = null,
+  // The app's answer; a waiting host is passed explicitly.
+  needs_attention = state !== 'complete' && state !== 'missing_source',
+) => ({
   host,
   state,
+  needs_attention,
   detail,
   sessions_imported: 1,
   sessions_partial: 0,
@@ -31,6 +38,7 @@ const ready: NativeIndexStatus = {
   python: { state: 'available', path: '/synthetic/python3' },
   readers: { state: 'verified', commit: '0'.repeat(40), plugin_version: '0.0.0' },
   hosts: [scan('claude', 'complete'), scan('cursor', 'missing_source')],
+  needs_attention: false,
   reconciles: 2,
   files_scanned: 3,
 };
@@ -42,12 +50,13 @@ const partial: NativeIndexStatus = {
     scan('codex', 'reader_failed', `synthetic-reader-detail-${'x'.repeat(120)}`),
     scan('cursor', 'complete'),
   ],
+  needs_attention: true,
 };
 const scanning: NativeIndexStatus = {
   ...ready,
   phase: { phase: 'scanning' },
   freshness: { freshness: 'unknown' },
-  hosts: [scan('claude', 'pending'), scan('codex', 'pending'), scan('cursor', 'pending')],
+  hosts: (['claude', 'codex', 'cursor'] as const).map((host) => scan(host, 'pending', null, false)),
   reconciles: 0,
 };
 
@@ -160,13 +169,13 @@ for (const [width, height] of [
       // never that stored history is missing.
       await expect(
         dialog.getByText(
-          /Last scan not complete for claude \(incomplete\), codex \(reader failed\)\. The index may be incomplete or out of date for those hosts\./,
+          /Last scan not complete for Claude Code \(read with gaps\), Codex \(reader failed\)\. The index may be incomplete or out of date for those hosts\./,
         ),
       ).toBeVisible();
-      await expect(dialog.getByText('claude', { exact: true }).locator('..')).toContainText(
-        'Incomplete',
+      await expect(dialog.getByText('Claude Code', { exact: true }).locator('..')).toContainText(
+        'Read with gaps',
       );
-      await expect(dialog.getByText('codex', { exact: true }).locator('..')).toContainText(
+      await expect(dialog.getByText('Codex', { exact: true }).locator('..')).toContainText(
         'Reader failed',
       );
       await expect(dialog.getByText('Plugin receiver').locator('..')).toHaveText(
@@ -202,11 +211,11 @@ for (const scheme of ['light', 'dark'] as const)
     );
     await trigger(page).click();
     // An absent source is its own neutral fact, not a failure and not “complete”.
-    await expect(panel(page).getByText('cursor', { exact: true }).locator('..')).toHaveText(
-      'cursorNo local history found',
+    await expect(panel(page).getByText('Cursor', { exact: true }).locator('..')).toHaveText(
+      'CursorNo local history found',
     );
     // Neutral states are plain values: neither the warning nor the success colour.
-    for (const words of ['No local history found', 'Complete'])
+    for (const words of ['No local history found', 'Read'])
       await expect(panel(page).getByText(words, { exact: true })).toHaveCSS(
         'color',
         await token(page, '--ink'),
@@ -224,7 +233,7 @@ test('a scanning index is neither green nor a warning, and its waiting hosts are
     await token(page, '--meta'),
   );
   await trigger(page).click();
-  await expect(panel(page).getByText('Not scanned yet')).toHaveCount(3);
+  await expect(panel(page).getByText('Waiting to be read')).toHaveCount(3);
   await expect(panel(page).getByText(/Last scan not complete/)).toHaveCount(0);
 });
 

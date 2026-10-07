@@ -191,8 +191,8 @@ it('shows a synthetic skill with an unknown inventory beside separately labelled
   ]);
   expect(read.querySelector('.xt-kind')!.textContent).toBe('skill');
   expect(read.querySelector('.xt-env-name')!.textContent).toBe('Review');
-  expect(read.querySelector('.xt-env-host')!.textContent).toBe(' · claude');
-  expect(tool.getAttribute('title')).toBe('Review · skill · claude · cli');
+  expect(read.querySelector('.xt-env-host')!.textContent).toBe(' · Claude Code');
+  expect(tool.getAttribute('title')).toBe('Review · skill · Claude Code · cli');
   expect(topList().getAttribute('tabindex')).toBe('0');
   // One column header sits over the list, outside the rows that scroll, and describes it: the
   // tool with its kind and host, the fixed 14-day strips, then the selected range's calls. The
@@ -208,7 +208,7 @@ it('shows a synthetic skill with an unknown inventory beside separately labelled
   ]);
   expect(columns.parentElement!.style.getPropertyValue('--calls')).toBe('7');
   const strip = within(read).getByRole('group', {
-    name: 'Review, claude: 5 calls per local day, last 14 days',
+    name: 'Review, Claude Code: 5 calls per local day, last 14 days',
   });
   const days = within(strip).getAllByRole('img');
   expect(days).toHaveLength(14);
@@ -217,7 +217,7 @@ it('shows a synthetic skill with an unknown inventory beside separately labelled
   expect(within(panel()).queryByTestId('environment-unresolved')).toBeNull();
   const observed = await observedDialog(1);
   expect(row('Review', observed).querySelector('.xt-env-context')!.textContent).toBe(
-    'skill claude · cli',
+    'skill Claude Code · cli',
   );
   fireEvent.keyDown(observed, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -260,19 +260,19 @@ it('shows a synthetic skill with an unknown inventory beside separately labelled
   );
   const configured = within(dialog).getByRole('list', { name: 'Configured components' });
   expect(within(configured).getAllByRole('listitem')).toHaveLength(14);
-  expect(text).toContain('claude · plugin · cloudflare@cloudflare');
+  expect(text).toContain('Claude Code · plugin · cloudflare@cloudflare');
   expect(text).toContain('Claude plugin enablement settings · home · disabled');
   expect(text).toContain('Claude skills directory · home · enablement not stated');
   const sources = within(dialog).getByRole('list', { name: 'Configuration sources' });
   expect(sources.textContent).toContain(
-    'claude · Claude skills directory · home 1incomplete · 2 stated, 1 skipped (entries without the documented shape)',
+    'Claude Code · Claude skills directory · home 1incomplete · 2 stated, 1 skipped (entries without the documented shape)',
   );
-  expect(sources.textContent).toContain('cursor · Cursor MCP config · repository 1not present');
+  expect(sources.textContent).toContain('Cursor · Cursor MCP config · repository 1not present');
   expect(text).toContain('Roots: home 1 read · repository 1 read · repository 2 read.');
   // Cache observations are labelled cache only, apart from configured components.
   const cache = within(dialog).getByRole('list', { name: 'Plugin cache observations' });
   expect(cache.closest('section')!.querySelector('h3')!.textContent).toBe('Cache only');
-  expect(cache.textContent).toContain('codex · Codex plugin cache · home 1read · 1 stated');
+  expect(cache.textContent).toContain('Codex · Codex plugin cache · home 1read · 1 stated');
   expect(within(configured).queryByText(/cache/i)).toBeNull();
   // No path, command, URL or credential-shaped value is rendered.
   expect(text).not.toMatch(/SYNTHETIC-FIXTURE-VALUE|https?:|\/Users|\.json|\.toml|\.claude|npx|--/);
@@ -308,7 +308,7 @@ it('shows the top eight identities in Rust order and every identity in a dialog'
   // A strip-only identity keeps its selected-range zero and its strip surface.
   const patch = row('apply_patch', all);
   expect(patch.querySelector('.xt-env-calls')!.textContent).toBe('0 calls');
-  expect(patch.querySelector('.xt-env-context')!.textContent).toBe('skill codex · cli');
+  expect(patch.querySelector('.xt-env-context')!.textContent).toBe('skill Codex · cli');
   // The dialog keeps its richer row: name, calls, then kind with host and surface over the strip.
   expect([...patch.children].map((cell) => cell.className.split(' ')[0])).toEqual([
     'xt-env-name',
@@ -352,9 +352,9 @@ it('sizes the calls column to the longest count shown and keeps a long name with
   const long = row('Bash-with-a-tool-name');
   expect(long.querySelector('.xt-env-calls')!.textContent).toBe('123,456 calls');
   expect(long.querySelector('.xt-kind')!.textContent).toBe('skill');
-  expect(long.querySelector('.xt-env-host')!.textContent).toBe(' · claude');
+  expect(long.querySelector('.xt-env-host')!.textContent).toBe(' · Claude Code');
   expect(long.querySelector('.xt-env-tool')!.getAttribute('title')).toBe(
-    'Bash-with-a-tool-name-longer-than-any-card-line-can-show-at-once · skill · claude · cli',
+    'Bash-with-a-tool-name-longer-than-any-card-line-can-show-at-once · skill · Claude Code · cli',
   );
   // Hook rows count events; the column takes the longest text, whatever its unit.
   expect(row('Hook summary events').querySelector('.xt-env-calls')!.textContent).toBe('20 events');
@@ -406,7 +406,7 @@ it('labels hook summaries as events and shows what cannot be attributed', async 
   expect(hook.textContent).not.toMatch(/stop_hook_summary|calls/);
   const observed = await observedDialog(11);
   expect(row('Hook summary events', observed).querySelector('.xt-env-context')!.textContent).toBe(
-    'hook claude · cli',
+    'hook Claude Code · cli',
   );
   fireEvent.keyDown(observed, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -424,10 +424,10 @@ it('labels hook summaries as events and shows what cannot be attributed', async 
       .getAllByRole('listitem')
       .map((item) => item.textContent),
   ).toEqual([
-    'claude · 20 hook summary events: a summary says hooks ran, not which one',
-    'claude · 6 skill calls: skill name not stated',
-    'claude · 4 calls: kind not recorded',
-    'claude · 1 MCP call: server and tool not stated',
+    'Claude Code · 20 hook summary events: a summary says hooks ran, not which one',
+    'Claude Code · 6 skill calls: skill name not stated',
+    'Claude Code · 4 calls: kind not recorded',
+    'Claude Code · 1 MCP call: server and tool not stated',
   ]);
   expect(dialog.textContent).not.toMatch(inventoryClaims);
 });
@@ -534,9 +534,9 @@ it('states unresolved counts without a denominator and keeps untimed observation
   fireEvent.focus(flag());
   const gist = await screen.findByRole('tooltip');
   expect(gist.textContent).toMatch(/^38 unresolved observations, including untimed: cannot be/);
-  expect(gist.textContent).toContain('In the last 7d: claude · 20 hook summary events');
+  expect(gist.textContent).toContain('In the last 7d: Claude Code · 20 hook summary events');
   expect(gist.textContent).toContain(
-    `Untimed, in no selected range: codex · ${SYNTHETIC_UNTIMED} untimed observations`,
+    `Untimed, in no selected range: Codex · ${SYNTHETIC_UNTIMED} untimed observations`,
   );
   expect(gist.textContent).not.toMatch(/\d+ of \d+|%/);
   expect(within(gist).queryByRole('button')).toBeNull();
@@ -553,7 +553,7 @@ it('states unresolved counts without a denominator and keeps untimed observation
       .getAllByRole('listitem')
       .map((item) => item.textContent),
   ).toEqual([
-    `codex · ${SYNTHETIC_UNTIMED} untimed observations: no timestamp, so no selected range can hold it`,
+    `Codex · ${SYNTHETIC_UNTIMED} untimed observations: no timestamp, so no selected range can hold it`,
   ]);
   expect(untimed.closest('section')!.textContent).toContain(
     'cannot be assigned to any selected range',
@@ -577,7 +577,7 @@ it('names only untimed observations when every unresolved one lacks a timestamp'
   const dialog = await unresolvedDialog();
   expect(within(dialog).queryByRole('list', { name: /Unresolved in the last/ })).toBeNull();
   expect(within(dialog).getByRole('list', { name: 'Untimed observations' }).textContent).toBe(
-    'claude · 3 untimed observations: no timestamp, so no selected range can hold it',
+    'Claude Code · 3 untimed observations: no timestamp, so no selected range can hold it',
   );
 });
 
@@ -590,10 +590,10 @@ it('keeps unknown kinds, unknown details and raw future surfaces visible', async
   expect(row('Composer').querySelector('.xt-kind')!.textContent).toBe('future_kind');
   const all = await observedDialog(11);
   const context = (name: string) => row(name, all).querySelector('.xt-env-context')!.textContent;
-  expect(context('shell')).toBe('skill codex · future.app');
-  expect(context('Composer')).toBe('future_kind cursor · unknown surface');
-  expect(context('LegacyTool')).toBe('unknown kind claude · cli');
-  expect(context('review')).toBe('command claude · cli');
+  expect(context('shell')).toBe('skill Codex · future.app');
+  expect(context('Composer')).toBe('future_kind Cursor · unknown surface');
+  expect(context('LegacyTool')).toBe('unknown kind Claude Code · cli');
+  expect(context('review')).toBe('command Claude Code · cli');
 });
 
 it('updates selected totals with the range while the strip keeps its fixed 14 dates', async () => {
@@ -762,10 +762,10 @@ it('says no configured component was verified when a source was not fully read',
     .getAllByRole('listitem')
     .map((item) => item.textContent);
   expect(lines[0]).toBe(
-    'claude · Claude skills directory · home 1incomplete · at least 257 entries, at least 257 skipped (over the entry limit; the listing stopped, so both are lower bounds)',
+    'Claude Code · Claude skills directory · home 1incomplete · at least 257 entries, at least 257 skipped (over the entry limit; the listing stopped, so both are lower bounds)',
   );
   expect(lines[3]).toBe(
-    'cursor · Cursor MCP config · home 1incomplete · 300 stated, 300 skipped (over the entry limit)',
+    'Cursor · Cursor MCP config · home 1incomplete · 300 stated, 300 skipped (over the entry limit)',
   );
   const cache = within(dialog).getByRole('list', { name: 'Plugin cache observations' });
   expect(cache.textContent).toContain('at least 257 entries');

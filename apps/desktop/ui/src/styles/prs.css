@@ -400,8 +400,12 @@
     monospace;
   font-variant-numeric: tabular-nums;
 }
+.xt-prs-type-values > span {
+  min-width: 0;
+  max-width: 100%;
+}
 .xt-prs-type-value {
-  white-space: nowrap;
+  white-space: normal;
 }
 .xt-prs-type-note {
   margin: 0;

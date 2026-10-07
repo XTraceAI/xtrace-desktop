@@ -7,6 +7,7 @@ import type { EnvRootState } from '../../data/generated/EnvRootState';
 import type { EnvSourceStatus } from '../../data/generated/EnvSourceStatus';
 import type { MetricToolIdentity } from '../../data/generated/MetricToolIdentity';
 import type { MetricUnresolvedReason } from '../../data/generated/MetricUnresolvedReason';
+import { calendarDay } from '../../kit/clock';
 import type { ControlTone } from '../../kit/control-tone';
 import { plural, surfaceLabel } from './present';
 
@@ -85,16 +86,8 @@ export function rowSurfaces(report: EnvironmentMetrics, row: EnvIdentityRow): st
   return selected.length > 0 ? selected : find(report.strip);
 }
 
-const dayFormat = new Intl.DateTimeFormat('en-US', {
-  month: 'short',
-  day: 'numeric',
-  timeZone: 'UTC',
-});
 /** A local calendar date (`YYYY-MM-DD`) as a label; the date is already local to the report. */
-export const dayLabel = (date: string) => {
-  const parsed = Date.parse(`${date}T00:00:00Z`);
-  return Number.isFinite(parsed) ? dayFormat.format(parsed) : date;
-};
+export const dayLabel = (date: string) => calendarDay(date);
 
 /** What each unresolved group is; none of these calls can be credited to a named component. */
 export const unresolvedText: Record<MetricUnresolvedReason, (calls: number) => string> = {

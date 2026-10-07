@@ -7,6 +7,7 @@ import type { DataSource, Unsubscribe } from '../data/DataSource';
 import type { FixtureExport } from '../data/generated/FixtureExport';
 import type { PrList } from '../data/generated/PrList';
 import type { DataEvent } from '../data/ipc-names';
+import { clock } from '../kit/clock';
 import { ThemeProvider } from '../theme/ThemeProvider';
 import { AppRoutes } from './AppRoutes';
 
@@ -123,15 +124,7 @@ export const loaded = async (text: string | RegExp) =>
 export const meta = () => document.querySelector('.xt-section-meta')!.textContent;
 
 /** The page's own format, restated so an expectation does not depend on the machine's zone. */
-export const shown = (ms: number) =>
-  new Date(ms).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  });
+export const shown = (ms: number) => clock(ms, { date: 'year' });
 
 export const deferred = <T,>() => {
   let resolve!: (value: T) => void;

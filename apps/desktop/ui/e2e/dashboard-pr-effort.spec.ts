@@ -179,7 +179,7 @@ for (const [width, height] of [
       // The range's total above one bar per day with agent time (four of
       // seven days); three marker days counting five pull requests; a usable
       // plot with its scale and a seven-day axis; all inside the card.
-      expect(layout.headline).toBe('0.8 agent hlast 7 days');
+      expect(layout.headline).toBe('0h50m agentlast 7 days');
       expect(layout.days).toBe(7);
       expect(layout.headlineClearance).toBeGreaterThanOrEqual(0);
       expect(layout.bars).toBe(4);
@@ -249,7 +249,7 @@ for (const scheme of ['light', 'dark'] as const)
     await page.getByRole('button', { name: 'Effort definition' }).blur();
     // Agent hours: the range's total, the 24 h line and a note for the day above it.
     await expect(effort.getByTestId('effort-headline')).toHaveText(
-      /^29 agent hlast 7 days1 day above 24 h$/,
+      /^29h00m agentlast 7 days1 day above 24 h$/,
     );
     await expect(effort.getByTestId('effort-reference')).toHaveText('24 h');
     // The scale's top label, "30 h", stays clear of the total above it.
@@ -264,15 +264,15 @@ for (const scheme of ['light', 'dark'] as const)
       .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-date')!));
     const [, , second, third, , fifth] = dates;
     await expect(day(second!)).toHaveAccessibleName(
-      `${second}: 26 h. gpt-6-astra 20 h (77%), claude-opus-5-5 6 h (23%). Above 24 h: agents ran at the same time. merged #7`,
+      `${second}: 26h00m. gpt-6-astra 20h00m (77%), claude-opus-5-5 6h00m (23%). Above 24 h: agents ran at the same time. merged #7`,
     );
     await day(second!).hover();
     // The open card only: a closing one can still be leaving as the next opens.
     const tip = page.locator('[data-testid="effort-day-card"][data-open]');
     await expect(tip).toBeVisible();
     await expect(tip.getByTestId('effort-day-model')).toHaveText([
-      'gpt-6-astra20 h77%',
-      'claude-opus-5-56 h23%',
+      'gpt-6-astra20h00m77%',
+      'claude-opus-5-56h00m23%',
     ]);
     await expect(tip).toContainText('Above 24 h: agents ran at the same time');
     await card(page).screenshot({ path: info.outputPath(`effort-card-hours-${scheme}.png`) });
@@ -310,7 +310,7 @@ for (const scheme of ['light', 'dark'] as const)
     await expect(tip).not.toContainText('No price: 128');
     await day(dates[4]!).blur();
     await day(second!).hover();
-    await expect(tip).toContainText('$420.00');
+    await expect(tip).toContainText('$420');
     await card(page).screenshot({ path: info.outputPath(`effort-card-cost-${scheme}.png`) });
   });
 
@@ -337,21 +337,28 @@ test('refreshes the F1 fixture from the keyboard and updates the tile after the 
   await dialog.getByRole('button', { name: 'Refresh 3 pull requests' }).focus();
   await page.keyboard.press('Enter');
   await expect(dialog.getByTestId('pr-refresh-report')).toHaveText(
-    'Requested 3: 2 refreshed, 1 failed, 0 skipped. Stored facts changed; the Dashboard reads them again.',
+    'Requested 3: 2 checked, 1 could not be checked, 0 skipped. Stored facts changed; the Dashboard reads them again.',
   );
-  await expect(dialog).toContainText('Failed: rate limited; earlier facts are kept');
+  await expect(dialog).toContainText('Could not be checked: rate limited; earlier facts are kept');
+  // While the dialog is open the mark stays, so its result stays reachable.
+  // (The page behind the dialog is hidden from the accessibility tree, so
+  // the mark is found by its test id rather than through the card's heading.)
+  await expect(page.getByTestId('pr-attention')).toHaveCount(1);
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
-  await expect(trigger).toBeFocused();
   // #12's check failed: it was checked, but could not be.
   await expect(tile).toContainText('0so far1 could not be checked');
-  // The status that used to sit under the chart now opens the dialog; the
-  // failed check keeps the red ! there.
+  // A rate limit is about the whole run and temporary, so the manual refresh
+  // does not mark #12 as tried: the red ! still asks, and focus is back on it.
+  // Nothing is left under the chart.
+  const mark = card(page).getByTestId('pr-attention');
+  await expect(mark).toHaveAttribute('data-state', 'attention');
+  await expect(mark).toBeFocused();
   await expect(card(page).getByTestId('pr-refresh')).toHaveCount(0);
   await expect(trigger).toHaveAttribute('data-state', 'attention');
   await page.keyboard.press('Enter');
   await expect(dialog.getByTestId('pr-refresh')).toContainText(
-    'Confirmed-linked pull requests: 1 refreshed, 1 failed, never refreshed',
+    'Confirmed-linked pull requests: 1 checked, 1 could not be checked',
   );
   await page.keyboard.press('Escape');
 });

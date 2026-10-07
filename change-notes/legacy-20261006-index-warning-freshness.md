@@ -1,0 +1,1 @@
+- Keep index warnings consistent and judge usage freshness from the reading's saved time.

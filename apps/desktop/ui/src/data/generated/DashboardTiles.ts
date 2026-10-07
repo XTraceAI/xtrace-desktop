@@ -3,7 +3,7 @@ import type { MetricTile } from "./MetricTile";
 
 export type DashboardTiles = { agent_hours: MetricTile, agent_hours_per_day: MetricTile, 
 /**
- * Agent hours divided by "your hours" ([`DashboardHumanHours`]) over the
- * window; unknown when your hours are zero or unknown.
+ * Agent hours divided by human time ([`DashboardHumanHours`]) over the
+ * window; unknown when human time is zero or unknown.
  */
 leverage: MetricTile, human_hours_est: MetricTile, concurrency_max: MetricTile, concurrency_mean: MetricTile, hands_off_median: MetricTile, hands_off_p90: MetricTile, sessions: MetricTile, human_messages: MetricTile, assistant_turns: MetricTile, tool_calls: MetricTile, sessions_per_day: MetricTile, tokens: MetricTile, cost: MetricTile, merged_prs: MetricTile, rule_fires: MetricTile, };

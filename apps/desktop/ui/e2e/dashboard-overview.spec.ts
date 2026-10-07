@@ -130,13 +130,24 @@ test('the Effort switch and a day of the timeline work from the keyboard', async
   await page.keyboard.press('Shift+Tab');
   await page.keyboard.press('Tab');
   await expect(last).toBeFocused();
-  await expect(page.locator('.xt-effort-tip')).toBeVisible();
-  await expect(page.locator('.xt-effort-tip-head')).toContainText('Sep 7');
+  // These visual-only day popups are aria-hidden and their triggers carry
+  // no described-by/controls link. Select the active card for the fixed day,
+  // so another day's closing animation cannot make the query ambiguous.
+  const activeDayCard = (day: string) =>
+    page.locator('.xt-effort-tip[data-open]').filter({
+      has: page.locator('.xt-effort-tip-head > span', { hasText: new RegExp(`^${day}$`) }),
+    });
+  await expect(page.locator('.xt-effort-tip[data-open]')).toHaveCount(1);
+  await expect(activeDayCard('Sep 7')).toHaveCount(1);
+  await expect(activeDayCard('Sep 7')).toBeVisible();
+  await expect(activeDayCard('Sep 7').locator('.xt-effort-tip-head')).toContainText('Sep 7');
   await page.keyboard.press('ArrowUp');
   const before = days.nth(-2);
   await expect(before).toBeFocused();
   await expect(before).toHaveAttribute('aria-label', /^Sep 6: /);
-  await expect(page.locator('.xt-effort-tip-head')).toContainText('Sep 6');
+  await expect(page.locator('.xt-effort-tip[data-open]')).toHaveCount(1);
+  await expect(activeDayCard('Sep 6')).toHaveCount(1);
+  await expect(activeDayCard('Sep 6').locator('.xt-effort-tip-head')).toContainText('Sep 6');
   await expect(timeline.locator('[tabindex="0"]')).toHaveCount(1);
   await page.keyboard.press('Home');
   await expect(days.first()).toBeFocused();

@@ -154,7 +154,7 @@ it('keeps unknown, measured zero, no sample, unresolved, stale and excluded apar
   expect(unmeasured(untitled).join()).toContain('stretch boundary unknown');
   // Facts kept after a failed refresh are marked stale.
   expect(within(rowOf('example/harbor#8')).getByText('stale').getAttribute('title')).toMatch(
-    /last refresh failed \(rate limited\); earlier facts kept/,
+    /stale after a failed check \(rate limited\); earlier facts kept/,
   );
   // An excluded surface is named where the row's hands-off leaves it out.
   const desk = rowOf('example/atlas#103');
@@ -255,7 +255,7 @@ it('withholds token medians when the fixed gate fails, and only them', async () 
   const report = syntheticReport(scenarios.sparse, 30, false).report;
   expect(report.summary.tokens.withheld).toBe('gate_failed');
   expect(unmeasured(tile('Tokens / PR'))[0]).toMatch(
-    /^Withheld: Token\+model coverage over the fixed 14 days Aug 25\s–\sSep 7, 2026: 0 of 2 sessions measured with a model \(0%\); token medians need at least 90%$/,
+    /^Withheld: Token\+model coverage over the fixed 14 days Aug 25\s–\sSep 7, 2026: 0 of 2 sessions measured with a model \(0%, below the 90% gate\); token medians need at least 90%$/,
   );
   // Row totals are not gated, and the other medians stand.
   const row = rowOf('example/harbor#20');

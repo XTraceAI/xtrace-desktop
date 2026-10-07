@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { MetricSessionStretch } from '../../data/generated/MetricSessionStretch';
+import { surfaceLabel } from '../../kit/hosts';
 import {
   activeDuration,
   circlingText,
@@ -94,12 +95,12 @@ it('names an excluded surface as the reason, without claiming the session’s ti
     degenerate_sessions: 3,
   });
   expect(screen.getByText(said)).toBeTruthy();
-  expect(said).toContain('claude raw-batched surface');
+  expect(said).toContain('Claude Code · raw-batched in this range');
   expect(said).toContain('(3 of 5)');
   // The surface's health is what excluded it. Nothing here says this session's
   // own timestamps are missing, absent or unrecorded.
   expect(said).not.toMatch(/missing|absent|no timestamp|unrecorded/i);
-  // An unlabelled surface is named as unlabelled rather than as nothing.
+  // A surface with no label is named as every screen names it, rather than as nothing.
   expect(
     unmeasuredText({
       host: 'codex',
@@ -107,7 +108,8 @@ it('names an excluded surface as the reason, without claiming the session’s ti
       qualifying_sessions: 3,
       degenerate_sessions: 3,
     }),
-  ).toContain('codex unlabelled surface');
+  ).toContain(`on ${surfaceLabel('codex', null)} in this range`);
+  expect(surfaceLabel('codex', null)).toBe('Codex · unknown surface');
 });
 
 it('says a session unmeasured on its own records is unmeasured for either reason', () => {
@@ -142,10 +144,10 @@ it('lays the stretches out in the order M-09 stated them, never re-sorted', () =
     [target('a:0'), target('b:0'), target('c:0')],
   );
   const labels = screen.getAllByRole('button').map((button) => button.getAttribute('aria-label'));
-  expect(labels.map((label) => label?.match(/lasted (\d+ min)/)?.[1])).toEqual([
-    '1 min',
-    '2 min',
-    '3 min',
+  expect(labels.map((label) => label?.match(/lasted (\d+ minutes?)/)?.[1])).toEqual([
+    '1 minute',
+    '2 minutes',
+    '3 minutes',
   ]);
 });
 
@@ -165,8 +167,8 @@ it('states each stretch’s length from its own duration, never from its endpoin
     [target('a:0')],
   );
   const button = screen.getByRole('button');
-  expect(within(button).getByText('1 min 30 s')).toBeTruthy();
-  expect(button.getAttribute('aria-label')).toContain('lasted 1 min 30 s');
+  expect(within(button).getByText('1.5 min')).toBeTruthy();
+  expect(button.getAttribute('aria-label')).toContain('lasted 1.5 minutes');
   expect(button.textContent).not.toContain('10 min');
 });
 
@@ -189,7 +191,7 @@ it('makes every segment a native button that says when, how long, and what press
   expect(first.getAttribute('aria-pressed')).toBe('false');
   expect(second.getAttribute('aria-pressed')).toBe('true');
   expect(first.getAttribute('aria-label')).toMatch(
-    /^Stretch 1 of 2, started .+, lasted 1 min, 1 min of it active, no repeats, not circling, shows its first tool call in the transcript$/,
+    /^Stretch 1 of 2, started .+, lasted 1 minute, 1 minute of it active, no repeats, not circling, shows its first tool call in the transcript$/,
   );
   expect(first.getAttribute('aria-label')).toContain(stretchStart('2026-09-07T12:00:00Z')!);
   // A stretch whose call cannot be shown is still a measured stretch, still a
@@ -297,13 +299,16 @@ it('announces what the last press did in a polite live region', () => {
   expect(live.textContent).toBe('Showing the first tool call of stretch 1: Read.');
 });
 
-it('words a duration at the scale it has, and never as zero', () => {
-  expect(stretchDuration(400)).toBe('1 s');
-  expect(stretchDuration(45_000)).toBe('45 s');
+it('words a length as all hands-off time is written, and a brief one never as zero', () => {
+  // Hands-off time is its own quantity: minutes, as every median of it reads.
+  expect(stretchDuration(400)).toBe('<0.1 min');
+  expect(stretchDuration(45_000)).toBe('0.8 min');
   expect(stretchDuration(60_000)).toBe('1 min');
-  expect(stretchDuration(90_000)).toBe('1 min 30 s');
-  expect(stretchDuration(3_600_000)).toBe('1 h');
-  expect(stretchDuration(5_400_000)).toBe('1 h 30 min');
+  expect(stretchDuration(90_000)).toBe('1.5 min');
+  expect(stretchDuration(3_600_000)).toBe('60 min');
+  expect(stretchDuration(5_400_000)).toBe('90 min');
+  expect(stretchDuration(5_400_000, true)).toBe('90 minutes');
+  expect(stretchDuration(60_000, true)).toBe('1 minute');
 });
 
 it('says a start time it cannot read is unreadable rather than inventing one', () => {
@@ -349,7 +354,7 @@ const worst = (tool_name: string, count: number) => ({
 it('says a stretch whose calls all differed had no repeats, as a measurement', () => {
   show(measuredWith([stretch('2026-09-07T12:00:00Z', 300_000)]), [target('a:0')]);
   const [segment] = screen.getAllByRole('button');
-  expect(within(segment).getByText('5 min active · no repeats')).toBeTruthy();
+  expect(within(segment).getByText('0h05m active · no repeats')).toBeTruthy();
   expect(segment.getAttribute('aria-label')).toContain(', no repeats, not circling,');
   expect(segment.getAttribute('data-circling')).toBeNull();
   expect(within(segment).queryByText('Circling')).toBeNull();
@@ -377,7 +382,7 @@ it.each([
       0,
     );
     const [segment] = screen.getAllByRole('button', { name: /^Stretch/ });
-    expect(within(segment).getByText('10 min active · repeats unknown')).toBeTruthy();
+    expect(within(segment).getByText('0h10m active · repeats unknown')).toBeTruthy();
     const label = segment.getAttribute('aria-label')!;
     expect(label).toContain(`repeats not counted: ${unknownRepeatsText(reason)}`);
     expect(label).toContain('whether it was circling is not known');
@@ -429,9 +434,9 @@ it('sets apart only the stretches the metric judged circling, and keeps M-09’s
   // Never re-ranked by repeats: the order is the one the metric stated.
   expect(
     segments.map((segment) => segment.getAttribute('aria-label')?.match(/lasted ([^,]+)/)?.[1]),
-  ).toEqual(['4 min', '15 min', '15 min']);
+  ).toEqual(['4 minutes', '15 minutes', '15 minutes']);
   expect(segments[0].getAttribute('aria-label')).toContain(
-    '4 min of it active, 5 repeats, most repeated: Edit, 6 calls, circling,',
+    '4 minutes of it active, 5 repeats, most repeated: Edit, 6 calls, circling,',
   );
   expect(segments[1].getAttribute('aria-label')).toContain(', not circling,');
 });
@@ -448,7 +453,7 @@ it('names the most repeated call by its tool and count only', () => {
     [target('a:0')],
   );
   const [segment] = screen.getAllByRole('button');
-  expect(within(segment).getByText('6 min active · 8 repeats · Edit ×9')).toBeTruthy();
+  expect(within(segment).getByText('0h06m active · 8 repeats · Edit ×9')).toBeTruthy();
   // The representative is a position for the reveal, not something to show.
   expect(segment.textContent).not.toContain('rec');
   expect(segment.getAttribute('aria-label')).not.toContain('rec');
@@ -473,11 +478,11 @@ it('states active time apart from the stretch’s length, including an honest ze
     [target('a:0'), target('b:0')],
   );
   const [idle, none] = screen.getAllByRole('button');
-  expect(within(idle).getByText('1 h 1 min')).toBeTruthy();
-  expect(within(idle).getByText('1 min active · 19 repeats · Edit ×20')).toBeTruthy();
-  expect(idle.getAttribute('aria-label')).toContain('lasted 1 h 1 min, 1 min of it active');
-  expect(activeDuration(0)).toBe('0 s');
-  expect(within(none).getByText('0 s active · no repeats')).toBeTruthy();
+  expect(within(idle).getByText('61 min')).toBeTruthy();
+  expect(within(idle).getByText('0h01m active · 19 repeats · Edit ×20')).toBeTruthy();
+  expect(idle.getAttribute('aria-label')).toContain('lasted 61 minutes, 1 minute of it active');
+  expect(activeDuration(0)).toBe('0h00m');
+  expect(within(none).getByText('0h00m active · no repeats')).toBeTruthy();
 });
 
 it('explains circling from the thresholds the answer carried, without calling anyone wrong', () => {
@@ -487,7 +492,7 @@ it('explains circling from the thresholds the answer carried, without calling an
   );
   const said = circlingText({ active_ms: 300_000, repeats: 7 });
   expect(screen.getByText(said)).toBeTruthy();
-  expect(said).toContain('at least 5 min of active time and at least 7 repeats');
+  expect(said).toContain('at least 5 minutes of active time and at least 7 repeats');
   expect(said).toContain('same tool with the same command, path or pattern');
   expect(said).toContain('it does not say the agent did anything wrong');
   expect(circlingText({ active_ms: 240_000, repeats: 1 })).toContain('at least 1 repeat.');

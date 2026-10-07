@@ -1,0 +1,1 @@
+- Make today's agent time in the tray match the Dashboard, including activity crossing midnight.
