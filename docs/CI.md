@@ -69,14 +69,53 @@ distinct predecessor detects installed hook declarations removed by the candidat
 using the candidate itself as its baseline would lose that protection. Earlier
 merged changes still require their own recorded local validation before merging.
 Release mode additionally builds and launches the production app configuration.
-Only the validated, secret-scanned SBOM is uploaded. The recorded candidate SHA
-identifies the tested source; the workflow does not publish a downloadable app.
+The validation job uploads the validated, secret-scanned SBOM and has no signing
+values.
+
+Only after validation passes does the `package` job build the signed disk image,
+in the `macos-signing` GitHub environment. It compiles the release app without
+any Apple values, then one step runs `node scripts/ci/release-dmg.mjs`, which:
+
+1. runs `pnpm tauri bundle --bundles app,dmg` so Tauri signs the app with the
+   hardened runtime and no extra entitlements, notarizes it and staples the ticket;
+2. checks the app's Developer ID team, timestamp, hardened runtime, stapled ticket
+   and Gatekeeper result, because Tauri only warns when notarization settings are
+   incomplete;
+3. mounts the disk image and checks the window layout with
+   `scripts/ci/dmg-layout.mjs`: the app and the Applications shortcut must sit
+   where `bundle.macOS.dmg` in `tauri.conf.json` places them, and the background
+   picture must exist. Finder sometimes saves the window before it moves the icons,
+   so a wrong layout is rebuilt up to three times before the job fails;
+4. notarizes and staples the disk image, then requires
+   `spctl -a -t open --context context:primary-signature`, `xcrun stapler validate`
+   and `hdiutil verify` to pass and checks the mounted app again;
+5. writes `artifacts/release/XTrace-Desktop-VERSION-macos-arm64.dmg` and its
+   SHA-256 file, which the workflow uploads as the `dmg-CANDIDATE_SHA` artifact.
+
+The workflow never creates or edits a GitHub release; attaching the disk image to
+a release is the release owner's separate step. To run the layout check on any
+local disk image, use `node scripts/ci/dmg-layout.mjs PATH_TO.dmg`. Local installs
+and `pnpm check:native` still build with `--bundles app` only.
+
+The `macos-signing` environment must require a maintainer's approval and holds
+these secrets:
+
+| Secret                       | Value                                                                        |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| `APPLE_CERTIFICATE`          | Base64 of the exported Developer ID Application `.p12`, with its private key |
+| `APPLE_CERTIFICATE_PASSWORD` | Password chosen when exporting that `.p12`                                   |
+| `APPLE_API_KEY`              | App Store Connect API key ID (10 characters)                                 |
+| `APPLE_API_ISSUER`           | Issuer ID for that key                                                       |
+| `APPLE_API_PRIVATE_KEY`      | Full contents of the key's `AuthKey_KEYID.p8` file                           |
+
+The signing identity is fixed in the workflow. The script writes the `.p8`
+contents to a private temporary file and deletes it when packaging ends.
 
 Before publishing each downloadable version, require successful native release
-validation for its exact source plus the separate acceptance of the final signed
-and notarized downloadable bytes. Signing, notarization, universal builds,
-Gatekeeper behavior and update delivery are not certified by this unsigned app
-launch. Changes to source or packaging invalidate the relevant release evidence.
+validation for its exact source plus acceptance of the final signed and notarized
+downloadable bytes, including a launch from `/Applications` on a Mac that has
+never run the app. Universal builds and update delivery are not covered by this
+workflow. Changes to source or packaging invalidate the relevant release evidence.
 
 `macos-14` is scheduled for retirement on November 2, 2026. Before retirement,
 replace it with a runner that preserves actual macOS 14 floor testing. Building
