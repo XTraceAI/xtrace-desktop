@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { lstat, mkdtemp, readFile, readlink, rm } from 'node:fs/promises';
+import { lstat, mkdtemp, readFile, readlink, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -138,11 +138,13 @@ export async function withMountedImage(image, inspect) {
     attached = true;
     return await inspect(mountPoint);
   } finally {
-    if (attached) {
-      const detach = spawnSync('hdiutil', ['detach', mountPoint], { stdio: 'pipe' });
-      if (detach.status !== 0) spawnSync('hdiutil', ['detach', '-force', mountPoint]);
-    }
-    await rm(mountPoint, { recursive: true, force: true });
+    // A failed attach can still leave the image mounted, so detach either way.
+    const detach = spawnSync('hdiutil', ['detach', mountPoint], { stdio: 'pipe' });
+    if (attached && detach.status !== 0)
+      spawnSync('hdiutil', ['detach', '-force', mountPoint], { stdio: 'pipe' });
+    // Only an empty folder is removed, so a volume that stayed mounted is left alone
+    // and the original error is kept.
+    await rmdir(mountPoint).catch(() => {});
   }
 }
 

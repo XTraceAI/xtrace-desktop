@@ -109,7 +109,8 @@ export async function packageDmg({
       if (output.trim()) console.error(output.trim());
       throw new Error(`Packaging stopped: ${command} ${args[0]} failed.`);
     }
-    return output;
+    // notarytool's JSON is on stdout; a warning on stderr must not spoil it.
+    return options.stdoutOnly ? (result.stdout ?? '') : output;
   };
   const verifyApp = (app) => {
     execute('codesign', ['--verify', '--deep', '--strict', app]);
@@ -159,20 +160,30 @@ export async function packageDmg({
     }
 
     const submission = notarizationResult(
-      execute('xcrun', [
-        'notarytool',
-        'submit',
-        image,
-        ...notaryAuth,
-        '--wait',
-        '--timeout',
-        '45m',
-        '--output-format',
-        'json',
-      ]),
+      execute(
+        'xcrun',
+        [
+          'notarytool',
+          'submit',
+          image,
+          ...notaryAuth,
+          '--wait',
+          '--timeout',
+          '30m',
+          '--output-format',
+          'json',
+        ],
+        { stdoutOnly: true },
+      ),
     );
     if (!submission.accepted) {
-      console.error(execute('xcrun', ['notarytool', 'log', submission.id, ...notaryAuth]));
+      // Apple keeps no log for a submission that is still in progress.
+      const log = run('xcrun', ['notarytool', 'log', submission.id, ...notaryAuth], {
+        cwd: repo,
+        encoding: 'utf8',
+        stdio: 'pipe',
+      });
+      if (log.stdout?.trim()) console.error(log.stdout.trim());
       throw new Error(`Apple did not accept the disk image (${submission.status}).`);
     }
     execute('xcrun', ['stapler', 'staple', image]);

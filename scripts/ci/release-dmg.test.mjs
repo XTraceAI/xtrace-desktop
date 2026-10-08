@@ -96,8 +96,17 @@ test('signature, Gatekeeper and notarytool output are read strictly', () => {
 
 // A copy of the repository's Tauri settings plus fake Apple tools: `pnpm` writes
 // a disk image, the layout check returns the queued results in order, and the
-// final mount shows a volume laid out as tauri.conf.json asks.
-async function fakeRelease(t, { layouts, notarization = 'Accepted' }) {
+// final mount shows a volume laid out as tauri.conf.json asks. `tool` can replace
+// any one tool's answer, and `finalIcons` the icons the final mount shows.
+async function fakeRelease(
+  t,
+  {
+    layouts,
+    notarization = 'Accepted',
+    tool = () => undefined,
+    finalIcons = [iloc('Applications', 480, 170), iloc('XTrace Desktop.app', 180, 170)],
+  },
+) {
   const repo = await mkdtemp(join(tmpdir(), 'xtrace-release-dmg-test-'));
   t.after(() => rm(repo, { recursive: true, force: true }));
   const config = join(repo, 'apps/desktop/src-tauri/tauri.conf.json');
@@ -108,14 +117,13 @@ async function fakeRelease(t, { layouts, notarization = 'Accepted' }) {
   await mkdir(join(volume, '.background'));
   await writeFile(join(volume, '.background/background.tiff'), '');
   await symlink('/Applications', join(volume, 'Applications'));
-  await writeFile(
-    join(volume, '.DS_Store'),
-    dsStore([iloc('Applications', 480, 170), iloc('XTrace Desktop.app', 180, 170)]),
-  );
+  await writeFile(join(volume, '.DS_Store'), dsStore(finalIcons));
   const calls = [];
   const keys = [];
   const run = (command, args, options) => {
     calls.push([command, ...args].join(' '));
+    const replaced = tool(command, args);
+    if (replaced) return replaced;
     if (command === 'pnpm') {
       keys.push(options.env.APPLE_API_KEY_PATH);
       assert.equal(readFileSync(options.env.APPLE_API_KEY_PATH, 'utf8'), env.APPLE_API_PRIVATE_KEY);
@@ -129,6 +137,7 @@ async function fakeRelease(t, { layouts, notarization = 'Accepted' }) {
     if (args[1] === 'submit')
       return {
         status: 0,
+        stderr: 'Warning: an unrelated notice on stderr.\n',
         stdout: JSON.stringify({
           id: 'ebde0ca8-1cbf-4024-b482-76ad213a6222',
           status: notarization,
@@ -199,4 +208,72 @@ test('a disk image Apple does not accept is never stapled or copied out', async 
     fake.calls.some((call) => call.includes('stapler staple')),
     false,
   );
+});
+
+const appCheckFailures = {
+  'no hardened runtime': [
+    (command, args) =>
+      command === 'codesign' && args[0] === '-dvv' && args[1].endsWith('.app')
+        ? { status: 0, stderr: signed.replace('flags=0x10000(runtime)', 'flags=0x0(none)') }
+        : undefined,
+    /without the hardened runtime/,
+  ],
+  'signed but not notarized': [
+    (command, args) =>
+      command === 'spctl' && args.includes('execute')
+        ? { status: 0, stderr: 'X: accepted\nsource=Developer ID' }
+        : undefined,
+    /does not accept the app as notarized/,
+  ],
+  'no stapled ticket on the app': [
+    (command, args) =>
+      args[0] === 'stapler' && args[1] === 'validate' && args[2].endsWith('.app')
+        ? { status: 65 }
+        : undefined,
+    /stapler failed/,
+  ],
+};
+
+for (const [name, [tool, message]] of Object.entries(appCheckFailures)) {
+  test(`an app with ${name} stops packaging before the disk image is notarized`, async (t) => {
+    const fake = await fakeRelease(t, { layouts: [[]], tool });
+    await assert.rejects(packageDmg(fake.options), message);
+    assert.equal(
+      fake.calls.some((call) => call.includes('notarytool submit')),
+      false,
+    );
+  });
+}
+
+test('the app inside the final disk image is checked again', async (t) => {
+  let mounted = false;
+  const fake = await fakeRelease(t, {
+    layouts: [[]],
+    tool: (command, args) => {
+      if (command === 'xcrun' && args[1] === 'staple') mounted = true;
+      return mounted && command === 'spctl' && args.includes('execute')
+        ? { status: 0, stderr: 'X: rejected' }
+        : undefined;
+    },
+  });
+  await assert.rejects(packageDmg(fake.options), /does not accept the app as notarized/);
+  assert.equal(existsSync(join(fake.repo, 'artifacts/release')), false);
+});
+
+test('a misplaced icon in the final disk image is never copied out', async (t) => {
+  const fake = await fakeRelease(t, {
+    layouts: [[]],
+    finalIcons: [iloc('Applications', 480, 170), iloc('XTrace Desktop.app', 208, 151)],
+  });
+  await assert.rejects(packageDmg(fake.options), /Final disk image layout: .*208,151/);
+  assert.equal(existsSync(join(fake.repo, 'artifacts/release')), false);
+});
+
+test('a submission still in progress reports its status even though Apple has no log yet', async (t) => {
+  const fake = await fakeRelease(t, {
+    layouts: [[]],
+    notarization: 'In Progress',
+    tool: (command, args) => (args[1] === 'log' ? { status: 69, stderr: 'no log' } : undefined),
+  });
+  await assert.rejects(packageDmg(fake.options), /did not accept the disk image \(In Progress\)/);
 });
