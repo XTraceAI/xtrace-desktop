@@ -7,6 +7,7 @@ __pycache__/
 /artifacts/private/
 /artifacts/parity/
 /artifacts/sbom.cdx.json
+/artifacts/release/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
