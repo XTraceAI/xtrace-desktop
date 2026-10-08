@@ -66,6 +66,7 @@ impl Store {
     }
 
     fn configure(connection: Connection, file_backed: bool) -> Result<Self> {
+        timestamp::register_sqlite(&connection)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         if file_backed {
@@ -95,6 +96,32 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::Store;
+
+    #[test]
+    fn store_connections_register_precise_response_timestamp_comparison() {
+        let directory = tempfile::TempDir::new().unwrap();
+        for store in [
+            Store::open_in_memory().unwrap(),
+            Store::open(directory.path().join("timestamps.sqlite")).unwrap(),
+        ] {
+            let comparison: i64 = store.connection.query_row(
+                "SELECT xt_timestamp_cmp('2026-09-07T12:00:00.0009Z','2026-09-07T12:00:00.0001Z')",
+                [], |row| row.get(0),
+            ).unwrap();
+            assert_eq!(comparison, 1);
+            store
+                .connection
+                .prepare("SELECT * FROM v_response_usage LIMIT 0")
+                .unwrap();
+            assert!(
+                store
+                    .connection
+                    .query_row("SELECT xt_timestamp_cmp('invalid',NULL)", [], |row| row
+                        .get::<_, i64>(0))
+                    .is_err()
+            );
+        }
+    }
 
     #[test]
     fn connection_settings_are_explicit_for_file_and_memory() {

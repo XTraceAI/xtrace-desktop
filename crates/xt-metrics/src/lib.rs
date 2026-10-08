@@ -1,5 +1,9 @@
 //! Read-only metrics over canonical work records and explicit event windows.
+mod tokens;
 mod window;
+pub use tokens::{
+    DayTokens, HostTokens, ModelTokens, SurfaceTokens, TokenCounters, TokenReport, TokenSummary,
+};
 pub use window::{DayBucket, Window};
 
 use rusqlite::{Connection, OpenFlags};
@@ -9,6 +13,8 @@ use std::{path::Path, time::Duration};
 pub enum Error {
     #[error("Invalid metric window")]
     InvalidWindow,
+    #[error("Token counter overflow")]
+    CounterOverflow,
     #[error(transparent)]
     Time(#[from] jiff::Error),
     #[error(transparent)]
@@ -27,10 +33,12 @@ impl MetricsDb {
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
+        xt_store::timestamp::register_sqlite(&connection)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "query_only", true)?;
         // Fail at open if the writer has not installed the current projection.
         connection.prepare("SELECT uuid,session_id,ts_ms FROM v_session_events LIMIT 0")?;
+        connection.prepare(&format!("{} LIMIT 0", tokens::QUERY))?;
         Ok(Self { connection })
     }
 

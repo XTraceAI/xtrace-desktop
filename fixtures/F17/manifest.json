@@ -14,6 +14,7 @@
     }
   ],
   "snapshots": {
-    "parser": "input/parser.json"
+    "parser": "input/parser.json",
+    "tokens": "input/tokens.json"
   }
 }

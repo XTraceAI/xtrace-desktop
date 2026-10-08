@@ -30,6 +30,10 @@ Equivalent offsets and trailing fractional zeroes describe the same instant.
 `ts_ms` remains a coarse POSIX millisecond projection for indexing; callers must
 not use it to break chronological ties. Range writes compare precise native
 instants within indexed endpoint buckets, including the leap-second overlap.
+The response-usage view uses this same parser through a deterministic SQLite
+comparator. `Store` registers it automatically; direct SQLite consumers must call
+`xt_store::timestamp::register_sqlite(&connection)` before querying
+`v_response_usage`. Registration supports read-only connections and writes no state.
 
 Usage counters, model, API/request IDs and timestamps remain nullable. A missing
 content array is unknown; an explicit empty array measures zero text and tools.

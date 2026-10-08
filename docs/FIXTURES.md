@@ -129,7 +129,7 @@ Tests alter both an input counter and a golden total to prove each mismatch fail
 
 These checks exercise F1's baseline shapes for M-02/M-03/M-04/M-05/M-10. They do
 not implement the production metric engine or establish whole-rule coverage.
-Prices, unknown counters, tie-breaking by native sequence, other host adapters,
+Prices, unknown counters, deterministic UUID tie-breaking, other host adapters,
 window boundaries and other edge cases require their owning fixtures and product
 tests. The bounded reference checker rejects unsupported F1 shapes. It checks the
 persisted session host and conflict flag as well as record flags: contradictory
@@ -227,3 +227,12 @@ Purge variants must eventually cover previously stored transcript/tool/fire/judg
 content, confirmed removal, unchanged metadata/counts and source files, and a
 metadata-only retry that cannot refill removed content. F18's skeleton does not
 claim those storage/ingestion/rulebook operations are implemented.
+
+## Token aggregation snapshots
+
+F5, F6, F17 and F18 expose a named `tokens` snapshot for the implemented response
+aggregation tests. These use the shared manifest loader and canonical writer.
+Their broader product fixtures remain skeletons; token-only evidence does not
+claim reader normalization, retention/purge or complete capture coverage.
+See [token aggregation acceptance](acceptance/token-aggregation.md) for arithmetic,
+selected UUIDs and replay expectations. F1's populated token golden is tested too.
