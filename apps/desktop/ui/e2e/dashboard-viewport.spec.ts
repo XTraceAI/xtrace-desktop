@@ -753,7 +753,7 @@ for (const shape of ['plain', 'stress'] as const)
           // only by scrolling inside itself.
           expect(g.rows.lanesTotal).toBe(14);
           expect(g.effort).toMatchObject({ days: 7, bars: 5, markers: 3 });
-          expect(g.effort!.headline).toBe('18h00m agentlast 7 days');
+          expect(g.effort!.headline).toBe('18 h 0 m agent hrs');
           // Effort draws no work type, so it has no unresolved triangle.
           await expect(page.getByTestId('effort-unresolved')).toHaveCount(0);
           // The lanes are capped, but no caption under the rows says so.
@@ -1112,7 +1112,7 @@ test('the chart, its ticks and its markers share one day mapping at 14d, 1120x72
   expectFits(dollars, 1120, 720);
   expect(dollars.effort).toMatchObject({ days: 14, bars: 5, partial: 1, ticks: 7, markers: 3 });
   expect(dollars.effort!.scale).toEqual(['$80', '$40', '0']);
-  expect(dollars.effort!.headline).toBe('$189+last 14 days1 response has no price');
+  expect(dollars.effort!.headline).toBe('$189+');
   expect(await page.locator('.xt-effort-card').textContent()).not.toMatch(/\d h\b/);
   await page.screenshot({ path: info.outputPath('effort-14d-dollars.png') });
 });

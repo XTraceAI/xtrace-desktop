@@ -242,7 +242,12 @@ fn the_hours_estimate_counts_only_the_persons_characters() {
 fn detail(db: &TempDb, start: &str, end: &str) -> (SpanPrompt, SpanAutomatic) {
     match MetricsDb::open(db.path())
         .unwrap()
-        .span_detail(SESSION, ms(start), ms(end))
+        .span_detail(
+            SESSION,
+            ms(start),
+            ms(end),
+            &xt_metrics::PriceCatalog::bundled().unwrap(),
+        )
         .unwrap()
     {
         SpanDetail::Indexed {

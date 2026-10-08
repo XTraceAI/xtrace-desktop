@@ -31,4 +31,4 @@ without a manual resize. The configured `{ x: 16, y: 26 }` accounts for AppKit's
 button frame offset; the visible frame should measure about 15 points from the
 left and 16 points from the top.
 
-This debug bundle is for local development. Signing, notarization, universal builds, oldest-supported macOS release QA and distribution require separate release acceptance.
+This debug bundle is for local development. The release workflow builds the signed, notarized disk image (see [CI](CI.md#native-validation-for-a-downloadable-release)); universal builds, oldest-supported macOS release QA and distribution still require separate release acceptance.

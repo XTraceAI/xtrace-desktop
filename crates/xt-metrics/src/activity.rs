@@ -1,6 +1,6 @@
 use crate::{
     ActiveSpanReport, Concurrency, HumanTime, MetricsDb, PrEffortReport, PriceCatalog, Result,
-    TypingRate, Window, sweep::sweep,
+    TypingRate, Window, report::UsageCollector, sweep::sweep,
 };
 use jiff::tz::TimeZone;
 
@@ -27,19 +27,34 @@ impl MetricsDb {
         catalog: &PriceCatalog,
     ) -> Result<WindowActivity> {
         self.read_snapshot(|db| {
-            let spans = db.active_spans(window)?;
-            Ok(WindowActivity {
-                human: db.read_human_time(window, typing_rate, zone.clone(), Some(&spans))?,
-                concurrency: sweep(&spans.spans)?,
-                pr_effort: db.read_pr_effort(
-                    window,
-                    zone,
-                    confirmed_only,
-                    catalog,
-                    Some(&spans),
-                )?,
-                spans,
-            })
+            db.read_window_activity(window, zone, typing_rate, confirmed_only, catalog, None)
+        })
+    }
+
+    /// [`MetricsDb::window_activity`] inside the caller's snapshot; M-19's
+    /// cost read also feeds `shared`.
+    pub(crate) fn read_window_activity(
+        &self,
+        window: Window,
+        zone: TimeZone,
+        typing_rate: TypingRate,
+        confirmed_only: bool,
+        catalog: &PriceCatalog,
+        shared: Option<&mut UsageCollector>,
+    ) -> Result<WindowActivity> {
+        let spans = self.active_spans(window)?;
+        Ok(WindowActivity {
+            human: self.read_human_time(window, typing_rate, zone.clone(), Some(&spans))?,
+            concurrency: sweep(&spans.spans)?,
+            pr_effort: self.read_pr_effort(
+                window,
+                zone,
+                confirmed_only,
+                catalog,
+                Some(&spans),
+                shared,
+            )?,
+            spans,
         })
     }
 }

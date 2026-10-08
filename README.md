@@ -10,8 +10,10 @@ Sessions shows indexed metadata with search, host filters and pagination; Settin
 reports indexing status and incomplete coverage. See [Sessions acceptance](docs/acceptance/indexed-sessions.md)
 for the current behavior. Dashboard metrics and session detail remain in development.
 
-There is no supported downloadable release yet. Build locally using the guide
-below; do not expect an installer or Homebrew cask to be available.
+Testing releases for Apple Silicon Macs running macOS 14 or newer are available
+from [GitHub Releases](https://github.com/XTraceAI/xtrace-desktop/releases/latest).
+The 0.1.4 source prepares the next release; publication is a separate step.
+See [updates and testing limits](docs/UPDATES.md). A Homebrew cask is not available.
 
 Use macOS 14.0 or newer, Xcode command-line tools, Rust 1.94.1, Node 22.23.1 and pnpm 10.33.0:
 

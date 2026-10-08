@@ -1,18 +1,12 @@
 import { expect, test } from '@playwright/test';
 import fixture from '../fixtures/F1.json' with { type: 'json' };
 import type { FixtureExport } from '../src/data/generated/FixtureExport';
+const SUMMARY_SCOPE =
+  'Counts cover all matching indexed sessions. Messages and agent working time cover the selected range. The table hides sessions still being checked and sub-sessions without a verified parent.';
+const SUMMARY_SCOPE_SHORT = 'Matching indexed sessions · messages/time in selected range';
 
-/**
- * The four range measurements above the session list. They describe the whole
- * selected range, so they must stay readable beside a list that filters and
- * pages independently of them: at both supported widths, in both schemes, no
- * label is clipped, no value or aside leaves its tile, and the list itself is
- * still on the page underneath.
- */
-const LABELS = ['Human messages', 'Output tokens', 'Agent time', 'Sessions / day'];
-const SCOPE =
-  'The summary counts all indexed activity in the selected range; filters narrow only the table.';
-const SCOPE_LINE = 'Range: all indexed activity · filters: table only';
+/** Four totals over every indexed match, including rows not loaded yet. */
+const LABELS = ['Sessions', 'Your input', 'Agent working time', 'Sessions with PRs'];
 
 for (const [width, height] of [
   [1440, 900],
@@ -31,8 +25,8 @@ for (const [width, height] of [
       // What the tiles cover reads in view as the heading's one short line;
       // the whole sentence is the summary's description.
       const line = page.locator('.xt-sessions-heading p');
-      await expect(line).toHaveText(SCOPE_LINE);
-      await expect(summary).toHaveAccessibleDescription(SCOPE);
+      await expect(line).toHaveText(SUMMARY_SCOPE_SHORT);
+      await expect(summary).toHaveAccessibleDescription(SUMMARY_SCOPE);
       await page.evaluate(() => document.fonts.ready);
       const subtitle = await line.evaluate((element) => ({
         height: element.getBoundingClientRect().height,
@@ -81,12 +75,14 @@ for (const [width, height] of [
         .locator('.xt-sessions-tiles')
         .screenshot({ path: info.outputPath(`sessions-tiles-${width}-${scheme}.png`) });
       expect(tiles.map((tile) => tile.label)).toEqual(LABELS);
-      // F1's range: five human messages, 150 independently measured output
-      // tokens, a 23-minute active span and one session in one day bucket.
-      expect(tiles[0].text).toContain('5');
-      expect(tiles[1].text).toContain('150');
-      expect(tiles[2].text).toContain('23');
-      expect(tiles[3].text).toContain('max 1');
+      // These are the Rust-exported F1 answers, not totals calculated from visible rows.
+      const values = summary.locator('.xt-stat-value .xt-metric-cell');
+      await expect(values).toHaveText(['1', '5', '0 h 23 m', '1']);
+      await expect(summary.locator('.xt-stat-aside')).toHaveText([
+        '0 sub · 0 checking',
+        '5 / main',
+        'Parallel sessions add together',
+      ]);
       for (const tile of tiles) {
         expect(tile.labelFits, tile.label ?? '').toBe(true);
         expect(tile.asideFits, tile.label ?? '').toBe(true);
@@ -99,23 +95,29 @@ for (const [width, height] of [
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
     });
 
-/**
- * The values the one-decimal scale cannot show, in a real engine: a range that
- * did a little must not render as "0", and the longer `<0.1` must still fit.
- * Served in place of the development F1 export; these are not real history.
- */
-test('a positive below the shown scale reads as such and still fits', async ({ page }, info) => {
+/** Synthetic measurements use the same summary and row field, never dashboard hours. */
+test('a short active time and incomplete input keep their meaning', async ({ page }, info) => {
   const small = structuredClone(fixture as FixtureExport);
-  for (const report of small.dashboards) {
-    // One session across the range's day buckets, and two seconds of span.
-    report.tiles.sessions_per_day.value = 1 / 30;
-    report.tiles.agent_hours.value = 2 / 3600;
-    report.tokens.counters.output_tokens = null;
+  for (const entry of small.sessions_summaries ?? []) {
+    if (!entry.session_ids.length) continue;
+    entry.summary.agent_ms = 2000;
+    entry.summary.human_messages = null;
+    entry.summary.messages_per_main_session = null;
   }
-  // The row under the tiles measures the same two seconds, on the same scale.
-  for (const page of small.sessions)
-    for (const row of page.rows) if (row.metrics.state === 'indexed') row.metrics.agent_ms = 2000;
-  await page.route('**/fixtures/F1.json?import', (route) =>
+  for (const sessionPage of small.sessions) {
+    if (sessionPage.summary)
+      Object.assign(sessionPage.summary, {
+        agent_ms: 2000,
+        human_messages: null,
+        messages_per_main_session: null,
+      });
+    for (const row of sessionPage.rows)
+      if (row.metrics.state === 'indexed') {
+        row.metrics.agent_ms = 2000;
+        row.metrics.human_messages = null;
+      }
+  }
+  await page.route('**/fixtures/F1.json*', (route) =>
     route.fulfill({
       contentType: 'text/javascript',
       body: `export default ${JSON.stringify(small)};`,
@@ -124,36 +126,81 @@ test('a positive below the shown scale reads as such and still fits', async ({ p
   await page.setViewportSize({ width: 1120, height: 720 });
   await page.goto('/sessions');
   const summary = page.getByRole('region', { name: 'Range summary' });
-  await expect(summary.locator('.xt-stat-tile')).toHaveCount(4);
-  await page.evaluate(() => document.fonts.ready);
-  const tiles = await page.evaluate(() =>
-    [...document.querySelectorAll<HTMLElement>('.xt-sessions-tiles .xt-stat-tile')].map((tile) => {
-      const value = tile.querySelector<HTMLElement>('.xt-stat-value .xt-metric-cell')!;
-      return {
-        label: tile.querySelector<HTMLElement>('.xt-stat-label')!.textContent,
-        value: value.textContent,
-        valueFits: value.scrollWidth <= value.clientWidth,
-      };
-    }),
-  );
-  await info.attach('tiles', { body: JSON.stringify(tiles, null, 2) });
-  await page
-    .locator('.xt-sessions-tiles')
-    .screenshot({ path: info.outputPath('sessions-tiles-small.png') });
-  // Agent time is written as all agent time is; sessions per day on the one-decimal scale.
-  expect(tiles[2].value).toBe('<0.1m');
-  expect(tiles[3].value).toBe('<0.1');
-  // Absent counters are not an absence of output.
-  expect(tiles[1].value).toContain('Output token counts are missing or incomplete');
-  for (const tile of tiles) expect(tile.valueFits, tile.label ?? '').toBe(true);
-  // A row reads the same way, and the longer value fits its narrow column.
+  await expect(summary.locator('.xt-stat-value .xt-metric-cell').nth(2)).toHaveText('<1 m');
+  const input = summary.locator('.xt-stat-tile').filter({ hasText: 'Your input' });
+  await expect(input.locator('.xt-stat-aside')).toHaveCount(0);
+  await input.focus();
+  await expect(page.getByRole('tooltip')).toContainText('Some messages have not been classified');
+  await page.keyboard.press('Escape');
   const cell = page
     .getByRole('row')
     .filter({ hasText: 'Session 00000000' })
-    .getByText('<0.1m', { exact: true });
+    .getByText('<1 m', { exact: true });
   await expect(cell).toBeVisible();
   expect(await cell.evaluate((element) => element.scrollWidth <= element.clientWidth + 0.5)).toBe(
     true,
   );
+  await page
+    .locator('.xt-sessions-tiles')
+    .screenshot({ path: info.outputPath('sessions-tiles-small.png') });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1120);
+});
+
+test('summary follows search, host, PR and date filters using exported answers', async ({
+  page,
+}) => {
+  await page.goto('/sessions');
+  const values = page
+    .getByRole('region', { name: 'Range summary' })
+    .locator('.xt-stat-value .xt-metric-cell');
+  await expect(values).toHaveText(['1', '5', '0 h 23 m', '1']);
+  await page.getByRole('searchbox', { name: 'Search sessions' }).fill('missing');
+  await expect(page.getByText('No sessions match these filters.')).toBeVisible();
+  await expect(values).toHaveText(['0', '0', '0 h 0 m', '0']);
+  await page.getByRole('searchbox', { name: 'Search sessions' }).fill('');
+  await expect(values).toHaveText(['1', '5', '0 h 23 m', '1']);
+  await page.getByRole('button', { name: 'Filter by host' }).click();
+  const claude = page.getByRole('checkbox', { name: 'Claude Code' });
+  await claude.focus();
+  await page.keyboard.press('Space');
+  await expect(claude).not.toBeChecked();
+  await page.keyboard.press('Escape');
+  await expect(values).toHaveText(['0', '0', '0 h 0 m', '0']);
+  await page.getByRole('button', { name: 'Filter by host' }).click();
+  await claude.focus();
+  await page.keyboard.press('Space');
+  await expect(claude).toBeChecked();
+  await page.keyboard.press('Escape');
+  await page.getByRole('switch', { name: 'With PRs only' }).click();
+  await expect(values).toHaveText(['1', '5', '0 h 23 m', '1']);
+  await page.getByRole('radio', { name: '14d', exact: true }).click();
+  await expect(values).toHaveText(['1', '5', '0 h 23 m', '1']);
+  await expect(page.getByRole('region', { name: 'Range summary' })).toHaveAccessibleDescription(
+    SUMMARY_SCOPE,
+  );
+});
+
+test('unsupported synthetic summary says unavailable while its row remains usable', async ({
+  page,
+}) => {
+  const unsupported = structuredClone(fixture as FixtureExport);
+  unsupported.sessions_summaries = [];
+  await page.route('**/fixtures/F1.json*', (route) =>
+    route.fulfill({
+      contentType: 'text/javascript',
+      body: `export default ${JSON.stringify(unsupported)};`,
+    }),
+  );
+  await page.goto('/sessions');
+  await expect(page.getByRole('region', { name: 'Range summary' }).getByRole('status')).toHaveText(
+    'Session summary unavailable. Loaded sessions remain below.Retry',
+  );
+  await expect(page.getByText('Session 00000000', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled();
+  const input = page
+    .getByRole('region', { name: 'Range summary' })
+    .locator('.xt-stat-tile')
+    .filter({ hasText: 'Your input' });
+  await input.focus();
+  await expect(page.getByRole('tooltip')).toContainText('Summary unavailable for these filters');
 });

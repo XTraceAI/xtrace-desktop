@@ -747,6 +747,7 @@ it('sends the whole session filter to the native list command', async () => {
     search: 'atlas',
     hosts: ['claude', 'codex'],
     withPrs: true,
+    sort: 'started',
     after: 'cursor-1',
     windowDays: 14,
   });

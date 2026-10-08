@@ -5,7 +5,7 @@ official XTrace project from XTrace Inc. The [Apache License 2.0](LICENSE) licen
 software; it does not grant permission to use these marks as your own branding.
 
 When distributing a fork, replace the app name, icons, and bundle identifier
-(`ai.xtrace.desktop`) with your own. Do not present a modified build as an
+(`ai.xtrace.app`) with your own. Do not present a modified build as an
 official XTrace release or imply endorsement by XTrace Inc. without permission.
 
 You may make truthful, reasonable references to XTrace when describing the

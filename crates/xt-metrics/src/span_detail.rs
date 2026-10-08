@@ -9,6 +9,8 @@
 //! * **Output tokens** are [`MetricsDb::session_windows`]' M-04 slice over the
 //!   span's own interval, so a response repeated across records is selected
 //!   once, by the same global projection the Dashboard sums.
+//! * **Cost** prices that same response selection with the shared API-price
+//!   calculation, keeping unpriced usage as unknown or a partial subtotal.
 //! * **The most-used tool** counts record-bound `tool_uses` rows joined through
 //!   `v_records`, the same rows and work exclusions M-17 counts, restricted to
 //!   the span. Slash commands and hook summaries are not tool calls.
@@ -27,7 +29,7 @@
 //! unclassified input is not "no prompt", and unkept words are not an empty
 //! message.
 
-use crate::{Error, MetricsDb, Result, SessionWindow, Window};
+use crate::{CostSummary, Error, MetricsDb, PriceCatalog, Result, SessionWindow, Window};
 use serde::Serialize;
 use xt_store::{
     record_preview::{self, Preview, PreviewKind},
@@ -78,7 +80,9 @@ pub(crate) const AUTOMATIC_QUERY: &str = "SELECT v.uuid,v.ts,v.ts_ms FROM v_sess
 pub const MAX_PROMPT_CHARS: usize = record_preview::MAX_PREVIEW_CHARS;
 
 /// One span's detail, or nothing measurable.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+// Preserve the public result shape; this read holds only one span at a time.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum SpanDetail {
     /// No indexed user session owns this identifier.
@@ -88,6 +92,9 @@ pub enum SpanDetail {
         /// M-04 output tokens of the responses selected inside the span;
         /// `None` when no selected response stated the counter.
         output_tokens: Option<u64>,
+        /// API-equivalent cost of the same selected responses, with unpriced
+        /// responses retained as unknown or a partial subtotal.
+        cost: CostSummary,
         prompt: SpanPrompt,
         automatic: SpanAutomatic,
     },
@@ -179,12 +186,18 @@ pub enum PromptText {
 
 impl MetricsDb {
     /// The detail of one span of one session: its most-used tool, its output
-    /// tokens and the last message a person typed in it or before it.
+    /// tokens, API-equivalent cost and the last message a person typed in it or before it.
     ///
     /// `start_ms`/`end_ms` are an [`crate::ActiveSpan`]'s endpoints, both
     /// inclusive; a single-event span has them equal. Read inside one
     /// snapshot, so every part describes the same committed state.
-    pub fn span_detail(&self, session_id: &str, start_ms: i64, end_ms: i64) -> Result<SpanDetail> {
+    pub fn span_detail(
+        &self,
+        session_id: &str,
+        start_ms: i64,
+        end_ms: i64,
+        catalog: &PriceCatalog,
+    ) -> Result<SpanDetail> {
         if start_ms > end_ms {
             return Err(Error::InvalidWindow);
         }
@@ -206,6 +219,7 @@ impl MetricsDb {
             Ok(SpanDetail::Indexed {
                 tool: metrics.span_tool(session_id, start_ms, end_ms)?,
                 output_tokens,
+                cost: metrics.span_cost(session_id, window, catalog)?,
                 prompt: metrics.span_prompt(session_id, start_ms, end_ms)?,
                 automatic: metrics.span_automatic(session_id, start_ms, end_ms)?,
             })

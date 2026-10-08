@@ -14,14 +14,14 @@
 //! mode: the JSONL sessions load whole and match the
 //! ordinary export record for record, the SQLite store is refused — with a
 //! committed write-ahead log beside it — and nothing under the home or in the
-//! temporary directory changes.
+//! test-owned reader temporary directory changes.
 #![cfg(unix)]
 use serde_json::json;
 use std::{
     collections::BTreeMap,
     ffi::OsString,
     fs,
-    os::unix::fs::PermissionsExt,
+    os::unix::{ffi::OsStrExt, fs::PermissionsExt},
     path::{Path, PathBuf},
     process::Command,
     time::{Duration, Instant},
@@ -907,15 +907,40 @@ fn a_reader_that_cannot_start_or_a_home_that_is_gone_leaves_nothing_behind() {
     assert_eq!(tree(&scene.root), before, "no file was left anywhere");
 }
 
-/// Names in the temporary directory a reader snapshot would use.
-fn snapshot_names() -> Vec<String> {
-    let mut names: Vec<String> = [std::env::temp_dir(), PathBuf::from("/tmp")]
-        .iter()
-        .filter_map(|dir| fs::read_dir(dir).ok())
-        .flatten()
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|name| name.starts_with("native-reader-"))
+/// Quote a Unix path for the launcher's shell without losing non-UTF-8 bytes.
+fn shell_path(path: &Path) -> Vec<u8> {
+    let mut quoted = vec![b'\''];
+    for &byte in path.as_os_str().as_bytes() {
+        if byte == b'\'' {
+            quoted.extend_from_slice(b"'\\''");
+        } else {
+            quoted.push(byte);
+        }
+    }
+    quoted.push(b'\'');
+    quoted
+}
+
+/// The reader clears its environment, so set TMPDIR inside a test-owned
+/// interpreter launcher rather than in the Rust process or production code.
+fn isolated_python(root: &Path, python: &OsString, snapshots: &Path) -> OsString {
+    let launcher = root.join("python launcher");
+    let mut script = b"#!/bin/sh\nTMPDIR=".to_vec();
+    script.extend(shell_path(snapshots));
+    script.extend_from_slice(b"\nexport TMPDIR\nexec ");
+    script.extend(shell_path(Path::new(python)));
+    script.extend_from_slice(b" \"$@\"\n");
+    fs::write(&launcher, script).unwrap();
+    fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755)).unwrap();
+    launcher.into_os_string()
+}
+
+/// Every entry in this test's own reader snapshot directory. Failure to read
+/// it is a failed check, and even an unexpected non-snapshot entry is refused.
+fn snapshot_names(dir: &Path) -> Vec<OsString> {
+    let mut names: Vec<OsString> = fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
         .collect();
     names.sort();
     names
@@ -984,8 +1009,28 @@ fn conformance_exact_detail() {
     };
     let root = repo();
     let temp = tempfile::TempDir::new().unwrap();
-    let home = temp.path().canonicalize().unwrap().join("home");
+    let temp_root = temp.path().canonicalize().unwrap();
+    let home = temp_root.join("home");
     fs::create_dir_all(&home).unwrap();
+    let snapshot_dir = temp_root.join("reader's snapshots");
+    fs::create_dir(&snapshot_dir).unwrap();
+    let python = isolated_python(&temp_root, &python, &snapshot_dir);
+    // Exercise shell quoting and Python's actual tempfile choice with the
+    // same cleared environment as the production reader command.
+    let probe = Command::new(&python)
+        .env_clear()
+        .args([
+            "-c",
+            "import os,sys,tempfile\n\
+             with tempfile.TemporaryDirectory(prefix='native-reader-') as path:\n\
+             \x20sys.stdout.buffer.write(os.fsencode(os.path.dirname(path)))",
+        ])
+        .output()
+        .unwrap();
+    assert!(probe.status.success(), "{probe:?}");
+    assert_eq!(probe.stdout, snapshot_dir.as_os_str().as_bytes());
+    let snapshots = snapshot_names(&snapshot_dir);
+    assert!(snapshots.is_empty(), "the probe left no staged snapshot");
     materialize(&python, &plugin_root, &home);
     // The store gains a committed write-ahead log that no checkpoint has
     // folded in: a read that opened it would have to recover the log, and one
@@ -1014,7 +1059,6 @@ fn conformance_exact_detail() {
     assert!(built.status.success(), "{built:?}");
     assert!(store.with_file_name("store.db-wal").is_file());
     let _ = fs::remove_file(store.with_file_name("store.db-shm"));
-    let snapshots = snapshot_names();
     let expected: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(root.join("fixtures/F18/input/native/native.json")).unwrap(),
     )
@@ -1107,11 +1151,15 @@ fn conformance_exact_detail() {
         "two JSONL sessions, from each producer"
     );
     // Exact reads alone, of every session and of the store with its log,
-    // changed nothing anywhere: no journal recovery, no shared-memory file,
-    // no copy, no source write, no staged snapshot.
+    // changed neither the home nor the reader temporary directory: no journal
+    // recovery, no shared-memory file, no copy, no source write, no snapshot.
     assert_eq!(tree(&home), before, "the exact reads changed the home");
     assert!(!store.with_file_name("store.db-shm").exists());
-    assert_eq!(snapshot_names(), snapshots, "no reader snapshot was staged");
+    assert_eq!(
+        snapshot_names(&snapshot_dir),
+        snapshots,
+        "no reader snapshot was staged"
+    );
     // And record for record, what the exact reads return is what the ordinary
     // export produces for the same session.
     for &(host, native, _) in &wanted {

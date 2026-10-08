@@ -147,6 +147,11 @@ fn fixture_mode_builds_isolated_database_and_generated_export_parity() {
         .into_iter()
         .map(|days| first.sessions_list("", None, None, days).unwrap())
         .collect();
+    let sessions_summaries = xtrace_desktop::dto::fixture_sessions_summaries(
+        &path.join("xtrace.db"),
+        first.fixture_now_ms().unwrap(),
+    )
+    .unwrap();
     // The stretches command, for every session each window lists: a
     // fixture's timeline must be what a running app would answer for the
     // same session and the same window.
@@ -329,6 +334,7 @@ fn fixture_mode_builds_isolated_database_and_generated_export_parity() {
         app_info,
         db_counts: first.db_counts().unwrap(),
         native_index: expected_native_index(),
+        sessions_summaries,
         sessions,
         session_stretches,
         span_details,

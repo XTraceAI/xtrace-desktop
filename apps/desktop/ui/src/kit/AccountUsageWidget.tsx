@@ -1059,12 +1059,14 @@ export function AccountUsageWidget({
   failed,
   refreshing,
   refreshEnabled = true,
+  failureMessage,
   onRefresh,
 }: {
   usage?: AccountUsage;
   failed: boolean;
   refreshing: boolean;
   refreshEnabled?: boolean;
+  failureMessage?: string;
   onRefresh: () => void;
 }) {
   useResetWakeup(usage, failed);
@@ -1083,9 +1085,10 @@ export function AccountUsageWidget({
       </div>
       {failed ? (
         <p className="xt-sidebar-empty" role="status">
-          {refreshEnabled
-            ? 'Account usage could not be read. Refresh to try again.'
-            : 'Account usage is available in the desktop app.'}
+          {failureMessage ??
+            (refreshEnabled
+              ? 'Account usage could not be read. Refresh to try again.'
+              : 'Account usage is available in the desktop app.')}
         </p>
       ) : (
         <>

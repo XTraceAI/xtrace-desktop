@@ -27,7 +27,7 @@ export const continuous = (value: number): string =>
  * stretch's length on a session's timeline, a session's or a pull request's
  * median, the Dashboard's median, p90 and daily line: minutes on the shared
  * scale, `3.2 min`. It is its own quantity, so it is never written as agent
- * time (`0h03m`). Not measured reads `—`.
+ * time (`0 h 3 m`). Not measured reads `—`.
  */
 export const handsOffTime = (minutes: number): string =>
   Number.isFinite(minutes) && minutes >= 0 ? `${continuous(minutes)} min` : UNMEASURED;

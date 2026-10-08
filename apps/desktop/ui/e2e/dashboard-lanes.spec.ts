@@ -36,13 +36,14 @@ for (const report of contextual.dashboards) {
     repo,
     branch,
     title: null,
-    child_check: 'checked',
     started_at_ms: null,
     pr_links: 0,
     inferred_pr_links: 0,
     cost,
     ...extra,
     automated_review: extra.automated_review ?? false,
+    // A session whose child checks have not finished is not listed.
+    child_check: extra.child_check ?? 'checked',
   });
   const priced = (total: number, patch: Partial<DashboardLaneCost> = {}): DashboardLaneCost => ({
     total_usd: total,
@@ -95,14 +96,133 @@ for (const report of contextual.dashboards) {
   ];
 }
 
-async function serveContext(page: Page) {
+/**
+ * The same lanes on an axis that starts, as a live one does, at an unrounded
+ * instant: two days and 22h59m later, so every tick is as wide as a time gets
+ * (`10:59 PM`) and the dated end has a two-digit day (`Sep 10`).
+ */
+const SHIFT = (2 * 24 * 60 + 22 * 60 + 59) * 60_000;
+const minuteAxis = structuredClone(contextual);
+for (const report of minuteAxis.dashboards) {
+  report.lane_start_ms += SHIFT;
+  report.lane_end_ms += SHIFT;
+  for (const lane of report.lanes) {
+    lane.start_ms += SHIFT;
+    lane.end_ms += SHIFT;
+  }
+}
+
+async function serveContext(page: Page, data: FixtureExport = contextual) {
   await page.route('**/fixtures/F1.json?import', (route) =>
     route.fulfill({
       contentType: 'text/javascript',
-      body: `export default ${JSON.stringify(contextual)};`,
+      body: `export default ${JSON.stringify(data)};`,
     }),
   );
 }
+
+/**
+ * Widths swept down and back up in one window, so each step is a resize; the
+ * near pairs straddle where the column gains the midpoint and the quarters.
+ */
+const SWEEP = [1920, 1600, 1562, 1558, 1440, 1280, 1146, 1142, 1120, 1366, 1600, 1920];
+
+for (const scheme of ['light', 'dark'] as const)
+  test(`minute times on the lane axis stay apart and on their instants while resizing ${scheme}`, async ({
+    page,
+  }, info) => {
+    await serveContext(page, minuteAxis);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto('/dashboard');
+    await expect(page.getByRole('table', { name: 'Session lanes' }).getByRole('row')).toHaveCount(
+      4,
+    );
+    await page.evaluate(() => document.fonts.ready);
+    for (const width of SWEEP) {
+      const height = width < 1200 ? 720 : 900;
+      await page.setViewportSize({ width, height });
+      const measured = await page.evaluate(() => {
+        const box = (element: Element) => element.getBoundingClientRect();
+        const axis = document.querySelector<HTMLElement>('.xt-lanes-axis')!;
+        const label = box(document.querySelector('.xt-lanes-activity-label')!);
+        const cell = box(axis.closest('[role="columnheader"]')!);
+        const head = box(document.querySelector('.xt-lanes .xt-table-head')!);
+        // Every tick the axis carries, in order, with the shown ones measured;
+        // a quarter's tick is matched to the gridline drawn at that quarter.
+        const ticks = [...axis.querySelectorAll<HTMLElement>(':scope > span:not(.sr-only)')]
+          .map((tick, quarter) => ({ quarter, text: tick.textContent, box: box(tick) }))
+          .filter((tick) => tick.box.width > 0);
+        const track = document.querySelector('.xt-lane-track')!;
+        const lines = [...track.querySelectorAll('i')].map((line) => box(line).left);
+        const scroll = document.querySelector<HTMLElement>('.xt-lanes .xt-table-scroll')!;
+        return {
+          column: cell.width,
+          ticks: ticks.map(({ quarter, text, box: b }) => ({
+            quarter,
+            text,
+            left: b.left,
+            right: b.right,
+            top: b.top,
+            bottom: b.bottom,
+          })),
+          // Where each shown tick is anchored against what is drawn beneath
+          // it: a quarter's centre on its gridline, the end at the track's
+          // end, and the start after the name.
+          offAnchor: ticks.map(({ quarter, box: b }) =>
+            quarter === 0
+              ? Math.max(0, label.right - b.left)
+              : quarter === 4
+                ? Math.abs(b.right - box(track).right)
+                : Math.abs((b.left + b.right) / 2 - lines[quarter - 1]!),
+          ),
+          gaps: ticks.slice(1).map((tick, index) => tick.box.left - ticks[index]!.box.right),
+          label: { left: label.left, right: label.right },
+          inCell: ticks.every(
+            ({ box: b }) => b.left >= cell.left - 0.5 && b.right <= cell.right + 0.5,
+          ),
+          inHead: ticks.every(
+            ({ box: b }) => b.top >= head.top - 0.5 && b.bottom <= head.bottom + 0.5,
+          ),
+          headHeight: head.height,
+          rowHeights: [...document.querySelectorAll('.xt-lanes .xt-data-row')].map(
+            (row) => box(row).height,
+          ),
+          horizontalOverflow: scroll.scrollWidth - scroll.clientWidth,
+          pageScroll: {
+            x: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+            y: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+          },
+        };
+      });
+      await info.attach(`axis-${width}`, { body: JSON.stringify(measured, null, 2) });
+      const head = (await page.locator('.xt-lanes .xt-table-head').boundingBox())!;
+      await page.screenshot({
+        path: info.outputPath(`axis-${scheme}-${width}.png`),
+        clip: { x: head.x, y: head.y, width: head.width, height: head.height + 70 },
+      });
+      const at = `${width}x${height}`;
+      // Each shown tick reads the time of its own quarter, the end with its
+      // day; the start and the dated end are always shown.
+      const times = ['10:59 PM', '10:59 AM', '10:59 PM', '10:59 AM'];
+      for (const tick of measured.ticks)
+        if (tick.quarter < 4) expect(tick.text, at).toBe(times[tick.quarter]);
+      expect(measured.ticks[0]?.quarter, at).toBe(0);
+      expect(measured.ticks.at(-1)?.quarter, at).toBe(4);
+      expect(measured.ticks.at(-1)?.text, at).toMatch(/^Sep 10(,| at) 10:59 PM$/);
+      // A wide column shows every quarter; no column shows a tick it cannot
+      // hold clear of its neighbours (4px, as the Dashboard check reads it).
+      if (width === 1920) expect(measured.ticks, at).toHaveLength(5);
+      for (const gap of measured.gaps) expect(gap, at).toBeGreaterThanOrEqual(4);
+      for (const off of measured.offAnchor) expect(off, at).toBeLessThanOrEqual(1);
+      expect(measured.inCell, at).toBe(true);
+      expect(measured.inHead, at).toBe(true);
+      expect(measured.headHeight, at).toBeCloseTo(24, 0);
+      for (const row of measured.rowHeights) expect(row, at).toBeCloseTo(22, 0);
+      expect(measured.horizontalOverflow, at).toBeLessThanOrEqual(1);
+      expect(measured.pageScroll, at).toEqual({ x: 0, y: 0 });
+    }
+  });
 
 for (const [width, height] of [
   [1440, 900],
@@ -244,7 +364,9 @@ for (const [width, height] of [
         ticksApart: true,
         ticksInsideHead: true,
       });
-      expect(measured.activity.ticks).toBeGreaterThanOrEqual(3);
+      // The start and the dated end at least: at 1120 a live axis's minute
+      // times leave no room for the midpoint (see the resizing test below).
+      expect(measured.activity.ticks).toBeGreaterThanOrEqual(2);
       expect(measured.activity.headHeight).toBeCloseTo(24, 0);
       await expect(page.locator('.xt-lanes-activity-label')).toBeVisible();
       expect(measured.header.join(' ')).not.toContain('first seen');

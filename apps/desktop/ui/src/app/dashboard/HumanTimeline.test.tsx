@@ -55,11 +55,12 @@ const mount = (r: DashboardMetrics) =>
 
 it('draws one 24-hour row per day with each stretch, ticks for single messages and the day total', () => {
   mount(report());
-  expect(screen.getByTestId('effort-total').textContent).toBe('1h30m human');
-  expect(screen.getByTestId('effort-headline').textContent).toContain('Sep 1–Sep 7, whole days');
-  expect(screen.getByTestId('effort-headline').textContent).toContain(
-    'gaps over 45 min count as breaks',
+  expect(screen.getByTestId('effort-total').textContent).toBe('1 h 30 m human');
+  // The total, then the break setting it depends on at the row's right end.
+  expect(screen.getByTestId('effort-headline').textContent).toBe(
+    '1 h 30 m humanbreak threshold: 45 min',
   );
+  expect(screen.getByText('break threshold: 45 min').className).toBe('xt-effort-headline-end');
   const rows = screen.getAllByTestId('human-day');
   expect(rows).toHaveLength(7);
   expect(rows.map((row) => row.dataset.date)).toEqual(
@@ -80,15 +81,15 @@ it('draws one 24-hour row per day with each stretch, ticks for single messages a
   expect(bars[1]!.dataset.tick).toBe('true');
   expect(bars[1]!.style.width).toBe('');
   // A measured zero is a zero, never a dash: a dash means unknown.
-  expect(rows[0]!.textContent).toBe('Sep 10h00m');
-  expect(last.textContent).toBe('Sep 70h30m');
+  expect(rows[0]!.textContent).toBe('Sep 10 h 0 m');
+  expect(last.textContent).toBe('Sep 70 h 30 m');
   // The hour axis is drawn once, above the rows.
   expect(screen.getByTestId('human-timeline').querySelector('.xt-human-axis')!.textContent).toBe(
     '0006121824',
   );
 });
 
-it('names the whole days human time cover, not the rolling range', () => {
+it('draws a row for every whole day human time cover, and names no range', () => {
   mount(
     report((r) => {
       const days = r.human_hours.current.by_day;
@@ -96,9 +97,10 @@ it('names the whole days human time cover, not the rolling range', () => {
     }),
   );
   expect(screen.getAllByTestId('human-day')).toHaveLength(8);
-  // A 7-day range that starts mid-day: human time covers eight whole days.
+  // A 7-day range that starts mid-day: human time covers eight whole days,
+  // one row each; the headline names no range.
   const headline = screen.getByTestId('effort-headline').textContent;
-  expect(headline).toContain('Sep 1–Sep 8, whole days');
+  expect(headline).not.toContain('whole days');
   expect(headline).not.toContain('last 7 days');
 });
 
@@ -152,7 +154,7 @@ it('keeps a folded stretch as one accessible image and tooltip entry with two dr
   expect(pieces[1]!.dataset.lane).toBe('1');
   for (const piece of pieces)
     expect(parseFloat(piece.style.width)).toBeCloseTo((10 / (24 * 60)) * 100);
-  expect(screen.getByTestId('effort-total').textContent).toBe('0h20m human');
+  expect(screen.getByTestId('effort-total').textContent).toBe('0 h 20 m human');
   fireEvent.focus(screen.getByTestId('human-day'));
   await screen.findByText('1:50 AM PDT → 1:10 AM PST — 20 min');
   expect(document.querySelectorAll('.xt-effort-tip-row')).toHaveLength(1);

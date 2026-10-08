@@ -294,3 +294,40 @@ for (const [width, height] of SIZES)
     await group.click();
     await expect(marker).toBeVisible();
   });
+
+for (const [width, height] of SIZES)
+  test(`Sessions shows a filtered parent’s own cells above its children at ${width}x${height}`, async ({
+    page,
+  }, info) => {
+    await open(page, true, `/sessions?q=${CHILD}&host=codex&range=14d`, width, height);
+    const table = page.getByRole('table', { name: 'Indexed sessions' });
+    const parent = table.getByRole('link', { name: `Open session ${PARENT_TITLE}, ${PARENT}` });
+    await expect(parent).toBeVisible();
+    await expect(table.getByText('Parent shown for context', { exact: false })).toBeVisible();
+    await expect(table.getByText('Sub-sessions of', { exact: true })).toHaveCount(0);
+    await expect(table.getByRole('link', { name: /^Open session / })).toHaveCount(1);
+    await table.getByRole('button', { name: `1 loaded sub-session of ${PARENT_TITLE}` }).click();
+    await expect(table.getByRole('link', { name: /^Open session / })).toHaveCount(2);
+    const measured = await measure(page, 'Indexed sessions');
+    expect(measured.rows.map((row) => row.id)).toEqual([PARENT, CHILD]);
+    expect(measured.rows.map((row) => row.height)).toEqual([40, 40]);
+    await info.attach('filtered-parent', { body: JSON.stringify(measured, null, 2) });
+    await page
+      .locator('.xt-sessions')
+      .screenshot({ path: info.outputPath(`filtered-parent-${width}.png`) });
+    // Its actual measurements and details are usable even though its own row
+    // is outside this search; returning preserves the exact list address.
+    await expect(parent).toHaveAttribute(
+      'href',
+      `/sessions/${PARENT}?q=${CHILD}&host=codex&range=14d`,
+    );
+    await expect(table.getByRole('button', { name: `Expand ${PARENT}` })).toBeVisible();
+    const cells = await parent
+      .locator('xpath=ancestor::*[@role="row"]')
+      .getByRole('cell')
+      .allTextContents();
+    const headers = await table.getByRole('columnheader').allTextContents();
+    expect(headers.slice(-2).map((header) => header.trim())).toEqual(['output', 'cost']);
+    expect(cells.at(-2)).toBe('150');
+    expect(cells.at(-1)).toBe('—Unmeasured: fixture-model-v1: service tier not recorded');
+  });

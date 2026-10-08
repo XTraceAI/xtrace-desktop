@@ -97,6 +97,7 @@ pub fn sessions(
     request: &PrSessions,
     zone: TimeZone,
     clock: MetricClock,
+    catalog: &xt_metrics::PriceCatalog,
 ) -> Result<SessionPage, StateError> {
     crate::dto::filtered_page(
         metrics,
@@ -105,6 +106,7 @@ pub fn sessions(
         zone,
         clock,
         &xt_store::session_list::SessionFilter {
+            sort: Default::default(),
             pull_request: Some(xt_store::session_list::PrMembership {
                 identity: &request.identity,
                 confirmed_only: request.confirmed_only,
@@ -112,6 +114,7 @@ pub fn sessions(
             ..Default::default()
         },
         request.after.as_ref(),
+        catalog,
     )
 }
 
@@ -151,8 +154,10 @@ pub fn fixture_sessions(
     path: &std::path::Path,
     now_ms: i64,
     pull_requests: &[(String, u64)],
+    prices: Option<&serde_json::Value>,
 ) -> Result<Vec<crate::dto::FixturePrSessions>, StateError> {
     let metrics = MetricsDb::open(path)?;
+    let catalog = crate::dashboard::fixture_catalog(prices)?;
     let mut exported = Vec::new();
     for (repository, number) in pull_requests {
         for window_days in crate::dashboard::WINDOW_PRESETS {
@@ -165,7 +170,13 @@ pub fn fixture_sessions(
                     window_end_ms: now_ms,
                     after: None,
                 })?;
-                let page = sessions(&metrics, &request, TimeZone::UTC, MetricClock::Fixture)?;
+                let page = sessions(
+                    &metrics,
+                    &request,
+                    TimeZone::UTC,
+                    MetricClock::Fixture,
+                    &catalog,
+                )?;
                 if page.next.is_some() {
                     return Err(StateError::FixtureInvalid);
                 }

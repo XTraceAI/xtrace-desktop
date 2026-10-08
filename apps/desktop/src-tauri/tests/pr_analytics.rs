@@ -317,6 +317,14 @@ fn a_drilldown_lists_exact_linked_members_over_the_pinned_report_window() {
         page.window, all.window,
         "the report's window, not a new one"
     );
+    // The shared row assembler uses the same whole-session cost on all routes.
+    for member in &page.rows {
+        let listed = state.sessions_list(&member.id, None, None, 7).unwrap();
+        let exact = state.session_row(&member.id, 7).unwrap().unwrap();
+        let listed = listed.rows.iter().find(|row| row.id == member.id).unwrap();
+        assert_eq!(member.cost, exact.cost);
+        assert_eq!(member.cost, listed.cost);
+    }
     let members: BTreeSet<String> = ids(&pages).into_iter().collect();
     assert_eq!(
         members,
@@ -990,8 +998,14 @@ mod ui_export {
                         after: after.as_deref(),
                     })
                     .unwrap();
-                    let page =
-                        sessions(&metrics, &request, TimeZone::UTC, MetricClock::Fixture).unwrap();
+                    let page = sessions(
+                        &metrics,
+                        &request,
+                        TimeZone::UTC,
+                        MetricClock::Fixture,
+                        &xt_metrics::PriceCatalog::bundled().unwrap(),
+                    )
+                    .unwrap();
                     assert_eq!(page.window, report.window);
                     let next = page.next.clone();
                     pr_sessions.push(Page {
@@ -1140,7 +1154,7 @@ mod native_fixture {
 
     const PARENT: &str = "/private/tmp/xtrace-pr-analytics-native";
     const ROOT: &str = "XTRACE_PR_NATIVE_FIXTURE_ROOT";
-    const LIVE: &str = "Library/Application Support/ai.xtrace.desktop/xtrace.db";
+    const LIVE: &str = "Library/Application Support/ai.xtrace.app/xtrace.db";
 
     fn names(dir: &Path) -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(dir)

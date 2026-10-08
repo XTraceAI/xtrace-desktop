@@ -386,8 +386,8 @@ pub struct DashboardLaneSession {
     pub sub_sessions_cut_short: Option<bool>,
 }
 
-/// One lane session's priced responses over its whole history. The cost
-/// tile's selection, restricted to the session but not to a window: a Claude
+/// Priced responses of a lane session or span. Whole-session costs use the cost
+/// tile's selection, restricted to the session; span costs also restrict the window. A Claude
 /// Code sidechain counts with its parent session, a separately indexed
 /// sub-session on its own row.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
@@ -804,7 +804,9 @@ pub struct TokensByHost {
 /// field for field; the words may also be read back from the session's
 /// original source, in memory, when the index did not keep them, and the
 /// source is read at most once for both the prompt and the automatic line.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+// Preserve the public result shape; this read holds only one span at a time.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Debug, PartialEq, Serialize, TS)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum DashboardSpanDetail {
     /// No indexed user session owns this identifier.
@@ -816,6 +818,9 @@ pub enum DashboardSpanDetail {
         /// no selected response stated the counter; a measured zero stays zero.
         #[ts(type = "number | null")]
         output_tokens: Option<u64>,
+        /// API-equivalent cost of exactly the responses selected inside this
+        /// span, including counts and reasons for any unpriced responses.
+        cost: DashboardLaneCost,
         prompt: DashboardSpanPrompt,
         /// The latest task notification Claude Code wrote inside the span,
         /// which is automatic and never the person's last message.

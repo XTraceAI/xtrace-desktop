@@ -2,12 +2,18 @@
 import type { DashboardWindow } from "./DashboardWindow";
 import type { SessionParentContext } from "./SessionParentContext";
 import type { SessionRow } from "./SessionRow";
+import type { SessionsSummary } from "./SessionsSummary";
 
 export type SessionPage = { 
 /**
  * The event window every row's measurements were taken over (M-01).
  */
 window: DashboardWindow, rows: Array<SessionRow>, next: string | null, 
+/**
+ * Only the first Sessions page carries totals across every matching page.
+ * PR drilldowns do not request these totals.
+ */
+summary?: SessionsSummary | null, 
 /**
  * Context only for each indexed parent this page's rows name in `parent`
  * that the page does not list itself, in identifier order, read in the

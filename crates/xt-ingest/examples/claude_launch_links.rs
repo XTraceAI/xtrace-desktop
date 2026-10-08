@@ -454,7 +454,11 @@ fn guarded(db: &std::path::Path, home: &std::path::Path) -> Result<PathBuf, &'st
     ]
     .into_iter()
     .flatten()
-    .map(|base| base.join("Library/Application Support/ai.xtrace.desktop"))
+    // The folder of the earlier app ID still holds real data too.
+    .flat_map(|base| {
+        ["ai.xtrace.app", "ai.xtrace.desktop"]
+            .map(|id| base.join("Library/Application Support").join(id))
+    })
     .map(|live| resolved(&live).unwrap_or(live))
     .collect();
     for name in [db, resolved_db.as_path()] {
@@ -517,7 +521,7 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path().canonicalize().unwrap();
         let home = root.join("home");
-        let live = home.join("Library/Application Support/ai.xtrace.desktop");
+        let live = home.join("Library/Application Support/ai.xtrace.app");
         let work = root.join("work");
         fs::create_dir_all(&live).unwrap();
         fs::create_dir_all(&work).unwrap();

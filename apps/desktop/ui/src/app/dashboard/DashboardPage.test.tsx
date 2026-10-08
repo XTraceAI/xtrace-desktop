@@ -1134,7 +1134,7 @@ it('marks a partial lane cost, an unpriced one, and keeps small and large amount
               unpriced_observations: 2,
               unpriced: [
                 {
-                  model: 'codex-auto-review',
+                  model: 'unpublished-model',
                   service_tier: null,
                   reason: 'unknown_model',
                   observations: 2,
@@ -1153,7 +1153,7 @@ it('marks a partial lane cost, an unpriced one, and keeps small and large amount
               unpriced_observations: 4,
               unpriced: [
                 {
-                  model: 'codex-auto-review',
+                  model: 'unpublished-model',
                   service_tier: null,
                   reason: 'unknown_model',
                   observations: 3,
@@ -1175,15 +1175,15 @@ it('marks a partial lane cost, an unpriced one, and keeps small and large amount
     'At least $12.40: 2 of 5 responses have no price.',
   );
   expect(partial.textContent).toContain(
-    'Whole session: at least $12.40 API-equivalent cost: 3 of 5 responses priced; 2 codex-auto-review have no published price.',
+    'Whole session: at least $12.40 API-equivalent cost: 3 of 5 responses priced; 2 unpublished-model have no published price.',
   );
   expect(
     within(unpriced).getByText(
-      'Unmeasured: codex-auto-review has no published price; no model recorded',
+      'Unmeasured: unpublished-model has no published price; no model recorded',
     ),
   ).toBeTruthy();
   expect(unpriced.textContent).toContain(
-    'cost unknown: codex-auto-review has no published price; no model recorded',
+    'cost unknown: unpublished-model has no published price; no model recorded',
   );
   expect(costCell(tiny).textContent).toBe('<$0.01');
   expect(costCell(large).textContent).toBe('$1,234');
@@ -1489,9 +1489,7 @@ it('shows the generated report leverage with a point for each day of every range
   const leverage = () =>
     within(tileNamed('Leverage')).getByRole('img', { name: /^Leverage by day/ });
   expect(tileValue('Leverage')).toMatch(/^\d+\.\d×/);
-  expect(tileSub('Leverage')).toMatch(
-    /^\d+h\d{2}(\.\d)?m agent ÷ \d+h\d{2}(\.\d)?m human · whole days$/,
-  );
+  expect(tileSub('Leverage')).toMatch(/^[\d,]+ h \d+ m agent ÷ [\d,]+ h \d+ m human · whole days$/);
   // The exact days are stated in its definition and accessible description.
   expect(
     document.getElementById(tileNamed('Leverage').getAttribute('aria-describedby')!)!.textContent,

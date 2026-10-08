@@ -135,17 +135,15 @@ it('F19: one shared session counts once, on its event day, beside two merge mark
   expect(tile().textContent).not.toContain('unknown');
   // No legend of assignments: one total and one bar per day.
   expect(effort().querySelector('.xt-effort-legend')).toBeNull();
-  expect(total()).toBe('0h30m agent');
-  expect(within(effort()).getByTestId('effort-headline').textContent).toBe(
-    '0h30m agentlast 7 days',
-  );
+  expect(total()).toBe('0 h 30 m agent hrs');
+  expect(within(effort()).getByTestId('effort-headline').textContent).toBe('0 h 30 m agent hrs');
   // Merge markers are deduplicated per pull request, on their own merge days;
   // each is that day's count, with every pull request's facts in its name.
   expect(day(/^2026-09-05: 1 merged pull request · xtrace\/app#1 · feat/).textContent).toBe('1');
   expect(day(/^2026-09-06: 1 merged pull request · xtrace\/app#2 · fix/).textContent).toBe('1');
   expect(screen.getByTestId('effort-marker-count').textContent).toBe('2 PRs');
   expect(barred()).toEqual(['2026-09-03']);
-  expect(day('2026-09-03: 0h30m. synthetic-model 0h30m (100%)')).toBeTruthy();
+  expect(day('2026-09-03: 0 h 30 m. synthetic-model 0 h 30 m (100%)')).toBeTruthy();
   fireEvent.click(measure('cost'));
   // The card shows no line of session totals above the chart.
   expect(screen.queryByTestId('effort-cohort')).toBeNull();
@@ -206,13 +204,13 @@ it('confirmed only: an inferred link is gone before the tile and the markers', a
     // divides: F1's own agent hours and its five messages on Sep 7.
     // Each day is named as the chart names it, and both whole-day columns
     // are written as all agent time is.
-    'Sep 10h00mno usagenone0h00m0h00m',
-    'Sep 20h00mno usagenone0h00m0h00m',
-    'Sep 30h30m$2.50none0h00m0h00m',
-    'Sep 40h00mno usagenone0h00m0h00m',
-    'Sep 50h00mno usage#10h00m0h00m',
-    'Sep 60h00mno usagenone0h00m0h00m',
-    'Sep 70h00mno usagenone0h23m0h20m',
+    'Sep 10 h 0 mno usagenone0 h 0 m0 h 0 m',
+    'Sep 20 h 0 mno usagenone0 h 0 m0 h 0 m',
+    'Sep 30 h 30 m$2.50none0 h 0 m0 h 0 m',
+    'Sep 40 h 0 mno usagenone0 h 0 m0 h 0 m',
+    'Sep 50 h 0 mno usage#10 h 0 m0 h 0 m',
+    'Sep 60 h 0 mno usagenone0 h 0 m0 h 0 m',
+    'Sep 70 h 0 mno usagenone0 h 23 m0 h 20 m',
   ]);
   fireEvent.keyDown(dialog, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -226,7 +224,7 @@ it('unknown facts: the known merged count is shown with how many are not checked
   expect(tile().textContent).toBe('Merged PRs1so far1 not checked yet');
   // An unresolved session's effort is in the day totals like any other's; the
   // card draws no type, so no unresolved-type triangle is in its header.
-  expect(total()).toBe('1h00m agent');
+  expect(total()).toBe('1 h 0 m agent hrs');
   expect(screen.queryByTestId('effort-unresolved')).toBeNull();
   expect(await statusLine()).toContain(
     'Confirmed-linked pull requests: 1 checked, 1 not checked yet',
@@ -248,12 +246,10 @@ it('partial pricing is explicit: a priced subtotal with a +, the unpriced respon
   await loaded();
   fireEvent.click(measure('cost'));
   expect(total()).toBe('$1.25+');
-  expect(within(effort()).getByTestId('effort-headline').textContent).toBe(
-    '$1.25+last 7 days1 response has no price',
-  );
+  expect(within(effort()).getByTestId('effort-headline').textContent).toBe('$1.25+');
   const notes = within(await method()).getByTestId('effort-notes').textContent;
   expect(notes).toContain(
-    '1 of 2 selected responses could not be priced (codex-auto-review: model not in the price catalog, 1 response); they add nothing to the bars',
+    '1 of 2 selected responses could not be priced (unpublished-model: model not in the price catalog, 1 response); they add nothing to the bars',
   );
   expect(notes).toContain(
     '1 Codex response recorded no service tier and is priced at OpenAI’s default (standard) tier',
@@ -263,7 +259,7 @@ it('partial pricing is explicit: a priced subtotal with a +, the unpriced respon
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   // The partial state reads in view without opening anything, and never as a total.
   const partial = day(
-    '2026-09-03: $1.25+. synthetic-model $1.25 (100%). No price: 1 codex-auto-review response',
+    '2026-09-03: $1.25+. synthetic-model $1.25 (100%). No price: 1 unpublished-model response',
   );
   expect(within(partial).getByTestId('effort-partial').textContent).toBe('+');
   expect(day('2026-09-01: no usage')).toBeTruthy();
@@ -271,7 +267,7 @@ it('partial pricing is explicit: a priced subtotal with a +, the unpriced respon
   expect(barred()).toEqual(['2026-09-03']);
   // Agent time is measured for the same cohort whatever the pricing says.
   fireEvent.click(measure('agent h'));
-  expect(total()).toBe('0h30m agent');
+  expect(total()).toBe('0 h 30 m agent hrs');
   expect(effort().querySelector('[data-testid="effort-partial"]')).toBeNull();
 });
 
@@ -294,7 +290,7 @@ it('nothing priced: the day is unknown, not zero, and the plot says nothing is p
   expect(screen.getByRole('heading', { level: 2, name: 'Effort' })).toBeTruthy();
   fireEvent.click(measure('cost'));
   expect(total()).toBe('cost unknown');
-  expect(day('2026-09-03: cost unknown. No price: 3 codex-auto-review responses')).toBeTruthy();
+  expect(day('2026-09-03: cost unknown. No price: 3 unpublished-model responses')).toBeTruthy();
   expect(screen.getByTestId('effort-unmeasured').textContent).toBe(
     'No priced daily usage to plot.',
   );
@@ -323,11 +319,9 @@ it('hovering or focusing a day opens its card with every model and its share', a
   );
   await loaded();
   expect(within(effort()).getByTestId('effort-reference').textContent).toBe('24 h');
-  expect(within(effort()).getByTestId('effort-headline').textContent).toBe(
-    '26h00m agentlast 7 days1 day above 24 h',
-  );
+  expect(within(effort()).getByTestId('effort-headline').textContent).toBe('26 h 0 m agent hrs');
   const busy = day(
-    '2026-09-05: 26h00m. gpt-6-astra 20h00m (77%), claude-opus-5-5 6h00m (23%). Above 24 h: agents ran at the same time',
+    '2026-09-05: 26 h 0 m. gpt-6-astra 20 h 0 m (77%), claude-opus-5-5 6 h 0 m (23%). Above 24 h: agents ran at the same time',
   );
   fireEvent.focus(busy);
   fireEvent.pointerEnter(busy);
@@ -337,7 +331,7 @@ it('hovering or focusing a day opens its card with every model and its share', a
     within(card)
       .getAllByTestId('effort-day-model')
       .map((row) => row.textContent),
-  ).toEqual(['gpt-6-astra20h00m77%', 'claude-opus-5-56h00m23%']);
+  ).toEqual(['gpt-6-astra20 h 0 m77%', 'claude-opus-5-56 h 0 m23%']);
   expect(card.textContent).toContain('Sep 5');
   expect(card.textContent).toContain('Above 24 h: agents ran at the same time');
 });

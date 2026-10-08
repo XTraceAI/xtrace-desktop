@@ -8,7 +8,7 @@ import type { DashboardWindow } from '../../data/generated/DashboardWindow';
 import type { SessionParentLink } from '../../data/generated/SessionParentLink';
 import { DataTable, type Column } from '../../kit/DataTable';
 import { EvidenceDot } from '../../kit/Badge';
-import { HostGlyph } from '../../kit/HostGlyph';
+import { LiveSessionHost } from '../LiveSessionBadge';
 import { hostName } from '../../kit/hosts';
 import { Icon } from '../../kit/icons';
 import { MetricCell } from '../../kit/MetricCell';
@@ -25,14 +25,18 @@ import {
   compactionEvents,
   useSessionCompactions,
 } from '../session-compactions';
-import {
-  isLiveSessionHost,
-  LIVE_SESSION_HOSTS,
-  useLiveSessionStatus,
-} from '../live-session-status';
+import { isLiveSessionHost, useLiveSessionStatus } from '../live-session-status';
 import '../../styles/live-session-status.css';
 import { LaneSpan } from './LaneSpan';
-import { axisTime, clockTime, plural, recordedTime, unpricedText, usd } from './present';
+import {
+  costAmount,
+  axisTime,
+  clockTime,
+  plural,
+  recordedTime,
+  unpricedText,
+  usd,
+} from './present';
 import {
   groupSessionLanes,
   laneRows,
@@ -363,23 +367,11 @@ export function ActivityLanes({ report, range }: { report: DashboardMetrics; ran
       width: '20px',
       render: (row) => {
         const host = row.kind === 'session' ? row.lane.host : row.parent.host;
-        const running =
-          row.kind === 'session' &&
-          isLiveSessionHost(host) &&
-          liveStatus(row.lane.sessionId) === 'running';
-        const glyph = <HostGlyph host={host} size={18} />;
-        return running && isLiveSessionHost(host) ? (
-          <span
-            className="xt-lane-live-host"
-            data-live-status="running"
-            role="img"
-            aria-label={`${LIVE_SESSION_HOSTS[host].label} · Running`}
-            title={`${LIVE_SESSION_HOSTS[host].source} · Running`}
-          >
-            <span aria-hidden="true">{glyph}</span>
-          </span>
-        ) : (
-          glyph
+        return (
+          <LiveSessionHost
+            host={host}
+            status={row.kind === 'session' ? liveStatus(row.lane.sessionId) : undefined}
+          />
         );
       },
     },
@@ -681,8 +673,8 @@ export const mergeUnpriced = (unpriced: readonly DashboardUnpriced[]): UnpricedG
 
 /**
  * What could not be priced, by model and reason, in the cost report's words:
- * "codex-auto-review has no published price". With counts, "20
- * codex-auto-review have no published price".
+ * "unpublished-model has no published price". With counts, "20
+ * unpublished-model have no published price".
  */
 const unpricedGap = (gap: UnpricedGap, counted: boolean) => {
   const many = gap.observations !== 1;
@@ -706,7 +698,7 @@ export const unpricedNames = (cost: DashboardLaneCost) =>
     : mergeUnpriced(cost.unpriced)
         .map((gap) => unpricedGap(gap, false))
         .join('; ');
-/** "980 of 1,000 responses priced; 20 codex-auto-review have no published price" */
+/** "980 of 1,000 responses priced; 20 unpublished-model have no published price" */
 export const partialText = (cost: DashboardLaneCost) =>
   `${cost.priced_observations.toLocaleString('en-US')} of ${plural(cost.selected_observations, 'response')} priced; ${
     cost.unpriced.length === 0
@@ -741,7 +733,7 @@ export interface ShownCost {
  * session with no response adds nothing and leaves the total known.
  */
 export const shownCost = (
-  sessions: readonly (DashboardLaneSession | null | undefined)[],
+  sessions: readonly (Pick<DashboardLaneSession, 'cost'> | null | undefined)[],
   {
     total = false,
     notShown = 0,
@@ -832,11 +824,19 @@ export const shownCostText = (shown: ShownCost) => {
 };
 
 /** One row's whole-session cost: a session's own, or a collapsed group's Σ total. */
-function LaneCost({ shown, note = '' }: { shown: ShownCost; note?: string }) {
+export function LaneCost({
+  shown,
+  note = '',
+  size = 10.5,
+}: {
+  shown: ShownCost;
+  note?: string;
+  size?: 10.5 | 11;
+}) {
   // Sub-sessions left out under a row that shows no total of them.
   const aside = note ? ` ${note}` : '';
   const unknown = (reason: string) => (
-    <MetricCell value={null} align="right" size={10.5} reason={`${reason}${aside}`} />
+    <MetricCell value={null} align="right" size={size} reason={`${reason}${aside}`} />
   );
   const { cost, total } = shown;
   if (!cost) return unknown(total ? 'Cost unknown for these sessions' : NO_SESSION);
@@ -860,17 +860,17 @@ function LaneCost({ shown, note = '' }: { shown: ShownCost; note?: string }) {
   if (cost.total_usd !== null)
     return (
       <MetricCell
-        value={`${mark}${usd(cost.total_usd)}`}
+        value={`${mark}${costAmount(cost)}`}
         align="right"
-        size={10.5}
+        size={size}
         title={`${scope}${usd(cost.total_usd)} at public API prices.${assumed}${aside}`}
       />
     );
   return (
     <MetricCell
-      value={`${mark}${usd(cost.priced_subtotal_usd)}+`}
+      value={`${mark}${costAmount(cost)}`}
       align="right"
-      size={10.5}
+      size={size}
       title={`${scope ? `${scope}at least` : 'At least'} ${usd(cost.priced_subtotal_usd)}: ${
         cost.unpriced_observations > 0
           ? `${cost.unpriced_observations.toLocaleString('en-US')} of ${plural(cost.selected_observations, 'response')} ${cost.unpriced_observations === 1 ? 'has' : 'have'} no price${andLeftOut(shown)}`

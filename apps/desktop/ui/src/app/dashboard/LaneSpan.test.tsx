@@ -60,6 +60,15 @@ const indexed = (
   state: 'indexed',
   tool: { state: 'called', name: 'WebFetch', calls: 3 },
   output_tokens: 3_150_000,
+  cost: {
+    total_usd: 1.25,
+    priced_subtotal_usd: 1.25,
+    selected_observations: 2,
+    priced_observations: 2,
+    unpriced_observations: 0,
+    assumed_tier_observations: 0,
+    unpriced: [],
+  },
   prompt: {
     state: 'found',
     at_ms: lane.start_ms,
@@ -79,10 +88,10 @@ const notification = (text: DashboardAutomaticText): DashboardSpanAutomatic => (
 describe('spanDuration', () => {
   it('states a length as all agent time is written, and a single event as one', () => {
     expect(spanDuration(0, 0)).toBe('single event');
-    expect(spanDuration(0, 2_000)).toBe('<0.1m');
-    expect(spanDuration(0, 30_000)).toBe('0h00.5m');
-    expect(spanDuration(0, 23 * 60_000)).toBe('0h23m');
-    expect(spanDuration(0, 150 * 60_000)).toBe('2h30m');
+    expect(spanDuration(0, 2_000)).toBe('<1 m');
+    expect(spanDuration(0, 30_000)).toBe('0 h 1 m');
+    expect(spanDuration(0, 23 * 60_000)).toBe('0 h 23 m');
+    expect(spanDuration(0, 150 * 60_000)).toBe('2 h 30 m');
   });
 });
 
@@ -98,7 +107,7 @@ it('opens a bubble on hover with the span’s name, length, start, tool, output 
   fireEvent.mouseMove(span);
   const bubble = await screen.findByRole('tooltip');
   expect(bubble.querySelector('.xt-span-bubble-name')!.textContent).toBe('Session 00000000');
-  expect(bubble.querySelector('.xt-span-bubble-duration')!.textContent).toBe('0h23m');
+  expect(bubble.querySelector('.xt-span-bubble-duration')!.textContent).toBe('0 h 23 m');
   expect(bubble.querySelector('time')!.textContent).toBe('12:00 PM');
   // The fixture's own answer, read through the native command at export.
   await waitFor(() =>
@@ -349,7 +358,7 @@ it('keeps an open bubble open while a live span grows', async () => {
   expect(bar()).toBe(span);
   expect(span.hasAttribute('data-popup-open')).toBe(true);
   const bubble = screen.getByRole('tooltip');
-  expect(bubble.querySelector('.xt-span-bubble-duration')!.textContent).toBe('0h28m');
+  expect(bubble.querySelector('.xt-span-bubble-duration')!.textContent).toBe('0 h 28 m');
   // The grown span is read for itself, with the earlier answer shown meanwhile.
   expect(bubble.textContent).toContain('WebFetch');
   await waitFor(() =>
@@ -438,3 +447,41 @@ describe('the automatic line', () => {
     expect(bubble.querySelector('hr')).toBeNull();
   });
 });
+
+it.each([
+  ['complete', { total_usd: 1.25, priced_observations: 2, unpriced_observations: 0 }, '$1.25'],
+  ['partial', { total_usd: null, priced_observations: 1, unpriced_observations: 1 }, '$1.25+'],
+  [
+    'unpriced',
+    { total_usd: null, priced_observations: 0, unpriced_observations: 2 },
+    'cost unknown',
+  ],
+  [
+    'no responses',
+    { total_usd: null, selected_observations: 0, priced_observations: 0, unpriced_observations: 0 },
+    'cost unknown',
+  ],
+  ['measured zero', { total_usd: 0, priced_subtotal_usd: 0 }, '$0.00'],
+])(
+  'shows %s cost beside output tokens without assigning it to the prompt',
+  async (_, overrides, expected) => {
+    const detail = indexed({});
+    if (detail.state !== 'indexed') throw new Error('indexed');
+    Object.assign(detail.cost, overrides);
+    const { bar } = setup(async () => detail);
+    fireEvent.focus(await waitFor(bar));
+    const bubble = await screen.findByRole('tooltip');
+    await waitFor(() =>
+      expect(bubble.querySelector('.xt-span-bubble-cost')?.textContent).toBe(expected),
+    );
+    expect(bubble.querySelector('.xt-span-bubble-output')?.nextElementSibling?.className).toBe(
+      'xt-span-bubble-cost',
+    );
+    expect(bubble.querySelector('.xt-span-bubble-cost')?.getAttribute('title')).toContain(
+      'recorded response usage in this span at public API prices',
+    );
+    expect(bubble.querySelector('.xt-span-bubble-prompt')?.textContent).toBe(
+      '› make the PR link exact, not inferred',
+    );
+  },
+);

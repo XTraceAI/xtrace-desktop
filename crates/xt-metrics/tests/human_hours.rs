@@ -1,5 +1,7 @@
 //! "Your hours" over a real store, and the day-by-day series of existing
 //! metrics. Every session identity and record is synthetic.
+mod hands_off_support;
+
 use jiff::{Timestamp, tz::TimeZone};
 use rusqlite::Connection;
 use serde_json::json;
@@ -170,7 +172,7 @@ fn daily_series_name_the_ranges_days() {
     let zone = TimeZone::UTC;
     let days = window().local_days(zone.clone()).unwrap();
     let concurrency = metrics.concurrency_by_day(window(), zone.clone()).unwrap();
-    let hands_off = metrics.hands_off_by_day(window(), zone).unwrap();
+    let (range, hands_off) = hands_off_support::matches_standalone(&metrics, window(), zone);
     assert_eq!(concurrency.len(), days.len());
     assert_eq!(hands_off.len(), days.len());
     for ((bucket, c), h) in days.iter().zip(&concurrency).zip(&hands_off) {
@@ -185,7 +187,6 @@ fn daily_series_name_the_ranges_days() {
     }
     // Hands-off is measured once over the range: the days' stretches are the
     // range's own, so their counts add up to the range's.
-    let range = metrics.hands_off(window()).unwrap();
     assert_eq!(
         hands_off.iter().map(|day| day.n.unwrap()).sum::<u64>(),
         range.n.unwrap()
@@ -311,13 +312,97 @@ fn an_overnight_hands_off_stretch_stays_whole_on_its_start_day() {
         ],
     );
     let metrics = MetricsDb::open(db.path()).unwrap();
-    let days = metrics.hands_off_by_day(window(), TimeZone::UTC).unwrap();
+    let (range, days) = hands_off_support::matches_standalone(&metrics, window(), TimeZone::UTC);
     assert_eq!(days[0].date, "2026-09-01");
     assert_eq!(days[0].n, Some(1));
     assert_eq!(days[0].median_min, Some(40.0));
     assert_eq!(days[1].n, Some(0));
     assert_eq!(days[1].median_min, None);
-    assert_eq!(metrics.hands_off(window()).unwrap().median_min, Some(40.0));
+    assert_eq!(range.median_min, Some(40.0));
+}
+
+/// A session that is measured early and unmeasured later publishes none of
+/// its stretches: the range is unknown, and so is every day from its first to
+/// its last event, its earlier measured day included. The other days keep
+/// their own stretches, through a partial first day and the 25-hour day the
+/// clocks go back on.
+#[test]
+fn a_later_unmeasured_stretch_hides_the_sessions_earlier_days() {
+    let mut db = TempDb::empty().unwrap();
+    // Rolling 10:00 PDT on Oct 31 to 09:00 PST on Nov 3, in Los Angeles.
+    let window = Window::new(ms("2026-10-31T17:00:00Z"), ms("2026-11-03T17:00:00Z")).unwrap();
+    seed_on(
+        &mut db,
+        "known",
+        "cli",
+        &[
+            // Before the window opens: not this range's.
+            work("early-h", "2026-10-31T16:00:00Z", true, false),
+            work("early-a", "2026-10-31T16:10:00Z", false, true),
+            // 23:50 PDT to 00:20 PDT: stays whole on Oct 31.
+            work("night-h", "2026-11-01T06:50:00Z", true, false),
+            work("night-a", "2026-11-01T07:20:00Z", false, true),
+            // 01:30 PDT to 01:30 PST: one hour on Nov 1.
+            work("fall-h", "2026-11-01T08:30:00Z", true, false),
+            work("fall-a", "2026-11-01T09:30:00Z", false, true),
+        ],
+    );
+    seed_on(
+        &mut db,
+        "later-unknown",
+        "cli",
+        &[
+            work("u1-h", "2026-11-02T20:00:00Z", true, false),
+            work("u1-a", "2026-11-02T20:05:00Z", false, true),
+            work("u2-h", "2026-11-03T15:00:00Z", true, false),
+            work("u2-a", "2026-11-03T15:10:00Z", false, false),
+        ],
+    );
+    let zone = TimeZone::get("America/Los_Angeles").unwrap();
+    let read = |db: &TempDb| {
+        let metrics = MetricsDb::open(db.path()).unwrap();
+        hands_off_support::matches_standalone(&metrics, window, zone.clone())
+    };
+    // The last reply calls no tool, so the second stretch is measured as none.
+    let (range, days) = read(&db);
+    assert_eq!(range.n, Some(3));
+    assert_eq!(
+        days.iter().map(|day| day.n).collect::<Vec<_>>(),
+        [Some(1), Some(1), Some(1), Some(0)]
+    );
+    // Its tool evidence becomes unknown.
+    Connection::open(db.path())
+        .unwrap()
+        .execute(
+            "UPDATE records SET tool_use_count=NULL WHERE uuid='u2-a'",
+            [],
+        )
+        .unwrap();
+    let (range, days) = read(&db);
+    assert_eq!(
+        (range.n, range.median_min, range.p90_min),
+        (None, None, None)
+    );
+    let summary: Vec<_> = days
+        .iter()
+        .map(|day| {
+            (
+                day.date.as_str(),
+                day.end_ms - day.start_ms,
+                day.n,
+                day.median_min,
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("2026-10-31", 14 * 3_600_000, Some(1), Some(30.0)),
+            ("2026-11-01", 25 * 3_600_000, Some(1), Some(60.0)),
+            ("2026-11-02", 24 * 3_600_000, None, None),
+            ("2026-11-03", 9 * 3_600_000, None, None),
+        ]
+    );
 }
 
 #[test]
@@ -362,9 +447,8 @@ fn per_day_hands_off_uses_the_ranges_timestamp_exclusions() {
         );
     }
     let metrics = MetricsDb::open(db.path()).unwrap();
-    let range = metrics.hands_off(window()).unwrap();
+    let (range, days) = hands_off_support::matches_standalone(&metrics, window(), TimeZone::UTC);
     assert!(range.excluded_surfaces.is_empty());
-    let days = metrics.hands_off_by_day(window(), TimeZone::UTC).unwrap();
     // Sep 1 keeps the healthy session's three stretches, as the range does.
     assert_eq!(days[0].n, Some(3));
     assert_eq!(days[1].n, Some(21));

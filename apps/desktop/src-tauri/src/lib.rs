@@ -15,6 +15,7 @@ mod account_usage_process;
 pub mod dashboard;
 mod dashboard_dto;
 pub mod dto;
+mod earlier_install;
 pub mod environment;
 mod environment_dto;
 pub mod gh_cli;
@@ -223,6 +224,7 @@ async fn account_usage_refresh_claude(
 #[tauri::command]
 async fn sessions_list(
     app: tauri::AppHandle,
+    sort: Option<xt_store::session_list::SessionSort>,
     search: String,
     hosts: Option<Vec<String>>,
     with_prs: bool,
@@ -236,6 +238,7 @@ async fn sessions_list(
         state.sessions_query(
             dto::SessionQuery {
                 search: &search,
+                sort: sort.unwrap_or_default(),
                 hosts: hosts.as_deref(),
                 with_prs,
                 after: after.as_deref(),
@@ -596,7 +599,7 @@ async fn today_summary(app: tauri::AppHandle) -> Result<today::TodaySummary, Str
 /// Popover-only: any other window is refused.
 #[tauri::command]
 fn tray_hide(webview_window: tauri::WebviewWindow) -> Result<(), String> {
-    popover(&webview_window).map(tray::hide_popover)
+    popover(&webview_window).map(tray::dismiss_popover)
 }
 
 /// Popover-only: hide it and bring the existing main window forward.
@@ -716,12 +719,9 @@ async fn purge_stored_content(app: tauri::AppHandle) -> Result<privacy::ContentP
     .await
 }
 
-/// Starts the app's services over the database startup selects. An error
-/// here is shown to the person by `fail_setup`, never handed to Tauri, which
-/// would end the app with a panic and nothing on screen.
-fn start(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    updates::setup(app.handle())?;
-    let options = state::StartupOptions::parse(
+/// The startup options from this launch's environment and arguments.
+fn startup_options() -> Result<state::StartupOptions, state::StateError> {
+    state::StartupOptions::parse(
         std::env::var_os("XTRACE_DATA_DIR").map(Into::into),
         std::env::var_os("XTRACE_FIXTURE"),
         std::env::args().skip(1),
@@ -730,7 +730,61 @@ fn start(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         std::env::var_os("XTRACE_NATIVE_HOME"),
         std::env::var_os("XTRACE_PYTHON"),
     )?
-    .with_github_cli(std::env::var_os(gh_cli::GH_ENV))?;
+    .with_github_cli(std::env::var_os(gh_cli::GH_ENV))
+}
+
+/// Copies the earlier install's data and screen settings when
+/// [`earlier_install::decide`] says so. It runs as a plugin's setup because
+/// Tauri initializes plugins while building the app, before it creates the
+/// windows in `tauri.conf.json` and before `setup`; WebKit storage copied
+/// any later would be copied under a running webview. Registered after the
+/// single-instance plugin, so a second launch has already handed over to the
+/// first and ended. Options that do not parse copy nothing here; `start`
+/// reports them.
+fn copy_earlier_install<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("earlier-install")
+        .setup(|app, _| {
+            if let Err(error) = copy_earlier_install_now(app) {
+                // Nothing has started yet: no window to hide, no service to
+                // stop. The alert is the one `fail_setup` shows.
+                startup_failure::exit(&startup_failure::message(&error));
+            }
+            Ok(())
+        })
+        .build()
+}
+
+fn copy_earlier_install_now<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<(), earlier_install::CopyError> {
+    let Ok(options) = startup_options() else {
+        return Ok(());
+    };
+    let earlier_install::Decision::Copy(folders) = earlier_install::decide(&options, || {
+        app.path()
+            .app_data_dir()
+            .map_err(|_| state::StateError::InvalidOption)
+    })?
+    else {
+        return Ok(());
+    };
+    earlier_install::copy(&folders, earlier_install::earlier_app_running)?;
+    // The screen settings are kept when they can be; without them the app
+    // still starts, with the default theme and the welcome screen.
+    if let Ok(home) = app.path().home_dir()
+        && let Err(error) = earlier_install::copy_screen_settings(&home, &app.config().identifier)
+    {
+        eprintln!("XTrace could not copy the earlier screen settings: {error}");
+    }
+    Ok(())
+}
+
+/// Starts the app's services over the database startup selects. An error
+/// here is shown to the person by `fail_setup`, never handed to Tauri, which
+/// would end the app with a panic and nothing on screen.
+fn start(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    updates::setup(app.handle())?;
+    let options = startup_options()?;
     let python = options.python.clone();
     let github_cli = options.github_cli.clone();
     let state = state::AppState::build(
@@ -933,6 +987,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             tray::show_main(app);
         }))
+        .plugin(copy_earlier_install())
         .setup(|app| {
             if let Err(error) = start(app) {
                 fail_setup(app, error.as_ref());

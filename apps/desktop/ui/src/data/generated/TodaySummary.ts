@@ -3,6 +3,7 @@ import type { DashboardUnavailable } from "./DashboardUnavailable";
 import type { MetricClock } from "./MetricClock";
 import type { TodayAgent } from "./TodayAgent";
 import type { TodayCost } from "./TodayCost";
+import type { TodayHuman } from "./TodayHuman";
 import type { TodayOutput } from "./TodayOutput";
 
 export type TodaySummary = { 
@@ -19,7 +20,8 @@ timezone: string, clock: MetricClock,
  */
 start_ms: number, 
 /**
- * The one captured instant every figure was read at: the exclusive end.
+ * The captured instant: exclusive end for output, cost and agent time.
+ * Human time uses the shared metric’s whole local day.
  */
 observed_ms: number, 
 /**
@@ -30,7 +32,7 @@ next_midnight_ms: number,
  * True when `observed_ms` is exactly local midnight: the half-open day
  * holds no instant yet, so nothing was read and every count is zero.
  */
-empty: boolean, output: TodayOutput, cost: TodayCost, agent: TodayAgent, 
+empty: boolean, output: TodayOutput, cost: TodayCost, agent: TodayAgent, human: TodayHuman, 
 /**
  * Tray sections existing data cannot prove.
  */

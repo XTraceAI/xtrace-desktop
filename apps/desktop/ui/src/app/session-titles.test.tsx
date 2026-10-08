@@ -149,7 +149,11 @@ it('shows a host title in Sessions for exactly the rows of the page it read', as
   // One read per page; nothing is read again while the rows stay the same.
   expect(reads).toHaveLength(1);
   // The list query itself is the same one it always was.
-  expect(list).toHaveBeenCalledWith({ search: '', hosts: null, withPrs: false }, null, 7);
+  expect(list).toHaveBeenCalledWith(
+    { search: '', hosts: null, withPrs: false, sort: 'started' },
+    null,
+    7,
+  );
 });
 
 it('reads the next page on its own and never more than one page at once', async () => {
@@ -172,7 +176,11 @@ it('reads the next page on its own and never more than one page at once', async 
   expect(screen.getByText('First page title')).toBeTruthy();
   expect(screen.getByText('Second page title')).toBeTruthy();
   // Pagination is the list's own: the second page was asked for by cursor.
-  expect(list).toHaveBeenLastCalledWith({ search: '', hosts: null, withPrs: false }, 'page-two', 7);
+  expect(list).toHaveBeenLastCalledWith(
+    { search: '', hosts: null, withPrs: false, sort: 'started' },
+    'page-two',
+    7,
+  );
 });
 
 it('cancels a read for a list that changed and never shows its late answer', async () => {

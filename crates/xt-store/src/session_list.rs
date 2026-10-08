@@ -2,9 +2,20 @@
 use crate::{Error, Result, Store};
 use serde::{Deserialize, Serialize};
 
+/// The indexed timestamp used to order the whole list before paging.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionSort {
+    #[default]
+    Started,
+    RecentlyActive,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionCursor {
     pub time: i64,
+    #[serde(default)]
+    pub sort: SessionSort,
     pub id: String,
 }
 #[derive(Clone, Debug)]
@@ -34,6 +45,8 @@ pub struct SessionSummary {
     /// The earliest visible work record, counting copies inherited from a
     /// forked session; not a session start.
     pub first_ts: Option<String>,
+    /// Latest timed own work, excluding metadata and inherited fork copies.
+    pub last_activity_at_ms: Option<i64>,
     pub record_count: u64,
     pub has_conflict: bool,
     /// Every stored session→pull request link, strongest confidence first. A
@@ -102,6 +115,7 @@ pub struct SessionFilter<'a> {
     /// Substring of the identity, repository/working directory, branch or
     /// saved title. At most 256 characters.
     pub search: &'a str,
+    pub sort: SessionSort,
     /// `None` lists every host. Otherwise a non-empty set of [`HOSTS`];
     /// duplicates collapse.
     pub hosts: Option<&'a [&'a str]>,
@@ -204,7 +218,10 @@ const PAGE_SQL: &str = concat!(
     " own_first_ms,
                 ",
     copied_first_ms_sql!(),
-    " copied_first_ms
+    " copied_first_ms,
+                (SELECT max(r.ts_ms) FROM records r WHERE r.session_id=s.session_id AND ",
+    work_record_sql!(),
+    ") last_activity_ms
               FROM sessions s WHERE s.kind='user' AND (?2 IS NULL OR instr(?2,'|'||s.host||'|')>0)
                 -- A recorded session→PR link of any confidence, before paging.
                 -- A number GitHub said is not a pull request is no link.
@@ -234,7 +251,7 @@ const PAGE_SQL: &str = concat!(
     shown_start_sql!("native_start", "host", "own_first_ms"),
     " started_at_ms,
                 coalesce(min(own_first_ms,copied_first_ms),own_first_ms,copied_first_ms) first_ms,
-                coalesce(native_start,own_first_ms,copied_first_ms,-9223372036854775808) sort_time FROM candidates
+                CASE WHEN ?10='recently_active' THEN coalesce(last_activity_ms,-9223372036854775808) ELSE coalesce(native_start,own_first_ms,copied_first_ms,-9223372036854775808) END sort_time FROM candidates
             ), page AS MATERIALIZED (
               SELECT * FROM ranked WHERE ?3 IS NULL OR sort_time < ?3 OR (sort_time=?3 AND session_id < ?4)
               ORDER BY sort_time DESC,session_id DESC LIMIT 51
@@ -249,7 +266,7 @@ const PAGE_SQL: &str = concat!(
               ) GROUP BY session_id
             )
             SELECT p.session_id,p.host,p.repo,p.git_branch,coalesce(w.record_count,0),p.has_conflict,
-              p.sort_time,p.first_ms,p.title,p.started_at_ms
+              p.sort_time,p.first_ms,p.title,p.started_at_ms,p.last_activity_ms
             FROM page p LEFT JOIN work w ON w.session_id=p.session_id
             ORDER BY p.sort_time DESC,p.session_id DESC LIMIT 51"
 );
@@ -295,6 +312,7 @@ pub fn page(
         connection,
         &SessionFilter {
             search,
+            sort: SessionSort::Started,
             hosts,
             with_prs: false,
             pull_request: None,
@@ -340,6 +358,9 @@ fn listed(
     if filter.search.chars().count() > 256 {
         return Err(Error::InvalidInput("invalid session filter"));
     }
+    if after.is_some_and(|cursor| cursor.sort != filter.sort) {
+        return Err(Error::InvalidInput("invalid session cursor"));
+    }
     let hosts = filter.host_set()?;
     let pull_request = filter
         .pull_request
@@ -362,6 +383,10 @@ fn listed(
                 pull_request.map(|(repository, _, _)| repository),
                 pull_request.map(|(_, number, _)| number),
                 pull_request.is_some_and(|(_, _, confirmed_only)| confirmed_only),
+                match filter.sort {
+                    SessionSort::Started => "started",
+                    SessionSort::RecentlyActive => "recently_active",
+                },
             ],
             |row| {
                 let id: String = row.get(0)?;
@@ -369,6 +394,7 @@ fn listed(
                     SessionSummary {
                         cursor: SessionCursor {
                             time: row.get(6)?,
+                            sort: filter.sort,
                             id: id.clone(),
                         },
                         id,
@@ -381,6 +407,7 @@ fn listed(
                         repo: row.get(2)?,
                         branch: row.get(3)?,
                         first_ts: None,
+                        last_activity_at_ms: row.get(10)?,
                         record_count: u64::try_from(row.get::<_, i64>(4)?)
                             .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(4, -1))?,
                         has_conflict: row.get(5)?,
@@ -844,7 +871,7 @@ mod query_plan_tests {
     }
 
     fn plan_with(store: &Store, id: Option<&str>, with_prs: bool) -> Vec<String> {
-        plan_bound(store, id, with_prs, None)
+        plan_bound(store, id, with_prs, None, SessionSort::Started)
     }
 
     fn plan_bound(
@@ -852,6 +879,7 @@ mod query_plan_tests {
         id: Option<&str>,
         with_prs: bool,
         pull_request: Option<(&str, i64, bool)>,
+        sort: SessionSort,
     ) -> Vec<String> {
         let mut statement = store
             .connection
@@ -868,7 +896,11 @@ mod query_plan_tests {
                     with_prs,
                     pull_request.map(|(repository, _, _)| repository),
                     pull_request.map(|(_, number, _)| number),
-                    pull_request.is_some_and(|(_, _, confirmed)| confirmed)
+                    pull_request.is_some_and(|(_, _, confirmed)| confirmed),
+                    match sort {
+                        SessionSort::Started => "started",
+                        SessionSort::RecentlyActive => "recently_active",
+                    },
                 ],
                 |row| row.get::<_, String>(3),
             )
@@ -894,6 +926,13 @@ mod query_plan_tests {
             plan.iter().any(|step| step.starts_with("SEARCH records ")),
             "{plan:?}"
         );
+        assert!(!scans_every_record(&plan), "{plan:?}");
+    }
+
+    #[test]
+    fn recent_pages_do_not_plan_full_record_scans() {
+        let store = Store::open_in_memory().unwrap();
+        let plan = plan_bound(&store, None, false, None, SessionSort::RecentlyActive);
         assert!(!scans_every_record(&plan), "{plan:?}");
     }
 
@@ -986,7 +1025,13 @@ mod query_plan_tests {
         // never a scan of every stored link, every pull request or every record.
         let store = Store::open_in_memory().unwrap();
         for confirmed in [false, true] {
-            let plan = plan_bound(&store, None, false, Some(("xtrace/app", 7, confirmed)));
+            let plan = plan_bound(
+                &store,
+                None,
+                false,
+                Some(("xtrace/app", 7, confirmed)),
+                SessionSort::Started,
+            );
             assert!(!scans_every_record(&plan), "{plan:?}");
             // (`p` is also the outer page's alias, which is scanned by design.)
             assert!(

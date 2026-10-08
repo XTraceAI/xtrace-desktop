@@ -8,14 +8,16 @@ response selection, work exclusions and UUID ownership remain authoritative.
 
 The DTO and catalog state this basis:
 
-> Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes unrecorded regional/speed modifiers, tool fees, and subscriptions.
+> Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes codex-auto-review responses, unrecorded regional/speed modifiers, tool fees, and subscriptions.
 
 This is not an invoice. `price_version` and `price_as_of` identify the supplied
 catalog. `total_usd` is null if any selected observation is unpriced, or when no
 usage observation exists. `priced_subtotal_usd` is a separately named partial
 subtotal, never a substitute for an unknown total. Each unpriced group names the
-recorded model, service tier, reason and observation count. Independently measured
-tokens remain available through the token report.
+recorded model, service tier, reason and observation count. Automatic review responses (`codex-auto-review`) are excluded from all cost
+amounts and selected, priced and unpriced response counts, including responses
+without timestamps. Other unknown models still produce an unpriced reason.
+Saved records, independently measured tokens and agent time remain unchanged.
 
 ## Catalog and arithmetic
 

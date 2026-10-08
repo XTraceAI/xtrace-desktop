@@ -74,8 +74,8 @@ export function unknownRepeatsText(reason: MetricUnknownRepeats): string {
 
 /**
  * A stretch's active time (M-05's fold over its records), written as all agent
- * time is (`0h05m`). Unlike an elapsed length it can honestly be zero — every
- * gap in the stretch was a long wait — and a zero is said as one (`0h00m`).
+ * time is (`0 h 5 m`). Unlike an elapsed length it can honestly be zero — every
+ * gap in the stretch was a long wait — and a zero is said as one (`0 h 0 m`).
  */
 export function activeDuration(ms: number, spoken = false): string {
   const duration = agentDuration(ms);

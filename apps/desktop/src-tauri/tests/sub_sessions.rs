@@ -110,6 +110,7 @@ fn pages(metrics: &MetricsDb, search: &str) -> Vec<SessionPage> {
                 after: after.as_deref(),
                 ..Default::default()
             },
+            &xt_metrics::PriceCatalog::bundled().unwrap(),
         )
         .unwrap();
         after = page.next.clone();
@@ -144,6 +145,11 @@ fn without_parent_and_human(value: &impl serde::Serialize) -> Value {
                     "parent",
                     "known_child",
                     "child_check",
+                    "main_sessions",
+                    "sub_sessions",
+                    "checking_sessions",
+                    "unlinked_sub_sessions",
+                    "messages_per_main_session",
                     "referenced_parents",
                     "human_messages",
                     "human_hours_est",
@@ -328,9 +334,15 @@ fn a_parent_link_excludes_child_human_inputs_and_preserves_agent_work() {
     assert_eq!(find(ORPHAN).known_child, Some(true));
     // The detail row is the listed row, parent included.
     assert_eq!(
-        &session_row(&metrics, 7, now().as_millisecond(), &id(CHILD))
-            .unwrap()
-            .unwrap(),
+        &session_row(
+            &metrics,
+            7,
+            now().as_millisecond(),
+            &id(CHILD),
+            &xt_metrics::PriceCatalog::bundled().unwrap()
+        )
+        .unwrap()
+        .unwrap(),
         find(CHILD)
     );
 
@@ -532,9 +544,15 @@ fn a_launched_claude_session_links_its_codex_parent_and_keeps_its_own_work() {
     assert_eq!(find(CLAUDE_OTHER).parent, None);
     assert_eq!(find(&id(PARENT)).parent, None);
     assert_eq!(
-        &session_row(&metrics, 7, now().as_millisecond(), CLAUDE_CHILD)
-            .unwrap()
-            .unwrap(),
+        &session_row(
+            &metrics,
+            7,
+            now().as_millisecond(),
+            CLAUDE_CHILD,
+            &xt_metrics::PriceCatalog::bundled().unwrap()
+        )
+        .unwrap()
+        .unwrap(),
         find(CLAUDE_CHILD)
     );
     let found = pages(&metrics, search);

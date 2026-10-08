@@ -51,7 +51,7 @@ export type BarState = 'measured' | 'none' | 'unknown';
 export interface ModelPart {
   name: string;
   value: number;
-  /** The value in words: `12h18m` or `$4.56`. */
+  /** The value in words: `12 h 18 m` or `$4.56`. */
   text: string;
   /** Its share of the day's plotted total: `42%`, or `<1%`. */
   share: string;
@@ -93,12 +93,8 @@ export interface DayMarkers {
   text: string;
 }
 export interface EffortHeadline {
-  /** The range's total, e.g. `$14,066+` or `655h12m agent`. */
+  /** The range's total, e.g. `$14,066+` or `655 h 12 m agent hrs`. */
   text: string;
-  /** e.g. `last 30 days`. */
-  range: string;
-  /** e.g. `1,965 responses have no price` or `10 days above 24 h`; null when nothing to add. */
-  note: string | null;
 }
 export interface EffortChart {
   metric: BarMetric;
@@ -184,7 +180,7 @@ function modelParts(day: MetricEffortDay, metric: BarMetric, total: number): Mod
     .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
 }
 
-/** `No price: 128 codex-auto-review responses`. */
+/** `No price: 128 unpublished-model responses`. */
 export function unpricedLine(unpriced: readonly UnpricedPart[]) {
   const count = unpriced.reduce((sum, part) => sum + part.responses, 0);
   return `No price: ${unpriced
@@ -213,11 +209,7 @@ function barName(bar: Omit<EffortBar, 'name'>) {
   return parts.join('. ');
 }
 
-export function effortChart(
-  current: MetricPrEffort,
-  metric: BarMetric,
-  windowDays: number,
-): EffortChart {
+export function effortChart(current: MetricPrEffort, metric: BarMetric): EffortChart {
   const days = current.cohort.by_day;
   const count = days.length;
   const byDay = markersByDay(current.markers);
@@ -338,47 +330,22 @@ export function effortChart(
           }
         : null,
     unmeasured,
-    headline: headline(current, metric, bars, windowDays),
+    headline: headline(current, metric),
     ticks: tickIndices(count),
     markers,
   };
 }
 
-/**
- * The selected range in a headline, e.g. `last 7 days`: the range the numbers
- * cover, never the count of local-day buckets it touches (usually one more).
- */
-export const rangeText = (days: number) => `last ${plural(days, 'day')}`;
-
-function headline(
-  current: MetricPrEffort,
-  metric: BarMetric,
-  bars: EffortBar[],
-  days: number,
-): EffortHeadline {
+function headline(current: MetricPrEffort, metric: BarMetric): EffortHeadline {
   const cohort = current.cohort;
-  const range = rangeText(days);
-  if (metric === 'agent') {
-    const over = bars.filter((bar) => bar.overFullDay).length;
-    return {
-      text: `${agentTime(cohort.agent_ms)} agent`,
-      range,
-      note: over > 0 ? `${plural(over, 'day')} above 24 h` : null,
-    };
-  }
+  if (metric === 'agent') return { text: `${agentTime(cohort.agent_ms)} agent hrs` };
   const cell = costCell(cohort.cost);
-  const unpriced = cohort.cost.unpriced_observations;
   return {
     text:
       cell.state === 'measured'
-        ? `${usd(cell.value)}${unpriced > 0 ? '+' : ''}`
+        ? `${usd(cell.value)}${cohort.cost.unpriced_observations > 0 ? '+' : ''}`
         : cell.state === 'none'
           ? 'no usage'
           : 'cost unknown',
-    range,
-    note:
-      unpriced > 0
-        ? `${plural(unpriced, 'response')} ${unpriced === 1 ? 'has' : 'have'} no price`
-        : null,
   };
 }

@@ -14,14 +14,14 @@ import { queryKeys } from '../../data/query-client';
 import { tokens as formatTokens } from '../../kit/format';
 import { useSurfaceTheme } from '../../theme/ThemeProvider';
 import { agentDuration } from '../agent-duration';
-import { clockTime, plural, recordedTime } from './present';
+import { clockTime, costAmount, plural, recordedTime } from './present';
 import '../../styles/span-bubble.css';
 
 let reads = 0;
 
 /**
  * A span's length from its two endpoints, as the bar draws it, written as all
- * agent time is (`3h12.8m`; `spoken`: in words). A span of one event has no length, and says so
+ * agent time is (`3 h 13 m`; `spoken`: in words). A span of one event has no length, and says so
  * rather than reading as zero minutes.
  */
 export function spanDuration(startMs: number, endMs: number, spoken = false): string {
@@ -179,6 +179,13 @@ function Detail({
             <span className="sr-only"> output tokens</span>
           </>
         )}
+      </span>
+      <span
+        className="xt-span-bubble-cost"
+        data-quiet={costAmount(detail.cost) === null ? '' : undefined}
+        title={`API-equivalent cost of recorded response usage in this span at public API prices: ${plural(detail.cost.priced_observations, 'response')} priced of ${plural(detail.cost.selected_observations, 'response')}${detail.cost.assumed_tier_observations > 0 ? `; ${plural(detail.cost.assumed_tier_observations, 'Codex response')} priced at the standard tier` : ''}${detail.cost.total_usd === null && detail.cost.priced_observations > 0 ? '; + means some responses could not be priced' : ''}`}
+      >
+        {costAmount(detail.cost) ?? 'cost unknown'}
       </span>
     </>
   );

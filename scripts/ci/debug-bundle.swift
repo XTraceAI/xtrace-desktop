@@ -3,14 +3,16 @@ import CoreGraphics
 
 // Inspect only the process launched by this smoke check. Window metadata proves
 // native creation, not rendered WKWebView content or accessibility behavior.
-guard CommandLine.arguments.count == 3,
+guard CommandLine.arguments.count == 4,
       let pid = Int32(CommandLine.arguments[1]) else { exit(2) }
 let expected = URL(fileURLWithPath: CommandLine.arguments[2]).standardizedFileURL
+let expectedID = CommandLine.arguments[3]
+guard expectedID.range(of: #"^ai\.xtrace\.app\.test\.[a-f0-9-]+$"#, options: .regularExpression) != nil else { exit(2) }
 let deadline = Date().addingTimeInterval(25)
 var readySince: Date?
 while Date() < deadline {
     if let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated,
-       app.isFinishedLaunching, app.bundleIdentifier == "ai.xtrace.desktop",
+       app.isFinishedLaunching, app.bundleIdentifier == expectedID,
        app.bundleURL?.standardizedFileURL == expected,
        let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
        windows.contains(where: { item in

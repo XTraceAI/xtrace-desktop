@@ -139,6 +139,8 @@
 }
 .xt-host-glyph-mark[data-host='cursor'] img,
 .xt-host-cursor .xt-host-glyph > img {
+  width: 88%;
+  height: 88%;
   background: var(--host-logo-light-surface);
 }
 .xt-host-glyph-mark[data-host='unknown'] {

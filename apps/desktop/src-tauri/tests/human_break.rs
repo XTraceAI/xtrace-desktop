@@ -110,6 +110,18 @@ fn a_saved_break_length_changes_what_the_dashboard_computes() {
             .unwrap()
             .starts_with("Each message you sent stood alone")
     );
+    // The tray reads the same committed break length as the Dashboard, and
+    // returns its current local day's own human time rather than a new formula.
+    let today = state.today().unwrap();
+    assert_eq!(today.human.break_minutes, 30);
+    let own_day = alone
+        .human_hours
+        .current
+        .by_day
+        .iter()
+        .find(|day| day.date == today.date)
+        .unwrap();
+    assert_eq!(today.human.active_ms, own_day.active_ms);
     // Agent hours never read the break length.
     assert_eq!(alone.tiles.agent_hours.value, Some(agent_h));
     state.shutdown();

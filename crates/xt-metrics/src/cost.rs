@@ -1,5 +1,5 @@
 use crate::{
-    Error, MetricsDb, PriceCatalog, Result, Window,
+    DayBucket, Error, MetricsDb, PriceCatalog, Result, Window,
     prices::{COST_BASIS, CacheWriteMode},
 };
 use jiff::tz::TimeZone;
@@ -44,6 +44,7 @@ pub struct UnpricedCost {
 }
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CostSummary {
+    /// Responses included in the cost estimate; automatic reviews are excluded.
     pub selected_observations: u64,
     pub priced_observations: u64,
     pub unpriced_observations: u64,
@@ -102,6 +103,8 @@ pub(crate) struct Observation {
 }
 #[derive(Clone, Copy)]
 pub(crate) enum Outcome {
+    /// Automatic reviews are outside the cost estimate, including its counts.
+    Excluded,
     /// Nano-USD, and whether the tier was assumed rather than recorded.
     Priced(u128, bool),
     Unpriced(UnpricedReason),
@@ -148,9 +151,30 @@ impl Observation {
     pub(crate) fn output_tokens(&self) -> Option<u64> {
         self.counters[1]
     }
-    pub(crate) fn price(&self, catalog: &PriceCatalog) -> Result<Outcome> {
+    pub(crate) fn host(&self) -> &str {
+        &self.host
+    }
+    /// The recorded model name exactly, blank included: the token and cost
+    /// breakdowns keep a blank name apart from an absent one.
+    pub(crate) fn raw_model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+    /// Input, output, cache-read and cache-creation counters, each absent
+    /// when unrecorded.
+    pub(crate) fn counters(&self) -> [Option<u64>; 4] {
+        self.counters
+    }
+    pub(crate) fn price(&self, catalog: &PriceCatalog, has_timestamp: bool) -> Result<Outcome> {
         use UnpricedReason::*;
         let unpriced = |reason| Ok(Outcome::Unpriced(reason));
+        // One cost-only exclusion, before missing timestamp/model/rate checks.
+        // Keep the shared response selection intact for tokens and agent time.
+        if self.model() == Some("codex-auto-review") {
+            return Ok(Outcome::Excluded);
+        }
+        if !has_timestamp {
+            return unpriced(MissingTimestamp);
+        }
         let Some(name) = self.model() else {
             return unpriced(MissingModel);
         };
@@ -254,8 +278,12 @@ pub(crate) struct Totals {
 }
 impl Totals {
     pub(crate) fn push(&mut self, row: &Observation, outcome: Outcome) -> Result<()> {
+        if matches!(outcome, Outcome::Excluded) {
+            return Ok(());
+        }
         self.observations += 1;
         match outcome {
+            Outcome::Excluded => unreachable!("excluded observations return before counting"),
             Outcome::Priced(value, assumed) => {
                 self.priced += 1;
                 self.assumed += u64::from(assumed);
@@ -299,52 +327,71 @@ impl Totals {
         }
     }
 }
-impl MetricsDb {
-    /// Price current selected response observations once from one read snapshot.
-    /// Enrichment, representative replacement and catalog changes need no stored cost.
-    pub fn cost(
-        &self,
-        window: Window,
-        zone: TimeZone,
-        catalog: &PriceCatalog,
-    ) -> Result<CostReport> {
+/// The cost report's breakdowns over one window, filled one in-window
+/// response at a time.
+pub(crate) struct Breakdowns {
+    days: Vec<DayBucket>,
+    day_ends: Vec<InstantKey>,
+    daily: Vec<Totals>,
+    total: Totals,
+    hosts: BTreeMap<String, Totals>,
+    models: BTreeMap<Option<String>, Totals>,
+    surfaces: BTreeMap<(String, Option<String>), Totals>,
+}
+impl Breakdowns {
+    pub(crate) fn new(window: Window, zone: TimeZone) -> Result<Self> {
         let days = window.local_days(zone)?;
-        let start = InstantKey::from_millisecond(window.start_ms());
-        let end = InstantKey::from_millisecond(window.end_ms());
-        let day_ends: Vec<_> = days
-            .iter()
-            .map(|d| InstantKey::from_millisecond(d.window.end_ms()))
-            .collect();
-        let mut daily: Vec<Totals> = days.iter().map(|_| Totals::default()).collect();
-        let mut total = Totals::default();
-        let mut hosts = BTreeMap::<String, Totals>::new();
-        let mut models = BTreeMap::<Option<String>, Totals>::new();
-        let mut surfaces = BTreeMap::<(String, Option<String>), Totals>::new();
-        let mut statement = self.connection.prepare(QUERY)?;
-        let mut rows = statement.query([window.start_ms(), window.candidate_end_ms()?])?;
-        while let Some(row) = rows.next()? {
-            let (ts, surface, observation) = read_row(row)?;
-            if ts < start || ts >= end {
-                continue;
-            }
-            let host = observation.host.clone();
-            let priced = observation.price(catalog)?;
-            total.push(&observation, priced)?;
-            hosts
-                .entry(host.clone())
-                .or_default()
-                .push(&observation, priced)?;
-            models
-                .entry(observation.model.clone())
-                .or_default()
-                .push(&observation, priced)?;
-            surfaces
-                .entry((host, surface))
-                .or_default()
-                .push(&observation, priced)?;
-            daily[day_ends.partition_point(|end| end <= &ts)].push(&observation, priced)?;
+        Ok(Self {
+            day_ends: days
+                .iter()
+                .map(|d| InstantKey::from_millisecond(d.window.end_ms()))
+                .collect(),
+            daily: days.iter().map(|_| Totals::default()).collect(),
+            days,
+            total: Totals::default(),
+            hosts: BTreeMap::new(),
+            models: BTreeMap::new(),
+            surfaces: BTreeMap::new(),
+        })
+    }
+    pub(crate) fn push(
+        &mut self,
+        ts: &InstantKey,
+        surface: Option<&str>,
+        observation: &Observation,
+        catalog: &PriceCatalog,
+    ) -> Result<()> {
+        let host = observation.host.clone();
+        let priced = observation.price(catalog, true)?;
+        if matches!(priced, Outcome::Excluded) {
+            return Ok(());
         }
-        Ok(CostReport {
+        self.total.push(observation, priced)?;
+        self.hosts
+            .entry(host.clone())
+            .or_default()
+            .push(observation, priced)?;
+        self.models
+            .entry(observation.model.clone())
+            .or_default()
+            .push(observation, priced)?;
+        self.surfaces
+            .entry((host, surface.map(str::to_owned)))
+            .or_default()
+            .push(observation, priced)?;
+        self.daily[self.day_ends.partition_point(|end| end <= ts)].push(observation, priced)
+    }
+    pub(crate) fn finish(self, catalog: &PriceCatalog) -> CostReport {
+        let Self {
+            days,
+            daily,
+            total,
+            hosts,
+            models,
+            surfaces,
+            ..
+        } = self;
+        CostReport {
             price_version: catalog.version().into(),
             price_as_of: catalog.as_of().into(),
             basis: COST_BASIS.into(),
@@ -381,11 +428,66 @@ impl MetricsDb {
                     cost: t.finish(),
                 })
                 .collect(),
-        })
+        }
+    }
+}
+impl MetricsDb {
+    /// Price current selected response observations once from one read snapshot.
+    /// Enrichment, representative replacement and catalog changes need no stored cost.
+    pub fn cost(
+        &self,
+        window: Window,
+        zone: TimeZone,
+        catalog: &PriceCatalog,
+    ) -> Result<CostReport> {
+        let mut report = Breakdowns::new(window, zone)?;
+        let start = InstantKey::from_millisecond(window.start_ms());
+        let end = InstantKey::from_millisecond(window.end_ms());
+        let mut statement = self.connection.prepare(QUERY)?;
+        let mut rows = statement.query([window.start_ms(), window.candidate_end_ms()?])?;
+        while let Some(row) = rows.next()? {
+            let (ts, surface, observation) = read_row(row)?;
+            if ts < start || ts >= end {
+                continue;
+            }
+            report.push(&ts, surface.as_deref(), &observation, catalog)?;
+        }
+        Ok(report.finish(catalog))
     }
 }
 
 impl MetricsDb {
+    /// Price the globally selected responses of one span using the same
+    /// millisecond slice as its output-token read. Called inside the span's
+    /// read snapshot; repeated response records are already selected once by
+    /// `v_response_usage`.
+    pub(crate) fn span_cost(
+        &self,
+        session_id: &str,
+        window: Window,
+        catalog: &PriceCatalog,
+    ) -> Result<CostSummary> {
+        let mut total = Totals::default();
+        let start = InstantKey::from_millisecond(window.start_ms());
+        let end = InstantKey::from_millisecond(window.end_ms());
+        let mut statement = self
+            .connection
+            .prepare(&format!("{QUERY} AND session_id=?3"))?;
+        let mut rows = statement.query(rusqlite::params![
+            window.start_ms(),
+            window.candidate_end_ms()?,
+            session_id
+        ])?;
+        while let Some(row) = rows.next()? {
+            let (ts, _, observation) = read_row(row)?;
+            if ts < start || ts >= end {
+                continue;
+            }
+            total.push(&observation, observation.price(catalog, true)?)?;
+        }
+        Ok(total.finish())
+    }
+
     /// The cost of exactly the named sessions' selected responses over their
     /// whole history, whenever each was: the same `v_response_usage`
     /// selection, deduplication and pricing as [`MetricsDb::cost`], restricted
@@ -394,7 +496,8 @@ impl MetricsDb {
     /// session; a separately indexed sub-session is its own). A response with
     /// no timestamp is in no window, so no other cost read sees it; here it is
     /// counted as unpriced ([`UnpricedReason::MissingTimestamp`]), so the
-    /// session's total is a floor rather than silently short.
+    /// session's total is a floor rather than silently short. Automatic reviews
+    /// are excluded from every cost read, even when their timestamp is absent.
     ///
     /// Only indexed user sessions get an entry; an unknown identifier is
     /// absent rather than an invented zero. An indexed session with no
@@ -444,13 +547,10 @@ impl MetricsDb {
             };
             if row.get_ref(3)?.data_type() == rusqlite::types::Type::Null {
                 let observation = read_observation(row)?;
-                total.push(
-                    &observation,
-                    Outcome::Unpriced(UnpricedReason::MissingTimestamp),
-                )?;
+                total.push(&observation, observation.price(catalog, false)?)?;
             } else {
                 let (_, _, observation) = read_row(row)?;
-                let priced = observation.price(catalog)?;
+                let priced = observation.price(catalog, true)?;
                 total.push(&observation, priced)?;
             }
         }

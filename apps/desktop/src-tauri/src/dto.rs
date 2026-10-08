@@ -222,6 +222,7 @@ pub struct FixtureExport {
     pub db_counts: DbCounts,
     pub native_index: NativeIndexStatus,
     pub sessions: Vec<SessionPage>,
+    pub sessions_summaries: Vec<FixtureSessionsSummary>,
     /// M-09 stretches for each listed session, per window preset.
     pub session_stretches: Vec<FixtureSessionStretches>,
     /// The detail of every span the Dashboard lanes return, as the span
@@ -398,6 +399,9 @@ pub struct SessionRow {
     pub other_models: u64,
     /// Earliest visible work record, including inherited copies.
     pub first_ts: Option<String>,
+    /// Latest timed own work, excluding metadata and inherited fork copies.
+    #[ts(type = "number | null", optional)]
+    pub last_activity_at_ms: Option<i64>,
     #[ts(type = "number")]
     pub record_count: u64,
     pub has_conflict: bool,
@@ -424,6 +428,10 @@ pub struct SessionRow {
     pub child_check: Option<SessionChildCheck>,
     pub metrics: MetricSessionWindow,
     pub hands_off: MetricSessionHandsOff,
+    /// Whole-session API-equivalent cost, independent of the selected window.
+    /// This session only; sub-sessions carry their own cost.
+    #[ts(optional = nullable)]
+    pub cost: Option<DashboardLaneCost>,
 }
 
 /// What a list may show of one session. `checking`: the supported checks of
@@ -449,12 +457,45 @@ impl From<xt_store::session_list::ChildCheck> for SessionChildCheck {
         }
     }
 }
+/// Rust totals over all indexed matches, including rows not loaded or shown.
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize, TS)]
+pub struct SessionsSummary {
+    #[ts(type = "number")]
+    pub main_sessions: u64,
+    #[ts(type = "number")]
+    pub sub_sessions: u64,
+    #[ts(type = "number")]
+    pub checking_sessions: u64,
+    #[ts(type = "number")]
+    pub unlinked_sub_sessions: u64,
+    #[ts(type = "number | null")]
+    pub human_messages: Option<u64>,
+    pub messages_per_main_session: Option<f64>,
+    #[ts(type = "number | null")]
+    pub agent_ms: Option<u64>,
+    #[ts(type = "number")]
+    pub sessions_with_prs: u64,
+}
+
+/// A narrow Rust-backed fixture answer, selected by the exact indexed matches.
+#[derive(Clone, Debug, PartialEq, Serialize, TS)]
+pub struct FixtureSessionsSummary {
+    pub days: u32,
+    pub session_ids: Vec<String>,
+    pub summary: SessionsSummary,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, TS)]
 pub struct SessionPage {
     /// The event window every row's measurements were taken over (M-01).
     pub window: DashboardWindow,
     pub rows: Vec<SessionRow>,
     pub next: Option<String>,
+    /// Only the first Sessions page carries totals across every matching page.
+    /// PR drilldowns do not request these totals.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub summary: Option<SessionsSummary>,
     /// Context only for each indexed parent this page's rows name in `parent`
     /// that the page does not list itself, in identifier order, read in the
     /// same snapshot. At most one per row; no further ancestor is read. An
@@ -485,6 +526,7 @@ pub struct SessionParentContext {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SessionQuery<'a> {
     pub search: &'a str,
+    pub sort: xt_store::session_list::SessionSort,
     /// `None` lists every host; otherwise a non-empty host set.
     pub hosts: Option<&'a [&'a str]>,
     /// Only sessions with a stored pull-request link of any confidence.
@@ -500,6 +542,7 @@ fn session_row_from(
     measured: &std::collections::BTreeMap<String, xt_metrics::SessionWindow>,
     hands_off: &std::collections::BTreeMap<String, xt_metrics::SessionHandsOff>,
     context: Option<&xt_store::session_list::SessionContext>,
+    costs: &std::collections::BTreeMap<String, xt_metrics::CostSummary>,
 ) -> Result<SessionRow, crate::state::StateError> {
     let metrics = match measured.get(&summary.id) {
         Some(window) => crate::dashboard::convert(window)?,
@@ -525,7 +568,9 @@ fn session_row_from(
             title: link.title,
         })
         .collect();
+    let cost = costs.get(&summary.id).map(crate::dashboard::lane_cost);
     Ok(SessionRow {
+        cost,
         id: summary.id,
         host: summary.host,
         title: summary.title,
@@ -536,6 +581,7 @@ fn session_row_from(
         model: summary.model,
         other_models: summary.other_models,
         first_ts: summary.first_ts,
+        last_activity_at_ms: summary.last_activity_at_ms,
         record_count: summary.record_count,
         has_conflict: summary.has_conflict,
         pr_links,
@@ -560,9 +606,11 @@ pub fn session_page(
     zone: jiff::tz::TimeZone,
     clock: MetricClock,
     query: SessionQuery<'_>,
+    catalog: &xt_metrics::PriceCatalog,
 ) -> Result<SessionPage, crate::state::StateError> {
     let SessionQuery {
         search,
+        sort,
         hosts,
         with_prs,
         after,
@@ -571,11 +619,21 @@ pub fn session_page(
     let cursor = session_cursor(after)?;
     let filter = xt_store::session_list::SessionFilter {
         search,
+        sort,
         hosts,
         with_prs,
         pull_request: None,
     };
-    filtered_page(metrics, days, window, zone, clock, &filter, cursor.as_ref())
+    filtered_page(
+        metrics,
+        days,
+        window,
+        zone,
+        clock,
+        &filter,
+        cursor.as_ref(),
+        catalog,
+    )
 }
 
 /// The opaque cursor a previous page returned, checked without storage.
@@ -594,6 +652,8 @@ pub(crate) fn session_cursor(
 /// One bounded page of the store's filtered list with each row's measurements
 /// over `window`, all in one read snapshot: at most 50 rows, and a `next`
 /// cursor exactly when the store found a 51st.
+// Keep the window and list-filter inputs explicit at this read boundary.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn filtered_page(
     metrics: &xt_metrics::MetricsDb,
     days: u32,
@@ -602,38 +662,46 @@ pub(crate) fn filtered_page(
     clock: MetricClock,
     filter: &xt_store::session_list::SessionFilter<'_>,
     cursor: Option<&xt_store::session_list::SessionCursor>,
+    catalog: &xt_metrics::PriceCatalog,
 ) -> Result<SessionPage, crate::state::StateError> {
-    let (rows, next, measured, hands_off, mut context) = metrics.read_snapshot(|metrics| {
-        let mut rows = metrics.sessions_page_filtered(filter, cursor)?;
-        let next = if rows.len() > 50 {
-            rows.truncate(50);
-            rows.last()
-                .map(|row| serde_json::to_string(&row.cursor))
-                .transpose()
-                .map_err(xt_store::Error::from)?
-        } else {
-            None
-        };
-        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
-        let measured = metrics.session_windows(window, &ids)?;
-        let hands_off = metrics.session_hands_off(window, &ids)?;
-        // The listed rows' own context and that of each direct parent they
-        // name, in one bounded read of this snapshot: at most 50 rows and 50
-        // parents, inside the store's context bound. Only the known-child bit
-        // and a parent's own resolved parent are used; nothing is measured.
-        let mut named = ids.clone();
-        named.extend(
-            rows.iter()
-                .filter_map(|row| row.parent.as_ref())
-                .map(|parent| parent.session_id.as_str()),
-        );
-        let context: std::collections::BTreeMap<String, _> = metrics
-            .session_context(&named)?
-            .into_iter()
-            .map(|row| (row.id.clone(), row))
-            .collect();
-        Ok((rows, next, measured, hands_off, context))
-    })?;
+    let (rows, next, measured, hands_off, mut context, costs, summary) =
+        metrics.read_snapshot(|metrics| {
+            let mut rows = metrics.sessions_page_filtered(filter, cursor)?;
+            let next = if rows.len() > 50 {
+                rows.truncate(50);
+                rows.last()
+                    .map(|row| serde_json::to_string(&row.cursor))
+                    .transpose()
+                    .map_err(xt_store::Error::from)?
+            } else {
+                None
+            };
+            let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+            let costs = metrics.whole_session_costs(&ids, catalog)?;
+            let measured = metrics.session_windows(window, &ids)?;
+            let hands_off = metrics.session_hands_off(window, &ids)?;
+            // The listed rows' own context and that of each direct parent they
+            // name, in one bounded read of this snapshot: at most 50 rows and 50
+            // parents, inside the store's context bound. Only the known-child bit
+            // and a parent's own resolved parent are used; nothing is measured.
+            let mut named = ids.clone();
+            named.extend(
+                rows.iter()
+                    .filter_map(|row| row.parent.as_ref())
+                    .map(|parent| parent.session_id.as_str()),
+            );
+            let context: std::collections::BTreeMap<String, _> = metrics
+                .session_context(&named)?
+                .into_iter()
+                .map(|row| (row.id.clone(), row))
+                .collect();
+            // A failure measuring a later matching session must not discard this
+            // valid page. No summary is an explicit unavailable answer, never zero.
+            let summary = (cursor.is_none() && filter.pull_request.is_none())
+                .then(|| metrics.sessions_summary(window, filter).ok())
+                .flatten();
+            Ok((rows, next, measured, hands_off, context, costs, summary))
+        })?;
     let listed: std::collections::BTreeSet<&str> = rows.iter().map(|row| row.id.as_str()).collect();
     let referenced: std::collections::BTreeSet<String> = rows
         .iter()
@@ -653,6 +721,9 @@ pub(crate) fn filtered_page(
         })
         .collect();
     let page = SessionPage {
+        summary: summary
+            .as_ref()
+            .and_then(|answer| crate::dashboard::convert(answer).ok()),
         window: crate::dashboard::dashboard_window(days, window, &zone, clock),
         next,
         referenced_parents,
@@ -660,7 +731,7 @@ pub(crate) fn filtered_page(
             .into_iter()
             .map(|r| {
                 let context = context.remove(&r.id);
-                session_row_from(r, &measured, &hands_off, context.as_ref())
+                session_row_from(r, &measured, &hands_off, context.as_ref(), &costs)
             })
             .collect::<Result<_, crate::state::StateError>>()?,
     };
@@ -680,27 +751,30 @@ pub fn session_row(
     days: u32,
     now_ms: i64,
     query: &str,
+    catalog: &xt_metrics::PriceCatalog,
 ) -> Result<Option<SessionRow>, crate::state::StateError> {
     let window = crate::dashboard::selected_window(days, now_ms)?;
-    let Some((summary, measured, hands_off, context)) = metrics.read_snapshot(|metrics| {
-        // Metadata and measurement come from one snapshot, as the list's do:
-        // the native index writes on its own connection, so a second read
-        // could show a row beside numbers taken after it changed.
-        let Some(summary) = metrics.session_exact(query)? else {
-            return Ok(None);
-        };
-        let measured = metrics.session_windows(window, &[summary.id.as_str()])?;
-        let hands_off = metrics.session_hands_off(window, &[summary.id.as_str()])?;
-        let context = metrics
-            .session_context(&[summary.id.as_str()])?
-            .into_iter()
-            .next();
-        Ok(Some((summary, measured, hands_off, context)))
-    })?
+    let Some((summary, measured, hands_off, context, costs)) =
+        metrics.read_snapshot(|metrics| {
+            // Metadata and measurement come from one snapshot, as the list's do:
+            // the native index writes on its own connection, so a second read
+            // could show a row beside numbers taken after it changed.
+            let Some(summary) = metrics.session_exact(query)? else {
+                return Ok(None);
+            };
+            let costs = metrics.whole_session_costs(&[summary.id.as_str()], catalog)?;
+            let measured = metrics.session_windows(window, &[summary.id.as_str()])?;
+            let hands_off = metrics.session_hands_off(window, &[summary.id.as_str()])?;
+            let context = metrics
+                .session_context(&[summary.id.as_str()])?
+                .into_iter()
+                .next();
+            Ok(Some((summary, measured, hands_off, context, costs)))
+        })?
     else {
         return Ok(None);
     };
-    let row = session_row_from(summary, &measured, &hands_off, context.as_ref())?;
+    let row = session_row_from(summary, &measured, &hands_off, context.as_ref(), &costs)?;
     crate::dashboard::checked_value(&row)?;
     Ok(Some(row))
 }
@@ -858,10 +932,11 @@ pub struct FixtureSessionStretches {
 pub fn fixture_session_stretches(
     path: &std::path::Path,
     now_ms: i64,
+    prices: Option<&serde_json::Value>,
 ) -> Result<Vec<FixtureSessionStretches>, crate::state::StateError> {
     let metrics = xt_metrics::MetricsDb::open(path)?;
     let mut out = Vec::new();
-    for page in fixture_session_pages(path, now_ms)? {
+    for page in fixture_session_pages(path, now_ms, prices)? {
         for row in page.rows {
             out.push(FixtureSessionStretches {
                 window_days: page.window.days,
@@ -878,8 +953,10 @@ pub fn fixture_session_stretches(
 pub fn fixture_session_pages(
     path: &std::path::Path,
     now_ms: i64,
+    prices: Option<&serde_json::Value>,
 ) -> Result<Vec<SessionPage>, crate::state::StateError> {
     let metrics = xt_metrics::MetricsDb::open(path)?;
+    let catalog = crate::dashboard::fixture_catalog(prices)?;
     crate::dashboard::WINDOW_PRESETS
         .into_iter()
         .map(|days| {
@@ -890,9 +967,78 @@ pub fn fixture_session_pages(
                 jiff::tz::TimeZone::UTC,
                 MetricClock::Fixture,
                 SessionQuery::default(),
+                &catalog,
             )
         })
         .collect()
+}
+
+/// A small set of synthetic browser selections, answered by Rust. Arbitrary
+/// selections still work in the native app; unsupported browser selections
+/// withhold the summary instead of borrowing unfiltered totals.
+pub fn fixture_sessions_summaries(
+    path: &std::path::Path,
+    now_ms: i64,
+) -> Result<Vec<FixtureSessionsSummary>, crate::state::StateError> {
+    let metrics = xt_metrics::MetricsDb::open(path)?;
+    let catalog = crate::dashboard::fixture_catalog(None)?;
+    let mut out = Vec::<FixtureSessionsSummary>::new();
+    for days in crate::dashboard::WINDOW_PRESETS {
+        let host_sets: [Option<&[&str]>; 5] = [
+            None,
+            Some(&["claude"]),
+            Some(&["codex"]),
+            Some(&["cursor"]),
+            Some(&["other"]),
+        ];
+        let cases = host_sets
+            .into_iter()
+            .map(|hosts| SessionQuery {
+                hosts,
+                ..Default::default()
+            })
+            .chain([
+                SessionQuery {
+                    with_prs: true,
+                    ..Default::default()
+                },
+                SessionQuery {
+                    search: "fixture-no-such-session",
+                    ..Default::default()
+                },
+            ]);
+        for query in cases {
+            let page = session_page(
+                &metrics,
+                days,
+                now_ms,
+                jiff::tz::TimeZone::UTC,
+                MetricClock::Fixture,
+                query,
+                &catalog,
+            )?;
+            // This fixture seam only exports complete single-page membership.
+            if page.next.is_some() {
+                continue;
+            }
+            let mut session_ids: Vec<String> = page.rows.into_iter().map(|row| row.id).collect();
+            session_ids.sort();
+            if out
+                .iter()
+                .any(|entry| entry.days == days && entry.session_ids == session_ids)
+            {
+                continue;
+            }
+            out.push(FixtureSessionsSummary {
+                days,
+                session_ids,
+                summary: page
+                    .summary
+                    .ok_or(xt_store::Error::InvalidInput("fixture summary unavailable"))?,
+            });
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

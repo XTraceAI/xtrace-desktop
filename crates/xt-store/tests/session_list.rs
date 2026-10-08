@@ -632,6 +632,7 @@ mod exact_pull_request {
                 hosts: Some(&codex),
                 with_prs: true,
                 search: "s-0",
+                sort: Default::default(),
                 pull_request: membership,
             },
         )
@@ -650,6 +651,7 @@ mod exact_pull_request {
                 hosts: Some(&codex),
                 with_prs: true,
                 search: "s-0",
+                sort: Default::default(),
                 pull_request: None,
             },
         )
@@ -774,4 +776,113 @@ mod not_found_on_github {
         assert_eq!(ids(&store, &with_prs), vec!["both", "fake-only", "real"]);
         assert_eq!(ids(&store, &members), vec!["both", "fake-only"]);
     }
+}
+
+#[test]
+fn recent_activity_orders_before_paging_filters_ties_and_unknowns() {
+    use xt_store::session_list::{SessionCursor, SessionFilter, SessionSort};
+    let temp = tempfile::TempDir::new().unwrap();
+    let path = temp.path().join("recent.sqlite");
+    let mut store = Store::open(&path).unwrap();
+    for i in 0..123 {
+        let id = format!("recent-{i:03}");
+        let mut session = SessionMeta::new(
+            &id,
+            if i % 2 == 0 { "codex" } else { "claude" },
+            SessionSource::Transcript,
+        );
+        session.started_at_ms = Some(i);
+        session.git_branch = Some(if i % 3 == 0 { "selected" } else { "main" }.into());
+        store.upsert_session(&session, false).unwrap();
+        if i < 120 {
+            let timestamp = if i == 0 {
+                "2026-01-04T00:00:00Z"
+            } else {
+                "2026-01-03T00:00:00Z"
+            };
+            let records = vec![
+                serde_json::from_value(serde_json::json!({
+                    "uuid":format!("work-{i}"),"type":"assistant","timestamp":timestamp,
+                    "message":{"role":"assistant","content":[]}
+                }))
+                .unwrap(),
+            ];
+            store.upsert_records(&id, &records, false).unwrap();
+        }
+    }
+    let meta = vec![serde_json::from_value(serde_json::json!({
+        "uuid":"meta-future","type":"assistant","timestamp":"2099-01-01T00:00:00Z","isMeta":true,
+        "message":{"role":"assistant","content":[]}
+    })).unwrap()];
+    store.upsert_records("recent-121", &meta, false).unwrap();
+    let sql = rusqlite::Connection::open(path).unwrap();
+    sql.execute(
+        "INSERT INTO native_record_copies(session_id,record_uuid) VALUES('recent-122','work-0')",
+        [],
+    )
+    .unwrap();
+    let recent = SessionFilter {
+        sort: SessionSort::RecentlyActive,
+        ..Default::default()
+    };
+    let first = store.sessions_page_filtered(&recent, None).unwrap();
+    assert_eq!(first[0].id, "recent-000"); // Oldest start, newest own work.
+    assert_eq!(first[1].id, "recent-119"); // Tied work orders by identity.
+    let started = store
+        .sessions_page_filtered(&SessionFilter::default(), None)
+        .unwrap();
+    assert!(!started[..50].iter().any(|row| row.id == "recent-000"));
+    assert!(
+        store
+            .sessions_page_filtered(&recent, Some(&started[0].cursor))
+            .is_err()
+    );
+    assert!(
+        store
+            .sessions_page_filtered(&SessionFilter::default(), Some(&first[0].cursor))
+            .is_err()
+    );
+    let legacy: SessionCursor = serde_json::from_str(r#"{"time":1,"id":"recent-001"}"#).unwrap();
+    assert_eq!(legacy.sort, SessionSort::Started);
+    let mut cursor = None;
+    let mut ids = Vec::new();
+    loop {
+        let mut page = store
+            .sessions_page_filtered(&recent, cursor.as_ref())
+            .unwrap();
+        let more = page.len() > 50;
+        page.truncate(50);
+        cursor = page.last().map(|row| row.cursor.clone());
+        ids.extend(page.into_iter().map(|row| row.id));
+        if !more {
+            break;
+        }
+    }
+    assert_eq!(ids.len(), 123);
+    assert_eq!(
+        ids.iter().collect::<std::collections::BTreeSet<_>>().len(),
+        123
+    );
+    assert_eq!(&ids[120..], ["recent-122", "recent-121", "recent-120"]);
+    let codex = ["codex"];
+    let filtered = store
+        .sessions_page_filtered(
+            &SessionFilter {
+                sort: SessionSort::RecentlyActive,
+                hosts: Some(&codex),
+                search: "selected",
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(filtered.len(), 21);
+    assert_eq!(filtered[0].id, "recent-000");
+    assert!(
+        filtered
+            .iter()
+            .all(|row| row.host == "codex" && row.branch.as_deref() == Some("selected"))
+    );
+    assert_eq!(filtered.last().unwrap().id, "recent-120");
+    assert_eq!(filtered.last().unwrap().last_activity_at_ms, None);
 }

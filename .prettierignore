@@ -6,6 +6,8 @@ Cargo.lock
 pnpm-lock.yaml
 artifacts/
 apps/desktop/ui/src/data/generated/
+# Preserve the Rust exporter's exact fixture bytes.
+apps/desktop/ui/fixtures/F1.json
 
 **/playwright-report/
 **/test-results/

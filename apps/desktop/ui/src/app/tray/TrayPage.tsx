@@ -1,12 +1,21 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { useData } from '../../data/DataProvider';
 import type { TodaySummary } from '../../data/generated/TodaySummary';
 import { queryKeys } from '../../data/query-client';
 import { calendarDay, clock } from '../../kit/clock';
-import { tokens, UNMEASURED } from '../../kit/format';
+import { UNMEASURED } from '../../kit/format';
 import { agentTime } from '../agent-duration';
+import { AccountUsageWidget } from '../../kit/AccountUsageWidget';
+import { accountUsageQueryOptions } from '../account-usage-query';
+import { isLiveSessionHost, useLiveSessionStatus } from '../live-session-status';
+import { LiveSessionBadge, LiveSessionHost } from '../LiveSessionBadge';
+import { displayTitle, repoName, shortId } from '../session-context';
+import { listedLanes, notListed, sessionKey } from '../dashboard/lanes';
+import { verifiedParent } from '../session-parent';
+import { useSessionTitles } from '../session-titles';
+import '../../styles/sidebar.css';
 import { plural, usd } from '../dashboard/present';
 import { LiveUpdatesNotice } from '../LiveUpdatesNotice';
 import '../../styles/tray.css';
@@ -29,25 +38,7 @@ const observedAt = (summary: TodaySummary) =>
 /** The report's own local date, never re-derived from this machine's clock. */
 const dateLabel = (summary: TodaySummary) => calendarDay(summary.date, 'weekday-day');
 
-export function outputText(summary: TodaySummary) {
-  const { output } = summary;
-  switch (output.state) {
-    case 'recorded':
-      return {
-        value: tokens(output.output_tokens),
-        meta: `${plural(output.selected_responses, 'response')} · ${plural(output.sessions, 'session')}`,
-      };
-    case 'incomplete':
-      return {
-        value: UNMEASURED,
-        meta: `Some of ${plural(output.selected_responses, 'response')} lack an output count`,
-      };
-    case 'none_recorded':
-      return { value: UNMEASURED, meta: 'No responses recorded yet today' };
-  }
-}
-
-/** What the visible cost line leaves unsaid: the basis of the estimate, in plain words. */
+/** The price is an API estimate, not a subscription or tool bill. */
 const COST_NOTE = 'Estimated at public API prices; subscriptions and tool fees are not included.';
 
 export function costText(summary: TodaySummary) {
@@ -55,13 +46,25 @@ export function costText(summary: TodaySummary) {
   const coverage = `${cost.priced_observations} of ${plural(cost.selected_observations, 'response')} priced`;
   switch (cost.state) {
     case 'priced':
-      return `${usd(cost.total_usd ?? 0)} API-equivalent · ${coverage}`;
+      return {
+        value: cost.total_usd === null ? UNMEASURED : usd(cost.total_usd),
+        title: `${COST_NOTE} ${coverage}.${cost.total_usd === null ? ' Today’s total is unavailable.' : ''}`,
+      };
     case 'partial':
-      return `Partial ${usd(cost.priced_subtotal_usd)}, not a total · ${coverage}`;
+      return {
+        value: UNMEASURED,
+        title: `${COST_NOTE} Today’s total is unavailable. Partial ${usd(cost.priced_subtotal_usd)}, not a total · ${coverage}.`,
+      };
     case 'unpriced':
-      return `Cost ${UNMEASURED} · ${coverage}`;
+      return {
+        value: UNMEASURED,
+        title: `${COST_NOTE} Today’s total is unavailable · ${coverage}.`,
+      };
     case 'none_recorded':
-      return `Cost ${UNMEASURED} · nothing to price`;
+      return {
+        value: UNMEASURED,
+        title: `${COST_NOTE} No responses recorded yet today; nothing to price.`,
+      };
   }
 }
 
@@ -69,10 +72,7 @@ export function agentText(summary: TodaySummary) {
   const { agent } = summary;
   return {
     value: agentTime(agent.active_ms),
-    meta:
-      agent.sessions === 0
-        ? 'No agent activity recorded today'
-        : `across ${plural(agent.sessions, 'session')}`,
+    meta: agent.sessions === 0 ? 'No activity' : plural(agent.sessions, 'session'),
   };
 }
 
@@ -88,7 +88,7 @@ function Header({ children }: { children?: ReactNode }) {
   );
 }
 
-function Today() {
+function Today({ children }: { children: ReactNode }) {
   const { source } = useData();
   const query = useQuery({
     queryKey: queryKeys.today,
@@ -119,6 +119,7 @@ function Today() {
             Retry
           </button>
         </div>
+        {children}
       </>
     );
   if (!data)
@@ -128,12 +129,12 @@ function Today() {
         <p role="status" className="xt-tray-card xt-tray-message">
           Reading today…
         </p>
+        {children}
       </>
     );
-  const output = outputText(data);
+  const cost = costText(data);
+  const humanNote = `${data.human.active_ms === null ? 'Who sent some messages is unknown' : 'Estimated from your messages'}. ${data.human.break_minutes} min break length.`;
   const agent = agentText(data);
-  const reason = (key: string) =>
-    data.unavailable.find((item) => item.key === key)?.reason ?? 'Unavailable';
   return (
     <>
       <Header>
@@ -155,34 +156,163 @@ function Today() {
         </div>
       )}
       <div className="xt-tray-tiles">
-        <section className="xt-tray-card xt-tray-tile" aria-label="Today’s output tokens">
-          <span className="xt-tray-label">Today · output</span>
-          <span className="xt-tray-value">{output.value}</span>
-          <span className="xt-tray-meta">{output.meta}</span>
-          <span className="xt-tray-meta" title={COST_NOTE}>
-            {costText(data)}
-          </span>
-        </section>
-        <section className="xt-tray-card xt-tray-tile" aria-label="Today’s agent hours">
+        <section
+          className="xt-tray-card xt-tray-tile"
+          aria-label="Today’s agent hours"
+          title={
+            data.agent.sessions === 0 ? 'No agent activity recorded today' : `Across ${agent.meta}`
+          }
+        >
           <span className="xt-tray-label">Today · agent</span>
           <span className="xt-tray-value">{agent.value}</span>
           <span className="xt-tray-meta">{agent.meta}</span>
         </section>
+        <section
+          className="xt-tray-card xt-tray-tile"
+          aria-label="Today’s human hours"
+          title={humanNote}
+          aria-description={humanNote}
+        >
+          <span className="xt-tray-label">Today · human</span>
+          <span className="xt-tray-value">
+            {data.human.active_ms === null ? UNMEASURED : agentTime(data.human.active_ms)}
+          </span>
+          <span className="xt-tray-meta">
+            {data.human.active_ms === null ? 'Unknown' : 'Estimate'}
+          </span>
+        </section>
+        <section
+          className="xt-tray-card xt-tray-tile"
+          aria-label="Today’s cost"
+          title={cost.title}
+          aria-description={cost.title}
+        >
+          <span className="xt-tray-label">Today · cost</span>
+          <span className="xt-tray-value">{cost.value}</span>
+        </section>
       </div>
-      <section className="xt-tray-card xt-tray-section" aria-label="Active now">
-        <h2 className="xt-tray-heading">Active now</h2>
-        <p className="xt-tray-unavailable">{reason('active_now')}</p>
-      </section>
-      <section className="xt-tray-card xt-tray-section" aria-label="Last rule fire">
-        <h2 className="xt-tray-heading">Last rule fire</h2>
-        <p className="xt-tray-unavailable">{reason('last_rule_fire')}</p>
-      </section>
-      <p className="xt-tray-footnote">
-        Since local midnight,{' '}
-        {data.timezone === 'system-local' ? 'system time zone' : data.timezone}. Agent hours match
-        today’s bar on the Dashboard: work that ran past midnight counts from midnight.
-      </p>
+      {children}
     </>
+  );
+}
+
+/** Only mounted while the popover is visible, including the widget's reset timer. */
+function Usage() {
+  const { source } = useData();
+  const query = useQuery(accountUsageQueryOptions(source));
+  return (
+    <AccountUsageWidget
+      usage={query.isError ? undefined : query.data}
+      failed={source.kind === 'preview' || query.isError}
+      refreshing={query.isFetching && query.data === undefined}
+      refreshEnabled={false}
+      failureMessage={
+        source.kind !== 'preview'
+          ? 'Account usage could not be read. Open XTrace Desktop to refresh.'
+          : undefined
+      }
+      onRefresh={() => {}}
+    />
+  );
+}
+
+const RECENT_LIMIT = 3;
+const RECENT_KEY = ['sessions', 'tray-recent', 7] as const;
+function RecentSessions() {
+  const { source } = useData();
+  const query = useQuery({
+    queryKey: RECENT_KEY,
+    queryFn: () =>
+      source.sessionsList(
+        { sort: 'recently_active', search: '', hosts: null, withPrs: false },
+        null,
+        7,
+      ),
+    enabled: source.kind !== 'preview',
+    refetchOnMount: 'always',
+  });
+  // First indexed page only. Reuse the list's decision about which sessions
+  // may be shown, then keep main sessions before limiting the visible rows.
+  // No scan for every session currently running is performed.
+  const rows = useMemo(() => {
+    if (query.isError || !query.data) return [];
+    const returned = query.data.rows;
+    const byKey = new Map(returned.map((row) => [sessionKey(row.host, row.id), row]));
+    const context = new Map(
+      (query.data.referenced_parents ?? []).map((row) => [
+        sessionKey(row.host, row.session_id),
+        row,
+      ]),
+    );
+    return listedLanes(
+      returned.map((row) => ({
+        key: sessionKey(row.host, row.id),
+        sessionId: row.id,
+        host: row.host,
+        row,
+      })),
+      (lane) => verifiedParent(lane.row),
+      ({ session_id, host }) => {
+        const key = sessionKey(host, session_id);
+        const found = byKey.get(key) ?? context.get(key);
+        return notListed(
+          found,
+          host,
+          verifiedParent({ id: session_id, parent: found?.parent }) !== null,
+        );
+      },
+    )
+      .filter((lane) => verifiedParent(lane.row) === null)
+      .slice(0, RECENT_LIMIT)
+      .map((lane) => lane.row);
+  }, [query.data, query.isError]);
+  const readTitle = useSessionTitles(
+    'tray-recent',
+    rows.map((row) => ({ id: row.id, version: row.record_count })),
+  );
+  const liveStatus = useLiveSessionStatus(
+    'tray-recent',
+    rows.filter((row) => isLiveSessionHost(row.host)).map((row) => row.id),
+  );
+  return (
+    <section className="xt-tray-card xt-tray-section" aria-label="Recent sessions">
+      <h2 className="xt-tray-heading">Recent sessions</h2>
+      <p className="xt-tray-meta">Up to {RECENT_LIMIT} recently active main sessions</p>
+      {query.isError ? (
+        <p className="xt-tray-unavailable">Recent sessions could not be read.</p>
+      ) : query.isPending ? (
+        <p className="xt-tray-unavailable">Reading sessions…</p>
+      ) : rows.length === 0 ? (
+        <p className="xt-tray-unavailable">No recent sessions to show.</p>
+      ) : (
+        <ul className="xt-tray-sessions">
+          {rows.map((row) => {
+            const status = liveStatus(row.id);
+            const name =
+              displayTitle(
+                readTitle(row.id, row.record_count) ?? row.title,
+                row.automated_review,
+              ) ?? `Session ${shortId(row.id)}`;
+            return (
+              <li key={row.id} className="xt-tray-session">
+                <div className="xt-tray-session-top">
+                  <span className="xt-tray-session-name" title={`${name} · ${row.id}`}>
+                    {name}
+                  </span>
+                  {isLiveSessionHost(row.host) && status !== 'running' && (
+                    <LiveSessionBadge host={row.host} status={status} />
+                  )}
+                </div>
+                <span className="xt-tray-meta xt-tray-session-meta">
+                  <LiveSessionHost host={row.host} status={status} />
+                  <span>{repoName(row.repo) ?? 'Unknown repository'}</span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -251,10 +381,18 @@ export function TrayPage() {
 
   return (
     <main className="xt-tray" aria-label="XTrace today">
-      {open ? <Today /> : <Header />}
+      <div className="xt-tray-content">
+        {open ? (
+          <Today>
+            <Usage />
+            <RecentSessions />
+          </Today>
+        ) : (
+          <Header />
+        )}
+      </div>
       {/* This popover's own runtime: the main window's Reconnect cannot repair it. */}
       <LiveUpdatesNotice className="xt-tray-stale" buttonClassName="xt-tray-retry" />
-      <div className="xt-tray-spacer" />
       <button
         type="button"
         className="xt-tray-open"

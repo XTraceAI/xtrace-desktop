@@ -77,7 +77,7 @@ it('draws a twenty-minute fall fold as two ten-minute pieces with one name and u
   expect(bar.pieces![0]!.left * 24).toBeCloseTo(1 + 50 / 60);
   expect(bar.pieces![1]!.left * 24).toBe(1);
   for (const piece of bar.pieces!) expect(piece.width * 24 * 60).toBeCloseTo(10);
-  expect(row!.total).toBe('0h20m');
+  expect(row!.total).toBe('0 h 20 m');
   expect(day).toEqual(before);
 });
 
@@ -101,7 +101,7 @@ it('keeps long overlapping fold pieces and independent repeated-hour messages on
   expect(row!.bars[1]!.pieces![0]!.lane).toBe(1);
   expect(row!.bars[1]!.pieces![0]!.width).toBe(0);
   expect(row!.bars[1]!.text).toBe('1:15 AM PST');
-  expect(row!.total).toBe('3h00m');
+  expect(row!.total).toBe('3 h 0 m');
 });
 
 it('leaves spring missing hours empty and keeps elapsed widths at an exact transition endpoint', () => {
@@ -199,7 +199,7 @@ it('places a stretch on its local clock, and a piece cut at midnight ends at mid
   const [row] = timelineRows([day], utc);
   expect(row!.label).toBe('Sep 28');
   expect(row!.weekend).toBe(false);
-  expect(row!.total).toBe('1h30m');
+  expect(row!.total).toBe('1 h 30 m');
   expect(row!.bars).toEqual([
     { left: 9 / 24, width: 0, tick: true, text: '9:00 AM' },
     { left: 22.5 / 24, width: 1.5 / 24, tick: false, text: '10:30 PM–12:00 AM' },
@@ -224,8 +224,8 @@ it('says a day with no time, no messages or unknown classification as such', () 
   );
   expect(rows.map((row) => [row.weekend, row.total, row.name])).toEqual([
     // A measured zero reads as zero; only an unknown day has no total.
-    [true, '0h00m', 'Oct 3: no messages'],
-    [true, '0h00m', 'Oct 4: no time between messages; one message at 1:00 AM'],
+    [true, '0 h 0 m', 'Oct 3: no messages'],
+    [true, '0 h 0 m', 'Oct 4: no time between messages; one message at 1:00 AM'],
     [false, null, 'Oct 5: unknown'],
   ]);
 });

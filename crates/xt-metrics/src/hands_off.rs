@@ -190,30 +190,35 @@ impl MetricsDb {
     /// Health and stretches consume one read snapshot. Exact instants determine
     /// membership and chronology; positive durations use the POSIX ms projection.
     pub fn hands_off(&self, window: Window) -> Result<HandsOff> {
-        let surfaces = load(&self.connection, window)?;
-        let mut excluded_surfaces = Vec::new();
-        let mut durations = Vec::new();
-        let mut measured = true;
-        for ((host, surface), sessions) in &surfaces {
-            if let Some(excluded) = health(host, surface, sessions) {
-                excluded_surfaces.push(excluded);
-                continue;
-            }
-            for events in sessions.values() {
-                measured &= stretches(events, |stretch| durations.push(stretch.duration_ms()))?;
-            }
-        }
-        let n = measured.then_some(durations.len() as u64);
-        let percentiles = measured
-            .then(|| stats::median_p90(&mut durations))
-            .flatten();
-        Ok(HandsOff {
-            n,
-            median_min: percentiles.map(|(median, _)| median / 60000.0),
-            p90_min: percentiles.map(|(_, p90)| p90 as f64 / 60000.0),
-            excluded_surfaces,
-        })
+        summary(&load(&self.connection, window)?)
     }
+}
+
+/// The window's report from its loaded events: [`MetricsDb::hands_off`]'s
+/// body, also used by [`MetricsDb::hands_off_with_days`] on its one load.
+pub(crate) fn summary(surfaces: &SurfaceSessions) -> Result<HandsOff> {
+    let mut excluded_surfaces = Vec::new();
+    let mut durations = Vec::new();
+    let mut measured = true;
+    for ((host, surface), sessions) in surfaces {
+        if let Some(excluded) = health(host, surface, sessions) {
+            excluded_surfaces.push(excluded);
+            continue;
+        }
+        for events in sessions.values() {
+            measured &= stretches(events, |stretch| durations.push(stretch.duration_ms()))?;
+        }
+    }
+    let n = measured.then_some(durations.len() as u64);
+    let percentiles = measured
+        .then(|| stats::median_p90(&mut durations))
+        .flatten();
+    Ok(HandsOff {
+        n,
+        median_min: percentiles.map(|(median, _)| median / 60000.0),
+        p90_min: percentiles.map(|(_, p90)| p90 as f64 / 60000.0),
+        excluded_surfaces,
+    })
 }
 
 /// One measured stretch: the contiguous run of events from its human record

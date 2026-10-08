@@ -85,20 +85,20 @@ async function serve(page: Page, shape: Shape) {
 /** Each tile's number with its unit and change, then the line under it. */
 const texts: Record<Shape, [string, string][]> = {
   dense: [
-    ['12.4×▲8.5%', '0h23m agent ÷ 0h20m human · whole days'],
+    ['12.4×▲8.5%', '0 h 23 m agent ÷ 0 h 20 m human · whole days'],
     ['1.8▼12.3%', 'max 8'],
     ['23▲15.2%', ''],
     ['3.2 min▼4.1%', 'p90 14.8 min'],
   ],
   reference: [
-    ['30×▲166.2%', '0h23m agent ÷ 0h20m human · whole days'],
+    ['30×▲166.2%', '0 h 23 m agent ÷ 0 h 20 m human · whole days'],
     ['2.6▲112.4%', 'max 8'],
     // Nothing checked yet: words instead of a number, never a zero.
     ['32 PRs not checked yet', ''],
     ['5.6 min▲298.6%', 'p90 32.1 min'],
   ],
   unknown: [
-    ['—Unmeasured: No active spans.', '0h23m agent ÷ 0h20m human · whole days'],
+    ['—Unmeasured: No active spans.', '0 h 23 m agent ÷ 0 h 20 m human · whole days'],
     ['—Unmeasured: No overlapping spans.', 'No overlapping spans.'],
     ['2 PRs not checked yet', ''],
     ['—Unmeasured: No hands-off stretches.', 'No hands-off stretches.'],

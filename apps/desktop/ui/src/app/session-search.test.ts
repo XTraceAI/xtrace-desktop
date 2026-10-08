@@ -7,6 +7,7 @@ import {
   parseHost,
   parseRange,
   parseSearch,
+  parseSessionSort,
   SEARCH_MAX,
   sessionHref,
   sessionParams,
@@ -125,4 +126,12 @@ it('carries the host set and the pull-request filter back to the list', () => {
   expect(params.get(sessionParams.host)).toBe('claude,codex');
   expect(params.get(sessionParams.withPrs)).toBe('1');
   expect(params.has('pr')).toBe(false);
+});
+
+it('carries Recently active through the detail route and defaults unknown sort to Started', () => {
+  expect(sessionHref('session-1', new URLSearchParams('sort=recently_active&range=14d'))).toBe(
+    '/sessions/session-1?range=14d&sort=recently_active',
+  );
+  expect(parseSessionSort('recently_active')).toBe('recently_active');
+  for (const value of [null, 'unknown', 'started']) expect(parseSessionSort(value)).toBe('started');
 });

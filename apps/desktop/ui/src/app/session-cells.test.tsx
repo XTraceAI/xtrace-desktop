@@ -30,7 +30,7 @@ it('keeps an idle member measured at zero agent time, never unmeasured', () => {
   const idle = byId('s-idle');
   expect(indexed(idle)?.events).toBe(0);
   const { container } = render(<AgentTime row={idle} />);
-  expect(container.textContent).toContain('0h00m');
+  expect(container.textContent).toContain('0 h 0 m');
   expect(container.querySelector('.xt-unmeasured')).toBeNull();
 });
 

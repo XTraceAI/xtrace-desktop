@@ -27,34 +27,39 @@ struct Period {
     cost: xt_metrics::CostReport,
 }
 impl Period {
-    /// The period's reports and its M-19 report; the window's spans are read
-    /// once for agent time, human time, concurrency and M-19.
+    /// The period's reports and its M-19 report. `reports` is this window's
+    /// activity and the reports that read its selected responses, and
+    /// `hands_off` its hands-off report, both read by the caller.
     fn read(
         db: &MetricsDb,
         window: Window,
+        reports: xt_metrics::PeriodReports,
+        hands_off: xt_metrics::HandsOff,
         zone: TimeZone,
-        catalog: &PriceCatalog,
         typing_rate: TypingRate,
     ) -> xt_metrics::Result<(Self, xt_metrics::PrEffortReport)> {
-        // M-19 from cached refresh facts only: no request is made here.
-        // Inferred links are removed before eligibility and assignment, so
-        // the tile and the chart count exact and SHA links only.
-        let xt_metrics::WindowActivity {
-            spans,
-            human,
-            concurrency,
-            pr_effort,
-        } = db.window_activity(window, zone.clone(), typing_rate, CONFIRMED_ONLY, catalog)?;
+        let xt_metrics::PeriodReports {
+            activity:
+                xt_metrics::WindowActivity {
+                    spans,
+                    human,
+                    concurrency,
+                    pr_effort,
+                },
+            tokens,
+            favorite,
+            cost,
+        } = reports;
         let period = Self {
             counts: db.counts(window, typing_rate)?,
             spans,
             human,
             concurrency,
-            hands_off: db.hands_off(window)?,
-            tokens: db.tokens(window, zone.clone())?,
-            favorite: db.favorite_model(window)?,
-            sessions: db.sessions_per_day(window, zone.clone())?,
-            cost: db.cost(window, zone, catalog)?,
+            hands_off,
+            tokens,
+            favorite,
+            sessions: db.sessions_per_day(window, zone)?,
+            cost,
         };
         Ok((period, pr_effort))
     }
@@ -358,8 +363,8 @@ fn lane_report(
     })
 }
 
-/// A session's whole cost in the report's own shape.
-fn lane_cost(cost: &xt_metrics::CostSummary) -> DashboardLaneCost {
+/// A session or span's cost in the report's own shape.
+pub(crate) fn lane_cost(cost: &xt_metrics::CostSummary) -> DashboardLaneCost {
     DashboardLaneCost {
         total_usd: cost.total_usd,
         priced_subtotal_usd: cost.priced_subtotal_usd,
@@ -483,10 +488,46 @@ pub fn assemble(
         .ok_or(StateError::InvalidMetricWindow)?;
     let lane_window = Window::new(lane_start, now_ms)?;
     let read = db.read_snapshot(|db| {
+        // The selected window's hands-off events are loaded once for its tile
+        // and its daily chart. The previous window has its own read.
+        let (hands_off, hands_off_by_day) = db.hands_off_with_days(window, zone.clone())?;
+        // Each window's spans are read once for agent time, human time,
+        // concurrency and M-19, and its selected responses once for M-19,
+        // tokens, the favorite model, cost and, for the selected window,
+        // coverage. M-19 is from cached refresh facts only: no request is
+        // made here. Inferred links are removed before eligibility and
+        // assignment, so the tile and the chart count exact and SHA links only.
+        let xt_metrics::ReportPeriods {
+            current: current_reports,
+            previous: previous_reports,
+            coverage,
+        } = db.report_periods(
+            window,
+            now_ms,
+            &[],
+            zone.clone(),
+            typing_rate,
+            CONFIRMED_ONLY,
+            catalog,
+        )?;
         Ok((
-            Period::read(db, window, zone.clone(), catalog, typing_rate)?,
-            Period::read(db, previous, zone.clone(), catalog, typing_rate)?,
-            db.coverage(window, now_ms, &[])?,
+            Period::read(
+                db,
+                window,
+                current_reports,
+                hands_off,
+                zone.clone(),
+                typing_rate,
+            )?,
+            Period::read(
+                db,
+                previous,
+                previous_reports,
+                db.hands_off(previous)?,
+                zone.clone(),
+                typing_rate,
+            )?,
+            coverage,
             // Spans, the context of the sessions they name and those
             // sessions' cost are read inside this one snapshot, so a row's
             // repository, identity and number all describe the same committed
@@ -496,7 +537,7 @@ pub fn assemble(
             // so this counts all indexed history. Reading it in the same
             // snapshot keeps it describing the state the windows describe.
             db.untimed_history()?,
-            Daily::read(db, window, break_length, zone.clone())?,
+            Daily::read(db, window, break_length, zone.clone(), hands_off_by_day)?,
         ))
     })?;
     let ((current, pr_current), (prior, pr_prior), coverage, lanes, untimed, daily) = read;
@@ -810,12 +851,14 @@ struct Daily {
 }
 
 impl Daily {
-    /// Called inside the report's one snapshot read.
+    /// Called inside the report's one snapshot read. `hands_off` is the
+    /// window's day-by-day hands-off, read by the caller.
     fn read(
         db: &MetricsDb,
         window: Window,
         break_length: BreakLength,
         zone: TimeZone,
+        hands_off: Vec<xt_metrics::DayHandsOff>,
     ) -> xt_metrics::Result<Self> {
         let human = db.human_hours(window, break_length, zone.clone())?;
         let agent_window = Window::new(human.current.start_ms, human.current.end_ms)?;
@@ -825,8 +868,8 @@ impl Daily {
             agent_window,
             previous_agent_ms: db.active_spans(previous_window)?.active_ms,
             human,
-            concurrency: db.concurrency_by_day(window, zone.clone())?,
-            hands_off: db.hands_off_by_day(window, zone)?,
+            concurrency: db.concurrency_by_day(window, zone)?,
+            hands_off,
         })
     }
 
@@ -943,6 +986,7 @@ pub fn span_detail(
     session_id: &str,
     start_ms: i64,
     end_ms: i64,
+    catalog: &PriceCatalog,
 ) -> Result<xt_metrics::SpanDetail, StateError> {
     if session_id.trim().is_empty()
         || session_id.len() > MAX_SESSION_ID_BYTES
@@ -953,7 +997,7 @@ pub fn span_detail(
     {
         return Err(StateError::InvalidSpanRequest);
     }
-    Ok(db.span_detail(session_id, start_ms, end_ms)?)
+    Ok(db.span_detail(session_id, start_ms, end_ms, catalog)?)
 }
 
 /// One session's original source for a span's words, read at most once per
@@ -982,6 +1026,7 @@ pub fn span_detail_dto(
     let SpanDetail::Indexed {
         tool,
         output_tokens,
+        cost,
         prompt,
         automatic,
     } = detail
@@ -1067,6 +1112,7 @@ pub fn span_detail_dto(
     let detail = DashboardSpanDetail::Indexed {
         tool: convert(&tool)?,
         output_tokens,
+        cost: lane_cost(&cost),
         prompt,
         automatic,
     };
@@ -1165,8 +1211,10 @@ impl std::ops::Deref for SpanDetailReads {
 pub fn fixture_span_details(
     path: &std::path::Path,
     now_ms: i64,
+    prices: Option<&serde_json::Value>,
 ) -> Result<Vec<FixtureSpanDetail>, StateError> {
     let metrics = MetricsDb::open(path)?;
+    let catalog = fixture_catalog(prices)?;
     let lane_start = now_ms
         .checked_sub(LANE_WINDOW_MS)
         .ok_or(StateError::InvalidMetricWindow)?;
@@ -1174,7 +1222,13 @@ pub fn fixture_span_details(
     spans
         .into_iter()
         .map(|span| {
-            let detail = span_detail(&metrics, &span.session_id, span.start_ms, span.end_ms)?;
+            let detail = span_detail(
+                &metrics,
+                &span.session_id,
+                span.start_ms,
+                span.end_ms,
+                &catalog,
+            )?;
             Ok(FixtureSpanDetail {
                 detail: span_detail_dto(detail, || {
                     Ok(SpanSource::Unavailable(SessionSourceReason::NotIndexed))
@@ -1585,6 +1639,16 @@ mod prompt_words_tests {
         xt_metrics::SpanDetail::Indexed {
             tool: xt_metrics::SpanTool::NoCalls,
             output_tokens: None,
+            cost: xt_metrics::CostSummary {
+                selected_observations: 0,
+                priced_observations: 0,
+                unpriced_observations: 0,
+                assumed_tier_observations: 0,
+                total_usd: None,
+                priced_subtotal_usd: 0.0,
+                priced_subtotal_nano_usd: 0,
+                unpriced: vec![],
+            },
             prompt: xt_metrics::SpanPrompt::Found {
                 at_ms: 1,
                 in_span: true,

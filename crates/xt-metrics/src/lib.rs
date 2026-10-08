@@ -13,9 +13,11 @@ mod pr_analytics;
 mod pr_effort;
 mod prices;
 mod repeats;
+mod report;
 mod session;
 mod session_hands_off;
 mod session_stretches;
+mod session_summary;
 mod sessions;
 mod span_detail;
 mod spans;
@@ -56,9 +58,11 @@ pub use repeats::{
     DEFAULT_ACTIVE_MS, DEFAULT_REPEATS, RepeatDensity, RepeatGroup, RepeatThresholds,
     SessionRepeats, StretchRepeats, UnknownRepeats,
 };
+pub use report::{PeriodReports, ReportPeriods};
 pub use session::{MAX_SESSIONS, SUB_SESSION_WALK, SessionWindow, SubSessions};
 pub use session_hands_off::SessionHandsOff;
 pub use session_stretches::{SessionStretch, SessionStretches, ToolBlock};
+pub use session_summary::SessionListSummary;
 pub use sessions::{DaySessions, SessionsPerDay};
 pub use span_detail::{
     AutomaticText, MAX_PROMPT_CHARS, PromptText, SpanAutomatic, SpanDetail, SpanPrompt, SpanTool,

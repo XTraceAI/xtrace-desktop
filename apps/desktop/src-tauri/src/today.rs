@@ -1,6 +1,6 @@
 //! The tray's "today": local midnight up to one captured instant, read in one
 //! snapshot through the existing M-04 token and cost reports and the M-05
-//! spans. Nothing here defines a metric; it only states which of their answers
+//! spans, plus the Dashboard’s whole-local-day human time. Nothing here defines a metric; it only states which of their answers
 //! are a measured zero, unknown, or a partial.
 use crate::{
     dashboard::checked_value,
@@ -10,7 +10,7 @@ use crate::{
 use jiff::{Timestamp, tz::TimeZone};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
-use xt_metrics::{MetricsDb, PriceCatalog, Window};
+use xt_metrics::{BreakLength, MetricsDb, PriceCatalog, Window};
 
 /// What the output counter says for today.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -75,6 +75,15 @@ pub struct TodayAgent {
     pub sessions: u64,
 }
 
+/// Human time for this whole local day, using the Dashboard’s calculation and saved
+/// break length. Unknown classifications keep the time unknown.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct TodayHuman {
+    #[ts(type = "number | null")]
+    pub active_ms: Option<u64>,
+    pub break_minutes: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct TodaySummary {
     /// The local calendar date of `observed_ms` in `timezone`.
@@ -85,7 +94,8 @@ pub struct TodaySummary {
     /// Local midnight: the inclusive start.
     #[ts(type = "number")]
     pub start_ms: i64,
-    /// The one captured instant every figure was read at: the exclusive end.
+    /// The captured instant: exclusive end for output, cost and agent time.
+    /// Human time uses the shared metric’s whole local day.
     #[ts(type = "number")]
     pub observed_ms: i64,
     /// The next local midnight, when this date ends.
@@ -97,6 +107,7 @@ pub struct TodaySummary {
     pub output: TodayOutput,
     pub cost: TodayCost,
     pub agent: TodayAgent,
+    pub human: TodayHuman,
     /// Tray sections existing data cannot prove.
     pub unavailable: Vec<DashboardUnavailable>,
 }
@@ -145,6 +156,7 @@ pub fn today(
     zone: TimeZone,
     clock: MetricClock,
     catalog: &PriceCatalog,
+    break_length: BreakLength,
 ) -> Result<TodaySummary, StateError> {
     let (date, start_ms, next_midnight_ms) = day_bounds(now_ms, &zone)?;
     let timezone = crate::dashboard::zone_name(&zone, clock.clone());
@@ -174,15 +186,25 @@ pub fn today(
     // [midnight, midnight) holds no instant: say so rather than read an
     // interval the metric windows reject.
     let empty = now_ms == start_ms;
-    let (output, cost, agent) = if empty {
-        none(catalog.version().into(), xt_metrics::COST_BASIS.into())
+    let (output, cost, agent, human) = if empty {
+        let (output, cost, agent) = none(catalog.version().into(), xt_metrics::COST_BASIS.into());
+        (
+            output,
+            cost,
+            agent,
+            TodayHuman {
+                active_ms: Some(0),
+                break_minutes: break_length.minutes(),
+            },
+        )
     } else {
         let window = Window::new(start_ms, now_ms)?;
-        let (tokens, cost, (day, spans)) = db.read_snapshot(|db| {
+        let (tokens, cost, (day, spans), human) = db.read_snapshot(|db| {
             Ok((
                 db.tokens(window, zone.clone())?,
                 db.cost(window, zone.clone(), catalog)?,
                 db.active_last_day(window, zone.clone())?,
+                db.human_hours(window, break_length, zone.clone())?.current,
             ))
         })?;
         // The one day bucket must be the day this summary names.
@@ -225,7 +247,11 @@ pub fn today(
             active_ms: day.active_ms,
             sessions: sessions.len() as u64,
         };
-        (output, cost, agent)
+        let human = TodayHuman {
+            active_ms: human.active_ms,
+            break_minutes: human.break_minutes,
+        };
+        (output, cost, agent, human)
     };
     if cost.total_usd.is_some_and(|v| !v.is_finite()) || !cost.priced_subtotal_usd.is_finite() {
         return Err(StateError::MetricEncoding);
@@ -241,6 +267,7 @@ pub fn today(
         output,
         cost,
         agent,
+        human,
         unavailable: unavailable(),
     };
     checked_value(&summary)?;
@@ -259,6 +286,7 @@ pub fn fixture_today(
         TimeZone::UTC,
         MetricClock::Fixture,
         &crate::dashboard::fixture_catalog(prices)?,
+        BreakLength::default(),
     )
 }
 

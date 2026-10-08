@@ -28,12 +28,13 @@ for (const colorScheme of ['light', 'dark'] as const) {
       'agent',
       'hands-off',
       'output',
+      'cost',
     ]);
     // F1 over the selected window: five human messages, five tool calls, a
     // 23-minute active span, a three-minute hands-off median over five
     // stretches and 150 output tokens (not the 1,100 total).
     const row = page.getByRole('row').filter({ hasText: 'Session 00000000' });
-    for (const measured of ['5', '0h23m', '3 min', '150']) {
+    for (const measured of ['5', '0 h 23 m', '3 min', '150']) {
       await expect(row.getByText(measured, { exact: true }).first()).toBeVisible();
     }
     await expect(row.getByText('1.1K', { exact: true })).toHaveCount(0);
@@ -170,10 +171,10 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.goto('/sessions');
     await expect(page.getByRole('table', { name: 'Indexed sessions' })).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
-    const expected = ['719h59.9m', '3h12.8m', '<0.1m', '0h00m'];
+    const expected = ['720 h 0 m', '3 h 13 m', '<1 m', '0 h 0 m'];
     for (const text of expected)
       await expect(
-        page.locator('.xt-session-agent .xt-metric-cell', { hasText: text }),
+        page.locator('.xt-session-agent .xt-metric-cell', { hasText: new RegExp(`^${text}$`) }),
       ).toHaveCount(1);
     const layout = await page.evaluate(() => {
       const header = [...document.querySelectorAll<HTMLElement>('[role="columnheader"]')].find(
@@ -225,7 +226,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await expect(expand).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page.locator('.xt-session-details')).toContainText(
-      'Agent time3h12.8m exactly 11,568,000 ms active in this range',
+      'Agent time3 h 13 m exactly 11,568,000 ms active in this range',
     );
   });
 }

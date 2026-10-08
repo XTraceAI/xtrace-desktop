@@ -3,8 +3,9 @@ use rusqlite::Connection;
 use serde_json::json;
 use std::path::PathBuf;
 use xt_fixtures::{Fixture, TempDb};
-use xt_metrics::{FavoriteModel, FavoriteUnknown, MetricsDb, Window};
+use xt_metrics::{FavoriteModel, FavoriteUnknown, MetricsDb, PriceCatalog, Window};
 use xt_store::{CanonicalRecord, retention::RetentionMode};
+mod report_support;
 fn fixture(id: &str) -> Fixture {
     Fixture::load(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -35,11 +36,19 @@ fn human(id: &str, second: u32) -> CanonicalRecord {
     row.message.usage = None;
     row
 }
+/// The favorite model, checked against the combined report read.
 fn query(db: &TempDb) -> FavoriteModel {
-    MetricsDb::open(db.path())
-        .unwrap()
-        .favorite_model(window())
-        .unwrap()
+    report_support::matches_standalone(
+        &MetricsDb::open(db.path()).unwrap(),
+        window(),
+        window().end_ms(),
+        &[],
+        TimeZone::UTC,
+        &PriceCatalog::bundled().unwrap(),
+    )
+    .current
+    .favorite
+    .unwrap()
 }
 #[test]
 fn favorite_f11_actual_two_iso_weeks_turn_tie_and_categorical_comparison() {
@@ -81,6 +90,17 @@ fn favorite_f11_actual_two_iso_weeks_turn_tie_and_categorical_comparison() {
         let compared = metrics.favorite_comparison(w).unwrap();
         assert_eq!(compared.current.model.as_deref(), Some("B"));
         assert_eq!(compared.previous.model.as_deref(), Some("A"));
+        // The combined read decides both weeks, turn ties included, the same.
+        let periods = report_support::matches_standalone(
+            &metrics,
+            w,
+            w.end_ms(),
+            &[],
+            TimeZone::UTC,
+            &PriceCatalog::bundled().unwrap(),
+        );
+        assert_eq!(periods.current.favorite.unwrap(), compared.current);
+        assert_eq!(periods.previous.favorite.unwrap(), compared.previous);
     }
 }
 #[test]
@@ -296,6 +316,16 @@ fn favorite_f11_lexical_tie_variant_retains_all_measured_output() {
         .unwrap();
     assert_eq!(r.model.as_deref(), Some("A"));
     assert_eq!(r.output_tokens, Some(100));
+    let week = Window::iso_week(ms("2026-09-01T00:00:00Z"), TimeZone::UTC).unwrap();
+    let periods = report_support::matches_standalone(
+        &MetricsDb::open(db.path()).unwrap(),
+        week,
+        week.end_ms(),
+        &[],
+        TimeZone::UTC,
+        &PriceCatalog::bundled().unwrap(),
+    );
+    assert_eq!(periods.current.favorite.unwrap(), r);
 }
 
 #[test]

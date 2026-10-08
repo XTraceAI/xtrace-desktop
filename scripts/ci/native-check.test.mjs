@@ -15,11 +15,13 @@ function fixture({
 } = {}) {
   const calls = [];
   const invocations = [];
+  const buildTargets = [];
   let identities = 0;
   let trusted;
   const run = (command, args, options) => {
     calls.push([command, ...args].join(' '));
     invocations.push({ command, args: [...args], env: { ...options.env } });
+    if (command === 'pnpm' && args[0] === 'tauri') buildTargets.push(options.env.CARGO_TARGET_DIR);
     assert.equal(options.env.GH_TOKEN, '');
     assert.equal(options.env.GITHUB_TOKEN, '');
     if (options.env.CI_TRUSTED_ROOT) trusted = options.env.CI_TRUSTED_ROOT;
@@ -33,7 +35,15 @@ function fixture({
       (notAncestor && args[0] === 'merge-base');
     return { status: failed ? 1 : 0, stdout };
   };
-  return { calls, invocations, environment, run, trusted: () => trusted, install: async () => [] };
+  return {
+    calls,
+    invocations,
+    buildTargets,
+    environment,
+    run,
+    trusted: () => trusted,
+    install: async () => [],
+  };
 }
 
 test('bundle setup builds, verifies and exports before the first workspace test', async () => {
@@ -143,7 +153,7 @@ test('native failures stop packaging and clean the temporary hook baseline', asy
   }
 });
 
-test('native evidence binds source, base and actual OS; release mode also launches the production build', async () => {
+test('native evidence binds source, base and actual OS; release mode also launches an isolated release build', async () => {
   for (const release of [false, true]) {
     const f = fixture();
     assert.deepEqual(await checkNative({ base, release, platform: 'darwin', ...f }), {
@@ -162,6 +172,17 @@ test('native evidence binds source, base and actual OS; release mode also launch
       f.calls.some((x) => x.includes('target/release/bundle/macos/')),
       release,
     );
+    const builds = f.calls.filter((call) => call.startsWith('pnpm tauri build'));
+    assert.ok(builds.every((call) => call.includes('--config ')));
+    const ids = builds.map((call) => JSON.parse(call.slice(call.indexOf('{'))).identifier);
+    assert.ok(ids.every((id) => /^ai\.xtrace\.app\.test\.[a-f0-9-]+$/.test(id)));
+    for (const launch of f.calls.filter((call) =>
+      call.startsWith('node scripts/ci/debug-bundle.mjs'),
+    )) {
+      assert.ok(launch.endsWith(ids[0]));
+      assert.ok(launch.includes(f.trusted()));
+    }
+    assert.ok(f.buildTargets.every((target) => target === f.trusted() + '/smoke-target'));
     await assert.rejects(access(f.trusted()), { code: 'ENOENT' });
   }
 });

@@ -10,7 +10,7 @@ import {
 import type { DashboardMetrics } from '../../data/generated/DashboardMetrics';
 import { useSurfaceTheme } from '../../theme/ThemeProvider';
 import { agentTime } from '../agent-duration';
-import { timelineRows, wholeDaysText, type TimelineRow } from './overview';
+import { timelineRows, type TimelineRow } from './overview';
 import '../../styles/overview.css';
 
 /** The 7-day range's eight days fill the plot; longer ranges keep that row size and scroll. */
@@ -101,12 +101,8 @@ export function HumanTimeline({ report }: { report: DashboardMetrics }) {
         <strong data-testid="effort-total">
           {unknown ? 'human time unknown' : `${agentTime(human.active_ms!)} human`}
         </strong>
-        <span>{wholeDaysText(human.by_day)}</span>
-        <small>
-          {unknown
-            ? 'Could not tell which messages a person sent.'
-            : `gaps over ${human.break_minutes} min count as breaks`}
-        </small>
+        {unknown && <small>Could not tell which messages a person sent.</small>}
+        <small className="xt-effort-headline-end">break threshold: {human.break_minutes} min</small>
       </p>
       <div className="xt-human-plot">
         <div className="xt-human-axis" aria-hidden="true">

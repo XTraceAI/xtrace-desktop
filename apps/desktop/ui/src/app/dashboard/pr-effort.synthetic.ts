@@ -52,7 +52,7 @@ export type SectionSpec = {
 };
 
 /** Unpriced responses are a model the catalog does not price. */
-const UNPRICED_MODEL = 'codex-auto-review';
+const UNPRICED_MODEL = 'unpublished-model';
 
 const cost = (spec: DaySpec | undefined): MetricEffortCost => {
   const selected = spec?.selected ?? (spec?.usd === undefined ? 0 : 1);

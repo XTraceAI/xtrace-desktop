@@ -22,7 +22,10 @@ import { ThemeProvider } from '../theme/ThemeProvider';
 import { CompactionBadge, useSessionCompactions } from './session-compactions';
 import { AppRoutes } from './AppRoutes';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 const exported = fixture as FixtureExport;
 function source() {
   return Object.assign(new FixtureDataSource(structuredClone(exported)), {
@@ -268,7 +271,23 @@ it.each(['focus', 'visibility', 'both'] as const)(
     Reflect.deleteProperty(document, 'visibilityState');
   },
 );
-it('keeps count and Running together in All sessions and recent activity, hides child counts, and dedupes overlap', async () => {
+it('keeps count and Running together in All sessions and hides child counts', async () => {
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      constructor(private callback: IntersectionObserverCallback) {}
+      observe(target: Element) {
+        queueMicrotask(() =>
+          this.callback(
+            [{ target, isIntersecting: true } as IntersectionObserverEntry],
+            this as unknown as IntersectionObserver,
+          ),
+        );
+      }
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   const data = source();
   const base = structuredClone(exported.sessions[0].rows[0]);
   const parent = {
@@ -327,16 +346,15 @@ it('keeps count and Running together in All sessions and recent activity, hides 
       </DataProvider>
     </ThemeProvider>,
   );
-  await waitFor(() => expect(screen.getAllByLabelText('Recorded compactions: 7')).toHaveLength(2));
-  // Each child is collapsed under its main session in both lists; opened, it
+  await waitFor(() => expect(screen.getAllByLabelText('Recorded compactions: 7')).toHaveLength(1));
+  // Each child is collapsed under its main session; opened, it
   // reads its live state as its own row.
-  await waitFor(() => expect(screen.getAllByText('Running', { exact: true })).toHaveLength(2));
+  await waitFor(() => expect(screen.getAllByLabelText(/ · Running$/)).toHaveLength(1));
   fireEvent.click(screen.getByRole('button', { name: '1 loaded sub-session of Main' }));
-  fireEvent.click(screen.getByRole('button', { name: '1 recent sub-session of Main' }));
-  await waitFor(() => expect(screen.getAllByText('Running', { exact: true })).toHaveLength(4));
+  await waitFor(() => expect(screen.getAllByLabelText(/ · Running$/)).toHaveLength(2));
   for (const count of screen.getAllByLabelText('Recorded compactions: 7')) {
     const row = count.closest('[role="row"]') ?? count.closest('li');
-    expect(within(row as HTMLElement).getByText('Running', { exact: true })).toBeTruthy();
+    expect(within(row as HTMLElement).getByLabelText(/ · Running$/)).toBeTruthy();
   }
   const table = screen.getByRole('table', { name: 'Indexed sessions' });
   const headers = within(table).getAllByRole('columnheader');
@@ -349,11 +367,6 @@ it('keeps count and Running together in All sessions and recent activity, hides 
     .getByRole('link', { name: 'Open session Child, child' })
     .closest('[role="row"]');
   expect(within(childRow as HTMLElement).getAllByRole('cell')[column].textContent).toBe('');
-  expect(
-    within(screen.getByRole('region', { name: 'Recent indexed activity' })).getAllByLabelText(
-      'Recorded compactions: 7',
-    ),
-  ).toHaveLength(1);
   for (const [ids] of data.compactions.read.mock.calls) expect(ids).toEqual(['main']);
 });
 it('shows a spinner only while a row with no count yet is being read', async () => {

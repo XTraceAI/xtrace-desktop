@@ -152,7 +152,12 @@ fn the_span_reports_its_own_most_used_tool() {
     // twice and Bash once.
     let (tool, _, _) = indexed(
         metrics
-            .span_detail("s", ms(&at(10, 0)), ms(&at(10, 12)))
+            .span_detail(
+                "s",
+                ms(&at(10, 0)),
+                ms(&at(10, 12)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert_eq!(
@@ -164,7 +169,12 @@ fn the_span_reports_its_own_most_used_tool() {
     );
     let (tool, _, _) = indexed(
         metrics
-            .span_detail("s", ms(&at(9, 0)), ms(&at(9, 10)))
+            .span_detail(
+                "s",
+                ms(&at(9, 0)),
+                ms(&at(9, 10)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert_eq!(
@@ -188,7 +198,12 @@ fn a_tie_resolves_to_the_same_tool_every_time() {
     let metrics = MetricsDb::open(db.path()).unwrap();
     let (tool, _, _) = indexed(
         metrics
-            .span_detail("tie", ms(&at(9, 0)), ms(&at(9, 0)))
+            .span_detail(
+                "tie",
+                ms(&at(9, 0)),
+                ms(&at(9, 0)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert_eq!(
@@ -207,7 +222,16 @@ fn output_is_the_shared_selection_over_the_span() {
     // 11 + 13 from the two single-record responses, and 40 — not 45 — from
     // the response restated over two records.
     let (start, end) = (ms(&at(10, 0)), ms(&at(10, 12)));
-    let (_, output, _) = indexed(metrics.span_detail("s", start, end).unwrap());
+    let (_, output, _) = indexed(
+        metrics
+            .span_detail(
+                "s",
+                start,
+                end,
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
+            .unwrap(),
+    );
     assert_eq!(output, Some(64));
     // The very slice session_windows takes over the span's interval.
     let SessionWindow::Indexed { tokens, .. } = &metrics
@@ -220,7 +244,12 @@ fn output_is_the_shared_selection_over_the_span() {
     // A single-event span includes its one event.
     let (_, output, _) = indexed(
         metrics
-            .span_detail("s", ms(&at(11, 5)), ms(&at(11, 5)))
+            .span_detail(
+                "s",
+                ms(&at(11, 5)),
+                ms(&at(11, 5)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert_eq!(output, Some(1));
@@ -232,7 +261,12 @@ fn the_prompt_is_the_spans_own_else_the_latest_before_it() {
     let metrics = MetricsDb::open(db.path()).unwrap();
     let (_, _, prompt) = indexed(
         metrics
-            .span_detail("s", ms(&at(10, 0)), ms(&at(10, 12)))
+            .span_detail(
+                "s",
+                ms(&at(10, 0)),
+                ms(&at(10, 12)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert_eq!(
@@ -247,7 +281,12 @@ fn the_prompt_is_the_spans_own_else_the_latest_before_it() {
     // The last span typed nothing: its prompt is the one before it started.
     let (_, _, prompt) = indexed(
         metrics
-            .span_detail("s", ms(&at(11, 0)), ms(&at(11, 5)))
+            .span_detail(
+                "s",
+                ms(&at(11, 0)),
+                ms(&at(11, 5)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert_eq!(
@@ -262,7 +301,12 @@ fn the_prompt_is_the_spans_own_else_the_latest_before_it() {
     // Whitespace runs collapse to one line.
     let (_, _, prompt) = indexed(
         metrics
-            .span_detail("s", ms(&at(9, 0)), ms(&at(9, 10)))
+            .span_detail(
+                "s",
+                ms(&at(9, 0)),
+                ms(&at(9, 10)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert_eq!(
@@ -295,7 +339,12 @@ fn sidechain_and_confirmed_automated_inputs_are_never_the_prompt() {
     let metrics = MetricsDb::open(db.path()).unwrap();
     let (_, _, prompt) = indexed(
         metrics
-            .span_detail("auto", ms(&at(9, 0)), ms(&at(9, 4)))
+            .span_detail(
+                "auto",
+                ms(&at(9, 0)),
+                ms(&at(9, 4)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert!(matches!(prompt, SpanPrompt::Found { at_ms, .. } if at_ms == ms(&at(9, 3))));
@@ -304,7 +353,12 @@ fn sidechain_and_confirmed_automated_inputs_are_never_the_prompt() {
     let metrics = MetricsDb::open(db.path()).unwrap();
     let (_, _, prompt) = indexed(
         metrics
-            .span_detail("auto", ms(&at(9, 0)), ms(&at(9, 4)))
+            .span_detail(
+                "auto",
+                ms(&at(9, 0)),
+                ms(&at(9, 4)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert_eq!(
@@ -335,7 +389,12 @@ fn a_session_with_only_delegated_inputs_has_no_prompt() {
     let metrics = MetricsDb::open(db.path()).unwrap();
     let (_, _, prompt) = indexed(
         metrics
-            .span_detail("quiet", ms(&at(9, 0)), ms(&at(9, 1)))
+            .span_detail(
+                "quiet",
+                ms(&at(9, 0)),
+                ms(&at(9, 1)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert_eq!(prompt, SpanPrompt::NoMessage);
@@ -362,7 +421,12 @@ fn unknowns_stay_unknown() {
     let metrics = MetricsDb::open(db.path()).unwrap();
     let (tool, output, prompt) = indexed(
         metrics
-            .span_detail("bare", ms(&at(9, 0)), ms(&at(9, 1)))
+            .span_detail(
+                "bare",
+                ms(&at(9, 0)),
+                ms(&at(9, 1)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert_eq!(tool, SpanTool::Unknown);
@@ -393,7 +457,12 @@ fn unknowns_stay_unknown() {
     let metrics = MetricsDb::open(db.path()).unwrap();
     let (_, _, prompt) = indexed(
         metrics
-            .span_detail("unclassified", ms(&at(9, 0)), ms(&at(9, 2)))
+            .span_detail(
+                "unclassified",
+                ms(&at(9, 0)),
+                ms(&at(9, 2)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert_eq!(prompt, SpanPrompt::Unclassified);
@@ -414,16 +483,32 @@ fn text_only_spans_call_no_tool_and_unknown_sessions_are_missing() {
     let metrics = MetricsDb::open(db.path()).unwrap();
     let (tool, output, _) = indexed(
         metrics
-            .span_detail("talk", ms(&at(9, 0)), ms(&at(9, 1)))
+            .span_detail(
+                "talk",
+                ms(&at(9, 0)),
+                ms(&at(9, 1)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert_eq!(tool, SpanTool::NoCalls);
     assert_eq!(output, Some(4));
     assert_eq!(
-        metrics.span_detail("nobody", 0, 1).unwrap(),
+        metrics
+            .span_detail(
+                "nobody",
+                0,
+                1,
+                &xt_metrics::PriceCatalog::bundled().unwrap()
+            )
+            .unwrap(),
         SpanDetail::Missing
     );
-    assert!(metrics.span_detail("talk", 2, 1).is_err());
+    assert!(
+        metrics
+            .span_detail("talk", 2, 1, &xt_metrics::PriceCatalog::bundled().unwrap())
+            .is_err()
+    );
 }
 
 #[test]
@@ -450,7 +535,12 @@ fn a_wrapped_input_withholds_its_words_rather_than_showing_the_wrapper() {
     // Before any adjustment the whole record is the person's.
     let (_, _, prompt) = indexed(
         metrics
-            .span_detail("wrapped", ms(&at(9, 0)), ms(&at(9, 1)))
+            .span_detail(
+                "wrapped",
+                ms(&at(9, 0)),
+                ms(&at(9, 1)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert!(matches!(
@@ -478,7 +568,12 @@ fn a_wrapped_input_withholds_its_words_rather_than_showing_the_wrapper() {
     let metrics = MetricsDb::open(db.path()).unwrap();
     let (_, _, prompt) = indexed(
         metrics
-            .span_detail("wrapped", ms(&at(9, 0)), ms(&at(9, 1)))
+            .span_detail(
+                "wrapped",
+                ms(&at(9, 0)),
+                ms(&at(9, 1)),
+                &xt_metrics::PriceCatalog::bundled().unwrap(),
+            )
             .unwrap(),
     );
     assert_eq!(
@@ -490,4 +585,166 @@ fn a_wrapped_input_withholds_its_words_rather_than_showing_the_wrapper() {
             text: PromptText::Wrapped,
         }
     );
+}
+
+fn prices() -> xt_metrics::PriceCatalog {
+    xt_metrics::PriceCatalog::from_json(include_str!("../../../fixtures/F1/input/prices.test.json"))
+        .unwrap()
+}
+fn priced_part(uuid: &str, time: &str, response: &str, output: u64) -> CanonicalRecord {
+    let mut value = serde_json::to_value(part(uuid, time, response, output)).unwrap();
+    value["message"]["usage"]["service_tier"] = json!("standard");
+    record(value)
+}
+fn span_cost(metrics: &MetricsDb, session: &str, start: i64, end: i64) -> xt_metrics::CostSummary {
+    let SpanDetail::Indexed { cost, .. } =
+        metrics.span_detail(session, start, end, &prices()).unwrap()
+    else {
+        panic!("indexed")
+    };
+    cost
+}
+
+#[test]
+fn span_cost_prices_only_its_session_and_selected_responses_including_both_endpoints() {
+    let mut db = TempDb::empty().unwrap();
+    seed(
+        &mut db,
+        "s",
+        &[
+            priced_part("before", &at(9, 59), "before", 900),
+            priced_part("start", &at(10, 0), "start", 11),
+            priced_part("copy", &at(10, 5), "repeated", 5),
+            priced_part("end", &at(10, 12), "repeated", 40),
+            priced_part("after", "2026-09-07T10:12:00.001Z", "after", 900),
+        ],
+        false,
+    );
+    seed(
+        &mut db,
+        "other",
+        &[priced_part("other", &at(10, 6), "other", 900)],
+        false,
+    );
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    let cost = span_cost(&metrics, "s", ms(&at(10, 0)), ms(&at(10, 12)));
+    assert_eq!(cost.selected_observations, 2);
+    assert_eq!(cost.priced_observations, 2);
+    // 10 input tokens per response at 1000 nano-USD; 51 output at 10000.
+    assert_eq!(cost.priced_subtotal_nano_usd, 530_000);
+    assert_eq!(cost.total_usd, Some(0.00053));
+    assert_eq!(
+        span_cost(&metrics, "s", ms(&at(10, 12)), ms(&at(10, 12))).selected_observations,
+        1
+    );
+}
+
+#[test]
+fn span_cost_keeps_partial_unknown_empty_and_measured_zero_distinct() {
+    let mut db = TempDb::empty().unwrap();
+    let mut unknown =
+        serde_json::to_value(priced_part("unknown", &at(10, 1), "unknown", 7)).unwrap();
+    unknown["message"]["model"] = json!("unknown-model");
+    let mut zero = serde_json::to_value(priced_part("zero", &at(11, 0), "zero", 0)).unwrap();
+    zero["message"]["usage"]["input_tokens"] = json!(0);
+    seed(
+        &mut db,
+        "s",
+        &[
+            priced_part("priced", &at(10, 0), "priced", 2),
+            record(unknown),
+            record(zero),
+            input("only-prompt", &at(12, 0), "just a prompt"),
+        ],
+        false,
+    );
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    let partial = span_cost(&metrics, "s", ms(&at(10, 0)), ms(&at(10, 1)));
+    assert_eq!(partial.total_usd, None);
+    assert_eq!(
+        (
+            partial.selected_observations,
+            partial.priced_observations,
+            partial.unpriced_observations
+        ),
+        (2, 1, 1)
+    );
+    assert_eq!(partial.priced_subtotal_nano_usd, 30_000);
+    let unknown = span_cost(&metrics, "s", ms(&at(10, 1)), ms(&at(10, 1)));
+    assert_eq!(unknown.total_usd, None);
+    assert_eq!(
+        (unknown.priced_observations, unknown.unpriced_observations),
+        (0, 1)
+    );
+    assert_eq!(
+        unknown.unpriced[0].reason,
+        xt_metrics::UnpricedReason::UnknownModel
+    );
+    assert_eq!(
+        span_cost(&metrics, "s", ms(&at(11, 0)), ms(&at(11, 0))).total_usd,
+        Some(0.0)
+    );
+    let empty = span_cost(&metrics, "s", ms(&at(12, 0)), ms(&at(12, 0)));
+    assert_eq!(empty.total_usd, None);
+    assert_eq!(empty.selected_observations, 0);
+}
+
+#[test]
+fn span_cost_and_tokens_agree_when_the_projection_overlaps_a_leap_second() {
+    let mut db = TempDb::empty().unwrap();
+    seed(
+        &mut db,
+        "s",
+        &[
+            priced_part("leap", "2016-12-31T23:59:60Z", "leap", 100),
+            priced_part("midnight", "2017-01-01T00:00:00Z", "midnight", 2),
+        ],
+        false,
+    );
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    let at = ms("2017-01-01T00:00:00Z");
+    let SpanDetail::Indexed {
+        cost,
+        output_tokens,
+        ..
+    } = metrics.span_detail("s", at, at, &prices()).unwrap()
+    else {
+        panic!("indexed")
+    };
+    assert_eq!(output_tokens, Some(2));
+    assert_eq!(cost.selected_observations, 1);
+    assert_eq!(cost.priced_subtotal_nano_usd, 30_000);
+}
+
+#[test]
+fn span_cost_excludes_automatic_review_but_keeps_its_output_tokens() {
+    let mut db = TempDb::empty().unwrap();
+    let mut review = priced_part("review", &at(10, 1), "review", 7);
+    review.message.model = Some("codex-auto-review".into());
+    seed(
+        &mut db,
+        "s",
+        &[priced_part("paid", &at(10, 0), "paid", 2), review],
+        false,
+    );
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    let SpanDetail::Indexed {
+        cost,
+        output_tokens,
+        ..
+    } = metrics
+        .span_detail("s", ms(&at(10, 0)), ms(&at(10, 1)), &prices())
+        .unwrap()
+    else {
+        panic!("indexed")
+    };
+    assert_eq!(output_tokens, Some(9));
+    assert_eq!(cost.selected_observations, 1);
+    assert_eq!(cost.priced_observations, 1);
+    assert_eq!(cost.unpriced_observations, 0);
+    assert_eq!(cost.total_usd, Some(0.00003));
+    let only_review = span_cost(&metrics, "s", ms(&at(10, 1)), ms(&at(10, 1)));
+    assert_eq!(only_review.selected_observations, 0);
+    assert_eq!(only_review.total_usd, None);
+    assert!(only_review.unpriced.is_empty());
 }

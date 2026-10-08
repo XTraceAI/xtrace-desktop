@@ -24,6 +24,18 @@ const START_TITLE: &str = "XTrace Desktop couldn't start";
 /// differs from this build's, or one a newer build wrote. Anything else shows
 /// every message in the chain.
 pub fn message(error: &(dyn Error + 'static)) -> StartupFailure {
+    // A copy of the earlier version's database that did not open says so in
+    // its own words: the earlier file was not opened, so nothing about it
+    // needs moving, and nothing was deleted.
+    if let Some(copy @ crate::earlier_install::CopyError::Database(source)) =
+        chain(error).find_map(|error| error.downcast_ref::<crate::earlier_install::CopyError>())
+    {
+        return StartupFailure {
+            title: START_TITLE.into(),
+            body: format!("{copy}\n\nDetails: {}", details(source)),
+            database: None,
+        };
+    }
     let opened = chain(error).find_map(|error| match error.downcast_ref::<StateError>() {
         Some(StateError::OpenDatabase { path, source }) => Some((path, source)),
         _ => None,

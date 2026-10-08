@@ -85,21 +85,15 @@ for (const colorScheme of ['dark', 'light'] as const) {
     await page.emulateMedia({ colorScheme, reducedMotion: 'no-preference' });
     await page.goto('/e2e/compactions.html?view=sessions');
     const nine = page.getByLabel('Recorded compactions: 9', { exact: true });
-    await expect(nine).toHaveCount(2);
-    await expect(page.getByLabel('Recorded compactions: unknown', { exact: true })).toHaveCount(2);
-    await expect(page.getByLabel('Recorded compactions: 0', { exact: true })).toHaveCount(2);
+    await expect(nine).toHaveCount(1);
+    await expect(page.getByLabel('Recorded compactions: unknown', { exact: true })).toHaveCount(1);
+    await expect(page.getByLabel('Recorded compactions: 0', { exact: true })).toHaveCount(1);
     await expect(nine.first()).toHaveAttribute('data-step', '5');
-    await expect(
-      page
-        .locator('.xt-sessions-recent-list li')
-        .filter({ has: nine })
-        .getByText('Running', { exact: true }),
-    ).toBeVisible();
     await expect(page.getByLabel('Recorded compactions: 8', { exact: true })).toHaveCount(0);
     // A fork shows its own count plus the count before the fork, even zero.
     const fork = (own: number, from: string) =>
       page.getByLabel(`Recorded compactions: ${own} + ${from}`, { exact: true });
-    await expect(fork(3, '0')).toHaveCount(2);
+    await expect(fork(3, '0')).toHaveCount(1);
     await expect(fork(3, '0').first()).toHaveText('↺ 3 + 0');
     await expect(fork(2, 'unknown').first()).toHaveText('↺ 2 + ?');
     const scroll = await page.evaluate(
@@ -108,7 +102,10 @@ for (const colorScheme of ['dark', 'light'] as const) {
     expect(scroll).toBe(false);
     await nine.last().scrollIntoViewIfNeeded();
     await expect(
-      page.locator('[role="row"]').filter({ has: nine }).getByText('Running', { exact: true }),
+      page
+        .locator('[role="row"]')
+        .filter({ has: nine })
+        .getByRole('img', { name: 'Codex · Running', exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole('columnheader', { name: 'Compactions', exact: true }),

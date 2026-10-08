@@ -2,7 +2,7 @@ use crate::{Error, Result};
 use serde::Deserialize;
 use std::collections::BTreeSet;
 
-pub const COST_BASIS: &str = "Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes unrecorded regional/speed modifiers, tool fees, and subscriptions.";
+pub const COST_BASIS: &str = "Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes codex-auto-review responses, unrecorded regional/speed modifiers, tool fees, and subscriptions.";
 
 /// Validated immutable in-memory catalog. No external path or network loader.
 #[derive(Clone, Debug)]

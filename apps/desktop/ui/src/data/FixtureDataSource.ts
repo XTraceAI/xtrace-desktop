@@ -194,7 +194,7 @@ export class FixtureDataSource implements DataSource {
    * repository, branch or saved title.
    */
   async sessionsList(
-    { search, hosts, withPrs }: SessionListFilter,
+    { search, hosts, withPrs, sort = 'started' }: SessionListFilter,
     after: string | null,
     windowDays: number,
   ): Promise<SessionPage> {
@@ -210,8 +210,21 @@ export class FixtureDataSource implements DataSource {
           (value ?? '').toLowerCase().includes(needle),
         ),
     );
+    // Exported timestamps are the store's answer; no work records are read here.
+    if (sort === 'recently_active')
+      rows.sort((a, b) => {
+        const aTime = a.last_activity_at_ms ?? -Infinity;
+        const bTime = b.last_activity_at_ms ?? -Infinity;
+        return aTime === bTime ? (a.id < b.id ? 1 : a.id > b.id ? -1 : 0) : aTime > bTime ? -1 : 1;
+      });
     return {
       window: page.window,
+      summary:
+        this.fixture.sessions_summaries?.find(
+          (entry) =>
+            entry.days === windowDays &&
+            JSON.stringify(entry.session_ids) === JSON.stringify(rows.map((row) => row.id).sort()),
+        )?.summary ?? null,
       rows: this.currentLinks(rows),
       next: null,
       referenced_parents: this.parentContext(page, rows),

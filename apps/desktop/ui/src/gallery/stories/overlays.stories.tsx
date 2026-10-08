@@ -4,6 +4,9 @@ import { createPopoverHandle, PopoverTrigger, PopoverClose } from '../../kit/Pop
 import { ModalClose } from '../../kit/Modal';
 import { story } from '../story';
 
+// Illustrative only: this gallery control never opens a browser.
+const illustrativeUpdates = { viewPublicReleases: async () => {} };
+
 function OverlayExample({
   kind,
   initial,
@@ -53,15 +56,7 @@ function OverlayExample({
           </label>
           <ModalClose render={<Button />}>Close example</ModalClose>
         </Modal>
-      ) : kind === 'updates' ? (
-        <LocalUpdatesPopover
-          id={id}
-          open={open}
-          onOpenChange={setOpen}
-          handle={handle}
-          controls={{ viewPublicReleases: async () => {} }}
-        />
-      ) : (
+      ) : kind === 'hub' ? (
         <HubPopover
           id={id}
           open={open}
@@ -70,6 +65,14 @@ function OverlayExample({
           connected={connected}
           teamLabel="Example team"
           onConnect={connected ? undefined : () => setOpen(false)}
+        />
+      ) : (
+        <LocalUpdatesPopover
+          id={id}
+          open={open}
+          onOpenChange={setOpen}
+          handle={handle}
+          controls={illustrativeUpdates}
         />
       )}
     </div>

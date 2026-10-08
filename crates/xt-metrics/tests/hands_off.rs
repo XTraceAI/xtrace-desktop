@@ -1,4 +1,6 @@
-use jiff::Timestamp;
+mod hands_off_support;
+
+use jiff::{Timestamp, tz::TimeZone};
 use rusqlite::Connection;
 use serde_json::json;
 use std::path::PathBuf;
@@ -20,11 +22,13 @@ fn ms(s: &str) -> i64 {
 fn window() -> Window {
     Window::new(ms("2026-09-01T00:00:00Z"), ms("2026-09-08T00:00:00Z")).unwrap()
 }
+/// The window's report, checked equal to the combined read's.
 fn query(db: &TempDb) -> HandsOff {
-    MetricsDb::open(db.path())
-        .unwrap()
-        .hands_off(window())
-        .unwrap()
+    query_in(db, window())
+}
+fn query_in(db: &TempDb, window: Window) -> HandsOff {
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    hands_off_support::matches_standalone(&metrics, window, TimeZone::UTC).0
 }
 fn seed(
     db: &mut TempDb,
@@ -112,14 +116,7 @@ fn hands_off_last_tool_result_no_tool_zero_and_half_open_edges() {
         (Some(1), Some(4.0), Some(4.0))
     );
     let after_human = Window::new(ms("2026-09-07T12:00:01Z"), ms("2026-09-07T12:05:00Z")).unwrap();
-    assert_eq!(
-        MetricsDb::open(db.path())
-            .unwrap()
-            .hands_off(after_human)
-            .unwrap()
-            .n,
-        Some(0)
-    );
+    assert_eq!(query_in(&db, after_human).n, Some(0));
 }
 
 #[test]
@@ -174,10 +171,7 @@ fn hands_off_precise_order_and_nonpositive_leap_projection() {
     ];
     seed(&mut db, "leap", "claude", None, &leap, false);
     let w = Window::new(ms("2016-12-31T23:59:59Z"), ms("2017-01-01T00:00:01Z")).unwrap();
-    assert_eq!(
-        MetricsDb::open(db.path()).unwrap().hands_off(w).unwrap().n,
-        Some(0)
-    );
+    assert_eq!(query_in(&db, w).n, Some(0));
 }
 
 #[test]

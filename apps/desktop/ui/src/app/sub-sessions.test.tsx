@@ -22,7 +22,8 @@ import { AppRoutes } from './AppRoutes';
  * under its exact parent, collapsed; opened, the child is its own row that
  * names its parent inside its own name cell, with its own link and
  * measurements. Search and page membership are the report's, and a parent the
- * report did not return is only named on a row of its own, never added. A
+ * report did not return is read for its own Sessions cells without changing
+ * the page's matches; Dashboard only names it. A
  * known sub-session whose creator is not verified is not listed.
  */
 
@@ -268,7 +269,10 @@ const listed = () =>
     .queryAllByRole('link', { name: /^Open session / })
     .map((open) => {
       const cells = within(open.closest<HTMLElement>('[role="row"]')!).getAllByRole('cell');
-      return [open.getAttribute('aria-label'), cells.at(-1)!.textContent];
+      const output = within(sessionsTable())
+        .getAllByRole('columnheader')
+        .findIndex((header) => header.textContent === 'output');
+      return [open.getAttribute('aria-label'), cells[output].textContent];
     });
 
 const groupButton = (name: string) => within(sessionsTable()).getByRole('button', { name });
@@ -283,15 +287,12 @@ const drawnRows = () =>
         ? name.querySelector('.xt-session-heading')!.textContent
         : name.querySelector('.xt-session-open')!.textContent;
     });
-/** The All sessions caption's counts, before what it says of order and range. */
-const caption = () => screen.getByText(/^\d+ loaded/).textContent!.split(' · sorted')[0];
-
 it('folds a child under its loaded parent’s row, collapsed, and lists it as its own row when opened', async () => {
   const { controls, reads } = titleControls();
   const child = row(CHILD, 111, { parent: link({ title: 'Saved parent' }), known_child: true });
   const parent = row(PARENT, 999, { title: 'Saved parent' });
   const { data } = source({ pages: [[child, parent]], titles: controls });
-  mount(data, '/sessions?q=01a0&host=codex&range=14d');
+  mount(data, '/sessions?q=01a0&host=codex&range=14d&sort=recently_active');
 
   // Collapsed: the parent's own row, with its own measurement, where its
   // newest loaded member (the child) was. The child has no row or marker.
@@ -300,8 +301,6 @@ it('folds a child under its loaded parent’s row, collapsed, and lists it as it
   expect(markers()).toHaveLength(0);
   const toggle = groupButton('1 loaded sub-session of Saved parent');
   expect(toggle.getAttribute('aria-expanded')).toBe('false');
-  // The loaded count is still every row the page returned.
-  expect(caption()).toBe('2 loaded · 1 sub-session grouped under main sessions');
 
   // Only drawn rows are read for titles: the collapsed child is not.
   await waitFor(() => expect(reads).toHaveLength(1));
@@ -319,9 +318,13 @@ it('folds a child under its loaded parent’s row, collapsed, and lists it as it
   const marker = screen.getByRole('link', { name: parentLabel('Parent host title') });
   expect(marker.textContent).toBe('↳Sub-session of Parent host title');
   // The exact parent route, carrying this list's own address.
-  expect(marker.getAttribute('href')).toBe(`/sessions/${enc(PARENT)}?q=01a0&host=codex&range=14d`);
+  expect(marker.getAttribute('href')).toBe(
+    `/sessions/${enc(PARENT)}?q=01a0&host=codex&range=14d&sort=recently_active`,
+  );
   const open = screen.getByRole('link', { name: `Open session ${CHILD}` });
-  expect(open.getAttribute('href')).toBe(`/sessions/${enc(CHILD)}?q=01a0&host=codex&range=14d`);
+  expect(open.getAttribute('href')).toBe(
+    `/sessions/${enc(CHILD)}?q=01a0&host=codex&range=14d&sort=recently_active`,
+  );
   expect(open.closest<HTMLElement>('.xt-session-name')!.style.getPropertyValue('--depth')).toBe(
     '1',
   );
@@ -340,69 +343,186 @@ it('folds a child under its loaded parent’s row, collapsed, and lists it as it
   expect(screen.queryByText('First recorded')).toBeNull();
 });
 
-it('names a filtered-out parent on a row of its own, reads its title once and never adds it', async () => {
+it('shows a filtered-out parent’s own row and measurements without changing the list filters', async () => {
   const { controls, reads } = titleControls();
   const child = row(CHILD, 111, { parent: link({ title: 'Saved parent' }), known_child: true });
-  const parent = row(PARENT, 999, { title: 'Saved parent', repo: '/code/elsewhere' });
-  const { data, listed: calls } = source({ pages: [[child, parent]], titles: controls });
+  const parent = row(PARENT, 999, { title: null, repo: '/code/elsewhere' });
+  const { data, listed: calls, opened } = source({ pages: [[child, parent]], titles: controls });
+  const { live, compactions } = spyReads(data);
   mount(data, `/sessions?q=${CHILD}`);
 
-  // The search keeps the child only. Its parent is named on one collapsed row
-  // that opens the parent's own page; the child does not become a main row.
-  const toggle = await within(await findTable()).findByRole('button', {
-    name: '1 loaded sub-session of Saved parent',
+  const open = await within(await findTable()).findByRole('link', {
+    name: `Open session Saved parent, ${PARENT}`,
   });
-  const header = toggle.closest<HTMLElement>('[role="row"]')!;
-  expect(header.querySelector('[data-group="absent"]')!.textContent).toMatch(
-    /^›1Sub-sessions ofSaved parentMain session not loaded here/,
-  );
-  const open = within(header).getByRole('link', {
-    name: `Open parent session Saved parent, ${PARENT}`,
-  });
+  const toggle = groupButton('1 loaded sub-session of Saved parent');
+  const header = open.closest<HTMLElement>('[role="row"]')!;
   expect(open.getAttribute('href')).toBe(`/sessions/${enc(PARENT)}?q=${enc(CHILD)}`);
-  // No measurement, start, PR, live state, compaction or details of its own.
-  const cells = within(header).getAllByRole('cell');
-  expect(cells.slice(3).map((cell) => cell.textContent)).toEqual(Array(8).fill(''));
-  expect(within(header).queryByRole('button', { name: /^Expand/ })).toBeNull();
-  expect(header.querySelector('[data-visible-id], [data-live-status]')).toBeNull();
-  expect(listed()).toEqual([]);
-  expect(caption()).toBe('1 loaded · 1 sub-session grouped under main sessions');
-  // Every read is the search the address holds; the parent is not searched for.
+  expect(within(header).getByText(/Parent shown for context/)).toBeTruthy();
+  expect(within(header).getByText('999')).toBeTruthy();
+  expect(within(header).getByRole('button', { name: `Expand ${PARENT}` })).toBeTruthy();
+  expect(header.querySelector('[data-visible-id]')!.getAttribute('data-visible-id')).toBe(PARENT);
+  expect(opened).toEqual([{ id: PARENT, days: 7 }]);
   expect(new Set(calls.map((call) => call.filter.search))).toEqual(new Set([CHILD]));
+  expect(screen.queryByText('Sub-sessions of', { exact: true })).toBeNull();
 
-  // The row naming the parent is drawn, so its title is read; the collapsed
-  // child's is not. Until it answers, the saved title stands.
+  FakeObserver.all.at(-1)!.show([PARENT]);
+  await waitFor(() => expect(live.flat()).toContain(PARENT));
+  await waitFor(() => expect(compactions.flat()).toContain(PARENT));
   await waitFor(() => expect(reads).toHaveLength(1));
   expect(reads[0].ids).toEqual([PARENT]);
   await answer(reads[0], { [PARENT]: 'Parent host title' });
-  // The heading, its disclosure and its link all say the same name.
   expect(toggle.getAttribute('aria-label')).toBe('1 loaded sub-session of Parent host title');
-  expect(header.querySelector('[data-group="absent"]')!.textContent).toMatch(
-    /^›1Sub-sessions ofParent host titleMain session not loaded here/,
-  );
-  expect(open.getAttribute('aria-label')).toBe(`Open parent session Parent host title, ${PARENT}`);
-  expect(open.getAttribute('title')).toBe(`Sub-sessions of Parent host title · ${PARENT}`);
-  expect(listed()).toEqual([]);
+  expect(open.getAttribute('aria-label')).toBe(`Open session Parent host title, ${PARENT}`);
+  expect(listed()).toEqual([[`Open session Parent host title, ${PARENT}`, '999']]);
 
   fireEvent.click(toggle);
-  expect(listed()).toEqual([[`Open session ${CHILD}`, '111']]);
-  // Its child's marker names it as its row does.
+  expect(listed()).toEqual([
+    [`Open session Parent host title, ${PARENT}`, '999'],
+    [`Open session ${CHILD}`, '111'],
+  ]);
   const marker = screen.getByRole('link', { name: parentLabel('Parent host title') });
-  expect(marker.textContent).toBe('↳Sub-session of Parent host title');
-  expect(marker.getAttribute('title')).toBe(`Sub-session of Parent host title · ${PARENT}`);
   expect(marker.getAttribute('href')).toBe(`/sessions/${enc(PARENT)}?q=${enc(CHILD)}`);
   await waitFor(() => expect(reads).toHaveLength(2));
   expect(reads[1].ids).toEqual([CHILD]);
-  // An answer naming a row it was not asked about is not used.
   await answer(reads[1], { [PARENT]: 'Unasked parent title' });
   expect(screen.queryByText('Unasked parent title')).toBeNull();
   expect(marker.getAttribute('aria-label')).toBe(parentLabel('Parent host title'));
-  // Closing and opening the group asks for nothing again.
   fireEvent.click(toggle);
   fireEvent.click(toggle);
   await act(async () => {});
   expect(readIds(reads)).toEqual([PARENT, CHILD]);
+  expect(opened).toEqual([{ id: PARENT, days: 7 }]);
 });
+
+it.each([
+  ['missing', null],
+  ['wrong host', row(PARENT, 999, { host: 'claude' })],
+  ['wrong identity', row(OTHER, 999)],
+  ['still checking', row(PARENT, 999, { child_check: 'checking' })],
+  ['missing display check', row(PARENT, 999, { child_check: undefined })],
+  ['unknown creator', row(PARENT, 999, { known_child: true, parent: null })],
+  ['failed', 'error'],
+] as const)(
+  'keeps an explicit fallback when the parent read is %s, without unsafe cells',
+  async (_state, result) => {
+    const child = row(CHILD, 111, { parent: link({ title: 'Saved parent' }), known_child: true });
+    const { data } = source({ pages: [[child]] });
+    const read = vi.spyOn(data, 'sessionRow').mockImplementation(async () => {
+      if (result === 'error') throw new Error('Parent unavailable');
+      return result;
+    });
+    const { live, compactions } = spyReads(data);
+    mount(data, `/sessions?q=${CHILD}`);
+    await within(await findTable()).findByText('Main session unavailable');
+    const toggle = groupButton('1 loaded sub-session of Saved parent');
+    const header = toggle.closest<HTMLElement>('[role="row"]')!;
+    expect(
+      within(header)
+        .getByRole('link', { name: `Open parent session Saved parent, ${PARENT}` })
+        .getAttribute('href'),
+    ).toBe(`/sessions/${enc(PARENT)}?q=${enc(CHILD)}`);
+    expect(
+      within(header)
+        .getAllByRole('cell')
+        .slice(3)
+        .map((cell) => cell.textContent),
+    ).toEqual(Array(9).fill(''));
+    expect(within(header).queryByRole('button', { name: /^Expand/ })).toBeNull();
+    expect(header.querySelector('[data-visible-id], [data-live-status]')).toBeNull();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledWith(PARENT, 7);
+    fireEvent.click(toggle);
+    expect(listed()).toEqual([[`Open session ${CHILD}`, '111']]);
+    for (const asked of [live.flat(), compactions.flat()]) expect(asked).not.toContain(PARENT);
+  },
+);
+
+it('reads one direct parent for two children and keeps the group open while its row loads', async () => {
+  const second = 'second-child';
+  const child = row(CHILD, 111, { parent: link({ title: 'Saved parent' }), known_child: true });
+  const another = row(second, 222, { parent: link({ title: 'Saved parent' }), known_child: true });
+  const { data } = source({ pages: [[child, another]] });
+  let finish!: (answer: SessionRow) => void;
+  const read = vi.spyOn(data, 'sessionRow').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  mount(data, '/sessions?range=14d');
+  await within(await findTable()).findByText('Loading main session…');
+  fireEvent.click(groupButton('2 loaded sub-sessions of Saved parent'));
+  expect(listed()).toEqual([
+    [`Open session ${CHILD}`, '111'],
+    [`Open session ${second}`, '222'],
+  ]);
+  // The fetched parent is itself a verified child. Its grandparent is only
+  // named in its own row, never fetched or added as another group.
+  await act(async () =>
+    finish(
+      row(PARENT, 999, {
+        title: 'Saved parent',
+        known_child: true,
+        parent: link({ session_id: OTHER, title: 'Grandparent' }),
+      }),
+    ),
+  );
+  await within(sessionsTable()).findByRole('link', {
+    name: `Open session Saved parent, ${PARENT}`,
+  });
+  expect(listed()).toEqual([
+    [`Open session Saved parent, ${PARENT}`, '999'],
+    [`Open session ${CHILD}`, '111'],
+    [`Open session ${second}`, '222'],
+  ]);
+  expect(groupButton('2 loaded sub-sessions of Saved parent').getAttribute('aria-expanded')).toBe(
+    'true',
+  );
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(read).toHaveBeenCalledWith(PARENT, 14);
+  expect(within(sessionsTable()).queryByRole('button', { name: /of Grandparent$/ })).toBeNull();
+});
+
+it.each(['failed', 'loaded'] as const)(
+  'refreshes a %s parent read along with its list, keeping its group and list address',
+  async (initial) => {
+    const child = row(CHILD, 111, { parent: link({ title: 'Saved parent' }), known_child: true });
+    const { data, listed: calls } = source({ pages: [[child]] });
+    const read = vi
+      .spyOn(data, 'sessionRow')
+      .mockImplementationOnce(async () => {
+        if (initial === 'failed') throw new Error('Temporary parent failure');
+        return row(PARENT, 333, { title: 'Saved parent' });
+      })
+      .mockResolvedValue(row(PARENT, 999, { title: 'Saved parent' }));
+    mount(data, `/sessions?q=${CHILD}&host=codex&range=14d`);
+    const table = await findTable();
+    if (initial === 'failed') await within(table).findByText('Main session unavailable');
+    else await within(table).findByText('333');
+    fireEvent.click(groupButton('1 loaded sub-session of Saved parent'));
+    expect(screen.getByRole('link', { name: `Open session ${CHILD}` })).toBeTruthy();
+    const callsBeforeRefresh = calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await within(table).findByText('999');
+    const open = within(table).getByRole('link', { name: `Open session Saved parent, ${PARENT}` });
+    expect(open.getAttribute('href')).toBe(`/sessions/${PARENT}?q=${CHILD}&host=codex&range=14d`);
+    expect(groupButton('1 loaded sub-session of Saved parent').getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    expect(listed()).toEqual([
+      [`Open session Saved parent, ${PARENT}`, '999'],
+      [`Open session ${CHILD}`, '111'],
+    ]);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenLastCalledWith(PARENT, 14);
+    expect(calls).toHaveLength(callsBeforeRefresh + 1);
+    expect(calls.at(-1)).toEqual({
+      filter: { search: CHILD, hosts: ['codex'], withPrs: false, sort: 'started' },
+      after: null,
+      days: 14,
+    });
+  },
+);
 
 it('keeps a parent’s saved title, or its identity, when its read finds none', async () => {
   for (const [saved, name] of [
@@ -425,184 +545,6 @@ it('keeps a parent’s saved title, or its identity, when its read finds none', 
     expect(screen.getByRole('link', { name: parentLabel(name) })).toBeTruthy();
     view.unmount();
   }
-});
-
-it('names an off-page parent in All sessions by the title Recent read for it, read once', async () => {
-  const { controls, reads } = titleControls();
-  const child = row(CHILD, 111, { parent: link(), known_child: true });
-  const { data } = source({
-    pages: [[child, row(OTHER, 5)]],
-    titles: controls,
-    // The parent's own recent activity, and its child's.
-    dashboard: (days) =>
-      lanesReport(days, [{ id: PARENT }, { id: CHILD, context: { parent: link() } }]),
-  });
-  mount(data, `/sessions?q=${CHILD}&range=7d`);
-  const recent = await screen.findByRole('region', { name: 'Recent indexed activity' });
-  const toggle = await within(await findTable()).findByRole('button', {
-    name: '1 loaded sub-session of Session 01a0aaaa',
-  });
-  // Recent's own row for the parent is read; the group row naming it in All
-  // sessions asks for nothing more.
-  await waitFor(() => expect(reads).toHaveLength(1));
-  expect(reads[0].ids).toEqual([PARENT]);
-  await answer(reads[0], { [PARENT]: 'OSS xtrace desktop' });
-  expect(
-    within(recent).getByRole('link', {
-      name: `Open recent Codex session OSS xtrace desktop, ${PARENT}`,
-    }),
-  ).toBeTruthy();
-  expect(toggle.getAttribute('aria-label')).toBe('1 loaded sub-session of OSS xtrace desktop');
-  expect(
-    within(sessionsTable()).getByRole('link', {
-      name: `Open parent session OSS xtrace desktop, ${PARENT}`,
-    }),
-  ).toBeTruthy();
-  fireEvent.click(toggle);
-  expect(
-    within(sessionsTable()).getByRole('link', { name: parentLabel('OSS xtrace desktop') }),
-  ).toBeTruthy();
-  await waitFor(() => expect(reads).toHaveLength(2));
-  expect(reads[1].ids).toEqual([CHILD]);
-  await answer(reads[1], {});
-  // Recent's group for the child names the same parent the same way.
-  fireEvent.click(
-    within(recent).getByRole('button', { name: '1 recent sub-session of OSS xtrace desktop' }),
-  );
-  expect(within(recent).getByRole('link', { name: new RegExp(`session ${CHILD}$`) })).toBeTruthy();
-  await act(async () => {});
-  expect(readIds(reads).filter((id) => id === PARENT)).toHaveLength(1);
-});
-
-it('names a parent only Recent’s group row names, and in the All sessions group too', async () => {
-  const { controls, reads } = titleControls();
-  const { data } = source({
-    pages: [[row(CHILD, 111, { parent: link(), known_child: true })]],
-    titles: controls,
-    // No recent activity for the parent: Recent only names it.
-    dashboard: (days) => lanesReport(days, [{ id: CHILD, context: { parent: link() } }]),
-  });
-  mount(data, `/sessions?q=${CHILD}&range=7d`);
-  const recent = await screen.findByRole('region', { name: 'Recent indexed activity' });
-  await within(recent).findByRole('button', { name: '1 recent sub-session of Session 01a0aaaa' });
-  await waitFor(() => expect(reads).toHaveLength(1));
-  // Both lists' group rows name one parent: it is asked about once.
-  expect(reads[0].ids).toEqual([PARENT]);
-  await answer(reads[0], { [PARENT]: 'Parent host title' });
-  const heading = within(recent)
-    .getByRole('button', { name: '1 recent sub-session of Parent host title' })
-    .closest('li')!;
-  expect(
-    within(heading).getByRole('link', { name: `Open parent session Parent host title, ${PARENT}` }),
-  ).toBeTruthy();
-  expect(
-    within(sessionsTable()).getByRole('button', {
-      name: '1 loaded sub-session of Parent host title',
-    }),
-  ).toBeTruthy();
-});
-
-it('never names a parent by the title read for a session with its identity on another host', async () => {
-  const { controls, reads } = titleControls();
-  const claudeParent = link({ host: 'claude', title: 'Claude parent' });
-  const { data } = source({
-    pages: [[row(CHILD, 111, { parent: claudeParent, known_child: true })]],
-    titles: controls,
-    // A Codex session with the parent's identity has recent activity of its own.
-    dashboard: (days) => lanesReport(days, [{ id: PARENT }]),
-  });
-  mount(data, `/sessions?q=${CHILD}&range=7d`);
-  const toggle = await within(await findTable()).findByRole('button', {
-    name: '1 loaded sub-session of Claude parent',
-  });
-  await waitFor(() => expect(reads).toHaveLength(1));
-  expect(reads[0].ids).toEqual([PARENT]);
-  await answer(reads[0], { [PARENT]: 'Codex host title' });
-  const recent = screen.getByRole('region', { name: 'Recent indexed activity' });
-  expect(
-    within(recent).getByRole('link', {
-      name: `Open recent Codex session Codex host title, ${PARENT}`,
-    }),
-  ).toBeTruthy();
-  // The Claude parent keeps its own saved name everywhere it is named.
-  expect(toggle.getAttribute('aria-label')).toBe('1 loaded sub-session of Claude parent');
-  fireEvent.click(toggle);
-  expect(
-    within(sessionsTable()).getByRole('link', {
-      name: `Sub-session of Claude parent, open parent session ${PARENT}`,
-    }),
-  ).toBeTruthy();
-  expect(within(sessionsTable()).queryByText(/Codex host title/)).toBeNull();
-});
-
-it('never names a loaded parent by the title read for a session with its identity on another host', async () => {
-  const { controls, reads } = titleControls();
-  const claudeParent = link({ host: 'claude', title: 'Claude link title' });
-  const { data } = source({
-    // All sessions loads the Claude parent, collapsed under its own parent.
-    pages: [
-      [
-        row(OTHER, 1, { host: 'claude', title: 'Claude ancestor' }),
-        row(PARENT, 2, {
-          host: 'claude',
-          title: 'Claude row title',
-          known_child: true,
-          parent: link({ session_id: OTHER, host: 'claude' }),
-        }),
-      ],
-    ],
-    titles: controls,
-    // Recent draws a Codex session with the parent's identity, and a group
-    // naming the Claude parent, which has no activity here.
-    dashboard: (days) => {
-      const report = lanesReport(days, [
-        { id: PARENT },
-        { id: CHILD, context: { known_child: true, parent: claudeParent } },
-      ]);
-      report.lane_sessions.push({
-        session_id: PARENT,
-        host: 'claude',
-        repo: null,
-        branch: null,
-        title: 'Claude link title',
-        automated_review: false,
-        started_at_ms: null,
-        pr_links: 0,
-        inferred_pr_links: 0,
-        cost: null,
-        parent: null,
-        known_child: false,
-        child_check: 'checked',
-      });
-      return report;
-    },
-  });
-  mount(data, '/sessions?range=7d');
-  const recent = await screen.findByRole('region', { name: 'Recent indexed activity' });
-  const group = await within(recent).findByRole('button', {
-    name: '1 recent sub-session of Claude row title',
-  });
-  expect(drawnRows()).toEqual(['Claude ancestor']);
-  // Recent's Codex row names the identity in the one read; the group naming
-  // the Claude parent asks for nothing more.
-  await waitFor(() => expect(reads).toHaveLength(1));
-  expect(reads[0].ids).toEqual([OTHER, PARENT]);
-  await answer(reads[0], { [PARENT]: 'Codex host title' });
-  expect(
-    within(recent).getByRole('link', {
-      name: `Open recent Codex session Codex host title, ${PARENT}`,
-    }),
-  ).toBeTruthy();
-  // The loaded Claude parent keeps its own row's saved title everywhere.
-  expect(group.getAttribute('aria-label')).toBe('1 recent sub-session of Claude row title');
-  expect(
-    within(recent).getByRole('link', { name: `Open parent session Claude row title, ${PARENT}` }),
-  ).toBeTruthy();
-  // Opened, the group lists its child under the same name.
-  fireEvent.click(group);
-  expect(within(recent).getByRole('link', { name: new RegExp(`session ${CHILD}$`) })).toBeTruthy();
-  expect(group.getAttribute('aria-label')).toBe('1 recent sub-session of Claude row title');
-  expect(within(recent).queryAllByText(/Codex host title/)).toHaveLength(1);
 });
 
 it('cancels a parent’s title read when the list changes and never shows its late answer', async () => {
@@ -632,63 +574,49 @@ it('cancels a parent’s title read when the list changes and never shows its la
   expect(toggle.getAttribute('aria-label')).toBe('1 loaded sub-session of Session 01a0aaaa');
 });
 
-it('replaces the row naming a later page’s parent with the parent’s own row, keeping the group open', async () => {
-  const { controls, reads } = titleControls();
+it('keeps one parent row and its open group when the parent arrives on a later page', async () => {
   const child = row(CHILD, 111, { parent: link(), known_child: true });
   const parent = row(PARENT, 999);
-  const { data, listed: calls } = source({
+  const {
+    data,
+    listed: calls,
+    opened,
+  } = source({
     pages: [[child, row(OTHER, 5)], [parent]],
-    titles: controls,
+  });
+  // A later page is authoritative over the context read, even if that read
+  // has a different measurement. Its cursor and loaded count remain intact.
+  vi.spyOn(data, 'sessionRow').mockImplementation(async (id, days) => {
+    opened.push({ id, days });
+    return row(PARENT, 777);
   });
   mount(data, '/sessions');
-
-  // No saved title anywhere: the parent's short identity, on the row that
-  // names it, where its child was.
-  const toggle = await within(await findTable()).findByRole('button', {
-    name: '1 loaded sub-session of Session 01a0aaaa',
+  await within(await findTable()).findByRole('link', {
+    name: `Open session Session 01a0aaaa, ${PARENT}`,
   });
-  expect(toggle.closest('[role="row"]')!.querySelector('[data-group="absent"]')).toBeTruthy();
-  expect(listed()).toEqual([[`Open session ${OTHER}`, '5']]);
-  // The row naming the parent is read after the session rows; it finds none.
-  await waitFor(() => expect(reads).toHaveLength(1));
-  expect(reads[0].ids).toEqual([OTHER, PARENT]);
-  await answer(reads[0], {});
-  expect(toggle.getAttribute('aria-label')).toBe('1 loaded sub-session of Session 01a0aaaa');
-  fireEvent.click(toggle);
+  const toggle = groupButton('1 loaded sub-session of Session 01a0aaaa');
   expect(listed()).toEqual([
-    [`Open session ${CHILD}`, '111'],
+    [`Open session Session 01a0aaaa, ${PARENT}`, '777'],
     [`Open session ${OTHER}`, '5'],
   ]);
-  const marker = screen.getByRole('link', { name: parentLabel('Session 01a0aaaa') });
-  expect(marker.getAttribute('href')).toBe(`/sessions/${enc(PARENT)}`);
-  await waitFor(() => expect(reads).toHaveLength(2));
-  expect(reads[1].ids).toEqual([CHILD]);
-  await answer(reads[1], {});
-
+  fireEvent.click(toggle);
+  fireEvent.click(within(sessionsTable()).getByRole('button', { name: `Expand ${PARENT}` }));
+  expect(screen.getByText('First recorded')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Load more sessions' }));
-  // The parent arrives on its own page: its own row takes the place of the
-  // row that named it, once, and the group is still open. Every row keeps its
-  // own measurement.
-  await waitFor(() => expect(listed()).toHaveLength(3));
+  await within(sessionsTable()).findByText('999');
   expect(listed()).toEqual([
     [`Open session ${PARENT}`, '999'],
     [`Open session ${CHILD}`, '111'],
     [`Open session ${OTHER}`, '5'],
   ]);
-  expect(document.querySelector('[data-group="absent"]')).toBeNull();
   expect(
     groupButton('1 loaded sub-session of Session 01a0aaaa').getAttribute('aria-expanded'),
   ).toBe('true');
-  expect(caption()).toBe('3 loaded · 1 sub-session grouped under main sessions');
-  // Only the list's own pages were read, the next one by its cursor.
+  expect(screen.getByText('First recorded')).toBeTruthy();
+  expect(screen.queryByText('Parent shown for context')).toBeNull();
+  expect(opened).toEqual([{ id: PARENT, days: 7 }]);
   expect(new Set(calls.map((call) => call.after))).toEqual(new Set([null, '1']));
   expect(new Set(calls.map((call) => call.filter.search))).toEqual(new Set(['']));
-  // Its own row is read at its own version, and then names it in the child's
-  // marker too.
-  await waitFor(() => expect(reads).toHaveLength(3));
-  expect(reads[2].ids).toEqual([PARENT]);
-  await answer(reads[2], { [PARENT]: 'Parent host title' });
-  expect(screen.getByRole('link', { name: parentLabel('Parent host title') })).toBe(marker);
 });
 
 it('leaves a row with no verified parent ordinary', async () => {
@@ -749,6 +677,9 @@ it('opens the exact parent from the keyboard and comes back to the same list', a
     within(await findTable()).findByRole('button', {
       name: '1 loaded sub-session of Session 01a0aaaa',
     });
+  await within(await findTable()).findByRole('link', {
+    name: `Open session Session 01a0aaaa, ${PARENT}`,
+  });
   fireEvent.click(await group());
   const open = screen.getByRole('link', { name: `Open session ${CHILD}` });
   const marker = screen.getByRole('link', { name: parentLabel('Session 01a0aaaa') });
@@ -1418,34 +1349,21 @@ const FOURTH = '01a0ffff-0000-7000-8000-000000000006';
 const MIDDLE = '01a01111-0000-7000-8000-000000000007';
 const GRAND = '01a02222-0000-7000-8000-000000000008';
 
-it('hides a sub-session whose main session is unknown from both Sessions lists, even when searched for', async () => {
+it('hides a searched sub-session whose main session is unknown and reads nothing for it', async () => {
   const { controls, reads } = titleControls();
   const { data } = source({
     pages: [[row(CHILD, 111, { known_child: true, parent: null }), row(OTHER, 999)]],
     titles: controls,
-    dashboard: (days) =>
-      lanesReport(days, [
-        { id: CHILD, context: { known_child: true, parent: null } },
-        { id: OTHER },
-      ]),
   });
   const { live, compactions } = spyReads(data);
   mount(data, `/sessions?q=${CHILD.slice(0, 8)}&range=7d`);
-  // The search matches the child only; it is loaded, counted and not listed.
   await within(await findTable()).findByText(
     'No session to list: every loaded session is a sub-session whose main session is unknown.',
   );
-  expect(caption()).toBe('1 loaded · 1 sub-session hidden: main session unknown');
-  const recent = screen.getByRole('region', { name: 'Recent indexed activity' });
-  await within(recent).findByRole('link', { name: new RegExp(`session ${OTHER}$`) });
   absentFrom(sessionsTable(), CHILD);
-  // Its links carry the search the address holds, so only its whole ID is absent.
-  expect(recent.innerHTML).not.toContain(CHILD);
-  // Nothing is read for it: no title, live state or compactions.
-  await waitFor(() => expect(reads).toHaveLength(1));
-  expect(reads[0].ids).toEqual([OTHER]);
-  await waitFor(() => expect(compactions.flat()).toContain(OTHER));
-  for (const asked of [live.flat(), compactions.flat()]) expect(asked).not.toContain(CHILD);
+  expect(reads).toHaveLength(0);
+  expect(compactions.flat()).toHaveLength(0);
+  expect(live.flat()).toHaveLength(0);
 });
 
 it('hides each loaded branch under an unknown main session, across pages, and keeps ordinary rows', async () => {
@@ -1479,24 +1397,28 @@ it('hides each loaded branch under an unknown main session, across pages, and ke
   });
   const { live, compactions } = spyReads(data);
   mount(data, '/sessions');
-  const middle = await within(await findTable()).findByRole('button', {
+  await within(await findTable()).findByRole('button', {
     name: '1 loaded sub-session of Middle',
   });
   // The ordinary untitled session, then the row naming the off-page parent
   // whose own parent is verified. No row names the unknown branch's parents.
-  expect(drawnRows()).toEqual([`Session ${OTHER.slice(0, 8)}`, '›1Sub-sessions ofMiddle']);
-  expect(listed()).toEqual([[`Open session ${OTHER}`, '4']]);
-  expect(caption()).toBe(
-    '5 loaded · 1 sub-session grouped under main sessions · 3 sub-sessions hidden: main session unknown',
-  );
+  await within(sessionsTable()).findByRole('link', { name: `Open session Middle, ${MIDDLE}` });
+  expect(drawnRows()).toEqual([`Session ${OTHER.slice(0, 8)}`, 'Middle']);
+  expect(listed()).toEqual([
+    [`Open session ${OTHER}`, '4'],
+    [`Open session Middle, ${MIDDLE}`, '7'],
+  ]);
   absentFrom(sessionsTable(), CHILD, SECOND, THIRD, PARENT);
   FakeObserver.all.at(-1)!.show([CHILD, SECOND, THIRD, OTHER, FOURTH, PARENT, MIDDLE]);
   // The ordinary row, then the parent the drawn group row names.
   await waitFor(() => expect(reads).toHaveLength(1));
-  expect(reads[0].ids).toEqual([OTHER, MIDDLE]);
-  fireEvent.click(middle);
+  expect(reads[0].ids).toEqual([OTHER]);
+  await answer(reads[0], {});
+  await waitFor(() => expect(readIds(reads)).toContain(MIDDLE));
+  fireEvent.click(groupButton('1 loaded sub-session of Middle'));
   expect(listed()).toEqual([
     [`Open session ${OTHER}`, '4'],
+    [`Open session Middle, ${MIDDLE}`, '7'],
     [`Open session ${FOURTH}`, '5'],
   ]);
 
@@ -1506,9 +1428,6 @@ it('hides each loaded branch under an unknown main session, across pages, and ke
   const grand = await within(await findTable()).findByRole('button', {
     name: '1 loaded sub-session of Grand',
   });
-  expect(caption()).toBe(
-    '7 loaded · 2 sub-sessions grouped under main sessions · 4 sub-sessions hidden: main session unknown',
-  );
   fireEvent.click(grand);
   expect(listed()).toEqual([
     [`Open session ${OTHER}`, '4'],
@@ -1521,7 +1440,8 @@ it('hides each loaded branch under an unknown main session, across pages, and ke
   await waitFor(() => expect(compactions.flat()).toContain(OTHER));
   for (const asked of [readIds(reads), live.flat(), compactions.flat()])
     for (const id of [CHILD, SECOND, THIRD, PARENT]) expect(asked).not.toContain(id);
-  // The parent the new group row names is only ever asked for its title.
+  // This new group's parent has no row in the source, so it only reads its
+  // title and never requests live status or compactions for the fallback.
   await waitFor(() => expect(readIds(reads)).toContain(GRAND));
   for (const asked of [live.flat(), compactions.flat()]) expect(asked).not.toContain(GRAND);
 });
@@ -1552,76 +1472,6 @@ it('groups by exact host: a parent named on another host is not the loaded row w
   // a listed row has, so, not known to be shown, each child is left out.
   expect(drawnRows()).toEqual(['Codex session']);
   expect(within(sessionsTable()).queryByRole('button', { name: /of Codex session$/ })).toBeNull();
-  expect(caption()).toBe('4 loaded · 3 sub-sessions hidden: main session unknown');
-});
-
-it('limits recent activity to eight main sessions and groups after grouping and hiding', async () => {
-  const roots = Array.from(
-    { length: 9 },
-    (_, index) => `01a1000${index}-0000-7000-8000-00000000000${index}`,
-  );
-  const KID = '01a2bbbb-0000-7000-8000-000000000011';
-  const LATE = '01a2cccc-0000-7000-8000-000000000012';
-  const HIDDEN = '01a2dddd-0000-7000-8000-000000000013';
-  const { controls, reads } = titleControls();
-  const { data } = source({
-    titles: controls,
-    dashboard: (days) =>
-      lanesReport(days, [
-        { id: HIDDEN, context: { known_child: true, parent: null } },
-        { id: KID, context: { known_child: true, parent: link({ session_id: roots[0] }) } },
-        { id: roots[0], context: { title: 'Root 0' } },
-        { id: LATE, context: { known_child: true, parent: link({ title: 'Saved parent' }) } },
-        ...roots.slice(1).map((id, index) => ({ id, context: { title: `Root ${index + 1}` } })),
-      ]),
-  });
-  const { live, compactions } = spyReads(data);
-  mount(data, '/sessions');
-  const recent = await screen.findByRole('region', { name: 'Recent indexed activity' });
-  await within(recent).findByRole('link', { name: new RegExp(`${roots[0]}$`) });
-  // Ten main sessions and groups remain once the unknown branch is hidden and
-  // children are grouped; the first eight are listed, each group collapsed.
-  expect(
-    within(recent)
-      .getAllByRole('link')
-      .map((link) => link.getAttribute('aria-label')),
-  ).toEqual([
-    `Open recent Codex session Root 0, ${roots[0]}`,
-    `Open parent session Saved parent, ${PARENT}`,
-    ...roots.slice(1, 7).map((id, index) => `Open recent Codex session Root ${index + 1}, ${id}`),
-  ]);
-  expect(
-    within(recent).getByText(
-      '8 most recent main sessions and groups with activity in the last 48 hours; opening a group also lists its sub-sessions',
-    ),
-  ).toBeTruthy();
-  const header = within(recent)
-    .getByRole('button', { name: '1 recent sub-session of Saved parent' })
-    .closest('li')!;
-  // The report returned no span for it; that is not a claim it had none.
-  expect(header.textContent).toContain('Main session: no activity returned here');
-  expect(header.querySelector('time, [data-live-status], .xt-compaction')).toBeNull();
-  absentFrom(recent, HIDDEN, KID, LATE, roots[7], roots[8]);
-  // The listed sessions, then the parent the listed group row names; nothing
-  // past the limit.
-  await waitFor(() => expect(reads).toHaveLength(1));
-  expect(reads[0].ids).toEqual([roots[0], ...roots.slice(1, 7), PARENT]);
-  await answer(reads[0], {});
-
-  // Opening a group adds its child below its parent; the limit still counts
-  // main sessions and groups.
-  fireEvent.click(within(recent).getByRole('button', { name: '1 recent sub-session of Root 0' }));
-  const kid = within(recent).getByRole('link', { name: `Open recent Codex session ${KID}` });
-  expect(kid.closest('li')!.dataset.depth).toBe('1');
-  expect(within(recent).getAllByRole('link')).toHaveLength(9);
-  absentFrom(recent, HIDDEN, roots[7], roots[8]);
-  await waitFor(() => expect(reads).toHaveLength(2));
-  expect(reads[1].ids).toEqual([KID]);
-  await waitFor(() => expect(live.flat()).toContain(KID));
-  for (const asked of [live.flat(), compactions.flat()])
-    for (const id of [HIDDEN, LATE, PARENT, roots[7], roots[8]]) expect(asked).not.toContain(id);
-  // A sub-session is not read for compactions; its parent is.
-  expect(compactions.flat()).not.toContain(KID);
 });
 
 it('reads a filtered-out parent’s context from the fixture export as the native page does', async () => {
@@ -1656,7 +1506,6 @@ it('reads a filtered-out parent’s context from the fixture export as the nativ
   await within(await findTable()).findByText(
     'No session to list: every loaded session is a sub-session whose main session is unknown.',
   );
-  expect(caption()).toBe('1 loaded · 1 sub-session hidden: main session unknown');
   expect(sessionsTable().innerHTML).not.toContain(PARENT);
   view.unmount();
 
@@ -1666,7 +1515,6 @@ it('reads a filtered-out parent’s context from the fixture export as the nativ
   await within(await findTable()).findByText(
     'No session to list: every loaded session is a sub-session whose main session is unknown.',
   );
-  expect(caption()).toBe('1 loaded · 1 sub-session hidden: main session unknown');
 });
 
 describe('a session whose display check is not finished', () => {
@@ -1688,33 +1536,22 @@ describe('a session whose display check is not finished', () => {
         ]),
     }).data;
 
-  it.each(stages)(
-    'is %s: never a main row unless checked, in either Sessions list',
-    async (stage, patch) => {
-      mount(data(patch), '/sessions?range=7d');
-      const table = await findTable();
-      await within(table).findByRole('link', { name: `Open session Saved parent, ${PARENT}` });
-      const recent = await screen.findByRole('region', { name: 'Recent indexed activity' });
-      await within(recent).findByRole('link', { name: new RegExp(`${PARENT}$`) });
-      if (stage === 'checked') {
-        expect(drawnRows()).toContain(`Session ${CHILD.slice(0, 8)}`);
-        expect(recent.innerHTML).toContain(CHILD);
-        expect(caption()).toBe('2 loaded');
-      } else if (stage === 'a child') {
-        // Collapsed under its verified parent, in both lists.
-        const group = groupButton('1 loaded sub-session of Saved parent');
-        expect(group.getAttribute('aria-expanded')).toBe('false');
-        absentFrom(sessionsTable(), CHILD);
-        expect(recent.innerHTML).not.toContain(CHILD);
-        expect(caption()).toBe('2 loaded · 1 sub-session grouped under main sessions');
-      } else {
-        // Loaded and counted, but listed nowhere, and never as a main row.
-        absentFrom(sessionsTable(), CHILD);
-        expect(recent.innerHTML).not.toContain(CHILD);
-        expect(caption()).toBe('2 loaded · 1 session hidden while checking who started it');
-      }
-    },
-  );
+  it.each(stages)('is %s: never a main row unless checked, in Sessions', async (stage, patch) => {
+    mount(data(patch), '/sessions?range=7d');
+    const table = await findTable();
+    await within(table).findByRole('link', { name: `Open session Saved parent, ${PARENT}` });
+    if (stage === 'checked') {
+      expect(drawnRows()).toContain(`Session ${CHILD.slice(0, 8)}`);
+    } else if (stage === 'a child') {
+      // Collapsed under its verified parent, in both lists.
+      const group = groupButton('1 loaded sub-session of Saved parent');
+      expect(group.getAttribute('aria-expanded')).toBe('false');
+      absentFrom(sessionsTable(), CHILD);
+    } else {
+      // Listed nowhere, and never as a main row.
+      absentFrom(sessionsTable(), CHILD);
+    }
+  });
 
   it.each(stages)(
     'is %s: never a main row unless checked, on the Dashboard',
@@ -1742,7 +1579,7 @@ describe('a session whose display check is not finished', () => {
  * Public snapshots captured from the app's own Sessions and Dashboard
  * responses, after each stage of the native index's work
  * (`cargo run -p xtrace-desktop --example visibility_snapshots`), replayed
- * through the production Dashboard, All sessions and Recent views. A watched
+ * through the production Dashboard, All sessions views. A watched
  * session that becomes a sub-session must never be drawn as a row of its own
  * in any frame. `XT_VISIBILITY_FRAMES` names a captured file; without it, a
  * synthetic sequence of the same shape is replayed. `XT_VISIBILITY_CHILDREN`
@@ -1833,8 +1670,6 @@ describe('replayed public snapshots', () => {
     mount(data, `/sessions?q=${CHILD}&range=7d`);
     const table = await findTable();
     await waitFor(() => expect(drawnAlone(table, CHILD)).toBe(true));
-    const recent = await screen.findByRole('region', { name: 'Recent indexed activity' });
-    await waitFor(() => expect(drawnAlone(recent, CHILD)).toBe(true));
   });
 
   it.each(cases)('frame %s: %s is no main row on the Dashboard', async (_, id, frame) => {
@@ -1844,16 +1679,16 @@ describe('replayed public snapshots', () => {
     expect(drawnAlone(table, id)).toBe(false);
   });
 
-  it.each(cases)('frame %s: %s is no main row in All or Recent', async (_, id, frame) => {
+  it.each(cases)('frame %s: %s is no main row in All sessions', async (_, id, frame) => {
     const { data } = source({
       list: (filter) => (filter.search === id ? frame.responses.searched[id] : undefined),
       dashboard: () => structuredClone(frame.responses.dashboard),
     });
     mount(data, `/sessions?q=${encodeURIComponent(id)}&range=${captured.days}d`);
     const table = await findTable();
-    await waitFor(() => expect(screen.getByText(/^\d+ loaded/)).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Refresh' }).hasAttribute('disabled')).toBe(false),
+    );
     expect(drawnAlone(table, id)).toBe(false);
-    const recent = await screen.findByRole('region', { name: 'Recent indexed activity' });
-    expect(drawnAlone(recent, id)).toBe(false);
   });
 });

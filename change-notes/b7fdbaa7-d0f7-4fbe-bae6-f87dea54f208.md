@@ -1,0 +1,1 @@
+- Dashboard Effort card: the agent-hours total now reads "agent hrs" and no longer shows the range and days-above-24 h text beside it.

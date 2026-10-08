@@ -32,106 +32,23 @@
   flex: 1 1 auto;
   min-height: 0;
 }
-.xt-sessions-recent {
+.xt-sessions > .xt-section-card .xt-section-right {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-  padding: 6px 11px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--subtle);
-  font-size: 11px;
-}
-.xt-sessions-recent-heading {
-  display: flex;
-  align-items: baseline;
-  gap: 6px 14px;
-  flex-wrap: wrap;
-}
-.xt-sessions-recent h2 {
-  margin: 0;
-  color: var(--ink);
-  font-size: 12px;
-}
-.xt-sessions-recent p {
-  margin: 0;
-  color: var(--meta);
-}
-.xt-sessions-recent-note {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px 14px;
-}
-.xt-sessions-recent-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  max-height: 152px;
-  margin: 1px 0;
-  padding: 0;
-  overflow: auto;
-  list-style: none;
-}
-.xt-sessions-recent-list li {
-  display: grid;
-  grid-template-columns: 76px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
-  padding: 4px 0;
-  border-top: 1px solid var(--divider);
+  gap: 8px;
 }
-.xt-sessions-recent-host,
-.xt-sessions-recent-id,
-.xt-sessions-recent-list time {
-  color: var(--meta);
-  font:
-    400 10px 'Geist Mono',
-    Menlo,
-    monospace;
+.xt-sessions-sort select {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
 }
-.xt-sessions-recent-list a {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  color: var(--accent-ink);
-  text-decoration: none;
-}
-.xt-sessions-recent-list a:hover,
-.xt-sessions-recent-list a:focus-visible {
-  text-decoration: underline;
-}
-.xt-sessions-recent-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.xt-sessions-recent-id {
-  overflow-wrap: anywhere;
-}
-.xt-sessions-recent-limit {
-  color: var(--warning) !important;
-}
-/* A listed sub-session is indented under the row that opened it; a row that
-   only names a main session with no recent activity says so where the time
-   would be. */
-.xt-sessions-recent-list li[data-depth] .xt-session-title-line {
-  padding-left: calc(var(--depth, 0) * 14px);
-}
-.xt-sessions-recent-quiet {
-  color: var(--meta);
-  font:
-    400 10px 'Geist Mono',
-    Menlo,
-    monospace;
-}
-@container sessions (max-width: 650px) {
-  .xt-sessions-recent-list li {
-    grid-template-columns: 66px minmax(0, 1fr);
-  }
-  .xt-sessions-recent-list time {
-    grid-column: 2;
-  }
+.xt-sessions-sort select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .xt-sessions-heading {
   display: flex;
@@ -384,8 +301,22 @@
 .xt-sessions-tiles .xt-stat-row {
   flex-wrap: wrap;
   justify-content: flex-end;
+  width: 100%;
   max-width: 100%;
   margin-left: auto;
+  row-gap: 4px;
+}
+/* Details get their own full line: explanatory words stay readable instead
+   of inheriting the shared tiles' short, clipped aside. */
+.xt-sessions-tiles .xt-stat-aside {
+  flex-basis: 100%;
+  max-width: 100%;
+  margin-left: 0;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  text-align: right;
+  line-height: 14px;
 }
 @container sessions (max-width: 760px) {
   .xt-sessions-tiles {

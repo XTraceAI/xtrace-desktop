@@ -179,7 +179,7 @@ for (const [width, height] of [
       // The range's total above one bar per day with agent time (four of
       // seven days); three marker days counting five pull requests; a usable
       // plot with its scale and a seven-day axis; all inside the card.
-      expect(layout.headline).toBe('0h50m agentlast 7 days');
+      expect(layout.headline).toBe('0 h 50 m agent hrs');
       expect(layout.days).toBe(7);
       expect(layout.headlineClearance).toBeGreaterThanOrEqual(0);
       expect(layout.bars).toBe(4);
@@ -248,9 +248,7 @@ for (const scheme of ['light', 'dark'] as const)
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Effort definition' }).blur();
     // Agent hours: the range's total, the 24 h line and a note for the day above it.
-    await expect(effort.getByTestId('effort-headline')).toHaveText(
-      /^29h00m agentlast 7 days1 day above 24 h$/,
-    );
+    await expect(effort.getByTestId('effort-headline')).toHaveText(/^29 h 0 m agent hrs$/);
     await expect(effort.getByTestId('effort-reference')).toHaveText('24 h');
     // The scale's top label, "30 h", stays clear of the total above it.
     const [total, topLabel] = await Promise.all([
@@ -264,15 +262,15 @@ for (const scheme of ['light', 'dark'] as const)
       .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-date')!));
     const [, , second, third, , fifth] = dates;
     await expect(day(second!)).toHaveAccessibleName(
-      `${second}: 26h00m. gpt-6-astra 20h00m (77%), claude-opus-5-5 6h00m (23%). Above 24 h: agents ran at the same time. merged #7`,
+      `${second}: 26 h 0 m. gpt-6-astra 20 h 0 m (77%), claude-opus-5-5 6 h 0 m (23%). Above 24 h: agents ran at the same time. merged #7`,
     );
     await day(second!).hover();
     // The open card only: a closing one can still be leaving as the next opens.
     const tip = page.locator('[data-testid="effort-day-card"][data-open]');
     await expect(tip).toBeVisible();
     await expect(tip.getByTestId('effort-day-model')).toHaveText([
-      'gpt-6-astra20h00m77%',
-      'claude-opus-5-56h00m23%',
+      'gpt-6-astra20 h 0 m77%',
+      'claude-opus-5-56 h 0 m23%',
     ]);
     await expect(tip).toContainText('Above 24 h: agents ran at the same time');
     await card(page).screenshot({ path: info.outputPath(`effort-card-hours-${scheme}.png`) });
@@ -282,28 +280,26 @@ for (const scheme of ['light', 'dark'] as const)
     // Cost: the total is a priced subtotal; the partly priced day carries a +
     // and names its unpriced responses; the day nothing could price has no bar.
     await effort.getByRole('radio', { name: 'cost' }).click();
-    await expect(effort.getByTestId('effort-headline')).toHaveText(
-      /^\$460\+last 7 days131 responses have no price$/,
-    );
+    await expect(effort.getByTestId('effort-headline')).toHaveText('$460+');
     await expect(effort.getByTestId('effort-reference')).toHaveCount(0);
     await expect(day(fifth!).getByTestId('effort-partial')).toHaveText('+');
     await expect(day(fifth!)).toHaveAccessibleName(
-      `${fifth}: $40.00+. claude-opus-5-5 $40.00 (100%). No price: 128 codex-auto-review responses`,
+      `${fifth}: $40.00+. claude-opus-5-5 $40.00 (100%). No price: 128 unpublished-model responses`,
     );
     await expect(day(third!).getByTestId('effort-bar')).toHaveCount(0);
     await day(third!).hover();
     await expect(tip.locator('.xt-effort-tip-head')).toHaveText(/cost unknown$/);
-    await expect(tip).toContainText('No price: 3 codex-auto-review responses');
+    await expect(tip).toContainText('No price: 3 unpublished-model responses');
     await page.mouse.move(0, 0);
     await expect(day(third!)).toHaveAccessibleName(
-      `${third}: cost unknown. No price: 3 codex-auto-review responses`,
+      `${third}: cost unknown. No price: 3 unpublished-model responses`,
     );
     // The keyboard reaches each day in turn and opens the same card.
     await day(dates[4]!).focus();
     await page.keyboard.press('Tab');
     await expect(day(fifth!)).toBeFocused();
     await expect(tip).toBeVisible();
-    await expect(tip).toContainText('No price: 128 codex-auto-review responses');
+    await expect(tip).toContainText('No price: 128 unpublished-model responses');
     await expect(tip.getByTestId('effort-day-model')).toHaveText(['claude-opus-5-5$40.00100%']);
     await page.keyboard.press('Shift+Tab');
     await expect(day(dates[4]!)).toBeFocused();

@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export function smokeEnvironment(directory, inherited = process.env) {
@@ -14,18 +14,76 @@ export function smokeEnvironment(directory, inherited = process.env) {
   return env;
 }
 
+/** Test identities are per-run and never use the installed app's identity. */
+export function isSmokeIdentifier(value) {
+  return /^ai\.xtrace\.app\.test\.[a-f0-9-]+$/.test(value);
+}
+
+export function inspectorArguments(pid, prepared) {
+  if (!isSmokeIdentifier(prepared.identifier)) throw new Error('Invalid smoke identity');
+  return [String(pid), prepared.bundle, prepared.identifier];
+}
+
+/** Copy first; all plist and signing writes belong to that disposable copy. */
+export async function prepareSmokeBundle(source, directory, { identifier, run = spawnSync } = {}) {
+  if (!isSmokeIdentifier(identifier)) throw new Error('Invalid smoke identity');
+  const checked = (command, args) => {
+    const result = run(command, args, { encoding: 'utf8', stdio: 'pipe', timeout: 120_000 });
+    if (result.error || result.signal || result.status !== 0)
+      throw new Error('Smoke preparation failed');
+    return result.stdout?.trim();
+  };
+  // A plist copy cannot change Tauri's compiled single-instance identity.
+  // The caller must build with this exact test ID before asking for a launch.
+  if (
+    checked('/usr/libexec/PlistBuddy', [
+      '-c',
+      'Print :CFBundleIdentifier',
+      join(source, 'Contents/Info.plist'),
+    ]) !== identifier
+  )
+    throw new Error('Source was not built with the expected test identity');
+  const bundle = join(directory, basename(source));
+  if (resolve(bundle) === resolve(source)) throw new Error('Smoke copy must be separate');
+  // Dereference trusted build links so executable and signing writes cannot
+  // follow a copied link back into the original build.
+  await cp(source, bundle, {
+    recursive: true,
+    dereference: true,
+    errorOnExist: true,
+    force: false,
+  });
+  const plist = join(bundle, 'Contents/Info.plist');
+  checked('codesign', ['--force', '--deep', '--sign', '-', bundle]);
+  checked('codesign', ['--verify', '--deep', '--strict', bundle]);
+  // Read after signing; never launch a copy whose identity was not established.
+  if (checked('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', plist]) !== identifier)
+    throw new Error('Smoke identity mismatch');
+  const executable = checked('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleExecutable', plist]);
+  if (!executable || !/^[A-Za-z0-9_. -]+$/.test(executable))
+    throw new Error('Invalid smoke executable');
+  return { bundle, identifier, executable };
+}
+
+export async function launchSmokeBundle(
+  source,
+  directory,
+  { spawnProcess = spawn, ...options } = {},
+) {
+  const prepared = await prepareSmokeBundle(source, directory, options);
+  const child = spawnProcess(join(prepared.bundle, 'Contents/MacOS', prepared.executable), [], {
+    stdio: 'ignore',
+    env: smokeEnvironment(directory),
+  });
+  return { prepared, child };
+}
+
 async function main() {
-  if (process.platform !== 'darwin' || process.argv.length !== 3) throw new Error();
+  if (process.platform !== 'darwin' || process.argv.length !== 4) throw new Error();
+  const identifier = process.argv[3];
+  if (!isSmokeIdentifier(identifier)) throw new Error();
   const bundle = resolve(process.argv[2]);
   if (!(await stat(bundle)).isDirectory() || !bundle.endsWith('.app')) throw new Error();
-  const plist = spawnSync(
-    '/usr/libexec/PlistBuddy',
-    ['-c', 'Print :CFBundleExecutable', join(bundle, 'Contents/Info.plist')],
-    { encoding: 'utf8' },
-  );
-  const executable = plist.stdout?.trim();
-  if (plist.status !== 0 || !executable || !/^[A-Za-z0-9_. -]+$/.test(executable))
-    throw new Error();
   const temporary = await mkdtemp(join(tmpdir(), 'xtrace-native-smoke-'));
   const script = join(dirname(fileURLToPath(import.meta.url)), 'debug-bundle.swift');
   const inspector = join(temporary, 'inspect');
@@ -38,15 +96,13 @@ async function main() {
     if (compile.error || compile.status !== 0) throw new Error();
     const env = smokeEnvironment(temporary);
     await mkdir(env.XTRACE_NATIVE_HOME);
-    child = spawn(join(bundle, 'Contents/MacOS', executable), [], {
-      stdio: 'ignore',
-      env,
-    });
+    const launched = await launchSmokeBundle(bundle, temporary, { identifier });
+    child = launched.child;
     await new Promise((resolve, reject) => {
       child.once('spawn', resolve);
       child.once('error', reject);
     });
-    const inspect = spawnSync(inspector, [String(child.pid), bundle], {
+    const inspect = spawnSync(inspector, inspectorArguments(child.pid, launched.prepared), {
       stdio: 'pipe',
       timeout: 35_000,
     });

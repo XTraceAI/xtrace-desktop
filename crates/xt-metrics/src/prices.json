@@ -1,7 +1,7 @@
 {
   "version": "public-token-usd-2026-10-01",
   "as_of": "2026-10-01",
-  "basis": "Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes unrecorded regional/speed modifiers, tool fees, and subscriptions.",
+  "basis": "Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes codex-auto-review responses, unrecorded regional/speed modifiers, tool fees, and subscriptions.",
   "sources": [
     "https://developers.openai.com/api/docs/pricing",
     "https://developers.openai.com/api/docs/models/gpt-6-astra",

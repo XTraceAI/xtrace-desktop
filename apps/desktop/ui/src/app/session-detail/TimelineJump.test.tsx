@@ -727,7 +727,7 @@ it('keeps what M-20 measured and says why a repeated call cannot be shown withou
     expect(first.getAttribute('aria-label')).toContain('The transcript is not available to show.'),
   );
   // Measured from the index, so shown whatever the text says.
-  expect(within(first).getByText('0h05m active · 6 repeats · Bash ×7')).toBeTruthy();
+  expect(within(first).getByText('0 h 5 m active · 6 repeats · Bash ×7')).toBeTruthy();
   expect(within(first).getByText('Circling')).toBeTruthy();
   fireEvent.click(first);
   fireEvent.click(showRepeat());
@@ -742,7 +742,7 @@ it('offers no repeated call for a stretch whose repeats were not counted, and sa
   mount(data);
   await transcriptReady();
   const unknown = await segment(2);
-  expect(within(unknown).getByText('0h03m active · repeats unknown')).toBeTruthy();
+  expect(within(unknown).getByText('0 h 3 m active · repeats unknown')).toBeTruthy();
   expect(unknown.getAttribute('data-circling')).toBeNull();
   fireEvent.click(unknown);
   expect(screen.queryByRole('button', { name: /^Show repeated call/ })).toBeNull();

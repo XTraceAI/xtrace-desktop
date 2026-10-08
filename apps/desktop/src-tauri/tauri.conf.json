@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "XTrace Desktop",
-  "version": "0.1.3",
-  "identifier": "ai.xtrace.desktop",
+  "version": "0.1.4",
+  "identifier": "ai.xtrace.app",
   "build": {
     "beforeDevCommand": "pnpm --dir ui dev",
     "devUrl": "http://127.0.0.1:5173",
@@ -30,9 +30,17 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
+    "targets": ["app", "dmg"],
     "icon": ["../ui/public/icons/icon.png", "../ui/public/icons/icon.icns"],
     "resources": { "../../../vendor/agent-plugins": "agent-plugins" },
-    "macOS": { "minimumSystemVersion": "14.0" }
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "dmg": {
+        "background": "dmg/background.tiff",
+        "windowSize": { "width": 660, "height": 432 },
+        "appPosition": { "x": 180, "y": 170 },
+        "applicationFolderPosition": { "x": 480, "y": 170 }
+      }
+    }
   }
 }

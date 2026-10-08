@@ -511,7 +511,7 @@
 .xt-effort .xt-dash-empty {
   margin: 0;
 }
-/* The range's total in large tabular figures, its range and one short note on
+/* The range's total in large tabular figures and at most one short note on
    a single 22px row, 6px clear of the scale's top label. */
 .xt-effort-headline {
   display: flex;
@@ -540,6 +540,10 @@
 .xt-effort-headline small {
   color: var(--secondary);
   font-size: 11px;
+}
+/* A setting the headline's total depends on, at the row's right end. */
+.xt-effort-headline .xt-effort-headline-end {
+  margin-left: auto;
 }
 /* The composite is at least 82px — a 50px plot floor and the 29px axis with
    3px between them — and more when the card has room, all of it to the plot.
@@ -1233,8 +1237,10 @@
 }
 /* The name and the ticks share one line. The ticks after the first are placed
    against the whole cell, so they sit exactly over the spans beneath them; the
-   first, the dated start, follows the name in the line. */
+   first, the start, follows the name in the line. The cell is the container
+   that decides how many ticks it can hold (below). */
 .xt-lanes-activity {
+  container: lanes-axis / inline-size;
   position: relative;
   display: flex;
   align-items: center;
@@ -1272,11 +1278,23 @@
 .xt-lanes-axis > span:last-child {
   transform: translateX(-100%);
 }
-/* Narrow panels keep the ends and the midpoint: quarter ticks would collide
-   with the name and the dated end, and a collided axis reads as a wrong time. */
-@container dashboard (max-width: 980px) {
+/* A collided axis reads as a wrong time, so a column too narrow for every
+   tick shows fewer, each still at its own instant. The live axis starts at an
+   unrounded instant, so the sizes are for its widest ticks in this monospace
+   type: a time such as `10:59 PM` (8ch) and the dated end `Sep 30 at 10:59 PM`
+   (18ch). The first stretch between shown instants must hold the name and its
+   gap (about 10ch), the start and half the next tick; the last, half a tick
+   and the dated end; each with 4px to spare: about 23ch. Quarters make four
+   such stretches, the midpoint two; the start and the dated end alone always
+   fit at the supported width. */
+@container lanes-axis (max-width: 92ch) {
   .xt-lanes-axis > span:nth-child(3),
   .xt-lanes-axis > span:nth-child(5) {
+    display: none;
+  }
+}
+@container lanes-axis (max-width: 46ch) {
+  .xt-lanes-axis > span:nth-child(4) {
     display: none;
   }
 }

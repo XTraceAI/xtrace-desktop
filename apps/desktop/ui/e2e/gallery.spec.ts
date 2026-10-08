@@ -54,8 +54,10 @@ for (const [tag, stories] of [
               story.id === 'sidebar/hub-popover-open'
             )
               await expect(frame.locator('.xt-popover')).toBeVisible();
-            if (story.id === 'rulepopover/open-context')
+            if (story.id === 'rulepopover/open-context') {
+              await frame.getByRole('button', { name: 'Example definition', exact: true }).hover();
               await expect(frame.getByRole('tooltip')).toBeVisible();
+            }
             for (const overlay of await frame
               .locator('.xt-popover, .xt-rule-popover, .xt-modal')
               .all()) {

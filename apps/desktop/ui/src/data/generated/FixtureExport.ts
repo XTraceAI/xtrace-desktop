@@ -6,6 +6,7 @@ import type { EnvironmentMetrics } from "./EnvironmentMetrics";
 import type { FixturePrEffortState } from "./FixturePrEffortState";
 import type { FixturePrSessions } from "./FixturePrSessions";
 import type { FixtureSessionStretches } from "./FixtureSessionStretches";
+import type { FixtureSessionsSummary } from "./FixtureSessionsSummary";
 import type { FixtureSpanDetail } from "./FixtureSpanDetail";
 import type { NativeIndexStatus } from "./NativeIndexStatus";
 import type { PrAnalyticsPage } from "./PrAnalyticsPage";
@@ -15,7 +16,7 @@ import type { RuleActivityResult } from "./RuleActivityResult";
 import type { SessionPage } from "./SessionPage";
 import type { TodaySummary } from "./TodaySummary";
 
-export type FixtureExport = { app_info: AppInfo, db_counts: DbCounts, native_index: NativeIndexStatus, sessions: Array<SessionPage>, 
+export type FixtureExport = { app_info: AppInfo, db_counts: DbCounts, native_index: NativeIndexStatus, sessions: Array<SessionPage>, sessions_summaries: Array<FixtureSessionsSummary>, 
 /**
  * M-09 stretches for each listed session, per window preset.
  */

@@ -62,6 +62,7 @@ mod summary {
             zone,
             MetricClock::System,
             &catalog(),
+            xt_metrics::BreakLength::default(),
         )
         .unwrap()
     }
@@ -339,6 +340,124 @@ mod summary {
         }
     }
 
+    #[test]
+    fn today_human_hours_use_the_dashboards_calculation_and_break_length() {
+        let mut db = TempDb::empty().unwrap();
+        let human = |id: &str, timestamp: &str| {
+            serde_json::from_value(json!({
+                "uuid": id, "type": "user", "timestamp": timestamp,
+                "message": {"role": "user", "content": [{"type":"text", "text":"synthetic message"}]}
+            }))
+            .unwrap()
+        };
+        seed(
+            db.store_mut(),
+            "human-day",
+            &[
+                human("h0", "2026-09-07T23:50:00Z"),
+                human("h1", "2026-09-08T00:10:00Z"),
+                human("h2", "2026-09-08T00:50:00Z"),
+                human("h3", "2026-09-08T01:40:00Z"),
+            ],
+        );
+        let now = ms("2026-09-08T12:00:00Z");
+        let metrics = MetricsDb::open(db.path()).unwrap();
+        for (minutes, expected_minutes) in [(60, 100), (45, 50), (15, 0)] {
+            let length = xt_metrics::BreakLength::new(minutes).unwrap();
+            let summary = today(
+                &metrics,
+                now,
+                TimeZone::UTC,
+                MetricClock::System,
+                &catalog(),
+                length,
+            )
+            .unwrap();
+            assert_eq!(summary.human.break_minutes, minutes);
+            assert_eq!(summary.human.active_ms, Some(expected_minutes * 60_000));
+            for days in xtrace_desktop::dashboard::WINDOW_PRESETS {
+                let dashboard = xtrace_desktop::dashboard::assemble(
+                    &metrics,
+                    days,
+                    now,
+                    TimeZone::UTC,
+                    MetricClock::System,
+                    &catalog(),
+                    xt_metrics::TypingRate::default(),
+                    length,
+                )
+                .unwrap();
+                let day = dashboard.human_hours.current.by_day.last().unwrap();
+                assert_eq!(day.date, summary.date);
+                assert_eq!(
+                    day.active_ms, summary.human.active_ms,
+                    "{days} days, {minutes} min break"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn today_human_hours_do_not_inherit_an_older_ranges_unknown_sender() {
+        let mut db = TempDb::empty().unwrap();
+        let human = |id: &str, timestamp: &str| {
+            serde_json::from_value(json!({
+            "uuid": id, "type": "user", "timestamp": timestamp,
+            "message": {"role": "user", "content": [{"type":"text", "text":"synthetic message"}]}
+        })).unwrap()
+        };
+        seed(
+            db.store_mut(),
+            "sender-check",
+            &[
+                human("older-unknown", "2026-09-06T12:00:00Z"),
+                human("today-first", "2026-09-08T00:10:00Z"),
+                human("today-last", "2026-09-08T00:50:00Z"),
+            ],
+        );
+        rusqlite::Connection::open(db.path())
+            .unwrap()
+            .execute(
+                "UPDATE records SET is_human=NULL WHERE uuid='older-unknown'",
+                [],
+            )
+            .unwrap();
+        let now = ms("2026-09-08T12:00:00Z");
+        let summary = read(&db, now, TimeZone::UTC);
+        assert_eq!(summary.human.active_ms, Some(40 * 60_000));
+        let dashboard = xtrace_desktop::dashboard::assemble(
+            &MetricsDb::open(db.path()).unwrap(),
+            7,
+            now,
+            TimeZone::UTC,
+            MetricClock::System,
+            &catalog(),
+            xt_metrics::TypingRate::default(),
+            xt_metrics::BreakLength::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            dashboard
+                .human_hours
+                .current
+                .by_day
+                .last()
+                .unwrap()
+                .active_ms,
+            None
+        );
+        // The same shared calculation marks today's own window unknown when
+        // one of today's messages has an unknown sender too.
+        rusqlite::Connection::open(db.path())
+            .unwrap()
+            .execute(
+                "UPDATE records SET is_human=NULL WHERE uuid='today-last'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(read(&db, now, TimeZone::UTC).human.active_ms, None);
+    }
+
     /// Tokens, cost and spans are read in one snapshot, by construction.
     #[test]
     fn today_reads_stay_inside_one_snapshot_by_construction() {
@@ -352,6 +471,7 @@ mod summary {
             "db.tokens(window",
             "db.cost(window",
             "db.active_last_day(window",
+            "db.human_hours(window",
         ] {
             assert_eq!(module.matches(read).count(), 1, "{read} is read elsewhere");
             assert!(closure.contains(read), "{read} is outside the snapshot");

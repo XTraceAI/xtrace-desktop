@@ -16,7 +16,7 @@ export function isLiveSessionHost(host: string): host is LiveSessionHost {
   return Object.hasOwn(LIVE_SESSION_HOSTS, host);
 }
 
-/** Priority order is supplied by the page, with recent chats first on Sessions. */
+/** Priority follows the visible rows in the order supplied by each page. */
 export function liveSessionIds(ids: readonly string[]): string[] {
   return [...new Set(ids)].slice(0, LIVE_SESSION_LIMIT);
 }

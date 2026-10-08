@@ -1,0 +1,1 @@
+- Compile native smoke tests with their own app ID and refuse to launch a bundle built with the installed app ID.

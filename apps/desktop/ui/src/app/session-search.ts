@@ -19,6 +19,7 @@ export const sessionParams = {
   withPrs: 'with_prs',
   /** The event window the list's measurements are taken over. */
   range: 'range',
+  sort: 'sort',
 } as const;
 
 /** The hosts the Sessions filter offers; the store rejects anything else. */
@@ -66,6 +67,11 @@ export function parseRange(value: string | null | undefined): TimeRange | null {
   return ranges.find((range) => range === value) ?? null;
 }
 
+/** Unrecognized or absent ordering keeps the existing Started default. */
+export function parseSessionSort(value: string | null | undefined) {
+  return value === 'recently_active' ? 'recently_active' : 'started';
+}
+
 /** The search text the list will run, bounded to what the store accepts. */
 export function parseSearch(value: string | null | undefined): string {
   return (value ?? '').slice(0, SEARCH_MAX);
@@ -84,6 +90,7 @@ export function listState(carry?: URLSearchParams | null): URLSearchParams {
     sessionParams.host,
     sessionParams.withPrs,
     sessionParams.range,
+    sessionParams.sort,
   ]) {
     const value = carry?.get(key);
     if (value) params.set(key, value);

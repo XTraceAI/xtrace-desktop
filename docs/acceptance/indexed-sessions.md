@@ -109,73 +109,47 @@ human-message count unknown without hiding its other numbers. An identifier
 no indexed session owns reports `missing` and no numbers at all. No metric
 definition, count or inferred surface is introduced here.
 
-## Range summary above the list
+## Summary above the list
 
-Four tiles sit between the heading and the recent-activity section, under one compact row of the
-page's limits, each a short phrase that stays in view with its explanation one
-closed native disclosure away (Tab, then Enter or Space):
+Four tiles follow the same search, host and With PRs filters as the table.
+Counts cover all matching indexed sessions, independent of the date range;
+messages and time measure only the selected range. The visible subtitle states
+this distinction.
 
-- "All indexed activity · selected range", whose disclosure — also the range
-  summary's accessible description — is the full rule: "All indexed activity in
-  this range. Search, host and pull-request filters apply to the table below."
-- When the index reports it, one warning-toned state word — `Index unavailable`,
-  `Indexing` (the phase is `scanning`), `Updates interrupted` or
-  `History incomplete` (the status's `needs_attention`, the same answer the
-  sidebar, Welcome and Settings read: no local history for a host is not
-  incomplete) — whose disclosure holds the full sentence and the
-  "View indexing status" link to Settings. Nothing is shown when the index is
-  healthy or its status has not been read.
-- When the report counts untimed history, "Untimed history · N records ·
-  outside dated measurements": a count of all indexed history, never of the
-  filtered rows or the selected range, disclosed with the host/surface list.
+- **Sessions** shows checked main sessions, with known sub-sessions and sessions
+  still being checked shown separately. Known sub-sessions without a verified
+  parent are counted too, and the definition explains why they can be hidden
+  from the table. A parent outside the filters is not counted as a main match.
+- **Your input** sums the existing per-session M-02 answers, including matching
+  sub-sessions and sessions still being checked. The messages-per-main-session
+  ratio is computed in Rust. It stays unavailable while main-session checks are
+  pending, the denominator is zero, or message classification is incomplete.
+- **Agent working time** sums the existing per-session M-05 milliseconds.
+  Parallel sessions add together, as the visible caption says. The definition
+  makes clear that this is active agent time, not time saved.
+- **Sessions with PRs** counts each matching indexed session with at least one
+  valid stored PR link once, including inferred links. It makes no merge-state
+  claim. Output tokens remain available in each session's row and details.
 
-An opened item takes a line of its own. The row sits outside the range summary
-region. The tiles describe the whole selected range, not the page of rows the
-list happens to have loaded, and the caption says so rather than leaving a
-reader to compare the two.
+The first `sessions_list` page carries a Rust summary over every matching page,
+read in the same snapshot as its rows. Later pages and PR drilldowns omit it.
+Pagination never becomes the denominator. Metric and display classifications
+reuse the existing stored answers; the time calculation is unchanged.
 
-They are read from the Dashboard's own `dashboard(days)` report, through the
-same cached query the Dashboard uses, so no new query, endpoint or metric
-definition is introduced and the two pages cannot disagree for one range. The
-search and host filters reach the list's query alone: the report is never read
-again for a filter change and never narrowed by one.
+The browser fixture selects a Rust-exported answer by exact matching session
+IDs and range. A selection that was not exported shows an unavailable summary,
+never unfiltered totals or a JavaScript sum. The native app supports arbitrary
+valid filters.
 
-- **Human messages** is the report's M-02 tile, with its reason, sample counts
-  and its change against the previous period, suppressed exactly where the
-  report suppresses it.
-- **Output tokens** is `tokens.counters.output_tokens`. M-04 measures output on
-  its own, so it is shown even when the range total is unmeasured; the tile's
-  definition says that and gives the range total when there is one. The report
-  publishes no previous-period output, so no change is shown rather than one
-  being derived here. A null output counter can mean the counters are absent
-  and can mean a response mixed measured counters with missing ones, and the
-  report does not distinguish them, so the unknown reads "Output counters are
-  absent or incomplete" rather than claiming there was no output. The coverage
-  count in the definition is `usage_coverage.total`, which counts sessions with
-  no gap at all: it is named as sessions with all four counters and a known
-  model, and stated not to be a count of sessions with measured output.
-- **Agent time** is the M-05 hours tile written as all agent time is
-  (`3h12.8m`, by `agent-duration.ts`). An unmeasured hour count stays
-  unmeasured: only a number is converted, and the report's own reason is what
-  the tile gives. A percentage change is the same in any unit, so the report's
-  change carries over unrecalculated.
-- **Sessions / day** is the M-16 mean, denominator untouched. Its aside is the
-  busiest of the very day buckets that mean divides by, read from the report's
-  `days` and never recounted, and it is omitted when the report carries no
-  buckets at all.
+A loading or failed summary shows no invented zeros. A failure measuring a
+later matching session withholds the summary while returning valid first-page
+rows. Retry rereads the page. A failed refresh withholds old summary values and
+preserves loaded rows; a failed load-more preserves the first page's summary
+and offers a retry. No backend error text is shown.
 
-Both one-decimal tiles are formatted by `metric-format.ts`'s `continuous`
-rather than by the shared scale alone, and the list's own `agent` column
-keeps that same scale, so the page reads one way throughout. That scale rounds anything under
-half a tenth to `0`, which would read as "nothing happened" for a session or a
-range that did a little: one session across 30 day buckets is 0.03/day, and a
-two-second span is 0.03 minutes. Such a value renders as `<0.1`, so the only
-`0` on this page is a measured zero, and an unmeasured value still renders as
-`—` with its reason because a formatter is never reached for one. This is not a
-new precision policy: the scale, its one decimal and every value reaching it
-are unchanged, and `usd` already reads a small cost as `<$0.01`. The helper is
-app-level and shared with the Dashboard's continuous values; no kit formatter
-and no report value changes.
+Every tile uses the existing `StatTile` and accessible `RulePopover`, with a
+plain definition describing this particular filtered measurement. Labels and
+captions stay whole in both themes; captions wrap on their own line.
 
 The `agent` column states the row's M-05 `agent_ms` as hours and the
 minutes that remain, as the design does: 192 minutes reads `3h12m`, 124
@@ -193,54 +167,24 @@ single session's spans never overlap, so a row reads at most just under
 summary tiles, hands-off and the session detail's timeline durations keep
 their own formats.
 
-Every tile is a `StatTile` wrapped in the shared `RulePopover`, so its rule is
-quoted verbatim from the reviewed contract, as on the Dashboard.
+## Session ordering
 
-A summary that is still loading, or that failed, cannot hide the list or invent
-a zero: each tile reports itself unmeasured with the reason, the list keeps
-loading and paging normally, and a failure adds one line saying the list is
-unaffected with a Retry beside it. No backend error text is shown.
+The All sessions table offers **Started** (the existing default) and
+**Recently active**. Both orders are applied in SQLite before the 50-row page
+bound and share every host, search and pull-request filter. Recently active
+uses the latest timed own work record, with the same work-record predicate as
+session events; metadata and inherited fork copies cannot make a conversation
+recent. A conversation resumed today can therefore appear on the first page
+although its start is older than every previously loaded page. Activity is
+across indexed history, independent of the selected measurement window.
+Undated activity comes last, with session ID descending breaking every tie.
+The cursor names its sort and is rejected for another order; old cursors and
+requests with no sort keep Started behavior.
 
-A failed refresh of an already-loaded report is the same failure. The query
-cache still holds the last successful report, but the page drops it with the
-error rather than annotating it: a retained value, change or busiest day would
-be presented as current when nothing confirms it still is. Every tile goes
-unmeasured, the list is untouched, and Retry restores all of them together.
-
-At 1440 and 1120 native widths, in light and dark, the four tiles keep their
-full labels: a value wraps under its label rather than the label being clipped,
-and the row halves below two tiles' worth of page width.
-
-## Recent indexed activity above All sessions
-
-The Sessions page shows "Recent indexed activity · last 48 hours" above the
-existing All sessions table. It uses the same cached Dashboard report as the
-range summary. The fixed 48-hour activity window does not change with the
-selected range. `groupSessionLanes(report.lanes)` makes one row per session,
-ordered by the end of its newest returned span. Sub-sessions are then grouped
-and hidden exactly as the Dashboard's lanes are (`listedLanes` and `laneRows`
-over the same report's `lane_sessions` context, by exact host and session ID):
-a verified sub-session is collapsed under the session that created it; one
-whose parent returned no span sits under a row that only names the parent and
-says "Main session: no activity returned here", with no time, live state or
-compactions; a known sub-session whose creator is not verified is not listed,
-nor anything returned under it. The first eight main sessions and groups are
-then shown; if there were more, the section says "8 most recent main sessions
-and groups with activity in the last 48 hours; opening a group also lists its
-sub-sessions." Opening a group lists its sub-sessions under it, beyond the
-eight. A session that started days ago can appear near the top when it has
-recent indexed activity.
-
-For those eight sessions, the app may read the host's own title from its local
-source, using the existing bounded title reader. A row falls back to its saved
-title or ID. Each row shows its full ID without clipping, host, and last
-recorded time. Its link opens the exact `/sessions/<ID>` route and carries the
-list's address so Back restores the filters and range. The section states that
-recorded activity does not mean the session is Running, and that search and
-filters affect All sessions only. If the report capped its spans, it warns
-that earlier activity can be missing. A failed report shows no recent rows,
-including when a prior result remains in the query cache. The All sessions
-table keeps its existing query, order, pagination, and filters.
+The sort is carried in the list address, session links and the detail page's
+Back link. Changing it starts from the first page; browser Back/Forward reads
+the same selection. The summary follows table filters; changing sort leaves
+its totals unchanged. There is no separate recent-activity panel.
 
 ## Sub-sessions in All sessions
 
@@ -287,22 +231,10 @@ to the same list with its groups collapsed.
   and their measurements, for all three window presets; the listed row's numbers
   equal the Dashboard tiles for the same window, and an invalid range fails.
 - `pnpm check`: typed DataSource contract, metadata rendering, host/search resets,
-  load-more, import-event refresh and query-error recovery pass. Six focused
-  tests cover the range summary: the four tiles against F1's report and the
-  caption, with filter changes leaving the report unread and unnarrowed;
-  measured output beside an unmeasured range total, with a measured zero kept
-  apart from an unknown and an unmeasured hour count converted to nothing; a
-  dropped busiest-day aside when the report carries no buckets; a range change
-  re-reading the report; a failed report leaving the list working, showing no
-  backend detail and recovering on Retry; and an unfinished read standing no
-  zero in for any tile. Five more cover the reviewed defects: a mean of 0.03,
-  a measured `0` and a showable `0.5` each rendering as themselves while agent
-  minutes of 0.03 reads `<0.1`; a successful load whose refresh then fails
-  hiding every value, change and busiest day while the list stays readable and
-  Retry restores them; and an absent output counter reading as absent or
-  incomplete with the definition naming its coverage count for what it is. One
-  more covers the list's own rows on that same scale: a two-second span reads
-  `<0.1`, an idle window reads `0` and an unindexed session reads neither. Three focused
+  load-more, import-event refresh and query-error recovery pass. Focused summary
+  tests cover filtered Rust answers, empty matches, the supplied ratio, range
+  changes, incomplete message counts, loading, retry, failed refreshes and
+  first-page totals preserved across load-more failures. Three focused
   tests open the M-02, M-04 and M-05 definitions from their headers by keyboard
   focus, assert the quoted rule text and `aria-describedby`, and check Escape
   closes the definition while focus stays on the header. One test covers the
@@ -330,10 +262,10 @@ to the same list with its groups collapsed.
   outside their scroll. A window too short to leave the list a usable height
   keeps a minimum list height and scrolls the page instead of losing rows.
 - `pnpm e2e --grep 'below the shown scale'` (same file): a synthetic export
-  served in place of F1 renders agent time as `<0.1m` and sessions per day as `<0.1` at
-  1120x720, shows the absent-counters reason for output, and renders the row's
-  own two-second span as `<0.1m`; every one of those longer values still
-  fits, in its tile and in the narrow `agent` column.
+  served in place of F1 renders two seconds of agent working time as `<1 m`,
+  the messages-per-main ratio as `<0.1`, and missing input as unmeasured.
+  `e2e/sessions-agent-time.spec.ts` also checks the full `254 h 27 m` summary
+  with its parallel-time caption at all three supported widths in both themes.
 - `pnpm e2e --grep 'agent time fits'` (`e2e/sessions.spec.ts`): at 1120x720,
   in light and dark, in Chromium and WebKit, rows served at `719h59.9m`,
   `3h12.8m`, `<0.1m` and `0h00m` fit the 64px column under its header without

@@ -9,6 +9,8 @@
 //! contract says it does, and match the unconfirmed agent-side measurements
 //! exactly.
 
+mod hands_off_support;
+
 use jiff::{Timestamp, tz::TimeZone};
 use rusqlite::Connection;
 use serde_json::{Value, json};
@@ -287,8 +289,16 @@ fn human_tool_automated_tool_human_keeps_one_uninterrupted_stretch() {
         }]})
     );
     let m = metrics(&confirmed);
-    let hands_off = m.hands_off(window()).unwrap();
+    let (hands_off, days) = hands_off_support::matches_standalone(&m, window(), TimeZone::UTC);
     assert_eq!((hands_off.n, hands_off.median_min), (Some(1), Some(5.0)));
+    // The neutral input starts no day's stretch either.
+    assert_eq!(
+        days.iter().map(|day| day.n).collect::<Vec<_>>(),
+        [Some(0); 6]
+            .into_iter()
+            .chain([Some(1)])
+            .collect::<Vec<_>>()
+    );
     assert_eq!(
         m.session_hands_off(window(), &["s"]).unwrap()["s"],
         SessionHandsOff::Measured {
@@ -414,7 +424,11 @@ fn unknown_classification_stays_unknown_beside_a_confirmed_input() {
             .human_minutes_est,
         None
     );
-    assert_eq!(m.hands_off(window()).unwrap().n, None);
+    let (hands_off, days) = hands_off_support::matches_standalone(&m, window(), TimeZone::UTC);
+    assert_eq!(hands_off.n, None);
+    // Only the day the unknown session touches is unknown.
+    assert_eq!(days.iter().filter(|day| day.n.is_none()).count(), 1);
+    assert_eq!(days[6].n, None);
     assert_eq!(
         stretches(&db, "s"),
         json!({"state":"unmeasured","excluded_surface":null})

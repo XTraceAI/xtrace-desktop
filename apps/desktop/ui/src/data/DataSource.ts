@@ -40,7 +40,11 @@ export interface LiveSessionControls {
  * Which indexed sessions the list names. Every part is applied by the store
  * before paging, so a filter never thins a page that was already cut.
  */
+export type SessionSort = 'started' | 'recently_active';
+
 export interface SessionListFilter {
+  /** Orders the whole filtered list before paging; defaults to Started. */
+  sort?: SessionSort;
   /**
    * Substring of the ID, repository, branch or a title the index saved; at
    * most 256 characters. A host title read transiently for display is not

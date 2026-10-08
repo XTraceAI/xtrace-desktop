@@ -145,7 +145,7 @@ export class TauriDataSource implements DataSource {
     return invoke<EnvironmentMetrics>(commands.environment, { windowDays });
   }
   sessionsList(
-    { search, hosts, withPrs }: SessionListFilter,
+    { search, hosts, withPrs, sort = 'started' }: SessionListFilter,
     after: string | null,
     windowDays: number,
   ) {
@@ -153,6 +153,7 @@ export class TauriDataSource implements DataSource {
       search,
       hosts,
       withPrs,
+      sort,
       after,
       windowDays,
     });

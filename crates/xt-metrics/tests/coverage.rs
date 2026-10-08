@@ -4,7 +4,8 @@ use serde_json::json;
 use std::path::PathBuf;
 use xt_fixtures::{Fixture, TempDb};
 use xt_metrics::{
-    CaptureGap, Coverage, DiscoveryHealth, InventoryState, MetricsDb, UsageGap, Window,
+    CaptureGap, Coverage, DiscoveryHealth, InventoryState, MetricsDb, PriceCatalog, UsageGap,
+    Window,
 };
 use xt_store::{
     CanonicalRecord, Host, SessionMeta, SessionSource,
@@ -18,6 +19,7 @@ fn fixture(id: &str) -> Fixture {
     )
     .unwrap()
 }
+mod report_support;
 fn ms(s: &str) -> i64 {
     s.parse::<Timestamp>().unwrap().as_millisecond()
 }
@@ -32,10 +34,35 @@ fn health(host: &str, surface: Option<&str>, inventory: InventoryState) -> Disco
     }
 }
 fn query(db: &TempDb, health: &[DiscoveryHealth]) -> Coverage {
-    MetricsDb::open(db.path())
-        .unwrap()
-        .coverage(window(), window().end_ms(), health)
-        .unwrap()
+    coverage_in(
+        &MetricsDb::open(db.path()).unwrap(),
+        window(),
+        window().end_ms(),
+        health,
+    )
+    .unwrap()
+}
+/// The coverage report, checked against the combined report read.
+fn coverage_in(
+    metrics: &MetricsDb,
+    window: Window,
+    now_ms: i64,
+    health: &[DiscoveryHealth],
+) -> xt_metrics::Result<Coverage> {
+    let catalog = PriceCatalog::bundled().unwrap();
+    report_support::matches_standalone(
+        metrics,
+        window,
+        now_ms,
+        health,
+        jiff::tz::TimeZone::UTC,
+        &catalog,
+    )
+    .coverage
+}
+/// The trailing 14 days ending at the window's end: the gate's own window.
+fn fourteen_days() -> Window {
+    Window::new(window().end_ms() - 14 * 86_400_000, window().end_ms()).unwrap()
 }
 fn seed(db: &mut TempDb, id: &str, host: &str, surface: Option<&str>, rows: &[CanonicalRecord]) {
     let mut session = SessionMeta::new(id, host, SessionSource::Fixture);
@@ -172,16 +199,24 @@ fn coverage_fixed_gate_ninety_percent_and_empty_are_not_display_window() {
         ),
         (10, 9, Some(90.0), Some(true))
     );
-    let wide = MetricsDb::open(db.path())
-        .unwrap()
-        .coverage(
-            Window::new(ms("2026-08-01T00:00:00Z"), window().end_ms()).unwrap(),
-            window().end_ms(),
-            &[],
-        )
-        .unwrap();
+    let wide = coverage_in(
+        &MetricsDb::open(db.path()).unwrap(),
+        Window::new(ms("2026-08-01T00:00:00Z"), window().end_ms()).unwrap(),
+        window().end_ms(),
+        &[],
+    )
+    .unwrap();
     assert_eq!(wide.gate_14d, report.gate_14d);
     assert_eq!(wide.usage.total.sessions, 10);
+    // A display window equal to the gate's own window gives the same gate.
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    let same = coverage_in(&metrics, fourteen_days(), window().end_ms(), &[]).unwrap();
+    assert_eq!(same.gate_14d, report.gate_14d);
+    assert_eq!(same.usage.total.measured, 9);
+    // One millisecond apart, the gate is its own window, not the display's.
+    let shifted = Window::new(fourteen_days().start_ms() + 1, window().end_ms()).unwrap();
+    let shifted = coverage_in(&metrics, shifted, window().end_ms(), &[]).unwrap();
+    assert_eq!(shifted.gate_14d, report.gate_14d);
     seed(&mut db, "extra", "claude", None, &[record("extra", false)]);
     assert_eq!(query(&db, &[]).gate_14d.passes, Some(false));
     // Only the exact structural pair is excluded, never unknown/raw-new surfaces.
@@ -194,6 +229,15 @@ fn coverage_fixed_gate_ninety_percent_and_empty_are_not_display_window() {
         &[record("cli", false)],
     );
     assert_eq!(query(&only, &[]).gate_14d.passes, None);
+    let same = coverage_in(
+        &MetricsDb::open(only.path()).unwrap(),
+        fourteen_days(),
+        window().end_ms(),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(same.gate_14d, query(&only, &[]).gate_14d);
+    assert_eq!(same.usage.total.sessions, 1);
     seed(
         &mut only,
         "other-host",
@@ -440,10 +484,13 @@ fn coverage_runtime_inventory_context_is_required_and_never_inferred() {
         Some(100.0)
     );
     assert!(
-        MetricsDb::open(db.path())
-            .unwrap()
-            .coverage(window(), window().end_ms(), &[context.clone(), context])
-            .is_err()
+        coverage_in(
+            &MetricsDb::open(db.path()).unwrap(),
+            window(),
+            window().end_ms(),
+            &[context.clone(), context]
+        )
+        .is_err()
     );
 }
 

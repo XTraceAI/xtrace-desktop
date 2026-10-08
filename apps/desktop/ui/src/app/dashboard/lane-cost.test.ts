@@ -120,7 +120,7 @@ it('adds a group’s whole costs into one known total when every session is pric
 it('keeps a group total a floor and names what an unpriced sub-session could not price', () => {
   const sum = shownCost([
     session(whole(10, 2)),
-    session(cost([gap('codex-auto-review', null, 'unknown_model', 5)])),
+    session(cost([gap('unpublished-model', null, 'unknown_model', 5)])),
   ]);
   expect(sum.cost).toMatchObject({
     total_usd: null,
@@ -129,7 +129,7 @@ it('keeps a group total a floor and names what an unpriced sub-session could not
     unpriced_observations: 5,
   });
   expect(shownCostText(sum)).toBe(
-    'at least $10.00 API-equivalent cost: 2 of 7 responses priced; 5 codex-auto-review have no published price',
+    'at least $10.00 API-equivalent cost: 2 of 7 responses priced; 5 unpublished-model have no published price',
   );
 });
 

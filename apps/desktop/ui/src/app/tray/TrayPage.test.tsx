@@ -7,11 +7,14 @@ import { DataProvider } from '../../data/DataProvider';
 import type { DataSource, TrayControls } from '../../data/DataSource';
 import type { FixtureExport } from '../../data/generated/FixtureExport';
 import type { NativeIndexStatus } from '../../data/generated/NativeIndexStatus';
+import type { SessionRow } from '../../data/generated/SessionRow';
+import { FixtureDataSource } from '../../data/FixtureDataSource';
 import type { TodaySummary } from '../../data/generated/TodaySummary';
+import type { LiveSessionStatus } from '../live-session-status';
 import { events, type DataEvent } from '../../data/ipc-names';
 import { registrationTimeoutMs } from '../../data/subscribe-invalidation';
 import { ThemeProvider } from '../../theme/ThemeProvider';
-import { TrayPage } from './TrayPage';
+import { costText, TrayPage } from './TrayPage';
 
 // JSON imports widen literal unions; the export is the generated shape.
 const exported = fixture as FixtureExport;
@@ -69,6 +72,7 @@ function summary(overrides: Partial<TodaySummary> = {}): TodaySummary {
       price_version: 'test',
     },
     agent: { active_ms: 5.7 * 3_600_000, sessions: 7 },
+    human: { active_ms: 2 * 3_600_000, break_minutes: 45 },
     ...overrides,
   };
 }
@@ -124,9 +128,7 @@ function nativeTray(initial = summary(), visible = false) {
   } satisfies TrayControls;
   const source = {
     kind: 'native',
-    accountUsage: async () => {
-      throw new Error('Account usage unavailable in this test');
-    },
+    accountUsage: vi.fn(async () => new FixtureDataSource(exported).accountUsage()),
     refreshClaudeUsage: async () => {
       throw new Error('Claude refresh unavailable in this test');
     },
@@ -143,7 +145,7 @@ function nativeTray(initial = summary(), visible = false) {
       if (state.next instanceof Error) throw state.next;
       return structuredClone(state.next);
     }),
-    sessionsList: vi.fn(async () => ({
+    sessionsList: vi.fn<DataSource['sessionsList']>(async () => ({
       window: exported.sessions[0].window,
       rows: [],
       next: null,
@@ -208,14 +210,14 @@ it('reads only while shown, and again on every reopen', async () => {
   await flush();
   // Created hidden: nothing is read until the menu-bar item shows it.
   expect(source.today).not.toHaveBeenCalled();
-  expect(screen.queryByRole('region', { name: 'Today’s output tokens' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Today’s cost' })).toBeNull();
   await show();
   await flush();
   expect(source.today).toHaveBeenCalledTimes(1);
-  expect(within(tile('Today’s output tokens')).getByText('1.52M')).toBeTruthy();
+  expect(within(tile('Today’s cost')).getByText('$41.27')).toBeTruthy();
   await act(() => tray.hide());
   await flush();
-  expect(screen.queryByRole('region', { name: 'Today’s output tokens' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Today’s cost' })).toBeNull();
   await show();
   await flush();
   expect(source.today).toHaveBeenCalledTimes(2);
@@ -231,6 +233,9 @@ it('reads when it mounts after the window was already shown', async () => {
   await flush();
   expect(source.today).toHaveBeenCalledTimes(1);
   expect(screen.getByTestId('tray-observed').textContent).toBe('Sun, Sep 20 · as of 8:00 AM');
+  expect(screen.queryByText(/Today in/)).toBeNull();
+  expect(screen.queryByText(/Hours use the Dashboard/)).toBeNull();
+  expect(screen.queryByTitle(/Agent hours count work after midnight/)).toBeNull();
 });
 
 it('a show while its listeners are still registering is seen by the snapshot taken after', async () => {
@@ -249,11 +254,11 @@ it('a show while its listeners are still registering is seen by the snapshot tak
   await flush();
   expect(tray.visible).toHaveBeenCalled();
   expect(source.today).toHaveBeenCalledTimes(1);
-  expect(within(tile('Today’s output tokens')).getByText('1.52M')).toBeTruthy();
+  expect(within(tile('Today’s cost')).getByText('$41.27')).toBeTruthy();
   // Listeners are live afterwards: a hide unmounts Today.
   await native(false);
   await flush();
-  expect(screen.queryByRole('region', { name: 'Today’s output tokens' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Today’s cost' })).toBeNull();
 });
 
 it('a hide while its listeners are still registering leaves it closed', async () => {
@@ -266,7 +271,7 @@ it('a hide while its listeners are still registering leaves it closed', async ()
   registration.resolve();
   await flush();
   expect(source.today).not.toHaveBeenCalled();
-  expect(screen.queryByRole('region', { name: 'Today’s output tokens' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Today’s cost' })).toBeNull();
 });
 
 it('unmounting before registration completes releases the listeners and takes no snapshot', async () => {
@@ -301,7 +306,7 @@ it('a show lost while its listener registers opens it, though a hide was heard f
   // The snapshot runs regardless of the earlier hide and says "shown".
   expect(tray.visible).toHaveBeenCalled();
   expect(source.today).toHaveBeenCalledTimes(1);
-  expect(within(tile('Today’s output tokens')).getByText('1.52M')).toBeTruthy();
+  expect(within(tile('Today’s cost')).getByText('$41.27')).toBeTruthy();
 });
 
 it('a hide lost while its listener registers closes it, though a show was heard first', async () => {
@@ -313,12 +318,12 @@ it('a hide lost while its listener registers closes it, though a show was heard 
   // The show listener hears a show and Today mounts; the hide is lost.
   await native(true);
   await flush();
-  expect(within(tile('Today’s output tokens')).getByText('1.52M')).toBeTruthy();
+  expect(within(tile('Today’s cost')).getByText('$41.27')).toBeTruthy();
   await native(false);
   hiddenLate.resolve();
   await flush();
   expect(tray.visible).toHaveBeenCalled();
-  expect(screen.queryByRole('region', { name: 'Today’s output tokens' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Today’s cost' })).toBeNull();
   // No read loop: the one read from the open, nothing after the close.
   await flush(60_000);
   expect(source.today).toHaveBeenCalledTimes(1);
@@ -334,7 +339,7 @@ it('a show heard while the snapshot is in flight outranks a "hidden" reply', asy
   await native(true);
   late.resolve(false);
   await flush();
-  expect(within(tile('Today’s output tokens')).getByText('1.52M')).toBeTruthy();
+  expect(within(tile('Today’s cost')).getByText('$41.27')).toBeTruthy();
 });
 
 it('a hide heard before the initial visibility read keeps it closed', async () => {
@@ -351,73 +356,420 @@ it('a hide heard before the initial visibility read keeps it closed', async () =
   expect(source.today).not.toHaveBeenCalled();
 });
 
-it('states measured, partial, incomplete and none-recorded figures as they are', async () => {
-  const { source, state, show, tray } = nativeTray();
-  mount(source);
-  await show();
-  await flush();
-  const output = tile('Today’s output tokens');
-  expect(within(output).getByText('412 responses · 6 sessions')).toBeTruthy();
-  expect(
-    within(output).getByText('$41.27 API-equivalent · 412 of 412 responses priced'),
-  ).toBeTruthy();
-  const agent = tile('Today’s agent hours');
-  expect(agent.textContent).toContain('5h42m');
-  expect(within(agent).getByText('across 7 sessions')).toBeTruthy();
-
-  const reopen = async (next: TodaySummary) => {
-    state.next = next;
-    await act(() => tray.hide());
-    await show();
-    await flush();
-  };
-  await reopen(
-    summary({
-      output: { state: 'incomplete', output_tokens: null, selected_responses: 3, sessions: 1 },
+it.each([
+  ['priced', 24.79, 24.79, 573, 573, '$24.79', '573 of 573 responses priced'],
+  ['priced', 0, 0, 1, 1, '$0.00', '1 of 1 response priced'],
+  ['priced', 0.004, 0.004, 1, 1, '<$0.01', '1 of 1 response priced'],
+  ['priced', 1234.56, 1234.56, 1, 1, '$1,235', '1 of 1 response priced'],
+  ['priced', null, 0, 1, 1, '—', 'Today’s total is unavailable'],
+  ['partial', null, 0.004, 3, 1, '—', 'Partial <$0.01, not a total · 1 of 3 responses priced'],
+  ['unpriced', null, 0, 3, 0, '—', '0 of 3 responses priced'],
+  ['none_recorded', null, 0, 0, 0, '—', 'No responses recorded yet today; nothing to price'],
+] as const)(
+  'shows %s cost with total %s as %s, with details only on hover and for assistive readers',
+  async (state, total, subtotal, selected, priced, value, explanation) => {
+    const next = summary({
       cost: {
         ...summary().cost,
-        state: 'partial',
-        total_usd: null,
-        priced_subtotal_usd: 0.004,
-        selected_observations: 3,
-        priced_observations: 1,
+        state,
+        total_usd: total,
+        priced_subtotal_usd: subtotal,
+        selected_observations: selected,
+        priced_observations: priced,
       },
-    }),
-  );
-  expect(within(tile('Today’s output tokens')).getByText('—')).toBeTruthy();
-  expect(screen.getByText('Some of 3 responses lack an output count')).toBeTruthy();
-  expect(screen.getByText('Partial <$0.01, not a total · 1 of 3 responses priced')).toBeTruthy();
+    });
+    const { source } = nativeTray(next, true);
+    mount(source);
+    await flush();
+    const cost = tile('Today’s cost');
+    expect(cost.textContent).toBe(`Today · cost${value}`);
+    expect(within(cost).getByText(value)).toBeTruthy();
+    expect(cost.title).toContain(explanation);
+    expect(cost.title).toContain('Estimated at public API prices');
+    expect(cost.title).toContain('subscriptions and tool fees are not included');
+    expect(cost.getAttribute('aria-description')).toBe(cost.title);
+    expect(costText(next)).toEqual({ value, title: cost.title });
+    expect(screen.queryByRole('region', { name: 'Today’s output tokens' })).toBeNull();
+    expect(screen.queryByText(/responses|API-equivalent|not a total|Today · output/)).toBeNull();
+    expect(cost.parentElement?.className).toBe('xt-tray-tiles');
+    expect(
+      Array.from(cost.parentElement!.children).map((element) => element.getAttribute('aria-label')),
+    ).toEqual(['Today’s agent hours', 'Today’s human hours', 'Today’s cost']);
+    expect(cost.parentElement?.nextElementSibling?.getAttribute('aria-label')).toBe(
+      'Account usage',
+    );
+  },
+);
 
-  // A measured zero stays "0", never a dash.
-  await reopen(
-    summary({
-      output: { state: 'recorded', output_tokens: 0, selected_responses: 1, sessions: 1 },
-    }),
-  );
-  expect(within(tile('Today’s output tokens')).getByText('0')).toBeTruthy();
-
-  // Exactly midnight: an explicit empty day, read without an error.
-  await reopen(exported.today);
+it('keeps the empty day free of invented hours or cost', async () => {
+  const { source } = nativeTray(exported.today, true);
+  mount(source);
+  await flush();
   expect(screen.queryByRole('alert')).toBeNull();
-  expect(within(tile('Today’s output tokens')).getByText('—')).toBeTruthy();
-  expect(screen.getByText('No responses recorded yet today')).toBeTruthy();
-  expect(screen.getByText('Cost — · nothing to price')).toBeTruthy();
-  expect(tile('Today’s agent hours').textContent).toContain('0h');
-  expect(screen.getByText('No agent activity recorded today')).toBeTruthy();
+  expect(tile('Today’s cost').textContent).toBe('Today · cost—');
+  expect(tile('Today’s cost').title).toContain('nothing to price');
+  expect(tile('Today’s agent hours').textContent).toContain('0 h 0 m');
+  expect(tile('Today’s agent hours').textContent).toContain('No activity');
+  expect(tile('Today’s agent hours').title).toBe('No agent activity recorded today');
   expect(screen.getByTestId('tray-observed').textContent).toBe('Tue, Sep 8 · as of 12:00 AM');
 });
 
-it('says what it cannot know instead of inventing it', async () => {
+it('shows human hours and the shared usage widget without the unavailable filler', async () => {
   const { source, show } = nativeTray();
   mount(source);
   await show();
   await flush();
-  expect(within(tile('Active now')).getByText(/cannot show what is running now/)).toBeTruthy();
-  expect(within(tile('Last rule fire')).getByText('Rule-fire data is unavailable')).toBeTruthy();
-  const text = document.body.textContent ?? '';
-  for (const invented of ['waiting on you', 'peak', 'blocked', '$ git', '×', 'Share'])
-    expect(text).not.toContain(invented);
+  expect(tile('Today’s human hours').textContent).toContain('2 h 0 m');
+  expect(tile('Today’s human hours').textContent).toContain('Estimate');
+  expect(tile('Today’s human hours').title).toBe(
+    'Estimated from your messages. 45 min break length.',
+  );
+  expect(tile('Today’s human hours').getAttribute('aria-description')).toBe(
+    tile('Today’s human hours').title,
+  );
+  expect(tile('Today’s agent hours').textContent).toContain('7 sessions');
+  expect(tile('Today’s agent hours').textContent).toContain('5 h 42 m');
+  expect(tile('Account usage')).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Active now' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Last rule fire' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Refresh usage' }).hasAttribute('disabled')).toBe(true);
 });
+
+it('keeps unknown human hours unknown', async () => {
+  const { source, show } = nativeTray(summary({ human: { active_ms: null, break_minutes: 60 } }));
+  mount(source);
+  await show();
+  await flush();
+  expect(within(tile('Today’s human hours')).getByText('—')).toBeTruthy();
+  expect(within(tile('Today’s human hours')).getByText('Unknown')).toBeTruthy();
+  expect(tile('Today’s human hours').title).toBe(
+    'Who sent some messages is unknown. 60 min break length.',
+  );
+});
+
+it('reads a bounded recent list, uses host titles and live states, and stops on hide', async () => {
+  const { source, tray, show } = nativeTray();
+  const fixtureRows = exported.sessions[0].rows;
+  const rows = Array.from({ length: 5 }, (_, index) => ({
+    ...fixtureRows[0],
+    id: `codex-tray-${index}`,
+    host: 'codex',
+    child_check: 'checked' as const,
+    known_child: false,
+    parent: null,
+    title: `Saved title ${index}`,
+    record_count: index + 1,
+  }));
+  source.sessionsList.mockResolvedValue({
+    window: exported.sessions[0].window,
+    rows,
+    next: 'next-page',
+  });
+  const titles = {
+    read: vi.fn(async (ids: string[]) => ({
+      titles: ids.map((id) => ({ id, title: `Host ${id}` })),
+    })),
+    cancel: vi.fn(async () => {}),
+  };
+  const live = {
+    read: vi.fn(async (ids: string[], token: string | null) => ({
+      view_id: token ?? 'tray-lease',
+      states: ids.map((id) => ({ id, status: 'running' as const })),
+    })),
+    release: vi.fn(async () => {}),
+  };
+  mount({ ...source, titles, liveSessions: live });
+  await flush();
+  expect(source.accountUsage).not.toHaveBeenCalled();
+  expect(source.sessionsList).not.toHaveBeenCalled();
+  expect(titles.read).not.toHaveBeenCalled();
+  expect(live.read).not.toHaveBeenCalled();
+  await show();
+  await flush();
+  expect(source.sessionsList).toHaveBeenCalledWith(
+    { sort: 'recently_active', search: '', hosts: null, withPrs: false },
+    null,
+    7,
+  );
+  expect(within(tile('Recent sessions')).getAllByRole('listitem')).toHaveLength(3);
+  expect(
+    within(tile('Recent sessions')).getAllByRole('img', { name: 'Codex · Running' }),
+  ).toHaveLength(3);
+  expect(within(tile('Recent sessions')).queryByText('Running')).toBeNull();
+  expect(within(tile('Recent sessions')).queryByText(/^Codex/)).toBeNull();
+  expect(screen.getByText('Host codex-tray-0')).toBeTruthy();
+  expect(titles.read.mock.calls.every(([ids]) => ids.length <= 3)).toBe(true);
+  expect(live.read.mock.calls.every(([ids]) => ids.length <= 3)).toBe(true);
+  await act(() => tray.hide());
+  await flush();
+  expect(live.release).toHaveBeenCalledWith('tray-lease');
+  const counts = [
+    source.accountUsage.mock.calls.length,
+    source.sessionsList.mock.calls.length,
+    titles.read.mock.calls.length,
+    live.read.mock.calls.length,
+  ];
+  await flush(5 * 60_000);
+  expect([
+    source.accountUsage.mock.calls.length,
+    source.sessionsList.mock.calls.length,
+    titles.read.mock.calls.length,
+    live.read.mock.calls.length,
+  ]).toEqual(counts);
+});
+
+it.each([
+  ['codex', 'running', 'Codex · Running', null],
+  ['claude', 'running', 'Claude Code · Running', null],
+  ['codex', 'waiting_approval', 'Codex', 'Waiting for approval'],
+  ['claude', 'waiting_input', 'Claude Code', 'Waiting for input'],
+  ['codex', 'idle', 'Codex', null],
+  ['claude', 'unknown', 'Claude Code', null],
+  ['cursor', 'running', 'Cursor', null],
+  ['other', 'running', 'Unknown host: other', null],
+] as const)(
+  'uses the %s icon for %s and keeps waiting badges',
+  async (host, status, label, badge) => {
+    const { source, show } = nativeTray();
+    source.sessionsList.mockResolvedValue({
+      window: exported.sessions[0].window,
+      rows: [
+        {
+          ...exported.sessions[0].rows[0],
+          id: 'tray-icon',
+          host,
+          title: 'Synthetic tray session',
+          repo: '/synthetic/repository',
+          known_child: false,
+          child_check: 'checked',
+          parent: null,
+        },
+      ],
+      next: null,
+    });
+    const live = {
+      read: vi.fn(async (ids: string[], token: string | null) => ({
+        view_id: token ?? 'tray-icon-lease',
+        states: ids.map((id) => ({ id, status: status as LiveSessionStatus })),
+      })),
+      release: vi.fn(async () => {}),
+    };
+    mount({ ...source, liveSessions: live });
+    await show();
+    await flush();
+    const recent = within(tile('Recent sessions'));
+    const icon = recent.getByRole('img', { name: label });
+    const row = recent.getByRole('listitem');
+    expect(row.querySelector('.xt-tray-session-meta')?.contains(icon)).toBe(true);
+    expect(recent.getByText('repository')).toBeTruthy();
+    expect(recent.queryByText('Running')).toBeNull();
+    expect(recent.queryByText(/^(Codex|Claude Code|Cursor|other)( ·|$)/)).toBeNull();
+    if (badge) expect(recent.getByRole('status').textContent).toBe(badge);
+    else expect(recent.queryByRole('status')).toBeNull();
+    expect(icon.classList.contains('xt-lane-live-host')).toBe(label.endsWith(' · Running'));
+    if (host === 'cursor' || host === 'other') expect(live.read).not.toHaveBeenCalled();
+  },
+);
+
+it.each(['returned', 'referenced'] as const)(
+  'skips sub-sessions with an eligible %s parent and fills three main rows before reading titles or live states',
+  async (where) => {
+    const { source, show } = nativeTray();
+    const main = (id: string): SessionRow => ({
+      ...exported.sessions[0].rows[0],
+      id,
+      host: 'codex',
+      title: id,
+      known_child: false,
+      child_check: 'checked',
+      parent: null,
+    });
+    const parent = main('main-parent');
+    const children = Array.from({ length: 3 }, (_, index): SessionRow => ({
+      ...main(`child-${index}`),
+      known_child: true,
+      child_check: 'child',
+      parent: {
+        session_id: parent.id,
+        host: parent.host,
+        title: parent.title,
+        evidence: 'native_spawn',
+      },
+    }));
+    const mains = [where === 'returned' ? parent : main('main-0'), main('main-1'), main('main-2')];
+    source.sessionsList.mockResolvedValue({
+      window: exported.sessions[0].window,
+      rows: [...children, ...mains],
+      next: 'later-page',
+      referenced_parents:
+        where === 'referenced'
+          ? [
+              {
+                session_id: parent.id,
+                host: parent.host,
+                known_child: false,
+                child_check: 'checked',
+                parent: null,
+              },
+            ]
+          : [],
+    });
+    const titles = {
+      read: vi.fn(async (ids: string[]) => ({ titles: ids.map((id) => ({ id, title: id })) })),
+      cancel: vi.fn(async () => {}),
+    };
+    const live = {
+      read: vi.fn(async (ids: string[]) => ({
+        view_id: 'lease',
+        states: ids.map((id) => ({ id, status: 'running' as const })),
+      })),
+      release: vi.fn(async () => {}),
+    };
+    mount({ ...source, titles, liveSessions: live });
+    await show();
+    await flush();
+    const recent = within(tile('Recent sessions'));
+    expect(
+      recent
+        .getAllByRole('listitem')
+        .map((row) => row.querySelector('.xt-tray-session-name')?.textContent),
+    ).toEqual(mains.map((row) => row.id));
+    expect(recent.getByText('Up to 3 recently active main sessions')).toBeTruthy();
+    expect(recent.queryByText(/Sub-session/)).toBeNull();
+    expect(titles.read).toHaveBeenCalled();
+    expect(live.read).toHaveBeenCalled();
+    for (const [ids] of titles.read.mock.calls) expect(ids).toEqual(mains.map((row) => row.id));
+    expect(live.read.mock.calls.some(([ids]) => ids.length === 3)).toBe(true);
+    for (const [ids] of live.read.mock.calls)
+      if (ids.length > 0) expect(ids).toEqual(mains.map((row) => row.id).sort());
+    for (const [, cursor] of source.sessionsList.mock.calls) expect(cursor).toBeNull();
+  },
+);
+
+it('keeps children without a verified parent and sessions still being checked out of Recent sessions', async () => {
+  const { source, show } = nativeTray();
+  const base = { ...exported.sessions[0].rows[0], host: 'codex', parent: null };
+  source.sessionsList.mockResolvedValue({
+    window: exported.sessions[0].window,
+    rows: [
+      { ...base, id: 'child-no-parent', known_child: false, child_check: 'child' },
+      { ...base, id: 'known-child-no-parent', known_child: true, child_check: 'checked' },
+      { ...base, id: 'checking', known_child: false, child_check: 'checking' },
+      { ...base, id: 'missing-check', known_child: false, child_check: null },
+    ],
+    next: null,
+  });
+  const titles = { read: vi.fn(async () => ({ titles: [] })), cancel: vi.fn(async () => {}) };
+  const live = {
+    read: vi.fn(async () => ({ view_id: 'lease', states: [] })),
+    release: vi.fn(async () => {}),
+  };
+  mount({ ...source, titles, liveSessions: live });
+  await show();
+  await flush();
+  expect(within(tile('Recent sessions')).getByText('No recent sessions to show.')).toBeTruthy();
+  expect(titles.read).not.toHaveBeenCalled();
+  expect(live.read).not.toHaveBeenCalled();
+});
+
+it('shows an empty recent list when the page contains only verified sub-sessions', async () => {
+  const { source, show } = nativeTray();
+  source.sessionsList.mockResolvedValue({
+    window: exported.sessions[0].window,
+    rows: Array.from({ length: 3 }, (_, index) => ({
+      ...exported.sessions[0].rows[0],
+      id: `verified-child-${index}`,
+      host: 'codex',
+      known_child: true,
+      child_check: 'child' as const,
+      parent: {
+        session_id: 'parent',
+        host: 'codex',
+        title: null,
+        evidence: 'native_spawn' as const,
+      },
+    })),
+    next: 'later-page',
+    referenced_parents: [
+      {
+        session_id: 'parent',
+        host: 'codex',
+        known_child: false,
+        child_check: 'checked',
+        parent: null,
+      },
+    ],
+  });
+  const titles = { read: vi.fn(async () => ({ titles: [] })), cancel: vi.fn(async () => {}) };
+  const live = {
+    read: vi.fn(async () => ({ view_id: 'lease', states: [] })),
+    release: vi.fn(async () => {}),
+  };
+  mount({ ...source, titles, liveSessions: live });
+  await show();
+  await flush();
+  expect(within(tile('Recent sessions')).getByText('No recent sessions to show.')).toBeTruthy();
+  expect(titles.read).not.toHaveBeenCalled();
+  expect(live.read).not.toHaveBeenCalled();
+  for (const [, cursor] of source.sessionsList.mock.calls) expect(cursor).toBeNull();
+});
+
+it.each(['returned', 'referenced'] as const)(
+  'hides a child whose %s parent is not shown, without reading its title or live state',
+  async (where) => {
+    const { source, show } = nativeTray();
+    const base = exported.sessions[0].rows[0];
+    const parent = {
+      ...base,
+      id: 'hidden-parent',
+      host: 'codex',
+      known_child: true,
+      child_check: 'child' as const,
+      parent: null,
+    };
+    const child = {
+      ...base,
+      id: 'hidden-child',
+      host: 'codex',
+      known_child: true,
+      child_check: 'child' as const,
+      parent: {
+        session_id: parent.id,
+        host: parent.host,
+        title: null,
+        evidence: 'native_spawn' as const,
+      },
+    };
+    source.sessionsList.mockResolvedValue({
+      window: exported.sessions[0].window,
+      rows: where === 'returned' ? [child, parent] : [child],
+      next: null,
+      referenced_parents:
+        where === 'referenced'
+          ? [
+              {
+                session_id: parent.id,
+                host: parent.host,
+                known_child: true,
+                child_check: 'child',
+                parent: null,
+              },
+            ]
+          : [],
+    });
+    const titles = { read: vi.fn(async () => ({ titles: [] })), cancel: vi.fn(async () => {}) };
+    const live = {
+      read: vi.fn(async () => ({ view_id: 'lease', states: [] })),
+      release: vi.fn(async () => {}),
+    };
+    mount({ ...source, titles, liveSessions: live });
+    await show();
+    await flush();
+    expect(within(tile('Recent sessions')).queryAllByRole('listitem')).toHaveLength(0);
+    expect(titles.read).not.toHaveBeenCalled();
+    expect(live.read).not.toHaveBeenCalled();
+  },
+);
 
 it('refreshes on committed data while shown, not on scan progress or while hidden', async () => {
   const { source, tray, emit, show } = nativeTray();
@@ -450,11 +802,9 @@ it('reads once more when a commit lands during its first read', async () => {
   await act(() => new Promise((done) => setTimeout(done, 600)));
   expect(source.today).toHaveBeenCalledTimes(1);
   // It may predate the commit, so it is read again when it lands.
-  first.resolve(summary({ output: { ...summary().output, output_tokens: 10 } }));
+  first.resolve(summary({ cost: { ...summary().cost, total_usd: 1, priced_subtotal_usd: 1 } }));
   await waitFor(() => expect(source.today).toHaveBeenCalledTimes(2));
-  await waitFor(() =>
-    expect(within(tile('Today’s output tokens')).getByText('1.52M')).toBeTruthy(),
-  );
+  await waitFor(() => expect(within(tile('Today’s cost')).getByText('$41.27')).toBeTruthy());
 });
 
 it('shows a first-read error with a working retry', async () => {
@@ -468,7 +818,7 @@ it('shows a first-read error with a working retry', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   await flush();
   expect(screen.queryByRole('alert')).toBeNull();
-  expect(within(tile('Today’s output tokens')).getByText('1.52M')).toBeTruthy();
+  expect(within(tile('Today’s cost')).getByText('$41.27')).toBeTruthy();
 });
 
 /*
@@ -481,18 +831,18 @@ it('renders a committed import while shown, and keeps the figures when a refresh
   const { source, state, emit, show } = nativeTray();
   mount(source);
   await show();
-  await screen.findByText('1.52M');
-  state.next = summary({ output: { ...summary().output, output_tokens: 2_000_000 } });
+  await screen.findByText('$41.27');
+  state.next = summary({ cost: { ...summary().cost, total_usd: 52, priced_subtotal_usd: 52 } });
   emit(events.importReceived);
-  await waitFor(() => expect(within(tile('Today’s output tokens')).getByText('2M')).toBeTruthy());
+  await waitFor(() => expect(within(tile('Today’s cost')).getByText('$52.00')).toBeTruthy());
   state.next = new Error('busy');
   emit(events.importReceived);
   await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Could not refresh'));
-  expect(within(tile('Today’s output tokens')).getByText('2M')).toBeTruthy();
+  expect(within(tile('Today’s cost')).getByText('$52.00')).toBeTruthy();
   state.next = summary();
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-  expect(within(tile('Today’s output tokens')).getByText('1.52M')).toBeTruthy();
+  expect(within(tile('Today’s cost')).getByText('$41.27')).toBeTruthy();
 });
 
 it('keeps one midnight timer while shown and reads the new date when it fires', async () => {
@@ -597,7 +947,7 @@ it('shows its own failed live updates and reconnects them, catching up without a
 
   // A change the failed attempt could not hear.
   state.next = summary({
-    output: { state: 'recorded', output_tokens: 2_000_000, selected_responses: 500, sessions: 7 },
+    cost: { ...summary().cost, total_usd: 52, priced_subtotal_usd: 52 },
   });
   state.listen = 'ok';
   const button = screen.getByRole('button', { name: 'Reconnect' });
@@ -610,7 +960,7 @@ it('shows its own failed live updates and reconnects them, catching up without a
   expect(screen.queryByText(/live updates/i)).toBeNull();
   expect(heard().every((count) => count === 1)).toBe(true);
   expect(source.today).toHaveBeenCalledTimes(2);
-  expect(within(tile('Today’s output tokens')).getByText('2M')).toBeTruthy();
+  expect(within(tile('Today’s cost')).getByText('$52.00')).toBeTruthy();
   expect(tray.onShown.mock.calls.length).toBe(mounts);
   // And it now hears committed data.
   await act(async () => emit(events.importReceived));

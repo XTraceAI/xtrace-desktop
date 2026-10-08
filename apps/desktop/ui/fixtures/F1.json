@@ -55,6 +55,7 @@
           "model": "fixture-model-v1",
           "other_models": 0,
           "first_ts": "2026-09-07T12:00:00Z",
+          "last_activity_at_ms": 1788783780000,
           "record_count": 25,
           "has_conflict": false,
           "pr_links": [
@@ -107,10 +108,36 @@
             "state": "measured",
             "n": 5,
             "median_min": 3.0
+          },
+          "cost": {
+            "total_usd": null,
+            "priced_subtotal_usd": 0.0,
+            "selected_observations": 10,
+            "priced_observations": 0,
+            "unpriced_observations": 10,
+            "assumed_tier_observations": 0,
+            "unpriced": [
+              {
+                "model": "fixture-model-v1",
+                "service_tier": null,
+                "reason": "missing_service_tier",
+                "observations": 10
+              }
+            ]
           }
         }
       ],
       "next": null,
+      "summary": {
+        "main_sessions": 1,
+        "sub_sessions": 0,
+        "checking_sessions": 0,
+        "unlinked_sub_sessions": 0,
+        "human_messages": 5,
+        "messages_per_main_session": 5.0,
+        "agent_ms": 1380000,
+        "sessions_with_prs": 1
+      },
       "referenced_parents": []
     },
     {
@@ -133,6 +160,7 @@
           "model": "fixture-model-v1",
           "other_models": 0,
           "first_ts": "2026-09-07T12:00:00Z",
+          "last_activity_at_ms": 1788783780000,
           "record_count": 25,
           "has_conflict": false,
           "pr_links": [
@@ -185,10 +213,36 @@
             "state": "measured",
             "n": 5,
             "median_min": 3.0
+          },
+          "cost": {
+            "total_usd": null,
+            "priced_subtotal_usd": 0.0,
+            "selected_observations": 10,
+            "priced_observations": 0,
+            "unpriced_observations": 10,
+            "assumed_tier_observations": 0,
+            "unpriced": [
+              {
+                "model": "fixture-model-v1",
+                "service_tier": null,
+                "reason": "missing_service_tier",
+                "observations": 10
+              }
+            ]
           }
         }
       ],
       "next": null,
+      "summary": {
+        "main_sessions": 1,
+        "sub_sessions": 0,
+        "checking_sessions": 0,
+        "unlinked_sub_sessions": 0,
+        "human_messages": 5,
+        "messages_per_main_session": 5.0,
+        "agent_ms": 1380000,
+        "sessions_with_prs": 1
+      },
       "referenced_parents": []
     },
     {
@@ -211,6 +265,7 @@
           "model": "fixture-model-v1",
           "other_models": 0,
           "first_ts": "2026-09-07T12:00:00Z",
+          "last_activity_at_ms": 1788783780000,
           "record_count": 25,
           "has_conflict": false,
           "pr_links": [
@@ -263,11 +318,129 @@
             "state": "measured",
             "n": 5,
             "median_min": 3.0
+          },
+          "cost": {
+            "total_usd": null,
+            "priced_subtotal_usd": 0.0,
+            "selected_observations": 10,
+            "priced_observations": 0,
+            "unpriced_observations": 10,
+            "assumed_tier_observations": 0,
+            "unpriced": [
+              {
+                "model": "fixture-model-v1",
+                "service_tier": null,
+                "reason": "missing_service_tier",
+                "observations": 10
+              }
+            ]
           }
         }
       ],
       "next": null,
+      "summary": {
+        "main_sessions": 1,
+        "sub_sessions": 0,
+        "checking_sessions": 0,
+        "unlinked_sub_sessions": 0,
+        "human_messages": 5,
+        "messages_per_main_session": 5.0,
+        "agent_ms": 1380000,
+        "sessions_with_prs": 1
+      },
       "referenced_parents": []
+    }
+  ],
+  "sessions_summaries": [
+    {
+      "days": 7,
+      "session_ids": [
+        "00000000-0000-4000-8000-000000000001"
+      ],
+      "summary": {
+        "main_sessions": 1,
+        "sub_sessions": 0,
+        "checking_sessions": 0,
+        "unlinked_sub_sessions": 0,
+        "human_messages": 5,
+        "messages_per_main_session": 5.0,
+        "agent_ms": 1380000,
+        "sessions_with_prs": 1
+      }
+    },
+    {
+      "days": 7,
+      "session_ids": [],
+      "summary": {
+        "main_sessions": 0,
+        "sub_sessions": 0,
+        "checking_sessions": 0,
+        "unlinked_sub_sessions": 0,
+        "human_messages": 0,
+        "messages_per_main_session": null,
+        "agent_ms": 0,
+        "sessions_with_prs": 0
+      }
+    },
+    {
+      "days": 14,
+      "session_ids": [
+        "00000000-0000-4000-8000-000000000001"
+      ],
+      "summary": {
+        "main_sessions": 1,
+        "sub_sessions": 0,
+        "checking_sessions": 0,
+        "unlinked_sub_sessions": 0,
+        "human_messages": 5,
+        "messages_per_main_session": 5.0,
+        "agent_ms": 1380000,
+        "sessions_with_prs": 1
+      }
+    },
+    {
+      "days": 14,
+      "session_ids": [],
+      "summary": {
+        "main_sessions": 0,
+        "sub_sessions": 0,
+        "checking_sessions": 0,
+        "unlinked_sub_sessions": 0,
+        "human_messages": 0,
+        "messages_per_main_session": null,
+        "agent_ms": 0,
+        "sessions_with_prs": 0
+      }
+    },
+    {
+      "days": 30,
+      "session_ids": [
+        "00000000-0000-4000-8000-000000000001"
+      ],
+      "summary": {
+        "main_sessions": 1,
+        "sub_sessions": 0,
+        "checking_sessions": 0,
+        "unlinked_sub_sessions": 0,
+        "human_messages": 5,
+        "messages_per_main_session": 5.0,
+        "agent_ms": 1380000,
+        "sessions_with_prs": 1
+      }
+    },
+    {
+      "days": 30,
+      "session_ids": [],
+      "summary": {
+        "main_sessions": 0,
+        "sub_sessions": 0,
+        "checking_sessions": 0,
+        "unlinked_sub_sessions": 0,
+        "human_messages": 0,
+        "messages_per_main_session": null,
+        "agent_ms": 0,
+        "sessions_with_prs": 0
+      }
     }
   ],
   "session_stretches": [
@@ -594,6 +767,22 @@
           "calls": 5
         },
         "output_tokens": 150,
+        "cost": {
+          "total_usd": null,
+          "priced_subtotal_usd": 0.0,
+          "selected_observations": 10,
+          "priced_observations": 0,
+          "unpriced_observations": 10,
+          "assumed_tier_observations": 0,
+          "unpriced": [
+            {
+              "model": "fixture-model-v1",
+              "service_tier": null,
+              "reason": "missing_service_tier",
+              "observations": 10
+            }
+          ]
+        },
         "prompt": {
           "state": "found",
           "at_ms": 1788783600000,
@@ -1526,7 +1715,7 @@
       "cost": {
         "price_version": "synthetic-v1",
         "as_of": "2026-09-17",
-        "basis": "Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes unrecorded regional/speed modifiers, tool fees, and subscriptions.",
+        "basis": "Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes codex-auto-review responses, unrecorded regional/speed modifiers, tool fees, and subscriptions.",
         "total_usd": null,
         "priced_subtotal_usd": 0.0,
         "selected_observations": 10,
@@ -3090,7 +3279,7 @@
       "cost": {
         "price_version": "synthetic-v1",
         "as_of": "2026-09-17",
-        "basis": "Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes unrecorded regional/speed modifiers, tool fees, and subscriptions.",
+        "basis": "Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes codex-auto-review responses, unrecorded regional/speed modifiers, tool fees, and subscriptions.",
         "total_usd": null,
         "priced_subtotal_usd": 0.0,
         "selected_observations": 10,
@@ -5744,7 +5933,7 @@
       "cost": {
         "price_version": "synthetic-v1",
         "as_of": "2026-09-17",
-        "basis": "Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes unrecorded regional/speed modifiers, tool fees, and subscriptions.",
+        "basis": "Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes codex-auto-review responses, unrecorded regional/speed modifiers, tool fees, and subscriptions.",
         "total_usd": null,
         "priced_subtotal_usd": 0.0,
         "selected_observations": 10,
@@ -26289,6 +26478,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -26341,6 +26531,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -26374,6 +26580,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -26426,6 +26633,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -26459,6 +26682,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -26511,6 +26735,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -26544,6 +26784,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -26596,6 +26837,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -26629,6 +26886,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -26681,6 +26939,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -26714,6 +26988,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -26766,6 +27041,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -26799,6 +27090,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -26851,6 +27143,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -26884,6 +27192,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -26936,6 +27245,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -26969,6 +27294,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -27021,6 +27347,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -27054,6 +27396,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -27106,6 +27449,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -27139,6 +27498,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -27191,6 +27551,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -27224,6 +27600,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -27276,6 +27653,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -27309,6 +27702,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -27361,6 +27755,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -27413,6 +27823,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -27465,6 +27876,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -27517,6 +27944,7 @@
             "model": "fixture-model-v1",
             "other_models": 0,
             "first_ts": "2026-09-07T12:00:00Z",
+            "last_activity_at_ms": 1788783780000,
             "record_count": 25,
             "has_conflict": false,
             "pr_links": [
@@ -27569,6 +27997,22 @@
               "state": "measured",
               "n": 5,
               "median_min": 3.0
+            },
+            "cost": {
+              "total_usd": null,
+              "priced_subtotal_usd": 0.0,
+              "selected_observations": 10,
+              "priced_observations": 0,
+              "unpriced_observations": 10,
+              "assumed_tier_observations": 0,
+              "unpriced": [
+                {
+                  "model": "fixture-model-v1",
+                  "service_tier": null,
+                  "reason": "missing_service_tier",
+                  "observations": 10
+                }
+              ]
             }
           }
         ],
@@ -27617,11 +28061,15 @@
       "selected_observations": 0,
       "priced_observations": 0,
       "price_version": "synthetic-v1",
-      "basis": "Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes unrecorded regional/speed modifiers, tool fees, and subscriptions."
+      "basis": "Global public token API-equivalent, using recorded service tier, or OpenAI's default tier for Codex responses that record none; excludes codex-auto-review responses, unrecorded regional/speed modifiers, tool fees, and subscriptions."
     },
     "agent": {
       "active_ms": 0,
       "sessions": 0
+    },
+    "human": {
+      "active_ms": 0,
+      "break_minutes": 60
     },
     "unavailable": [
       {

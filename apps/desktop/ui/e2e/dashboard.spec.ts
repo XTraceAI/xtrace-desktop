@@ -132,10 +132,13 @@ for (const { width, height } of sizes)
       expect(result.main).toBe(width - 228);
       expect(result.h1).toEqual({ x: 245, y: 52, height: 29 });
       expect(result.clipped).toEqual([]);
-      // The lane axis keeps quarter ticks where they fit and falls back to
-      // the start, the midpoint and the dated end; either way no two ticks collide, in
-      // WebKit's wider metrics as well as Chromium's.
-      expect(result.tickCount).toBe(width === 1440 ? 5 : 3);
+      // The lane axis keeps the start and the dated end, and adds the midpoint
+      // and quarters only where the column holds a live axis's widest times
+      // (dashboard-lanes.spec.ts): at these widths `10:59 PM` ticks overlapped
+      // the midpoint at 1120 and the quarters at 1440, so F1's shorter whole
+      // hours show the same ticks. No two ticks collide, in WebKit's wider
+      // metrics as well as Chromium's.
+      expect(result.tickCount).toBe(width === 1440 ? 3 : 2);
       expect(result.collidedTicks).toBe(0);
       expect(result.tiles.map((tile) => tile.text)).toEqual(labels);
       for (const tile of result.tiles) expect(tile.fits, tile.text!).toBe(true);

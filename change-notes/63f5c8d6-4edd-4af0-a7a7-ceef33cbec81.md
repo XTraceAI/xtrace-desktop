@@ -1,0 +1,1 @@
+- Dashboard Effort card: the human-hours headline shows "break threshold: N min" at the right instead of the date range and break note, and the cost headline shows only its total.

@@ -72,11 +72,7 @@ export function EffortByType({
   metric: EffortMetric;
 }) {
   const { current } = report.pr_effort;
-  const days = report.window.days;
-  const chart = useMemo(
-    () => effortChart(current, barMetric(metric), days),
-    [current, metric, days],
-  );
+  const chart = useMemo(() => effortChart(current, barMetric(metric)), [current, metric]);
   const empty = current.cohort.sessions === 0;
   if (metric === 'human') return <HumanTimeline report={report} />;
   return (
@@ -86,8 +82,6 @@ export function EffortByType({
       ) : (
         <p className="xt-effort-headline" data-testid="effort-headline">
           <strong data-testid="effort-total">{chart.headline.text}</strong>
-          <span>{chart.headline.range}</span>
-          {chart.headline.note && <small>{chart.headline.note}</small>}
         </p>
       )}
       {chart.days.length > 0 && <EffortPlot chart={chart} drawn={!empty} />}
@@ -361,11 +355,7 @@ export function EffortMethod({
   children?: ReactNode;
 }) {
   const { current } = report.pr_effort;
-  const days = report.window.days;
-  const chart = useMemo(
-    () => effortChart(current, barMetric(metric), days),
-    [current, metric, days],
-  );
+  const chart = useMemo(() => effortChart(current, barMetric(metric)), [current, metric]);
   const cost = current.cohort.cost;
   const human = report.human_hours.current;
   // Agent and human time over the same whole day, paired in Rust (the

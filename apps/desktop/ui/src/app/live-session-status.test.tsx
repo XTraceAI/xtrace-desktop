@@ -403,8 +403,6 @@ it.each([
   ['running', 'Running'],
   ['waiting_approval', 'Waiting for approval'],
   ['waiting_input', 'Waiting for input'],
-  ['idle', 'Idle'],
-  ['unknown', 'Unknown'],
 ] as const)('shows the full textual %s label and its runtime source', (status, label) => {
   render(<LiveSessionBadge status={status} />);
   const badge = screen.getByText(label);
@@ -427,11 +425,13 @@ it.each(['claude', 'codex'] as const)('labels every %s status with its own runti
   expect(document.querySelector('[data-live-status]')).toBeNull();
   for (const [status, text] of statuses) {
     rerender(<LiveSessionBadge host={host} status={status} />);
+    if (status === 'idle' || status === 'unknown') {
+      expect(screen.queryByRole('status')).toBeNull();
+      continue;
+    }
     const badge = screen.getByRole('status', { name: `${label} · ${text}` });
     expect(badge.textContent).toBe(text);
     expect(badge.getAttribute('aria-live')).toBe('off');
-    expect(badge.getAttribute('title')).toBe(
-      `${runtime} · ${status === 'unknown' ? 'live state unavailable' : text}`,
-    );
+    expect(badge.getAttribute('title')).toBe(`${runtime} · ${text}`);
   }
 });

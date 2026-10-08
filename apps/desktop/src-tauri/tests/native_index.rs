@@ -632,6 +632,7 @@ fn a_background_sub_session_change_is_announced_once_and_leaves_the_status_alone
             jiff::tz::TimeZone::UTC,
             MetricClock::Fixture,
             SessionQuery::default(),
+            &xt_metrics::PriceCatalog::bundled().unwrap(),
         )
         .unwrap();
         page.rows

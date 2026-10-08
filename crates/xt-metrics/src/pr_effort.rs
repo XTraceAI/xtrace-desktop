@@ -22,6 +22,7 @@
 use crate::{
     CostSummary, Error, MetricsDb, PriceCatalog, Result, Window,
     cost::{self, Totals},
+    report::UsageCollector,
     spans::ActiveSpanReport,
 };
 use jiff::tz::TimeZone;
@@ -323,12 +324,16 @@ impl Accumulator {
         observation: &cost::Observation,
         priced: cost::Outcome,
     ) -> Result<()> {
+        if matches!(priced, cost::Outcome::Excluded) {
+            return Ok(());
+        }
         self.cost.push(observation, priced)?;
         self.daily[day].push(observation, priced)?;
         let model = self.daily_models[day]
             .entry(observation.model().map(str::to_owned))
             .or_default();
         match priced {
+            cost::Outcome::Excluded => unreachable!("excluded observations return before counting"),
             cost::Outcome::Priced(nano_usd, _) => {
                 model.priced += 1;
                 model.nano_usd = model
@@ -612,12 +617,15 @@ impl MetricsDb {
         confirmed_only: bool,
         catalog: &PriceCatalog,
     ) -> Result<PrEffortReport> {
-        self.read_snapshot(|db| db.read_pr_effort(window, zone, confirmed_only, catalog, None))
+        self.read_snapshot(|db| {
+            db.read_pr_effort(window, zone, confirmed_only, catalog, None, None)
+        })
     }
 
     /// [`MetricsDb::pr_effort`] inside the caller's snapshot. `measured` is
     /// this window's [`MetricsDb::active_spans`] already read in that same
-    /// snapshot; without it the spans are read here.
+    /// snapshot; without it the spans are read here. `shared` also receives
+    /// each selected in-window response this report's cost read accepts.
     pub(crate) fn read_pr_effort(
         &self,
         window: Window,
@@ -625,6 +633,7 @@ impl MetricsDb {
         confirmed_only: bool,
         catalog: &PriceCatalog,
         measured: Option<&ActiveSpanReport>,
+        mut shared: Option<&mut UsageCollector>,
     ) -> Result<PrEffortReport> {
         let days = window.local_days(zone.clone())?;
         let start = InstantKey::from_millisecond(window.start_ms());
@@ -741,12 +750,12 @@ impl MetricsDb {
         let mut statement = self.connection.prepare(cost::SESSION_QUERY)?;
         let mut rows = statement.query([window.start_ms(), window.candidate_end_ms()?])?;
         while let Some(row) = rows.next()? {
-            let (ts, _, observation) = cost::read_row(row)?;
+            let (ts, surface, observation) = cost::read_row(row)?;
             if ts < start || ts >= end {
                 continue;
             }
             let session: String = row.get(11)?;
-            let priced = observation.price(catalog)?;
+            let priced = observation.price(catalog, true)?;
             let day = day_ends.partition_point(|end| end <= &ts);
             if let Some(model) = observation.model() {
                 usage.entry(session.clone()).or_default().add_responses(
@@ -761,6 +770,10 @@ impl MetricsDb {
             for accumulator in [&mut cohort, group] {
                 accumulator.sessions.insert(session.clone());
                 accumulator.push_cost(day, &observation, priced)?;
+            }
+            // The same accepted response, for the caller's other reports.
+            if let Some(shared) = shared.as_mut() {
+                shared.push(&ts, &session, surface.as_deref(), &observation)?;
             }
         }
         drop(rows);

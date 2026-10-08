@@ -25,6 +25,7 @@ const release = await readFile(
 );
 const nativeSource = await readFile(new URL('./native-check.mjs', import.meta.url), 'utf8');
 const jobs = jobsOf(source);
+const releaseJobs = jobsOf(release);
 const editedJobs = jobsOf(metadata);
 
 test('candidate CI jobs have no metadata credentials or grants', () => {
@@ -72,9 +73,13 @@ test('routine CI is Linux-only and native work is explicit release preparation',
   assert.match(release, /ref: \$\{\{ inputs\.candidate_sha \}\}/);
   assert.match(release, /REVIEWED_BASE_SHA="\$\(git rev-parse "\$CANDIDATE_SHA\^1"\)"/);
   assert.match(release, /pnpm check:native --base "\$REVIEWED_BASE_SHA" --release/);
-  assert.doesNotMatch(release, /GITHUB_TOKEN|GH_TOKEN|secrets\.|contents: write|gh release/);
+  assert.doesNotMatch(
+    release,
+    /GITHUB_TOKEN|GH_TOKEN|contents: write|gh release|permissions:\n(?! {2}contents: read\n)/,
+  );
+  assert.doesNotMatch(releaseJobs.native, /secrets\.|environment:/);
   assert.match(release, /persist-credentials: false/);
-  assert.deepEqual(Object.keys(jobsOf(release)), ['native']);
+  assert.deepEqual(Object.keys(jobsOf(release)), ['native', 'package']);
   assert.match(release, /^permissions:\n {2}contents: read\n\n/m);
   assert.doesNotMatch(jobsOf(release).native, /^\s+permissions:/m);
   for (const action of release.matchAll(/uses: (\S+)/g)) assert.match(action[1], /@[a-f0-9]{40}$/);
@@ -295,6 +300,59 @@ test('release validation explicitly uses verified vendored producer conformance'
   assert.match(gate, /from bundle_source import verify_bundle/);
   assert.match(gate, /verifyCheckout\(pin, git\)/);
   assert.match(gate, /assert-no-skipped-conformance\.sh/);
+});
+
+test('only the signing step of the packaging job sees Apple values, after validation passes', () => {
+  assert.deepEqual(Object.keys(releaseJobs), ['native', 'package']);
+  const job = releaseJobs.package;
+  assert.ok(
+    job.includes(
+      "    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
+    ),
+    'packaging runs only on the default branch and skips reviewed tag validation',
+  );
+  assert.match(job, /^ {4}needs: native$/m);
+  assert.match(job, /^ {4}environment: macos-signing$/m);
+  assert.match(job, /runs-on: macos-14/);
+  assert.doesNotMatch(job, /permissions:|continue-on-error|\|\| true/);
+  for (const check of [
+    /CANDIDATE_SHA.*\^\[0-9a-f\]\{40\}\$/,
+    /test "\$WORKFLOW_REF" = "refs\/heads\/\$DEFAULT_BRANCH"/,
+    /test "\$\(git rev-parse HEAD\)" = "\$CANDIDATE_SHA"/,
+    /git merge-base --is-ancestor "\$CANDIDATE_SHA"/,
+    /test "\$\(uname -m\)" = arm64/,
+  ])
+    assert.match(job, check);
+  for (const checkout of job.split(/- uses: actions\/checkout@/).slice(1))
+    assert.match(checkout.split(/\n\s+- (?:uses|name|run):/)[0], /persist-credentials: false/);
+  const steps = job.split(/\n {6}- /);
+  const build = steps.findIndex((step) => step.includes('pnpm tauri build --no-bundle'));
+  const sign = steps.findIndex((step) => step.includes('node scripts/ci/release-dmg.mjs'));
+  const upload = steps.findIndex((step) => step.includes('actions/upload-artifact@'));
+  assert.ok(
+    build > 0 && sign === build + 1 && upload === sign + 1,
+    'compile, then sign, then upload',
+  );
+  assert.match(steps[build], /pnpm install --frozen-lockfile --ignore-scripts/);
+  steps.forEach((step, index) => {
+    if (index !== sign) assert.doesNotMatch(step, /secrets\.|APPLE_/, step.split('\n')[0]);
+  });
+  assert.deepEqual(
+    [...steps[sign].matchAll(/secrets\.(\w+)/g)].map((match) => match[1]),
+    [
+      'APPLE_CERTIFICATE',
+      'APPLE_CERTIFICATE_PASSWORD',
+      'APPLE_API_KEY',
+      'APPLE_API_ISSUER',
+      'APPLE_API_PRIVATE_KEY',
+    ],
+  );
+  assert.match(
+    steps[sign],
+    /APPLE_SIGNING_IDENTITY: 'Developer ID Application: .+ \([A-Z0-9]{10}\)'/,
+  );
+  assert.match(steps[upload], /path: artifacts\/release\/\n/);
+  assert.match(steps[upload], /if-no-files-found: error/);
 });
 
 test('credentialed contribution checks run only reviewed source', () => {

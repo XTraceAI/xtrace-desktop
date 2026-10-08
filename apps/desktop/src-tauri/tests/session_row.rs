@@ -286,3 +286,71 @@ fn an_identity_that_differs_only_in_whitespace_is_a_different_session() {
         " session-ws"
     );
 }
+
+#[test]
+fn whole_session_cost_matches_dashboard_and_never_shrinks_with_the_window() {
+    let fixture = xt_fixtures::Fixture::load(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../fixtures/F1"),
+    )
+    .unwrap();
+    let catalog =
+        xt_metrics::PriceCatalog::from_json(&fixture.snapshots()["prices"].to_string()).unwrap();
+    let mut db = xt_fixtures::TempDb::empty().unwrap();
+    let now = fixture.now().timestamp_millis();
+    let response = |id: &str, timestamp: &str, model: &str| {
+        serde_json::from_value(json!({"uuid": id, "type": "assistant", "timestamp": timestamp,
+            "message": {"model": model, "usage": {"input_tokens": 0, "output_tokens": 1,
+            "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "service_tier": "standard"}}})).unwrap()
+    };
+    seed(
+        db.store_mut(),
+        "whole-cost",
+        &[
+            response("old", "2020-01-01T00:00:00Z", "test-flat"),
+            response("new", "2026-09-07T12:00:00Z", "test-flat"),
+            response("unknown", "2026-09-07T12:01:00Z", "not-in-catalog"),
+        ],
+    );
+    let metrics = xt_metrics::MetricsDb::open(db.path()).unwrap();
+    let reports = xtrace_desktop::dashboard::fixture_reports(
+        db.path(),
+        now,
+        fixture.snapshots().get("prices"),
+    )
+    .unwrap();
+    let dashboard_cost = &reports[0]
+        .lane_sessions
+        .iter()
+        .find(|row| row.session_id == "whole-cost")
+        .unwrap()
+        .cost;
+    for days in [7, 14, 30] {
+        let page = xtrace_desktop::dto::session_page(
+            &metrics,
+            days,
+            now,
+            jiff::tz::TimeZone::UTC,
+            xtrace_desktop::dto::MetricClock::Fixture,
+            Default::default(),
+            &catalog,
+        )
+        .unwrap();
+        let listed = page.rows.iter().find(|row| row.id == "whole-cost").unwrap();
+        let exact = xtrace_desktop::dto::session_row(&metrics, days, now, "whole-cost", &catalog)
+            .unwrap()
+            .unwrap();
+        assert_eq!(&listed.cost, dashboard_cost);
+        assert_eq!(listed.cost, exact.cost);
+        let cost = listed.cost.as_ref().unwrap();
+        assert_eq!(
+            (
+                cost.selected_observations,
+                cost.priced_observations,
+                cost.unpriced_observations
+            ),
+            (3, 2, 1)
+        );
+        assert_eq!(cost.total_usd, None);
+        assert_eq!(cost.priced_subtotal_usd, 0.00002);
+    }
+}

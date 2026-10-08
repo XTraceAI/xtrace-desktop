@@ -354,7 +354,7 @@ const worst = (tool_name: string, count: number) => ({
 it('says a stretch whose calls all differed had no repeats, as a measurement', () => {
   show(measuredWith([stretch('2026-09-07T12:00:00Z', 300_000)]), [target('a:0')]);
   const [segment] = screen.getAllByRole('button');
-  expect(within(segment).getByText('0h05m active · no repeats')).toBeTruthy();
+  expect(within(segment).getByText('0 h 5 m active · no repeats')).toBeTruthy();
   expect(segment.getAttribute('aria-label')).toContain(', no repeats, not circling,');
   expect(segment.getAttribute('data-circling')).toBeNull();
   expect(within(segment).queryByText('Circling')).toBeNull();
@@ -382,7 +382,7 @@ it.each([
       0,
     );
     const [segment] = screen.getAllByRole('button', { name: /^Stretch/ });
-    expect(within(segment).getByText('0h10m active · repeats unknown')).toBeTruthy();
+    expect(within(segment).getByText('0 h 10 m active · repeats unknown')).toBeTruthy();
     const label = segment.getAttribute('aria-label')!;
     expect(label).toContain(`repeats not counted: ${unknownRepeatsText(reason)}`);
     expect(label).toContain('whether it was circling is not known');
@@ -453,7 +453,7 @@ it('names the most repeated call by its tool and count only', () => {
     [target('a:0')],
   );
   const [segment] = screen.getAllByRole('button');
-  expect(within(segment).getByText('0h06m active · 8 repeats · Edit ×9')).toBeTruthy();
+  expect(within(segment).getByText('0 h 6 m active · 8 repeats · Edit ×9')).toBeTruthy();
   // The representative is a position for the reveal, not something to show.
   expect(segment.textContent).not.toContain('rec');
   expect(segment.getAttribute('aria-label')).not.toContain('rec');
@@ -479,10 +479,10 @@ it('states active time apart from the stretch’s length, including an honest ze
   );
   const [idle, none] = screen.getAllByRole('button');
   expect(within(idle).getByText('61 min')).toBeTruthy();
-  expect(within(idle).getByText('0h01m active · 19 repeats · Edit ×20')).toBeTruthy();
+  expect(within(idle).getByText('0 h 1 m active · 19 repeats · Edit ×20')).toBeTruthy();
   expect(idle.getAttribute('aria-label')).toContain('lasted 61 minutes, 1 minute of it active');
-  expect(activeDuration(0)).toBe('0h00m');
-  expect(within(none).getByText('0h00m active · no repeats')).toBeTruthy();
+  expect(activeDuration(0)).toBe('0 h 0 m');
+  expect(within(none).getByText('0 h 0 m active · no repeats')).toBeTruthy();
 });
 
 it('explains circling from the thresholds the answer carried, without calling anyone wrong', () => {

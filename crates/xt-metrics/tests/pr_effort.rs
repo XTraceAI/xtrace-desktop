@@ -1,4 +1,5 @@
 mod activity_support;
+mod report_support;
 use jiff::{Timestamp, tz::TimeZone};
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -131,11 +132,22 @@ fn fail(db: &mut TempDb, number: u64, at: i64, error: PrRefreshError) {
         }))
         .unwrap();
 }
+/// The M-19 report, checked against the combined report read.
 fn report(db: &TempDb, confirmed_only: bool) -> PrEffortReport {
-    let report = MetricsDb::open(db.path())
-        .unwrap()
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    let report = metrics
         .pr_effort(window(), TimeZone::UTC, confirmed_only, &catalog())
         .unwrap();
+    let periods = report_support::matches_standalone_links(
+        &metrics,
+        window(),
+        window().end_ms(),
+        &[],
+        TimeZone::UTC,
+        confirmed_only,
+        &catalog(),
+    );
+    assert_eq!(periods.current.activity.unwrap().pr_effort, report);
     reconcile(db, window(), TimeZone::UTC, &report);
     report
 }
@@ -1022,6 +1034,15 @@ fn pr_effort_dollars_per_assignment_and_day_price_each_response_by_its_model() {
     let report = metrics
         .pr_effort(window(), TimeZone::UTC, false, &prices)
         .unwrap();
+    let periods = report_support::matches_standalone(
+        &metrics,
+        window(),
+        window().end_ms(),
+        &[],
+        TimeZone::UTC,
+        &prices,
+    );
+    assert_eq!(periods.current.activity.unwrap().pr_effort, report);
     let day = |totals: &EffortTotals, date: &str| {
         totals
             .by_day
@@ -1040,10 +1061,10 @@ fn pr_effort_dollars_per_assignment_and_day_price_each_response_by_its_model() {
     assert_eq!(feat.cost.assumed_tier_observations, 0);
 
     // Codex: no recorded tier, priced at the default tier and counted as
-    // assumed; the unpublished review model is named, never added as zero.
+    // assumed; automatic reviews do not enter cost amounts or response counts.
     let other = group(&report, &EffortAssignment::Other);
     let first = day(other, "2026-09-03");
-    assert_eq!(first.total_usd, None);
+    assert_eq!(first.total_usd, Some(0.00465));
     assert_eq!(first.priced_subtotal_usd, 0.00465);
     assert_eq!(
         (
@@ -1052,15 +1073,14 @@ fn pr_effort_dollars_per_assignment_and_day_price_each_response_by_its_model() {
             first.unpriced_observations,
             first.assumed_tier_observations
         ),
-        (2, 1, 1, 1)
+        (1, 1, 0, 1)
     );
-    assert_eq!(
-        first.unpriced[0].model.as_deref(),
-        Some("codex-auto-review")
-    );
-    assert_eq!(
-        first.unpriced[0].reason,
-        xt_metrics::UnpricedReason::UnknownModel
+    assert!(first.unpriced.is_empty());
+    assert!(
+        other.by_day[2]
+            .models
+            .iter()
+            .all(|m| m.model.as_deref() != Some("codex-auto-review"))
     );
     assert_eq!(day(other, "2026-09-04").total_usd, Some(0.005));
     assert_eq!(other.cost.priced_subtotal_usd, 0.00965);
@@ -1291,4 +1311,95 @@ fn the_sessions_list_and_the_effort_split_name_the_same_most_used_model() {
         assert_eq!(row.model.as_deref(), Some(model), "{session}");
         assert_eq!(row.other_models, 1, "{session}");
     }
+}
+
+#[test]
+fn pr_effort_excludes_review_cost_but_preserves_sessions_and_model_hours() {
+    let mut db = TempDb::empty().unwrap();
+    // Equal response counts: the review's greater output still makes it the
+    // most-used model for hours, just as before the cost-only exclusion.
+    seed(
+        &mut db,
+        "mixed",
+        &[
+            model_response("paid", "2026-09-02T10:00:00Z", "effort-test", 2),
+            model_response("review", "2026-09-02T10:05:00Z", "codex-auto-review", 9),
+        ],
+    );
+    seed(
+        &mut db,
+        "review-only",
+        &[
+            model_response("r1", "2026-09-03T11:00:00Z", "codex-auto-review", 3),
+            model_response("r2", "2026-09-03T11:05:00Z", "codex-auto-review", 4),
+        ],
+    );
+    link(&mut db, "mixed", 1, PrConfidence::Exact);
+    merged(&mut db, 1, "2026-09-05T09:00:00Z", "feat: mixed");
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    let report = report(&db, false);
+    assert_eq!(report.cohort.sessions, 2);
+    assert_eq!(report.cohort.agent_ms, 600_000);
+    assert_eq!(report.cohort.cost.total_usd, Some(2.0));
+    assert_eq!(report.cohort.cost.selected_observations, 1);
+    let feat = group(&report, &ty("feat"));
+    assert_eq!(feat.sessions, 1);
+    assert_eq!(feat.agent_ms, 300_000);
+    let first = &feat.by_day[1];
+    assert_eq!(first.cost.total_usd, Some(2.0));
+    assert_eq!(
+        first.models,
+        [
+            ModelDayEffort {
+                model: Some("codex-auto-review".into()),
+                priced_nano_usd: 0,
+                priced_observations: 0,
+                unpriced_observations: 0,
+                agent_ms: 300_000
+            },
+            ModelDayEffort {
+                model: Some("effort-test".into()),
+                priced_nano_usd: 2_000_000_000,
+                priced_observations: 1,
+                unpriced_observations: 0,
+                agent_ms: 0
+            },
+        ]
+    );
+    let other = group(&report, &EffortAssignment::Other);
+    assert_eq!(other.sessions, 1);
+    assert_eq!(other.agent_ms, 300_000);
+    assert_eq!(other.cost.selected_observations, 0);
+    assert_eq!(other.cost.total_usd, None);
+    assert!(other.cost.unpriced.is_empty());
+    assert_eq!(
+        other.by_day[2].models,
+        [ModelDayEffort {
+            model: Some("codex-auto-review".into()),
+            priced_nano_usd: 0,
+            priced_observations: 0,
+            unpriced_observations: 0,
+            agent_ms: 300_000
+        },]
+    );
+    let tokens = metrics.tokens(window(), TimeZone::UTC).unwrap();
+    assert_eq!(tokens.total.selected_responses, 4);
+    assert_eq!(tokens.total.counters.output_tokens, Some(18));
+    // Only cost leaves reviews out: from one read of the responses, the
+    // combined report keeps them in tokens, the favorite model and coverage.
+    let periods = report_support::matches_standalone(
+        &metrics,
+        window(),
+        window().end_ms(),
+        &[],
+        TimeZone::UTC,
+        &catalog(),
+    );
+    assert_eq!(periods.current.tokens.unwrap(), tokens);
+    assert_eq!(
+        periods.current.favorite.unwrap().model.as_deref(),
+        Some("codex-auto-review")
+    );
+    let coverage = periods.coverage.unwrap().usage.total;
+    assert_eq!((coverage.sessions, coverage.measured), (2, 2));
 }

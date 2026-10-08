@@ -80,16 +80,3 @@
 .xt-session-heading .xt-session-open {
   min-width: 0;
 }
-.xt-sessions-recent-state {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-  min-width: 0;
-}
-.xt-sessions-recent-state .xt-live-session-badge {
-  width: auto;
-  max-width: 100%;
-  white-space: normal;
-  line-height: 12px;
-}

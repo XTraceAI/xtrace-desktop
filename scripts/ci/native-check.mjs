@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { installAbout, installSyft } from '../supply-chain/install-tools.mjs';
 import { readPin } from './plugin-pin.mjs';
 
@@ -95,16 +96,27 @@ export async function checkNative({
     execute('pnpm', ['sbom']);
     execute('pnpm', ['notices:check']);
     execute('node', ['scripts/security/scan-secrets.mjs', '--content', 'artifacts/sbom.cdx.json']);
-    execute('pnpm', ['tauri', 'build', '--debug', '--bundles', 'app']);
+    // A test identity must be compiled into Tauri, including its singleton
+    // socket. A plist-only change cannot isolate it from the installed app.
+    const testIdentifier = `ai.xtrace.app.test.${randomUUID()}`;
+    const testTarget = join(trusted, 'smoke-target');
+    // APFS clones reuse our completed build cache without writable links back
+    // to it. All test build outputs are disposable and separate from source.
+    execute('cp', ['-c', '-R', join(repo, 'target'), testTarget]);
+    env.CARGO_TARGET_DIR = testTarget;
+    const testConfig = JSON.stringify({ identifier: testIdentifier });
+    execute('pnpm', ['tauri', 'build', '--debug', '--bundles', 'app', '--config', testConfig]);
     execute('node', [
       'scripts/ci/debug-bundle.mjs',
-      'target/debug/bundle/macos/XTrace Desktop.app',
+      join(testTarget, 'debug/bundle/macos/XTrace Desktop.app'),
+      testIdentifier,
     ]);
     if (release) {
-      execute('pnpm', ['tauri', 'build', '--bundles', 'app']);
+      execute('pnpm', ['tauri', 'build', '--bundles', 'app', '--config', testConfig]);
       execute('node', [
         'scripts/ci/debug-bundle.mjs',
-        'target/release/bundle/macos/XTrace Desktop.app',
+        join(testTarget, 'release/bundle/macos/XTrace Desktop.app'),
+        testIdentifier,
       ]);
     }
     if (git('rev-parse', 'HEAD') !== head)

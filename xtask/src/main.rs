@@ -199,6 +199,7 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             let sessions = xtrace_desktop::dto::fixture_session_pages(
                 database.path(),
                 fixture.now().timestamp_millis(),
+                fixture.snapshots().get("prices"),
             )?;
             // The PRs page report before the refresh, like the Dashboards.
             let pr_analytics = xtrace_desktop::pr_analytics::fixture_pages(
@@ -208,12 +209,14 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             let session_stretches = xtrace_desktop::dto::fixture_session_stretches(
                 database.path(),
                 fixture.now().timestamp_millis(),
+                fixture.snapshots().get("prices"),
             )?;
             // Span details are metadata of the stored records, which a
             // pull-request refresh never changes.
             let span_details = xtrace_desktop::dashboard::fixture_span_details(
                 database.path(),
                 fixture.now().timestamp_millis(),
+                fixture.snapshots().get("prices"),
             )?;
             // Drilldowns are read before the refresh too, like the Sessions
             // pages: membership is the links, which a refresh never changes,
@@ -231,6 +234,7 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                             .map(|number| (row.pull_request.repository.clone(), number))
                     })
                     .collect::<Result<Vec<_>, _>>()?,
+                fixture.snapshots().get("prices"),
             )?;
             // The listed rows are what the fixture stores before the refresh,
             // and the refreshed rows are what it leaves.
@@ -269,6 +273,10 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                     fixture.snapshots().get("prices"),
                 )?,
                 db_counts: database.store().counts()?.try_into()?,
+                sessions_summaries: xtrace_desktop::dto::fixture_sessions_summaries(
+                    database.path(),
+                    fixture.now().timestamp_millis(),
+                )?,
                 sessions,
                 session_stretches,
                 span_details,

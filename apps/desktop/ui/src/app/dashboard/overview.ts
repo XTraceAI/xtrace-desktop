@@ -209,7 +209,7 @@ export interface TimelineRow {
   label: string;
   weekend: boolean;
   bars: TimelineBar[];
-  /** The day's total, written as all agent time is (`0h00m` for a measured zero); null when unknown. */
+  /** The day's total, written as all agent time is (`0 h 0 m` for a measured zero); null when unknown. */
   total: string | null;
   /** The row's accessible name. */
   name: string;

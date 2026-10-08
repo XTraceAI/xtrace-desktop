@@ -57,7 +57,7 @@ const window: DashboardWindow = {
 it('writes one agent time the same way on every screen, and no non-time as one', () => {
   const ms = 11_568_000;
   const shown = agentTime(ms);
-  expect(shown).toBe('3h12.8m');
+  expect(shown).toBe('3 h 13 m');
   expect(agentDuration(ms).visible).toBe(shown);
   // A lane's active span, a hands-off stretch and its active part, the tray.
   expect(spanDuration(0, ms)).toBe(shown);
@@ -71,7 +71,7 @@ it('writes one agent time the same way on every screen, and no non-time as one',
   for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -60_000])
     expect(agentDuration(bad)).toEqual({ visible: '—', spoken: 'not measured', exact: '—' });
   // A measured zero is a zero, never a dash.
-  expect(agentTime(0)).toBe('0h00m');
+  expect(agentTime(0)).toBe('0 h 0 m');
 });
 
 it('writes money one way: cents below $100, whole dollars from $100', () => {

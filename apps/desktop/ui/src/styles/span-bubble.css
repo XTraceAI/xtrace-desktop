@@ -95,6 +95,7 @@
   color: var(--ink);
 }
 .xt-span-bubble-meta {
+  flex-wrap: wrap;
   color: var(--meta);
 }
 .xt-span-bubble-meta time {
@@ -108,10 +109,13 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.xt-span-bubble-output {
+.xt-span-bubble-output,
+.xt-span-bubble-cost {
   flex: none;
-  margin-inline-start: auto;
   color: var(--secondary);
+}
+.xt-span-bubble-output {
+  margin-inline-start: auto;
 }
 .xt-span-bubble-quiet,
 .xt-span-bubble [data-quiet] {

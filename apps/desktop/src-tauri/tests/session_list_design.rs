@@ -210,8 +210,8 @@ fn filters_apply_before_the_page_and_listed_rows_match_the_exact_row() {
 /// a gate: `cargo test -p xtrace-desktop --release --test session_list_design
 /// -- --ignored --nocapture`. The page reads one bounded metadata page, one
 /// link statement, the page's own events and usage, and a single pass over the
-/// window's events for hands-off surface health — never one full-window read
-/// per row.
+/// window's events for hands-off surface health. Its first page also measures
+/// the summary across every matching indexed session.
 #[test]
 #[ignore]
 fn list_page_cost_on_a_synthetic_history() {
@@ -296,4 +296,85 @@ fn list_page_cost_on_a_synthetic_history() {
             );
         }
     }
+}
+
+#[test]
+fn only_the_first_page_carries_all_matching_summary_totals() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("home")).unwrap();
+    std::fs::create_dir_all(root.path().join("data")).unwrap();
+    {
+        let mut store = Store::open(root.path().join("data/xtrace.db")).unwrap();
+        for index in 0..65 {
+            let mut session =
+                SessionMeta::new(format!("main-{index:02}"), "claude", SessionSource::Fixture);
+            session.started_at_ms = Some(index);
+            store.upsert_session(&session, false).unwrap();
+        }
+    }
+    let state = state(root.path());
+    let first = state.sessions_list("", None, None, 7).unwrap();
+    let totals = first.summary.unwrap();
+    assert_eq!(totals.main_sessions + totals.checking_sessions, 65);
+    assert_eq!(totals.human_messages, Some(0));
+    let second = state
+        .sessions_list("", None, first.next.as_deref(), 7)
+        .unwrap();
+    assert_eq!(second.rows.len(), 15);
+    assert!(second.summary.is_none());
+    let narrowed = state.sessions_list("main-00", None, None, 7).unwrap();
+    let totals = narrowed.summary.unwrap();
+    assert_eq!(totals.main_sessions + totals.checking_sessions, 1);
+}
+
+#[test]
+fn a_failed_later_session_summary_does_not_discard_valid_first_page_rows() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("home")).unwrap();
+    std::fs::create_dir_all(root.path().join("data")).unwrap();
+    let path = root.path().join("data/xtrace.db");
+    let now = Timestamp::now();
+    {
+        let mut store = Store::open(&path).unwrap();
+        for index in 0..65 {
+            let mut session = SessionMeta::new(
+                format!("session-{index:02}"),
+                "codex",
+                SessionSource::Fixture,
+            );
+            session.started_at_ms = Some(index);
+            store.upsert_session(&session, false).unwrap();
+        }
+        store
+            .upsert_records(
+                "session-00",
+                &[serde_json::from_value(json!({
+                    "uuid": "broken-later-record", "type": "assistant", "timestamp": at(now, 60),
+                    "message": {"role": "assistant", "id": "broken-response", "content": [],
+                        "usage": {"input_tokens": 1, "output_tokens": 2,
+                            "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}
+                }))
+                .unwrap()],
+                false,
+            )
+            .unwrap();
+    }
+    // Synthetic damaged metric data in the oldest row, beyond the first page.
+    // Rows on that page remain readable; aggregate measurement must fail.
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    xt_store::timestamp::register_sqlite(&connection).unwrap();
+    connection
+        .execute_batch("PRAGMA ignore_check_constraints=ON;")
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE usage SET input_tokens=-1 WHERE uuid='broken-later-record'",
+            [],
+        )
+        .unwrap();
+    let state = state(root.path());
+    let first = state.sessions_list("", None, None, 7).unwrap();
+    assert_eq!(first.rows.len(), 50);
+    assert!(first.summary.is_none());
+    assert!(first.next.is_some());
 }

@@ -59,7 +59,7 @@
 }
 .xt-tray-tiles {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 .xt-tray-tile {
@@ -67,7 +67,7 @@
   flex-direction: column;
   gap: 5px;
   min-width: 0;
-  padding: 12px;
+  padding: 10px 7px;
 }
 .xt-tray-label,
 .xt-tray-heading {
@@ -79,6 +79,8 @@
 }
 .xt-tray-label {
   color: var(--meta);
+  font-size: 9px;
+  letter-spacing: 0.02em;
 }
 .xt-tray-heading {
   color: var(--ink);
@@ -87,12 +89,12 @@
 .xt-tray-value {
   color: var(--ink);
   font-family: var(--font-mono);
-  font-size: 24px;
+  font-size: 16px;
   font-weight: 600;
   letter-spacing: -0.03em;
-  line-height: 1;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
 }
-/* Wraps rather than truncates: a partial cost must never lose "not a total". */
 .xt-tray-meta {
   color: var(--meta);
   font-family: var(--font-mono);
@@ -144,17 +146,9 @@
   font-weight: 600;
   cursor: pointer;
 }
-.xt-tray-footnote {
-  margin: 0;
-  padding: 0 4px;
-  color: var(--meta);
-  font-size: 10.5px;
-}
-.xt-tray-spacer {
-  flex: 1;
-}
 .xt-tray-open {
   height: 32px;
+  flex: none;
   border: 0;
   border-radius: 8px;
   background: var(--btn-ink);
@@ -162,4 +156,60 @@
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+}
+
+.xt-tray-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+.xt-tray-content > * {
+  flex-shrink: 0;
+}
+.xt-tray-sessions {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.xt-tray-session {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 0;
+}
+.xt-tray-session + .xt-tray-session {
+  border-top: 1px solid var(--border);
+}
+.xt-tray-session-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.xt-tray-session-name {
+  min-width: 0;
+  flex: 1;
+  color: var(--ink);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-tray-session .xt-live-session-badge {
+  flex: none;
+}
+.xt-tray-session-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.xt-tray-session-meta > :first-child {
+  flex: none;
+}
+.xt-tray-session-meta > :last-child {
+  min-width: 0;
 }

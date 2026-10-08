@@ -256,6 +256,7 @@ impl Reader<'_> {
                     jiff::tz::TimeZone::UTC,
                     MetricClock::System,
                     query,
+                    &xt_metrics::PriceCatalog::bundled()?,
                 )?
             }
         })
@@ -419,7 +420,8 @@ fn blank(value: &mut serde_json::Value) {
 }
 
 /// Refuse a database in the app's own data folder (or aliased to it), a
-/// sidecar alias, and the real home, before anything is opened.
+/// sidecar alias, and the real home, before anything is opened. The folder
+/// of the earlier app ID still holds real data and is refused too.
 fn guard(db: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     validate_index_destination(db, home)?;
     let real = env::var_os("HOME").map(PathBuf::from);
@@ -430,7 +432,10 @@ fn guard(db: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     }
     let live: Vec<PathBuf> = real
         .into_iter()
-        .map(|base| base.join("Library/Application Support/ai.xtrace.desktop"))
+        .flat_map(|base| {
+            ["ai.xtrace.app", "ai.xtrace.desktop"]
+                .map(|id| base.join("Library/Application Support").join(id))
+        })
         .map(|live| resolved(&live).unwrap_or(live))
         .collect();
     for suffix in ["", "-wal", "-shm", "-journal"] {

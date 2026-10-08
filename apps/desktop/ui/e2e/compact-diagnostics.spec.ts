@@ -2,6 +2,9 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import fixture from '../fixtures/F1.json' with { type: 'json' };
 import { withPrEffort, type SectionSpec } from '../src/app/dashboard/pr-effort.synthetic';
 import type { FixtureExport } from '../src/data/generated/FixtureExport';
+const SUMMARY_SCOPE =
+  'Counts cover all matching indexed sessions. Messages and agent working time cover the selected range. The table hides sessions still being checked and sub-sessions without a verified parent.';
+const SUMMARY_SCOPE_SHORT = 'Matching indexed sessions · messages/time in selected range';
 
 /**
  * Every limitation at once, over test-only synthetic data served in place of
@@ -62,7 +65,7 @@ combined.native_index = {
 };
 
 async function open(page: Page, path: string, width: number, height: number, scheme: string) {
-  await page.route('**/fixtures/F1.json?import', (route) =>
+  await page.route('**/fixtures/F1.json*', (route) =>
     route.fulfill({
       contentType: 'text/javascript',
       body: `export default ${JSON.stringify(combined)};`,
@@ -136,13 +139,11 @@ for (const [width, viewportHeight] of [
       // Partial pricing is a priced subtotal marked +, on the total and on its
       // day, with the unpriced responses named.
       await effort.getByRole('radio', { name: 'cost' }).click();
-      await expect(effort.getByTestId('effort-headline')).toHaveText(
-        '$2.05+last 7 days1 response has no price',
-      );
+      await expect(effort.getByTestId('effort-headline')).toHaveText('$2.05+');
       const partial = effort.locator('[data-testid="effort-day"][data-partial]');
       await expect(partial).toHaveCount(1);
       await expect(partial).toHaveAccessibleName(
-        /: \$1\.25\+\. synthetic-model \$1\.25 \(100%\)\. No price: 1 codex-auto-review response$/,
+        /: \$1\.25\+\. synthetic-model \$1\.25 \(100%\)\. No price: 1 unpublished-model response$/,
       );
       // From the measure control, Tab alone reaches the method control, which
       // opens the method and the daily values over the page.
@@ -215,11 +216,9 @@ for (const [width, viewportHeight] of [
       await expect(page.locator('.xt-sessions-heading + .xt-sessions-summary')).toHaveCount(1);
       await expect(page.getByRole('region', { name: 'Untimed indexed history' })).toHaveCount(0);
       await expect(page.locator('.xt-sessions [role="status"]')).toHaveCount(0);
-      await expect(heading.locator('p')).toHaveText(
-        'Range: all indexed activity · filters: table only',
-      );
+      await expect(heading.locator('p')).toHaveText(SUMMARY_SCOPE_SHORT);
       await expect(page.getByRole('region', { name: 'Range summary' })).toHaveAccessibleDescription(
-        'The summary counts all indexed activity in the selected range; filters narrow only the table.',
+        SUMMARY_SCOPE,
       );
       // A small triangle, the heading's last control, at its right edge.
       const [box, head] = await Promise.all([flag.boundingBox(), heading.boundingBox()]);
@@ -305,7 +304,7 @@ test('healthy sessions draw no warning triangle', async ({ page }) => {
   await page.goto('/sessions');
   await expect(page.getByText('Session 00000000', { exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Range summary' })).toBeVisible();
-  await expect(page.locator('.xt-sessions-tiles .xt-stat-tile').first()).toContainText('5');
+  await expect(page.locator('.xt-sessions-tiles .xt-stat-tile').first()).toContainText('1main');
   await expect(page.getByTestId('sessions-issues')).toHaveCount(0);
   await expect(page.locator('.xt-sessions details')).toHaveCount(0);
   await expect(page.locator('.xt-sessions [role="status"]')).toHaveCount(0);

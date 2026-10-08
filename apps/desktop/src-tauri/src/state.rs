@@ -99,6 +99,9 @@ pub enum StateError {
     LiveStatus(&'static str),
 }
 
+/// The app's database file in its data folder.
+pub const DATABASE_FILE: &str = "xtrace.db";
+
 #[derive(Default)]
 pub struct StartupOptions {
     pub data_dir: Option<PathBuf>,
@@ -185,6 +188,36 @@ impl StartupOptions {
         }
         self.github_cli = github_cli;
         Ok(self)
+    }
+}
+
+/// Which data folder a launch uses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DataFolder {
+    /// A disposable folder of its own (under `XTRACE_DATA_DIR` when given);
+    /// fixture startup never selects live data.
+    Fixture,
+    /// The folder `XTRACE_DATA_DIR` names.
+    Chosen(PathBuf),
+    /// The app's own application-data folder.
+    Default(PathBuf),
+}
+
+impl StartupOptions {
+    /// The one rule for which data folder this launch uses. The default
+    /// folder is resolved only when neither a fixture nor `XTRACE_DATA_DIR`
+    /// is given, so fixture mode never even asks the host for it.
+    pub fn data_folder(
+        &self,
+        default_dir: impl FnOnce() -> Result<PathBuf, StateError>,
+    ) -> Result<DataFolder, StateError> {
+        if self.fixture.is_some() {
+            return Ok(DataFolder::Fixture);
+        }
+        Ok(match &self.data_dir {
+            Some(path) => DataFolder::Chosen(path.clone()),
+            None => DataFolder::Default(default_dir()?),
+        })
     }
 }
 
@@ -285,12 +318,12 @@ impl AppState {
         default_dir: impl FnOnce() -> Result<PathBuf, StateError>,
         default_home: impl FnOnce() -> Result<PathBuf, StateError>,
     ) -> Result<Self, StateError> {
-        if let Some(id) = options.fixture {
-            return Self::fixture(id, options.data_dir);
-        }
-        let data_dir = match options.data_dir {
-            Some(path) => path,
-            None => default_dir()?,
+        let data_dir = match options.data_folder(default_dir)? {
+            DataFolder::Fixture => {
+                let id = options.fixture.ok_or(StateError::InvalidOption)?;
+                return Self::fixture(id, options.data_dir);
+            }
+            DataFolder::Chosen(path) | DataFolder::Default(path) => path,
         };
         let native_home = match options.native_home {
             Some(path) => path,
@@ -299,7 +332,7 @@ impl AppState {
         if !native_home.is_dir() {
             return Err(StateError::NativeHome);
         }
-        let db_path = data_dir.join("xtrace.db");
+        let db_path = data_dir.join(DATABASE_FILE);
         xt_ingest::native::validate_index_destination(&db_path, &native_home)
             .map_err(StateError::IndexDestination)?;
         std::fs::create_dir_all(&data_dir)?;
@@ -340,7 +373,7 @@ impl AppState {
             live_identity: Mutex::new(None),
             database: Mutex::new(Some(Database {
                 store,
-                metrics_path: data_dir.join("xtrace.db"),
+                metrics_path: data_dir.join(DATABASE_FILE),
                 metric_context: Arc::new(metric_context),
                 _fixture_directory: directory,
             })),
@@ -372,7 +405,7 @@ impl AppState {
             }
             None => tempfile::TempDir::new()?,
         };
-        let path = directory.path().join("xtrace.db");
+        let path = directory.path().join(DATABASE_FILE);
         fixture
             .write_db(&path, true)
             .map_err(|_| StateError::FixtureInvalid)?;
@@ -561,6 +594,7 @@ impl AppState {
         self.sessions_query(
             crate::dto::SessionQuery {
                 search,
+                sort: Default::default(),
                 hosts: host.as_ref().map(std::slice::from_ref),
                 with_prs: false,
                 after,
@@ -577,6 +611,14 @@ impl AppState {
         window_days: u32,
     ) -> Result<crate::dto::SessionPage, StateError> {
         self.with_metrics(window_days, |metrics, inputs| {
+            let bundled;
+            let catalog = match inputs.catalog {
+                Some(catalog) => catalog,
+                None => {
+                    bundled = xt_metrics::PriceCatalog::bundled()?;
+                    &bundled
+                }
+            };
             crate::dto::session_page(
                 metrics,
                 window_days,
@@ -584,6 +626,7 @@ impl AppState {
                 inputs.zone,
                 inputs.clock,
                 query,
+                catalog,
             )
         })
     }
@@ -924,7 +967,15 @@ impl AppState {
         window_days: u32,
     ) -> Result<Option<crate::dto::SessionRow>, StateError> {
         self.with_metrics(window_days, |metrics, inputs| {
-            crate::dto::session_row(metrics, window_days, inputs.now, session_id)
+            let bundled;
+            let catalog = match inputs.catalog {
+                Some(catalog) => catalog,
+                None => {
+                    bundled = xt_metrics::PriceCatalog::bundled()?;
+                    &bundled
+                }
+            };
+            crate::dto::session_row(metrics, window_days, inputs.now, session_id, catalog)
         })
     }
 
@@ -964,8 +1015,16 @@ impl AppState {
         read_id: &str,
         readers: &crate::native_index::DetailReaders,
     ) -> Result<crate::dto::DashboardSpanDetail, StateError> {
-        let detail = self.with_metric_inputs(|metrics, _| {
-            crate::dashboard::span_detail(metrics, session_id, start_ms, end_ms)
+        let detail = self.with_metric_inputs(|metrics, inputs| {
+            let bundled;
+            let catalog = match inputs.catalog {
+                Some(catalog) => catalog,
+                None => {
+                    bundled = xt_metrics::PriceCatalog::bundled()?;
+                    &bundled
+                }
+            };
+            crate::dashboard::span_detail(metrics, session_id, start_ms, end_ms, catalog)
         })?;
         // Only the file read takes a slot in `reads`, under `read_id`, so the
         // measured detail never waits for one. Every slot taken answers
@@ -1158,14 +1217,6 @@ impl AppState {
     ) -> Result<crate::dto::SessionPage, StateError> {
         let request = crate::pr_analytics::validate(request)?;
         self.with_metric_inputs(|metrics, inputs| {
-            crate::pr_analytics::sessions(metrics, &request, inputs.zone, inputs.clock)
-        })
-    }
-
-    /// The tray's local day so far: midnight in the captured zone up to the
-    /// captured instant, under the same catalog policy as the Dashboard.
-    pub fn today(&self) -> Result<crate::today::TodaySummary, StateError> {
-        self.with_metric_inputs(|metrics, inputs| {
             let bundled;
             let catalog = match inputs.catalog {
                 Some(catalog) => catalog,
@@ -1174,8 +1225,34 @@ impl AppState {
                     &bundled
                 }
             };
-            crate::today::today(metrics, inputs.now, inputs.zone, inputs.clock, catalog)
+            crate::pr_analytics::sessions(metrics, &request, inputs.zone, inputs.clock, catalog)
         })
+    }
+
+    /// The tray's local day so far: midnight in the captured zone up to the
+    /// captured instant, under the same catalog policy as the Dashboard.
+    pub fn today(&self) -> Result<crate::today::TodaySummary, StateError> {
+        self.with_prepared_metrics(
+            |store| crate::human_break::break_length(store.human_break()?),
+            |metrics, inputs, break_length| {
+                let bundled;
+                let catalog = match inputs.catalog {
+                    Some(catalog) => catalog,
+                    None => {
+                        bundled = xt_metrics::PriceCatalog::bundled()?;
+                        &bundled
+                    }
+                };
+                crate::today::today(
+                    metrics,
+                    inputs.now,
+                    inputs.zone,
+                    inputs.clock,
+                    catalog,
+                    break_length,
+                )
+            },
+        )
     }
 
     pub fn tokens_by_host(&self, window_days: u32) -> Result<crate::dto::TokensByHost, StateError> {
@@ -2203,7 +2280,14 @@ mod tests {
         let reader = std::thread::spawn(move || {
             holder.with_metric_inputs(|metrics, _| {
                 // A real read connection, mid-read.
-                metrics.span_detail("no-such-session", 0, 0).unwrap();
+                metrics
+                    .span_detail(
+                        "no-such-session",
+                        0,
+                        0,
+                        &xt_metrics::PriceCatalog::bundled().unwrap(),
+                    )
+                    .unwrap();
                 started.send(()).unwrap();
                 released.recv().unwrap();
                 Ok(())
@@ -2323,7 +2407,12 @@ mod tests {
                 released.recv().unwrap();
                 assert!(path.exists(), "the read keeps its database");
                 // The connection still reads after shutdown began.
-                metrics.span_detail("no-such-session", 0, 0)?;
+                metrics.span_detail(
+                    "no-such-session",
+                    0,
+                    0,
+                    &xt_metrics::PriceCatalog::bundled().unwrap(),
+                )?;
                 Ok(())
             })
         });

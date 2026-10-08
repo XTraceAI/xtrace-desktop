@@ -3,8 +3,9 @@ use rusqlite::Connection;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use xt_fixtures::{Fixture, TempDb};
-use xt_metrics::{MetricsDb, TokenReport, TokenSummary, Window};
+use xt_metrics::{MetricsDb, PriceCatalog, TokenReport, TokenSummary, Window};
 use xt_store::{CanonicalRecord, Host, SessionMeta, SessionSource};
+mod report_support;
 fn fixture(id: &str) -> Fixture {
     Fixture::load(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -40,10 +41,23 @@ fn seed(id: &str) -> (Fixture, TempDb) {
     (f, db)
 }
 fn query(db: &TempDb) -> TokenReport {
-    MetricsDb::open(db.path())
-        .unwrap()
-        .tokens(window(), TimeZone::UTC)
-        .unwrap()
+    tokens_in(
+        &MetricsDb::open(db.path()).unwrap(),
+        window(),
+        TimeZone::UTC,
+    )
+    .unwrap()
+}
+/// The token report, checked against the combined report read.
+fn tokens_in(
+    metrics: &MetricsDb,
+    window: Window,
+    zone: TimeZone,
+) -> xt_metrics::Result<TokenReport> {
+    let catalog = PriceCatalog::bundled().unwrap();
+    report_support::matches_standalone(metrics, window, window.end_ms(), &[], zone, &catalog)
+        .current
+        .tokens
 }
 fn breakdowns_match(r: &TokenReport) {
     let total = r.total.counters.total_tokens.unwrap();
@@ -346,10 +360,12 @@ fn tokens_keys_are_host_scoped_and_missing_ids_never_form_a_shared_group() {
 #[test]
 fn tokens_local_day_buckets_use_the_same_selected_responses() {
     let (_, db) = seed("F17");
-    let report = MetricsDb::open(db.path())
-        .unwrap()
-        .tokens(window(), TimeZone::get("America/Los_Angeles").unwrap())
-        .unwrap();
+    let report = tokens_in(
+        &MetricsDb::open(db.path()).unwrap(),
+        window(),
+        TimeZone::get("America/Los_Angeles").unwrap(),
+    )
+    .unwrap();
     assert_eq!(report.by_day.len(), 8);
     assert_eq!(
         report
@@ -628,10 +644,7 @@ fn tokens_precise_instants_precede_uuid_including_leap_seconds() {
         } else {
             window()
         };
-        let report = MetricsDb::open(db.path())
-            .unwrap()
-            .tokens(w, TimeZone::UTC)
-            .unwrap();
+        let report = tokens_in(&MetricsDb::open(db.path()).unwrap(), w, TimeZone::UTC).unwrap();
         let expected_input = if name == "unknown" {
             1
         } else {
@@ -647,12 +660,7 @@ fn tokens_precise_instants_precede_uuid_including_leap_seconds() {
                 .unwrap()
                 .execute("UPDATE records SET ts='invalid' WHERE uuid='a'", [])
                 .unwrap();
-            assert!(
-                MetricsDb::open(db.path())
-                    .unwrap()
-                    .tokens(w, TimeZone::UTC)
-                    .is_err()
-            );
+            assert!(tokens_in(&MetricsDb::open(db.path()).unwrap(), w, TimeZone::UTC).is_err());
         }
     }
 }
@@ -689,21 +697,19 @@ fn tokens_precise_window_and_day_membership_keeps_leaps_before_midnight() {
     let metrics = MetricsDb::open(db.path()).unwrap();
     let boundary = ms("2017-01-01T00:00:00Z");
     let end = ms("2017-01-02T00:00:00Z");
-    let left = metrics
-        .tokens(
-            Window::new(boundary - 86_400_000, boundary).unwrap(),
-            TimeZone::UTC,
-        )
-        .unwrap();
-    let right = metrics
-        .tokens(Window::new(boundary, end).unwrap(), TimeZone::UTC)
-        .unwrap();
-    let combined = metrics
-        .tokens(
-            Window::new(boundary - 86_400_000, end).unwrap(),
-            TimeZone::UTC,
-        )
-        .unwrap();
+    let left = tokens_in(
+        &metrics,
+        Window::new(boundary - 86_400_000, boundary).unwrap(),
+        TimeZone::UTC,
+    )
+    .unwrap();
+    let right = tokens_in(&metrics, Window::new(boundary, end).unwrap(), TimeZone::UTC).unwrap();
+    let combined = tokens_in(
+        &metrics,
+        Window::new(boundary - 86_400_000, end).unwrap(),
+        TimeZone::UTC,
+    )
+    .unwrap();
     assert_eq!(left.total.counters.input_tokens, Some(7));
     assert_eq!(right.total.counters.input_tokens, Some(76));
     assert_eq!(combined.total.counters.input_tokens, Some(83));
@@ -716,16 +722,19 @@ fn tokens_precise_window_and_day_membership_keeps_leaps_before_midnight() {
     breakdowns_match(&left);
     breakdowns_match(&right);
     breakdowns_match(&combined);
-    let millisecond = metrics
-        .tokens(Window::new(boundary, boundary + 1).unwrap(), TimeZone::UTC)
-        .unwrap();
+    let millisecond = tokens_in(
+        &metrics,
+        Window::new(boundary, boundary + 1).unwrap(),
+        TimeZone::UTC,
+    )
+    .unwrap();
     assert_eq!(millisecond.total.counters.input_tokens, Some(47));
-    let after = metrics
-        .tokens(
-            Window::new(boundary + 1, boundary + 2).unwrap(),
-            TimeZone::UTC,
-        )
-        .unwrap();
+    let after = tokens_in(
+        &metrics,
+        Window::new(boundary + 1, boundary + 2).unwrap(),
+        TimeZone::UTC,
+    )
+    .unwrap();
     assert_eq!(after.total.counters.input_tokens, Some(29));
 }
 
@@ -737,9 +746,12 @@ fn tokens_empty_windows_preserve_numeric_boundary_domain() {
         ms("-000001-01-01T00:00:00Z"),
         Timestamp::MAX.as_second() * 1000 - 1,
     ] {
-        let report = metrics
-            .tokens(Window::new(start, start + 1).unwrap(), TimeZone::UTC)
-            .unwrap();
+        let report = tokens_in(
+            &metrics,
+            Window::new(start, start + 1).unwrap(),
+            TimeZone::UTC,
+        )
+        .unwrap();
         assert_eq!(report.total.selected_responses, 0);
     }
 }

@@ -1,3 +1,4 @@
+import type { DashboardLaneCost } from '../../data/generated/DashboardLaneCost';
 import type { DashboardCapture } from '../../data/generated/DashboardCapture';
 import type { DashboardWindow } from '../../data/generated/DashboardWindow';
 import type { MetricCaptureGap } from '../../data/generated/MetricCaptureGap';
@@ -8,6 +9,7 @@ import type { MetricTile } from '../../data/generated/MetricTile';
 import type { MetricUnpricedReason } from '../../data/generated/MetricUnpricedReason';
 import type { MetricUsageGap } from '../../data/generated/MetricUsageGap';
 import { clock, dayRange } from '../../kit/clock';
+import { usd } from '../../kit/format';
 import type { ControlTone } from '../../kit/control-tone';
 import { surfaceLabel } from '../../kit/hosts';
 import { rules, type RuleId } from '../../kit/rules';
@@ -19,8 +21,16 @@ import type { TimeRange } from '../../kit/TopBar';
  * Money and a host's surface are each written in one place (the kit's `usd`
  * and `surfaceLabel`); they are re-exported here for the report's screens.
  */
-export { usd } from '../../kit/format';
+export { usd };
 export { surfaceLabel };
+
+/** The visible cost amount for a session or span, preserving unknown and partial usage. */
+export const costAmount = (cost: DashboardLaneCost): string | null =>
+  cost.priced_observations === 0
+    ? null
+    : cost.total_usd !== null
+      ? usd(cost.total_usd)
+      : `${usd(cost.priced_subtotal_usd)}+`;
 
 export const rangeDays: Record<TimeRange, 7 | 14 | 30> = { '7d': 7, '14d': 14, '30d': 30 };
 

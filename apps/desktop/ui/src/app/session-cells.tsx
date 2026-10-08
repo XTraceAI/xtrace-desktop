@@ -94,11 +94,11 @@ export function HandsOff({ row }: { row: SessionRow }) {
 }
 
 /**
- * The row's M-05 active time as hours and remaining minutes (`3h12.8m`), on
- * the one-decimal scale the column has always used. The compact text is drawn
- * for the eye; a screen reader hears the same value in words with the exact
- * millisecond measurement, which is also the tooltip and a line in the row's
- * details. An unindexed session keeps its reason, never a zero.
+ * The row's M-05 active time as hours and remaining whole minutes
+ * (`3 h 13 m`). The compact text is drawn for the eye; a screen reader hears
+ * the same value in words with the exact millisecond measurement, which is
+ * also the tooltip and a line in the row's details. An unindexed session keeps
+ * its reason, never a zero.
  */
 export function AgentTime({ row }: { row: SessionRow }) {
   const metrics = indexed(row);
