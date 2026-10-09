@@ -1,7 +1,8 @@
 //! Generated Environment IPC shapes. Metric shapes mirror `xt_metrics`'s M-17
 //! report and probe shapes mirror `xt_probes::environment`; conversion checks
 //! the JSON round trip so a renamed or removed core field fails instead of
-//! silently becoming unknown. No shape here carries a filesystem path.
+//! silently becoming unknown. Discovered filesystem paths are omitted;
+//! structural names remain visible, including path-like or URL-like text.
 use crate::dashboard_dto::{DashboardWindow, MetricInventory};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -201,7 +202,8 @@ pub enum EnvSourceStatus {
 }
 
 /// A verified configured component: configured, not installed, callable or
-/// called. Only structural fields; never a command, argument, value or URL.
+/// called. Command, argument, environment, credential and URL field values
+/// are omitted; structural names may contain path-like or URL-like text.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct EnvConfiguredComponent {
     pub host: String,
