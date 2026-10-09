@@ -2,7 +2,7 @@
 import type { MetricIdentityCalls } from "./MetricIdentityCalls";
 
 /**
- * The M-17 inventory join. The app always supplies an unknown inventory, so
- * `known` never occurs in this bridge; the variant mirrors the core shape.
+ * Tool usage compared with inventory. The app always supplies an unknown
+ * inventory, so `known` never occurs in this bridge; the variant mirrors the core shape.
  */
 export type MetricInventoryJoin = { "known": { installed: Array<MetricIdentityCalls>, called_not_installed: Array<MetricIdentityCalls>, } } | "unknown";

@@ -1,4 +1,4 @@
-//! Generated Environment IPC shapes. Metric shapes mirror `xt_metrics`'s M-17
+//! Generated Environment IPC shapes. Metric shapes mirror `xt_metrics`'s tool usage
 //! report and probe shapes mirror `xt_probes::environment`; conversion checks
 //! the JSON round trip so a renamed or removed core field fails instead of
 //! silently becoming unknown. Discovered filesystem paths are omitted;
@@ -48,8 +48,8 @@ pub struct MetricSurfaceCalls {
     pub by_identity: Vec<MetricIdentityCalls>,
 }
 
-/// The M-17 inventory join. The app always supplies an unknown inventory, so
-/// `known` never occurs in this bridge; the variant mirrors the core shape.
+/// Tool usage compared with inventory. The app always supplies an unknown
+/// inventory, so `known` never occurs in this bridge; the variant mirrors the core shape.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricInventoryJoin {
@@ -86,7 +86,7 @@ pub struct MetricUnresolvedCalls {
     pub calls: u64,
 }
 
-/// One M-17 report over one window, exactly as `xt_metrics` computed it.
+/// One tool usage report over one window, exactly as `xt_metrics` computed it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MetricEnvUsage {
     #[ts(type = "number")]

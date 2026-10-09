@@ -1,6 +1,6 @@
 # Environment probe and bridge
 
-The Environment bridge reports how often structural tool identities were called (M-17) beside the components that supported host configuration files state. It is an honest alpha boundary: the registries a local reader can open cannot prove a complete, callable host inventory. The bridge therefore always supplies an **unknown** inventory to M-17 and returns verified configured components separately. It never derives "not installed", "never called" or a used/installed ratio.
+The Environment bridge reports how often structural tool identities were called beside the components that supported host configuration files state. It is an honest alpha boundary: the registries a local reader can open cannot prove a complete, callable host inventory. The bridge therefore always supplies an **unknown** inventory to the tool usage calculation and returns verified configured components separately. It never derives "not installed", "never called" or a used/installed ratio.
 
 ## What the probe reads
 

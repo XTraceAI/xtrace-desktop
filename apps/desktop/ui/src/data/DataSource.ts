@@ -12,7 +12,7 @@ export type Unsubscribe = () => void;
 export interface DataSource {
   dashboard(windowDays: number): Promise<DashboardMetrics>;
   tokensByHost(windowDays: number): Promise<TokensByHost>;
-  /** M-17 counts with an unknown inventory beside configured components; never recalculated here. */
+  /** Tool usage counts with an unknown inventory beside configured components; never recalculated here. */
   environment(windowDays: number): Promise<EnvironmentMetrics>;
   readonly kind: 'native' | 'fixture' | 'preview';
   sessionsList(search: string, host: string | null, after: string | null): Promise<SessionPage>;

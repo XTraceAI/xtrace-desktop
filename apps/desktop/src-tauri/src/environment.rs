@@ -1,4 +1,4 @@
-//! Thin Environment composition: M-17 counts stay in xt-metrics and registry
+//! Environment reports: tool usage counts stay in xt-metrics and configuration
 //! reading stays in xt-probes. This module only fixes the two windows, supplies
 //! an unknown inventory, orders identity rows and converts to generated DTOs.
 use crate::{
@@ -16,7 +16,7 @@ use xt_probes::environment::{self as probe, EnvironmentProbe, ProbeHost, ProbeRo
 
 /// The fixed strip: this many local calendar dates, whatever range is selected.
 pub const STRIP_DAYS: u32 = 14;
-/// The hosts supplied to M-17, each with an unknown inventory.
+/// The hosts included in tool usage reports, each with an unknown inventory.
 const HOSTS: [ProbeHost; 3] = [ProbeHost::Claude, ProbeHost::Codex, ProbeHost::Cursor];
 
 /// Fourteen local calendar dates ending with the date that holds the last
@@ -35,7 +35,7 @@ pub fn strip_window(now_ms: i64, zone: &TimeZone) -> Result<Window, StateError> 
 }
 
 /// Every probed host is supplied as `Inventory::Unknown`. The registries
-/// available here cannot prove a complete callable inventory, so the M-17 join
+/// available here cannot prove a complete callable inventory, so the usage report
 /// must never state installed-but-never-called or called-but-not-installed.
 fn unknown_inventory() -> Vec<HostInventory> {
     HOSTS
