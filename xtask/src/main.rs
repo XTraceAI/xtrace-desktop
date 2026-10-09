@@ -130,6 +130,11 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                     fixture.now().timestamp_millis(),
                     fixture.snapshots().get("prices"),
                 )?,
+                environments: xtrace_desktop::environment::fixture_reports(
+                    database.path(),
+                    fixture.now().timestamp_millis(),
+                    &catalog,
+                )?,
                 db_counts: database.store().counts()?.try_into()?,
                 sessions: xtrace_desktop::dto::session_page(database.store(), "", None, None)?,
                 native_index: xtrace_desktop::dto::NativeIndexStatus {

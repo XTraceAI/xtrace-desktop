@@ -84,7 +84,9 @@ input. No input glob is used. For example, a session may point to
   The harness passes session metadata and records through `Store` with an
   explicit `keep_content` flag. Store validation and UUID merging still apply.
 - Optional `gh` names a JSON stub. Optional `snapshots` maps names to JSON paths;
-  F16 reserves `fresh`, `typical`, `connected`, `no-python3` and `env`.
+  F16 reserves `fresh`, `typical`, `connected`, `no-python3` and `env`. The `env`
+  snapshot indexes a small synthetic probe matrix under `input/probes/env/`, read by
+  the environment probe and the fixture shell export; F16 remains a skeleton.
 - All paths are relative to the fixture directory. Missing files, traversal,
   absolute paths and symlinks escaping the fixture fail. Diagnostics identify
   the file and JSON/JSONL location, such as

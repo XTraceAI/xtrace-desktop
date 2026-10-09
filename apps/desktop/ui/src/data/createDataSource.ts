@@ -16,6 +16,7 @@ export async function createDataSource(): Promise<DataSource> {
     kind: 'preview',
     dashboard: unavailable,
     tokensByHost: unavailable,
+    environment: unavailable,
     sessionsList: unavailable,
     appInfo: unavailable,
     dbCounts: unavailable,
