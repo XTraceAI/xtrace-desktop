@@ -5,6 +5,7 @@ import type { EnvRootScope } from "./EnvRootScope";
 
 /**
  * A verified configured component: configured, not installed, callable or
- * called. Only structural fields; never a command, argument, value or URL.
+ * called. Command, argument, environment, credential and URL field values
+ * are omitted; structural names may contain path-like or URL-like text.
  */
 export type EnvConfiguredComponent = { host: string, source: EnvConfigSource, scope: EnvRootScope, kind: EnvComponentKind, name: string, enabled: boolean | null, };

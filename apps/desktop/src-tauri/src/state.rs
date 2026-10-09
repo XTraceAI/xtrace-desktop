@@ -374,7 +374,7 @@ impl AppState {
         })
     }
 
-    /// M-17 for the selected range and the fixed 14-date strip, with an
+    /// Tool usage for the selected range and the fixed 14-date strip, with an
     /// unknown inventory, beside the configured-component probe. Native roots
     /// are the native home option and local repository paths from stored
     /// session metadata; fixture mode uses the shared fixture probe.

@@ -4,6 +4,6 @@ import type { MetricSurfaceCalls } from "./MetricSurfaceCalls";
 import type { MetricUnresolvedCalls } from "./MetricUnresolvedCalls";
 
 /**
- * One M-17 report over one window, exactly as `xt_metrics` computed it.
+ * One tool usage report over one window, exactly as `xt_metrics` computed it.
  */
 export type MetricEnvUsage = { window_start_ms: number, window_end_ms: number, observed: Array<MetricSurfaceCalls>, hosts: Array<MetricHostEnvironment>, unresolved: Array<MetricUnresolvedCalls>, };

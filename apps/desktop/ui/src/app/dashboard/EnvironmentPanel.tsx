@@ -29,7 +29,7 @@ import {
 import { inventoryState, plural, windowLabel, zoneLabel } from './present';
 import { useEnvironmentReport } from './range';
 
-/** The Environment card body: observed M-17 usage, with configured facts one step away. */
+/** The Environment card body: observed component usage, with configured facts one step away. */
 export function EnvironmentPanel({ range }: { range: TimeRange }) {
   const report = useEnvironmentReport(range);
   if (report.isPending)
