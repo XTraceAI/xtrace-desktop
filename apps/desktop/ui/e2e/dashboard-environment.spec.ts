@@ -141,7 +141,7 @@ for (const [width, height] of [
       // Both dialogs fit the window without horizontal overflow.
       for (const [trigger, name] of [
         ['Unresolved attribution details', 'Unresolved attribution'],
-        ['Observed identities · 11', 'Observed identities · last 7d'],
+        ['Observed identities · 11', 'Observed identities'],
         ['Configured components · 14', 'Configured components'],
       ] as const) {
         await panel(page).getByRole('button', { name: trigger }).click();
@@ -167,7 +167,7 @@ test('the F1 export shows real observed usage, not the unavailable placeholder',
 }) => {
   await open(page, { width: 1440, height: 900, dense: false });
   await expect(panel(page).getByTestId('environment-summary')).toContainText(
-    '5 observed calls · 1 identity · last 7d',
+    '5 observed calls · last 7d · 1 identity in either window',
   );
   await expect(panel(page)).not.toContainText('Environment data is unavailable');
   await expect(row(page, 'Read').locator('.xt-env-calls')).toHaveText('5 calls');
@@ -224,7 +224,7 @@ test('keyboard reaches every observed identity and the configured details', asyn
   const all = panel(page).getByRole('button', { name: 'Observed identities · 11' });
   await all.focus();
   await page.keyboard.press('Enter');
-  const dialog = page.getByRole('dialog', { name: 'Observed identities · last 7d' });
+  const dialog = page.getByRole('dialog', { name: 'Observed identities' });
   await expect(dialog).toBeVisible();
   const list = dialog.getByRole('list', { name: 'All 11 observed' });
   await expect(list.getByRole('listitem')).toHaveCount(11);
@@ -271,7 +271,7 @@ test('range presets change selected totals while strips keep the fixed 14 dates'
   ] as const) {
     await range.getByRole('radio', { name: `${days}d` }).click();
     await expect(panel(page).getByTestId('environment-summary')).toContainText(
-      `${total} · 11 identities · last ${days}d`,
+      `${total} · last ${days}d · 11 identities in either window`,
     );
     await expect(bash.locator('.xt-env-calls')).toHaveText(calls);
     await expect(bash.getByRole('img')).toHaveCount(14);

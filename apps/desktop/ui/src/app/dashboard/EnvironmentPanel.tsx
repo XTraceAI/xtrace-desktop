@@ -68,8 +68,8 @@ function EnvironmentBody({ report, range }: { report: EnvironmentMetrics; range:
     <>
       <p className="xt-env-summary" data-testid="environment-summary">
         <span>
-          {plural(totals.selected_calls, 'observed call')} ·{' '}
-          {plural(totals.identities, 'identity', 'identities')} · last {range}
+          {plural(totals.selected_calls, 'observed call')} · last {range} ·{' '}
+          {plural(totals.identities, 'identity', 'identities')} in either window
         </span>
         <StatePill tone={inventory.tone} height={20}>
           {inventory.label}
@@ -90,8 +90,8 @@ function EnvironmentBody({ report, range }: { report: EnvironmentMetrics; range:
       )}
       <p className="xt-dash-note xt-env-note" data-testid="environment-strip-note">
         Strips: fixed 14 local days {windowLabel(report.strip_window)},{' '}
-        {zoneLabel(report.strip_window)}, any range; shades at 1, 3, 8. Observed use only: installed
-        components are unknown.
+        {zoneLabel(report.strip_window)}, any range; shades at 1, {STRIP_THRESHOLDS[0]},{' '}
+        {STRIP_THRESHOLDS[1]}. Observed use only: installed components are unknown.
       </p>
       <div className="xt-env-actions">
         {identities.length > 0 && <AllObserved report={report} range={range} />}
@@ -233,7 +233,7 @@ function IdentityItem({
         </span>
       )}
       <DayStrip
-        label={`${text.name}, ${row.host}: ${callsText(identity, row.strip_calls)} per local day, last 14 days`}
+        label={`${text.name}, ${row.host}: ${callsText(identity, row.strip_calls)} across 14 local days; daily counts`}
         thresholds={STRIP_THRESHOLDS}
         days={row.strip.map((day) => ({ label: dayLabel(day.date), value: day.calls }))}
       />
@@ -290,10 +290,7 @@ function Details({
 function AllObserved({ report, range }: { report: EnvironmentMetrics; range: TimeRange }) {
   const count = report.identities.length;
   return (
-    <Details
-      trigger={`Observed identities · ${count}`}
-      title={`Observed identities · last ${range}`}
-    >
+    <Details trigger={`Observed identities · ${count}`} title="Observed identities">
       <p className="xt-dash-note">
         Every identity with a call in the last {range} or the fixed 14 local days, in report order,
         with its kind, host and surface.

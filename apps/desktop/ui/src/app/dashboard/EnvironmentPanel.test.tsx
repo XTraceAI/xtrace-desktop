@@ -9,6 +9,7 @@ import type { FixtureExport } from '../../data/generated/FixtureExport';
 import { events, type DataEvent } from '../../data/ipc-names';
 import { ThemeProvider } from '../../theme/ThemeProvider';
 import { AppRoutes } from '../AppRoutes';
+import { STRIP_THRESHOLDS } from './environment';
 import { SYNTHETIC_UNTIMED, syntheticEnvironment } from './environment.synthetic';
 
 // JSON imports widen literal unions; the export is the generated shape.
@@ -82,7 +83,7 @@ const row = (name: string, list = topList()) =>
 /** Opens the observed dialog, which holds each identity's kind, host and surface context. */
 async function observedDialog(count: number) {
   fireEvent.click(within(panel()).getByRole('button', { name: `Observed identities · ${count}` }));
-  const dialog = await screen.findByRole('dialog', { name: /^Observed identities · last/ });
+  const dialog = await screen.findByRole('dialog', { name: 'Observed identities' });
   return within(dialog).getByRole('list', { name: `All ${count} observed` });
 }
 async function unresolvedDialog() {
@@ -104,7 +105,7 @@ it('shows F1 observed usage with an unknown inventory beside separately labelled
   mount(source);
   await screen.findByTestId('dashboard-summary');
   expect((await loaded()).textContent).toBe(
-    '5 observed calls · 1 identity · last 7dInventory unknown',
+    '5 observed calls · last 7d · 1 identity in either windowInventory unknown',
   );
   expect(source.environment).toHaveBeenCalledWith(7);
   const pill = within(panel()).getByText('Inventory unknown');
@@ -123,12 +124,13 @@ it('shows F1 observed usage with an unknown inventory beside separately labelled
   );
   expect(topList().getAttribute('tabindex')).toBe('0');
   const strip = within(read).getByRole('group', {
-    name: 'Read, claude: 5 calls per local day, last 14 days',
+    name: 'Read, claude: 5 calls across 14 local days; daily counts',
   });
   const days = within(strip).getAllByRole('img');
   expect(days).toHaveLength(14);
   expect(days[0].getAttribute('aria-label')).toBe('Aug 25: 0');
   expect(days[13].getAttribute('aria-label')).toBe('Sep 7: 5');
+  expect(days.slice(0, 13).every((day) => /: 0$/.test(day.getAttribute('aria-label')!))).toBe(true);
   expect(within(panel()).queryByTestId('environment-unresolved')).toBeNull();
   const observed = await observedDialog(1);
   expect(row('Read', observed).querySelector('.xt-env-context')!.textContent).toBe(
@@ -185,10 +187,13 @@ it('shows the top eight identities in Rust order and every identity in a dialog'
     'review',
   ];
   expect(rows(topList())).toEqual(top8);
+  expect(within(panel()).getByTestId('environment-summary').textContent).toContain(
+    '104 observed calls · last 7d · 11 identities in either window',
+  );
   expect(topList().getAttribute('aria-label')).toBe('Most-called identities, top 8 of 11');
   const all = await observedDialog(11);
   expect(all.closest('[role="dialog"]')!.getAttribute('aria-labelledby')).toBeTruthy();
-  expect(screen.getByRole('dialog', { name: 'Observed identities · last 7d' })).toBeTruthy();
+  expect(screen.getByRole('dialog', { name: 'Observed identities' })).toBeTruthy();
   expect(rows(all)).toEqual([
     ...top8,
     'Task',
@@ -221,6 +226,9 @@ it('never reranks: the panel keeps the report order even against the counts', as
 it('shades the fixed strip at 0, under 3, under 8 and 8 or more calls', async () => {
   mount(nativeSource((days) => synthetic(days)));
   await loaded();
+  expect(within(panel()).getByTestId('environment-strip-note').textContent).toContain(
+    `shades at 1, ${STRIP_THRESHOLDS[0]}, ${STRIP_THRESHOLDS[1]}`,
+  );
   const days = within(within(row('Bash')).getByRole('group')).getAllByRole('img');
   expect(days.slice(0, 4).map((day) => day.getAttribute('aria-label'))).toEqual([
     'Aug 25: 0',
@@ -343,7 +351,7 @@ it('updates selected totals with the range while the strip keeps its fixed 14 da
     fireEvent.click(screen.getByRole('radio', { name: range }));
     await waitFor(() =>
       expect(within(panel()).getByTestId('environment-summary').textContent).toContain(
-        `${total} · 11 identities · last ${range}`,
+        `${total} · last ${range} · 11 identities in either window`,
       ),
     );
     expect(row('Bash').querySelector('.xt-env-calls')!.textContent).toBe(calls);

@@ -32,7 +32,7 @@ export function useTokensByHost(range: TimeRange) {
   });
 }
 
-/** M-17 usage beside configured facts; keyed by range, refreshed with every `metrics` query. */
+/** Observed component usage beside configured facts; keyed by range, refreshed with every `metrics` query. */
 export function useEnvironmentReport(range: TimeRange) {
   const { source } = useData();
   const days = rangeDays[range];

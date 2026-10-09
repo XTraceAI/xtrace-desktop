@@ -539,7 +539,7 @@
   margin-left: auto;
 }
 
-/* Environment (M-17): observed identities in report order, configured facts behind a dialog. */
+/* Environment: observed identities in report order, configured facts behind a dialog. */
 .xt-env {
   display: flex;
   flex-direction: column;
