@@ -139,9 +139,9 @@ it('shows F1 observed usage with an unknown inventory beside separately labelled
   fireEvent.keyDown(observed, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(within(panel()).getByTestId('environment-strip-note').textContent).toMatch(
-    /fixed 14 local days Aug 25\s–\sSep 7, 2026, UTC, any range/,
+    /14 local days Aug 25\s–\sSep 7, 2026, UTC; same for every range/,
   );
-  expect(panel().textContent).toContain('installed components are unknown');
+  expect(panel().textContent).toContain('Installed components unknown');
   expect(panel().textContent).not.toMatch(inventoryClaims);
 
   // Configured components are a separate dialog, never presented as installed or callable.
@@ -227,7 +227,7 @@ it('shades the fixed strip at 0, under 3, under 8 and 8 or more calls', async ()
   mount(nativeSource((days) => synthetic(days)));
   await loaded();
   expect(within(panel()).getByTestId('environment-strip-note').textContent).toContain(
-    `shades at 1, ${STRIP_THRESHOLDS[0]}, ${STRIP_THRESHOLDS[1]}`,
+    `Shades: 1, ${STRIP_THRESHOLDS[0]}, ${STRIP_THRESHOLDS[1]}`,
   );
   const days = within(within(row('Bash')).getByRole('group')).getAllByRole('img');
   expect(days.slice(0, 4).map((day) => day.getAttribute('aria-label'))).toEqual([

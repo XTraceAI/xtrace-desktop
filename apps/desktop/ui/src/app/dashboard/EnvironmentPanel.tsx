@@ -89,9 +89,9 @@ function EnvironmentBody({ report, range }: { report: EnvironmentMetrics; range:
         />
       )}
       <p className="xt-dash-note xt-env-note" data-testid="environment-strip-note">
-        Strips: fixed 14 local days {windowLabel(report.strip_window)},{' '}
-        {zoneLabel(report.strip_window)}, any range; shades at 1, {STRIP_THRESHOLDS[0]},{' '}
-        {STRIP_THRESHOLDS[1]}. Observed use only: installed components are unknown.
+        Strips: 14 local days {windowLabel(report.strip_window)}, {zoneLabel(report.strip_window)};
+        same for every range. Shades: 1, {STRIP_THRESHOLDS[0]}, {STRIP_THRESHOLDS[1]}. Installed
+        components unknown.
       </p>
       <div className="xt-env-actions">
         {identities.length > 0 && <AllObserved report={report} range={range} />}

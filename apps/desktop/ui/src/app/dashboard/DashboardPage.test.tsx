@@ -155,7 +155,7 @@ it('renders the generated F1 report with honest unknowns and the shared sidebar 
   // Environment reads its own observed usage instead of the report's unavailable entry.
   expect(
     (await within(card('Environment')).findByTestId('environment-summary')).textContent,
-  ).toContain('5 observed calls · 1 identity · last 7d');
+  ).toContain('5 observed calls · last 7d · 1 identity in either window');
   expect(card('Environment').textContent).not.toContain('Environment data is unavailable');
   // F1 is legitimately unpriced: no total, no subtotal masquerading as one.
   const cost = within(card('API-equivalent cost'));
