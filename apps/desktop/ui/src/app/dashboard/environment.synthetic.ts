@@ -5,8 +5,8 @@ import type { MetricSurfaceCalls } from '../../data/generated/MetricSurfaceCalls
 import type { MetricToolIdentity } from '../../data/generated/MetricToolIdentity';
 
 /**
- * Test-only synthetic Environment report: not real history, not a design sample and not the
- * planned 58-item inventory. It replaces the observed usage of a generated F1 report (keeping its
+ * Test-only synthetic Environment report with eleven identities. It replaces the observed usage
+ * of a generated F1 report (keeping its
  * disclosed windows, strip dates and configured facts) with eleven identities in the order Rust
  * would assign, one strip of each shade step (0, 2, 5 and 9 calls), hook summaries with unresolved
  * attribution, unknown kind and details, a future kind and a raw future surface. Seven codex

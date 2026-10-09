@@ -166,7 +166,7 @@ it('shows F1 observed usage with an unknown inventory beside separately labelled
   expect(cache.closest('section')!.querySelector('h3')!.textContent).toBe('Cache only');
   expect(cache.textContent).toContain('codex · Codex plugin cache · home 1read · 1 stated');
   expect(within(configured).queryByText(/cache/i)).toBeNull();
-  // No path, command, URL or credential-shaped value is rendered.
+  // Synthetic configuration field values are absent in this fixture.
   expect(text).not.toMatch(/SYNTHETIC-FIXTURE-VALUE|https?:|\/Users|\.json|\.toml|\.claude|npx|--/);
   expect(text).not.toMatch(inventoryClaims);
   fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
