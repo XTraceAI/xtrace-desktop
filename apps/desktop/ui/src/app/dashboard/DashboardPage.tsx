@@ -20,9 +20,11 @@ import { RulePopover } from '../../kit/RulePopover';
 import type { RuleId } from '../../kit/rules';
 import { SectionCard } from '../../kit/SectionCard';
 import { StatTile } from '../../kit/StatTile';
+import type { TimeRange } from '../../kit/TopBar';
 import { freshnessText, phaseText } from '../native-index-text';
 import { useNativeIndexStatus } from '../useAppInfo';
 import { ActivityLanes } from './ActivityLanes';
+import { EnvironmentPanel } from './EnvironmentPanel';
 import {
   captureGapText,
   captureText,
@@ -87,7 +89,7 @@ export function DashboardPage() {
         </Button>
       </p>
     );
-  else body = <DashboardReport report={report.data} />;
+  else body = <DashboardReport report={report.data} range={range} />;
   return (
     <section className="xt-dashboard" aria-busy={report.isFetching || undefined}>
       <h1>{TITLE}</h1>
@@ -109,7 +111,7 @@ function tileTip(tile: MetricTile, ...extra: (string | null | undefined)[]) {
   return parts.filter(Boolean).join(' ');
 }
 
-function DashboardReport({ report }: { report: DashboardMetrics }) {
+function DashboardReport({ report, range }: { report: DashboardMetrics; range: TimeRange }) {
   const { tiles, favorite } = report;
   const favoriteModel = favorite.current.model;
   return (
@@ -237,14 +239,8 @@ function DashboardReport({ report }: { report: DashboardMetrics }) {
             )}
           />
         </DashCard>
-        <DashCard title="Environment" rule="M-17" className="xt-reserved-card">
-          <UnavailableLine
-            reason={unavailableReason(
-              report.unavailable,
-              'environment',
-              'Environment data is unavailable',
-            )}
-          />
+        <DashCard title="Environment" rule="M-17" className="xt-env-card">
+          <EnvironmentPanel range={range} />
         </DashCard>
       </div>
 
