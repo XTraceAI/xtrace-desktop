@@ -2,6 +2,7 @@
 mod cost;
 mod counts;
 mod coverage;
+mod environment;
 mod favorite;
 mod hands_off;
 mod human;
@@ -20,6 +21,10 @@ pub use counts::{Counts, TypingRate};
 pub use coverage::{
     CaptureGap, Coverage, CoverageSurface, DiscoveryHealth, HostUsageCoverage, InventoryState,
     SurfaceCapture, SurfaceUsageCoverage, UsageCoverage, UsageCoverageSummary, UsageGap, UsageGate,
+};
+pub use environment::{
+    DayCalls, EnvUsage, HostEnvironment, HostInventory, IdentityCalls, Inventory, InventoryJoin,
+    SurfaceCalls, ToolIdentity, UnresolvedCalls, UnresolvedReason,
 };
 pub use favorite::{FavoriteComparison, FavoriteModel, FavoriteUnknown};
 pub use hands_off::{ExcludedSurface, HandsOff};
@@ -47,6 +52,8 @@ pub enum Error {
     InvalidTypingRate,
     #[error("Duplicate discovery health context for a host/surface")]
     InvalidCoverageContext,
+    #[error("Duplicate supplied inventory for a host")]
+    DuplicateInventoryHost,
     #[error("Invalid price catalog")]
     InvalidPriceCatalog,
     #[error(transparent)]
@@ -88,6 +95,13 @@ impl MetricsDb {
         connection.prepare(&format!("{} LIMIT 0", favorite::OUTPUT_QUERY))?;
         connection.prepare(&format!("{} LIMIT 0", favorite::TURN_QUERY))?;
         connection.prepare(&format!("{} LIMIT 0", cost::QUERY))?;
+        for query in [
+            environment::RECORD_QUERY,
+            environment::RECORD_UNTIMED_QUERY,
+            environment::STRUCTURAL_QUERY,
+        ] {
+            connection.prepare(&format!("{query} LIMIT 0"))?;
+        }
         Ok(Self { connection })
     }
 

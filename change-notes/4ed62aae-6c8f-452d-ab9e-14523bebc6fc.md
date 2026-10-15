@@ -1,0 +1,1 @@
+- Keep Environment scans within checked folders when a folder is replaced during a scan.

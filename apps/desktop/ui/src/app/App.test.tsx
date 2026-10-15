@@ -66,6 +66,7 @@ it('uses hash routes for native protocol navigation and reloads', async () => {
       window: exported.dashboards[0].window,
       hosts: exported.dashboards[0].tokens_by_host,
     }),
+    environment: async () => exported.environments[0],
     sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: async () => exported.native_index,
     subscribe: async () => () => {},

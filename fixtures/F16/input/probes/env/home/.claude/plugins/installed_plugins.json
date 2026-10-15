@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "plugins": {
+    "memhub@memhub": [
+      {
+        "scope": "user",
+        "installPath": "/synthetic/home/.claude/plugins/marketplaces/memhub",
+        "installedAt": "2026-09-01T00:00:00.000Z",
+        "lastUpdated": "2026-09-05T00:00:00.000Z",
+        "version": "0.27.13"
+      }
+    ],
+    "unproven@marketplace": [{ "version": "1.0.0" }]
+  }
+}

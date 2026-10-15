@@ -172,7 +172,7 @@ pub fn scan_native_observed(
     mode: ScanMode,
     observer: &mut dyn FnMut(&Path),
 ) -> ImportReport {
-    let home = match anchor(request.home) {
+    let home = match anchor_home(request.home) {
         Ok(home) => home,
         Err(error) => {
             let detail = format!("home cannot be anchored to the current directory: {error}");
@@ -329,7 +329,7 @@ pub fn validate_index_destination(db: &Path, home: &Path) -> Result<(), &'static
 /// The readers change into the home and receive it as `HOME`, so a relative
 /// spelling would resolve beneath itself there; it is made absolute here, in
 /// the caller's directory, without following symlinks.
-fn anchor(home: &Path) -> std::io::Result<PathBuf> {
+pub fn anchor_home(home: &Path) -> std::io::Result<PathBuf> {
     if home.is_absolute() {
         return Ok(home.to_path_buf());
     }

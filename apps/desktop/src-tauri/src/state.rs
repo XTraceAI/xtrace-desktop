@@ -126,7 +126,18 @@ enum MetricContext {
     Fixture {
         now_ms: i64,
         catalog: xt_metrics::PriceCatalog,
+        /// The shared fixture probe over F16's synthetic matrix, read once.
+        probe: Box<xt_probes::EnvironmentProbe>,
     },
+}
+
+/// One command's clock, zone, catalog and read sources, fixed under the lock.
+struct MetricInputs<'a> {
+    now: i64,
+    zone: jiff::tz::TimeZone,
+    clock: crate::dto::MetricClock,
+    catalog: Option<&'a xt_metrics::PriceCatalog>,
+    fixture_probe: Option<&'a xt_probes::EnvironmentProbe>,
 }
 
 struct Database {
@@ -159,6 +170,10 @@ impl AppState {
             Some(path) => path,
             None => default_home()?,
         };
+        if native_home.as_os_str().is_empty() {
+            return Err(StateError::NativeHome);
+        }
+        let native_home = xt_ingest::native::anchor_home(&native_home)?;
         if !native_home.is_dir() {
             return Err(StateError::NativeHome);
         }
@@ -231,6 +246,9 @@ impl AppState {
         let metric_context = MetricContext::Fixture {
             now_ms: fixture.now().timestamp_millis(),
             catalog: crate::dashboard::fixture_catalog(fixture.snapshots().get("prices"))?,
+            probe: Box::new(crate::environment::fixture_probe(
+                &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../fixtures"),
+            )?),
         };
         Self::from_store(
             store,
@@ -291,56 +309,128 @@ impl AppState {
     fn with_metrics<T>(
         &self,
         window_days: u32,
-        read: impl FnOnce(
-            &xt_metrics::MetricsDb,
-            i64,
-            jiff::tz::TimeZone,
-            crate::dto::MetricClock,
-            Option<&xt_metrics::PriceCatalog>,
-        ) -> Result<T, StateError>,
+        read: impl FnOnce(&xt_metrics::MetricsDb, MetricInputs<'_>) -> Result<T, StateError>,
     ) -> Result<T, StateError> {
         crate::dashboard::validate_window(window_days)?;
         let guard = self.database.lock().map_err(|_| StateError::Poisoned)?;
         let database = guard.as_ref().ok_or(StateError::Closed)?;
-        let (now, zone, clock, catalog) = match &database.metric_context {
-            MetricContext::System => (
-                jiff::Timestamp::now().as_millisecond(),
-                jiff::tz::TimeZone::try_system().map_err(|_| StateError::MetricTimezone)?,
-                crate::dto::MetricClock::System,
-                None,
-            ),
+        let inputs = match &database.metric_context {
+            MetricContext::System => MetricInputs {
+                now: jiff::Timestamp::now().as_millisecond(),
+                zone: jiff::tz::TimeZone::try_system().map_err(|_| StateError::MetricTimezone)?,
+                clock: crate::dto::MetricClock::System,
+                catalog: None,
+                fixture_probe: None,
+            },
             #[cfg(all(debug_assertions, feature = "fixtures"))]
-            MetricContext::Fixture { now_ms, catalog } => (
-                *now_ms,
-                jiff::tz::TimeZone::UTC,
-                crate::dto::MetricClock::Fixture,
-                Some(catalog),
-            ),
+            MetricContext::Fixture {
+                now_ms,
+                catalog,
+                probe,
+            } => MetricInputs {
+                now: *now_ms,
+                zone: jiff::tz::TimeZone::UTC,
+                clock: crate::dto::MetricClock::Fixture,
+                catalog: Some(catalog),
+                fixture_probe: Some(probe),
+            },
         };
         let metrics = xt_metrics::MetricsDb::open(&database.metrics_path)?;
-        read(&metrics, now, zone, clock, catalog)
+        read(&metrics, inputs)
     }
 
     pub fn metrics_dashboard(
         &self,
         window_days: u32,
     ) -> Result<crate::dto::DashboardMetrics, StateError> {
-        self.with_metrics(window_days, |metrics, now, zone, clock, catalog| {
+        self.with_metrics(window_days, |metrics, inputs| {
             let bundled;
-            let catalog = match catalog {
+            let catalog = match inputs.catalog {
                 Some(catalog) => catalog,
                 None => {
                     bundled = xt_metrics::PriceCatalog::bundled()?;
                     &bundled
                 }
             };
-            crate::dashboard::assemble(metrics, window_days, now, zone, clock, catalog)
+            crate::dashboard::assemble(
+                metrics,
+                window_days,
+                inputs.now,
+                inputs.zone,
+                inputs.clock,
+                catalog,
+            )
         })
     }
 
     pub fn tokens_by_host(&self, window_days: u32) -> Result<crate::dto::TokensByHost, StateError> {
-        self.with_metrics(window_days, |metrics, now, zone, clock, _| {
-            crate::dashboard::tokens_by_host(metrics, window_days, now, zone, clock)
+        self.with_metrics(window_days, |metrics, inputs| {
+            crate::dashboard::tokens_by_host(
+                metrics,
+                window_days,
+                inputs.now,
+                inputs.zone,
+                inputs.clock,
+            )
+        })
+    }
+
+    /// Tool usage for the selected range and the fixed 14-date strip, with an
+    /// unknown inventory, beside the configured-component probe. Native roots
+    /// are the native home option and local repository paths from stored
+    /// session metadata; fixture mode uses the shared fixture probe.
+    pub fn metrics_environment(
+        &self,
+        window_days: u32,
+    ) -> Result<crate::dto::EnvironmentMetrics, StateError> {
+        self.metrics_environment_with_probe(window_days, xt_probes::probe)
+    }
+
+    fn metrics_environment_with_probe(
+        &self,
+        window_days: u32,
+        read_native: impl FnOnce(&xt_probes::ProbeRoots) -> xt_probes::EnvironmentProbe,
+    ) -> Result<crate::dto::EnvironmentMetrics, StateError> {
+        crate::dashboard::validate_window(window_days)?;
+        let roots = {
+            let guard = self.database.lock().map_err(|_| StateError::Poisoned)?;
+            let database = guard.as_ref().ok_or(StateError::Closed)?;
+            match &database.metric_context {
+                MetricContext::System => {
+                    let stored: Vec<Option<String>> =
+                        crate::dto::session_page(&database.store, "", None, None)?
+                            .rows
+                            .into_iter()
+                            .map(|session| session.repo)
+                            .collect();
+                    Some(crate::environment::native_roots(
+                        self.native_home.as_deref(),
+                        &stored,
+                    ))
+                }
+                #[cfg(all(debug_assertions, feature = "fixtures"))]
+                MetricContext::Fixture { .. } => None,
+            }
+        };
+        // Only owned roots cross the lock boundary; native configuration IO
+        // must not hold up other state reads or shutdown.
+        let native = roots.as_ref().map(read_native);
+        self.with_metrics(window_days, |metrics, inputs| {
+            // Fixture mode keeps its cached probe and temporary database
+            // alive under the existing metrics lock. Native mode is rechecked
+            // here, so shutdown during the probe returns Closed.
+            let probe = inputs
+                .fixture_probe
+                .or(native.as_ref())
+                .ok_or(StateError::MetricEncoding)?;
+            crate::environment::assemble(
+                metrics,
+                window_days,
+                inputs.now,
+                inputs.zone,
+                inputs.clock,
+                probe,
+            )
         })
     }
 
@@ -351,5 +441,134 @@ impl AppState {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{sync::mpsc, thread};
+
+    fn native_state() -> (tempfile::TempDir, AppState) {
+        let guard = tempfile::TempDir::new().unwrap();
+        let root = guard.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        let state = AppState::build(
+            StartupOptions {
+                data_dir: Some(root.join("data")),
+                native_home: Some(root.join("home")),
+                ..Default::default()
+            },
+            || panic!("explicit synthetic data directory"),
+            || panic!("explicit synthetic home"),
+        )
+        .unwrap();
+        (guard, state)
+    }
+
+    fn while_native_probe_paused(
+        state: &AppState,
+        action: impl FnOnce(),
+    ) -> (bool, Result<crate::dto::EnvironmentMetrics, StateError>) {
+        thread::scope(|scope| {
+            let (entered, paused) = mpsc::channel();
+            let (release, released) = mpsc::channel();
+            let request = scope.spawn(move || {
+                state.metrics_environment_with_probe(7, |roots| {
+                    // Inspect the actual lock while the injected probe owns
+                    // the call. Channels hold it here without timing sleeps.
+                    entered.send(state.database.try_lock().is_ok()).unwrap();
+                    released.recv().unwrap();
+                    xt_probes::probe(roots)
+                })
+            });
+            let unlocked = paused.recv().unwrap();
+            // Skip the action on the old locked implementation, then release
+            // and join normally so the regression fails instead of deadlocking.
+            if unlocked {
+                action();
+            }
+            release.send(()).unwrap();
+            (unlocked, request.join().unwrap())
+        })
+    }
+
+    #[test]
+    fn paused_native_environment_probe_allows_other_state_reads() {
+        let (_guard, state) = native_state();
+        let (unlocked, report) = while_native_probe_paused(&state, || {
+            assert_eq!(
+                serde_json::to_value(state.db_counts().unwrap()).unwrap(),
+                serde_json::json!({"sessions":0,"records":0,"usage":0})
+            );
+            assert!(state.sessions_list("", None, None).unwrap().rows.is_empty());
+            assert_eq!(state.metrics_dashboard(7).unwrap().window.days, 7);
+        });
+        assert!(
+            unlocked,
+            "native probe held the database mutex and blocked state reads"
+        );
+        let report = report.unwrap();
+        assert_eq!(report.window.end_ms, report.strip_window.end_ms);
+        assert_eq!(report.window.clock, report.strip_window.clock);
+    }
+
+    #[test]
+    fn shutdown_completes_during_native_probe_and_request_returns_closed() {
+        let (_guard, state) = native_state();
+        let (unlocked, report) = while_native_probe_paused(&state, || {
+            state.shutdown();
+            assert!(matches!(state.db_counts(), Err(StateError::Closed)));
+        });
+        assert!(
+            unlocked,
+            "native probe held the database mutex and blocked shutdown"
+        );
+        assert!(matches!(report, Err(StateError::Closed)));
+    }
+
+    #[test]
+    fn invalid_window_and_closed_state_do_not_probe_native_files() {
+        let (_guard, state) = native_state();
+        assert!(matches!(
+            state.metrics_environment_with_probe(15, |_| panic!("invalid window must not probe")),
+            Err(StateError::InvalidMetricWindow)
+        ));
+        state.shutdown();
+        assert!(matches!(
+            state.metrics_environment_with_probe(7, |_| panic!("closed state must not probe")),
+            Err(StateError::Closed)
+        ));
+        assert!(matches!(
+            state.metrics_environment_with_probe(15, |_| panic!(
+                "invalid closed request must not probe"
+            )),
+            Err(StateError::InvalidMetricWindow)
+        ));
+    }
+
+    #[cfg(all(debug_assertions, feature = "fixtures"))]
+    #[test]
+    fn cached_fixture_environment_never_invokes_native_probe_or_host_defaults() {
+        let guard = tempfile::TempDir::new().unwrap();
+        let state = AppState::build(
+            StartupOptions {
+                fixture: Some("F1".into()),
+                data_dir: Some(guard.path().to_owned()),
+                ..Default::default()
+            },
+            || panic!("fixture must not resolve host data"),
+            || panic!("fixture must not resolve host home"),
+        )
+        .unwrap();
+        let report = state
+            .metrics_environment_with_probe(7, |_| panic!("fixture must use its cached probe"))
+            .unwrap();
+        assert_eq!(report.window.clock, crate::dto::MetricClock::Fixture);
+        assert_eq!(report.totals.configured_components, 14);
+        let path = state.app_info().data_dir;
+        assert!(std::path::Path::new(&path).exists());
+        state.shutdown();
+        assert!(!std::path::Path::new(&path).exists());
     }
 }

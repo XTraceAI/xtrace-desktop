@@ -5141,6 +5141,15 @@ dependencies = [
 [[package]]
 name = "xt-probes"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "toml 1.1.5+spec-1.1.0",
+]
 
 [[package]]
 name = "xt-rulebook"
@@ -5203,6 +5212,7 @@ dependencies = [
  "xt-fixtures",
  "xt-ingest",
  "xt-metrics",
+ "xt-probes",
  "xt-store",
 ]
 

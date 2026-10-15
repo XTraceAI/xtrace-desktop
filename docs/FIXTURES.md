@@ -35,6 +35,11 @@ failed assertion returns a nonzero exit. `fixture-db` refuses skeletons.
 `fixture-export` permits structural skeleton exports and preserves their status
 and empty expectations.
 
+Shell exports use the alternate catalog's F16 Environment matrix when its
+`F16/input/probes/env.json` index is present. When that optional index is absent,
+they use the bundled synthetic matrix. Invalid supplied matrices fail the export;
+the selected fixture's database, prices and clock still come from its catalog.
+
 Exports contain the same canonical Rust records used by the loader and database
 builder. Generated IPC DTO parity is a later IPC-boundary responsibility; this
 command does not claim that transport contract exists yet.
@@ -84,7 +89,9 @@ input. No input glob is used. For example, a session may point to
   The harness passes session metadata and records through `Store` with an
   explicit `keep_content` flag. Store validation and UUID merging still apply.
 - Optional `gh` names a JSON stub. Optional `snapshots` maps names to JSON paths;
-  F16 reserves `fresh`, `typical`, `connected`, `no-python3` and `env`.
+  F16 reserves `fresh`, `typical`, `connected`, `no-python3` and `env`. The `env`
+  snapshot indexes a small synthetic probe matrix under `input/probes/env/`, read by
+  the environment probe and the fixture shell export; F16 remains a skeleton.
 - All paths are relative to the fixture directory. Missing files, traversal,
   absolute paths and symlinks escaping the fixture fail. Diagnostics identify
   the file and JSON/JSONL location, such as

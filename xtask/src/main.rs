@@ -1,4 +1,11 @@
-use std::{env, error::Error, fs::OpenOptions, io::Write, path::PathBuf, process::ExitCode};
+use std::{
+    env,
+    error::Error,
+    fs::{self, OpenOptions},
+    io::{ErrorKind, Write},
+    path::PathBuf,
+    process::ExitCode,
+};
 use xt_fixtures::{Fixture, FixtureId, FixtureStatus};
 
 const HELP: &str = "XTrace development tasks:
@@ -73,8 +80,8 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             .ok_or_else(|| format!("missing value for {option}"))?;
         *target = Some(PathBuf::from(value));
     }
-    let catalog =
-        catalog.unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures"));
+    let bundled_catalog = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures");
+    let catalog = catalog.unwrap_or_else(|| bundled_catalog.clone());
     if task == "fixture-validate" {
         let fixtures = Fixture::all(catalog)?;
         let mut asserted = 0;
@@ -116,6 +123,12 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     } else {
         let json = if shell {
             let database = fixture.build_db(true)?;
+            let environment_catalog =
+                match fs::symlink_metadata(catalog.join("F16/input/probes/env.json")) {
+                    Ok(_) => &catalog,
+                    Err(error) if error.kind() == ErrorKind::NotFound => &bundled_catalog,
+                    Err(error) => return Err(error.into()),
+                };
             let export = xtrace_desktop::dto::FixtureExport {
                 app_info: xtrace_desktop::dto::AppInfo {
                     name: "XTrace Desktop".into(),
@@ -129,6 +142,11 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                     database.path(),
                     fixture.now().timestamp_millis(),
                     fixture.snapshots().get("prices"),
+                )?,
+                environments: xtrace_desktop::environment::fixture_reports(
+                    database.path(),
+                    fixture.now().timestamp_millis(),
+                    environment_catalog,
                 )?,
                 db_counts: database.store().counts()?.try_into()?,
                 sessions: xtrace_desktop::dto::session_page(database.store(), "", None, None)?,

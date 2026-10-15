@@ -16,6 +16,11 @@ export class FixtureDataSource implements DataSource {
   async dashboard(windowDays: number) {
     return structuredClone(this.report(windowDays));
   }
+  async environment(windowDays: number) {
+    const report = this.fixture.environments.find((entry) => entry.window.days === windowDays);
+    if (!report) throw new Error('Metric range must be 7, 14, or 30 days.');
+    return structuredClone(report);
+  }
   async tokensByHost(windowDays: number) {
     const report = this.report(windowDays);
     return structuredClone({ window: report.window, hosts: report.tokens_by_host });

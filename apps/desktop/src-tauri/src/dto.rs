@@ -1,5 +1,6 @@
 //! Serialized IPC and fixture contracts. Integer constructors enforce JSON precision.
 pub use crate::dashboard_dto::*;
+pub use crate::environment_dto::*;
 use serde::Serialize;
 use ts_rs::TS;
 use xt_store::StoreCounts;
@@ -144,6 +145,7 @@ pub struct FixtureExport {
     pub native_index: NativeIndexStatus,
     pub sessions: SessionPage,
     pub dashboards: Vec<DashboardMetrics>,
+    pub environments: Vec<EnvironmentMetrics>,
 }
 
 pub fn export_types(directory: impl AsRef<std::path::Path>) -> Result<(), ts_rs::ExportError> {

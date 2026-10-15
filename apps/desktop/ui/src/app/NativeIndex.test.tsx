@@ -16,6 +16,7 @@ const tokensByHost = async () => ({
   window: exported.dashboards[0].window,
   hosts: exported.dashboards[0].tokens_by_host,
 });
+const environment = async () => exported.environments[0];
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => false }));
 afterEach(() => {
   cleanup();
@@ -80,6 +81,7 @@ it('shows the typed native index status as reported and refreshes it on its even
     dbCounts: async () => exported.db_counts,
     dashboard,
     tokensByHost,
+    environment,
     sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: vi.fn(async () => status),
     subscribe: vi.fn(async (event, callback) => {
@@ -136,6 +138,7 @@ it('polls a transient status until it settles, so a ready event that precedes th
     dbCounts: vi.fn(async () => exported.db_counts),
     dashboard,
     tokensByHost,
+    environment,
     sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: vi.fn(async () => status),
     // No event ever arrives: the listener registered after the only `ready`.
@@ -172,6 +175,7 @@ it('reconciles the data queries when the first status seen is already settled', 
     dbCounts: vi.fn(async () => exported.db_counts),
     dashboard,
     tokensByHost,
+    environment,
     sessionsList: async () => ({ rows: [], next: null }),
     nativeIndexStatus: vi.fn(async () => ready),
     subscribe: async () => () => {},

@@ -6,6 +6,8 @@ use tauri::{Emitter, Manager};
 pub mod dashboard;
 mod dashboard_dto;
 pub mod dto;
+pub mod environment;
+mod environment_dto;
 pub mod native_index;
 pub mod state;
 mod window_controls;
@@ -42,6 +44,16 @@ fn metrics_dashboard(
 ) -> Result<dto::DashboardMetrics, String> {
     state
         .metrics_dashboard(window_days)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn metrics_environment(
+    state: tauri::State<'_, state::AppState>,
+    window_days: u32,
+) -> Result<dto::EnvironmentMetrics, String> {
+    state
+        .metrics_environment(window_days)
         .map_err(|error| error.to_string())
 }
 
@@ -134,6 +146,7 @@ pub fn run() {
             sessions_list,
             native_index_status,
             metrics_dashboard,
+            metrics_environment,
             tokens_by_host
         ])
         .build(tauri::generate_context!())

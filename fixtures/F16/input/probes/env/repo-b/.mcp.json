@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "memhub": { "command": "/synthetic/bin/memhub", "args": ["serve"] }
+  }
+}
