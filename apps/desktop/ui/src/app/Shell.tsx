@@ -8,6 +8,7 @@ import { useTheme } from '../theme/ThemeProvider';
 import { useAppInfo, useNativeIndexObservation } from './useAppInfo';
 import { LiveUpdatesNotice } from './LiveUpdatesNotice';
 import { UpdateNotice } from './UpdateNotice';
+import { TelemetryNotice } from './telemetry/TelemetryNotice';
 import { pluginReceiver, sidebarIndexStatus } from './sidebar-index-status';
 import { pages } from './routes';
 import { useShellShortcuts } from './useShellShortcuts';
@@ -215,6 +216,13 @@ export function Shell() {
           ) : null}
           <LiveUpdatesNotice className="xt-shell-notice" buttonClassName="refresh-button" />
           <Outlet context={outlet} />
+          {/* Over the page, so it takes no room from it; after the page, so
+              keyboard order matches where it appears. Welcome shows the
+              disclosure itself; `/` only redirects. */}
+          <TelemetryNotice
+            floating
+            suppressed={location.pathname === '/' || current?.path === '/first-launch'}
+          />
         </main>
       </div>
     </div>

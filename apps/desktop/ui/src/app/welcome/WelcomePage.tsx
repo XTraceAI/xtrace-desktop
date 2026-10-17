@@ -12,6 +12,7 @@ import { SectionCard } from '../../kit/SectionCard';
 import { hostScanText } from '../index-host-state';
 import { freshnessText } from '../native-index-text';
 import { useDbCounts, useNativeIndexStatus } from '../useAppInfo';
+import { TelemetryNotice } from '../telemetry/TelemetryNotice';
 import { completeWelcome } from './welcome-completion';
 import { attentionCount, hostName, phasePill, plural, readerNote } from './welcome-text';
 import '../../styles/welcome.css';
@@ -104,6 +105,7 @@ export function WelcomePage() {
           )}
         </SectionCard>
       </div>
+      <TelemetryNotice closable={false} />
     </section>
   );
 }

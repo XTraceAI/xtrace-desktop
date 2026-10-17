@@ -41,6 +41,10 @@ export const commands = {
   openPublicReleases: 'open_public_releases',
   humanBreak: 'human_break',
   setHumanBreak: 'set_human_break',
+  telemetryState: 'telemetry_state',
+  telemetrySetEnabled: 'telemetry_set_enabled',
+  telemetryDisclosureShown: 'telemetry_disclosure_shown',
+  openTelemetryDoc: 'open_telemetry_doc',
 } as const;
 export const events = {
   importReceived: 'ingest://import-received',

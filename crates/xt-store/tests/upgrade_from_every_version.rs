@@ -411,7 +411,7 @@ fn a_fingerprint_left_for_an_unapplied_version_is_replaced_when_it_applies() {
         .unwrap()
         .execute_batch(
             "UPDATE migration_fingerprints SET name='0022_draft', sha256=(SELECT sha256 FROM migration_fingerprints WHERE version=1) WHERE version=22;
-             ALTER TABLE pull_requests DROP COLUMN manual_failed_at;
+             DROP TABLE telemetry_events; ALTER TABLE pull_requests DROP COLUMN manual_failed_at;
              DROP TABLE session_child_checks;
              ALTER TABLE claude_launch_groups DROP COLUMN unfinished_starts;
              ALTER TABLE claude_launch_candidates DROP COLUMN child_check_complete;

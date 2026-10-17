@@ -46,11 +46,23 @@ background-task summary. Full transcript archiving is off by default. Settings
 can enable it for future imports or delete saved content and previews. Indexing
 and content deletion leave original conversation files unchanged.
 
-The app has no telemetry collector or cloud transcript upload. Account-usage
-reads, GitHub checks and release updates can contact their providers. Claude
+The app has no cloud transcript upload. Anonymous usage telemetry (see
+[Telemetry](#telemetry)), account-usage reads, GitHub checks and release updates
+can contact their providers. Claude
 usage checks run your local Claude Code CLI, which can save its own configuration
 and probe files. See [data and network details](docs/SETUP.md#data-and-network)
 before treating the app as offline or its database as free of sensitive text.
+
+## Telemetry
+
+XTrace Desktop sends a few anonymous usage events, such as when the app is opened
+and roughly how often it is used, with the app version, the macOS version, which
+coding agents have history on this Mac and a random ID. It never sends repository
+names, file paths, prompts or other conversation text, pull-request links, token
+counts or costs. Telemetry is on by default, and nothing is sent until the app has
+shown a notice about it. Turn it off with **Turn off** in that notice, the switch in
+Settings, or by starting the app with `XTRACE_TELEMETRY=0`. [TELEMETRY.md](TELEMETRY.md)
+lists every event and property.
 
 ## Build and contribute
 

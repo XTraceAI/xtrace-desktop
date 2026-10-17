@@ -22,6 +22,7 @@ import { Toggle } from '../kit/Toggle';
 import { useTheme, type ThemePreference } from '../theme/ThemeProvider';
 import { hostScanText } from './index-host-state';
 import { codexHistoryGapsText, freshnessText, phaseText } from './native-index-text';
+import { TelemetrySettings } from './telemetry/TelemetrySettings';
 import { useAppInfo, useDbCounts, useNativeIndexStatus } from './useAppInfo';
 import '../styles/settings.css';
 
@@ -63,10 +64,10 @@ export function SettingsPage() {
           <NativeIndex />
         </SectionCard>
       )}
+      <TelemetrySettings controls={source.telemetry} />
       <SectionCard title="Not in this build">
         <p className="xt-settings-note">
-          Telemetry, cloud sinks, the judge route and price-table selection have no settings yet.
-          This build has no telemetry collector, so there is nothing to turn off.
+          Cloud sinks, the judge route and price-table selection have no settings yet.
         </p>
       </SectionCard>
     </section>

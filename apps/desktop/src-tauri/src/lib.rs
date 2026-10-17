@@ -34,6 +34,7 @@ mod session_source_dto;
 pub mod session_titles;
 pub mod startup_failure;
 pub mod state;
+pub mod telemetry;
 pub mod today;
 pub mod transcript_dto;
 pub mod transcript_reads;
@@ -663,6 +664,100 @@ async fn open_public_releases<R: tauri::Runtime>(
     .await
 }
 
+/// The telemetry state this launch runs with.
+#[tauri::command]
+fn telemetry_state(
+    telemetry: tauri::State<'_, telemetry::Telemetry>,
+) -> telemetry::consent::TelemetryState {
+    telemetry.state()
+}
+
+/// Turns telemetry on or off; refused under `XTRACE_TELEMETRY=0`. Turning it
+/// off stops queued and in-flight work at once. Returns the state read back.
+#[tauri::command]
+async fn telemetry_set_enabled(
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<telemetry::consent::TelemetryState, String> {
+    let handle = app.clone();
+    write_on_worker(app, move |state| {
+        telemetry_service(&handle)?
+            .set_preference(enabled, |apply| state.set_telemetry_enabled(enabled, apply))
+    })
+    .await
+}
+
+/// The renderer calls this only once the disclosure is visible on screen.
+#[tauri::command]
+async fn telemetry_disclosure_shown(
+    app: tauri::AppHandle,
+) -> Result<telemetry::consent::TelemetryState, String> {
+    let handle = app.clone();
+    write_on_worker(app, move |state| {
+        telemetry_service(&handle)?
+            .disclosure_shown(|apply| state.set_telemetry_disclosure_shown(apply))
+    })
+    .await
+}
+
+/// Main window only: opens the fixed published event list in the system
+/// browser. The renderer cannot name a URL.
+#[tauri::command]
+async fn open_telemetry_doc(webview_window: tauri::WebviewWindow) -> Result<(), String> {
+    if webview_window.label() != tray::MAIN_LABEL {
+        return Err("only the main window may do this".into());
+    }
+    on_worker(
+        "the telemetry event list could not be opened in the browser",
+        telemetry::open_telemetry_doc,
+    )
+    .await
+}
+
+fn telemetry_service<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<tauri::State<'_, telemetry::Telemetry>, state::StateError> {
+    app.try_state::<telemetry::Telemetry>()
+        .ok_or(state::StateError::Closed)
+}
+
+/// The telemetry service for this launch; [`telemetry::sender_config`]
+/// decides whether it has a sender.
+fn start_telemetry<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    consent: telemetry::consent::Consent,
+    own_live_data: bool,
+) -> telemetry::Telemetry {
+    let env_off = telemetry::consent::env_off(std::env::var_os(telemetry::consent::ENV).as_deref());
+    let config = telemetry::sender_config(
+        telemetry::posthog::PostHogConfig::from_build(),
+        own_live_data,
+        &app.config().identifier,
+    );
+    telemetry::Telemetry::for_launch(
+        consent,
+        env_off,
+        config,
+        curl_transport,
+        Arc::new(telemetry::AppStore(app.clone())),
+        Arc::new(telemetry::sender::SystemClock),
+    )
+}
+
+/// The system `curl` sender, on macOS only.
+fn curl_transport(
+    config: &telemetry::posthog::PostHogConfig,
+) -> Option<Arc<dyn telemetry::sender::Transport>> {
+    #[cfg(target_os = "macos")]
+    return telemetry::posthog::CurlTransport::new(config)
+        .map(|transport| Arc::new(transport) as Arc<dyn telemetry::sender::Transport>);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = config;
+        None
+    }
+}
+
 /// The renderer confirms first; this clears registered content fields in one
 /// store transaction and never touches original host files. The event is
 /// published from the worker after the commit, once the lock is released.
@@ -745,19 +840,19 @@ fn start(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let options = startup_options()?;
     let python = options.python.clone();
     let github_cli = options.github_cli.clone();
-    let state = state::AppState::build(
-        options,
-        || {
-            app.path()
-                .app_data_dir()
-                .map_err(|_| state::StateError::InvalidOption)
-        },
-        || {
-            app.path()
-                .home_dir()
-                .map_err(|_| state::StateError::InvalidOption)
-        },
-    )?;
+    let default_dir = || {
+        app.path()
+            .app_data_dir()
+            .map_err(|_| state::StateError::InvalidOption)
+    };
+    // Read before the options are consumed; telemetry sends only from the
+    // app's own data folder.
+    let default_data_folder = telemetry::uses_default_data_folder(&options, default_dir);
+    let state = state::AppState::build(options, default_dir, || {
+        app.path()
+            .home_dir()
+            .map_err(|_| state::StateError::InvalidOption)
+    })?;
     let publish: native_index::Publish = {
         let handle = app.handle().clone();
         Arc::new(move |status: &dto::NativeIndexStatus| {
@@ -862,7 +957,16 @@ fn start(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     };
     let usage = Arc::new(usage);
     usage.start_automatic();
+    // Unreadable saved settings read as a fresh install: nothing can be
+    // sent until the disclosure is shown and saved.
+    let consent = state
+        .telemetry_consent()
+        .unwrap_or(telemetry::consent::Consent::FRESH);
+    let live = state.database_path().is_some();
     app.manage(state);
+    // After the state, which the sender's store calls go through.
+    let telemetry = start_telemetry(app.handle(), consent, live && default_data_folder);
+    app.manage(telemetry);
     app.manage(usage);
     app.manage(index);
     app.manage(transcript_reads::TranscriptReads::default());
@@ -872,6 +976,7 @@ fn start(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(refresh);
     app.manage(auto_worker);
     tray::setup(app)?;
+    app.state::<telemetry::Telemetry>().opened();
     Ok(())
 }
 
@@ -931,6 +1036,11 @@ fn stop_services(app: &tauri::AppHandle) {
     if let Some(index) = app.try_state::<native_index::NativeIndex>() {
         index.shutdown();
     }
+    // The telemetry sender stops before the database closes: its request
+    // is cancelled and anything still queued is never sent.
+    if let Some(telemetry) = app.try_state::<telemetry::Telemetry>() {
+        telemetry.shutdown();
+    }
     if let Some(state) = app.try_state::<state::AppState>() {
         state.shutdown();
     }
@@ -960,6 +1070,15 @@ pub fn run() {
                 && let Some(worker) = window.try_state::<pr_refresh::AutoCheckWorker>()
             {
                 worker.wake();
+            }
+            // Real use of the main window or the menu-bar popover is the only
+            // trigger for the activity heartbeats; this only signals the
+            // telemetry thread, which does the work.
+            if matches!(event, tauri::WindowEvent::Focused(true))
+                && (window.label() == tray::MAIN_LABEL || window.label() == tray::TRAY_LABEL)
+                && let Some(telemetry) = window.try_state::<telemetry::Telemetry>()
+            {
+                telemetry.activity();
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -1006,7 +1125,11 @@ pub fn run() {
             open_typing_test,
             open_public_releases,
             human_break,
-            set_human_break
+            set_human_break,
+            telemetry_state,
+            telemetry_set_enabled,
+            telemetry_disclosure_shown,
+            open_telemetry_doc
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|error| startup_failure::exit(&startup_failure::message(&error)))

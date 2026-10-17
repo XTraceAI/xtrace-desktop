@@ -21,6 +21,7 @@ import type { DashboardSpanDetail } from './generated/DashboardSpanDetail';
 import type { RuleActivityResult } from './generated/RuleActivityResult';
 import type { AccountUsage } from './generated/AccountUsage';
 import type { LiveSessionSnapshot } from './generated/LiveSessionSnapshot';
+import type { TelemetryState } from './generated/TelemetryState';
 
 export type Unsubscribe = () => void;
 /** Development builds only: release information without update installation. */
@@ -98,6 +99,20 @@ export interface HumanBreakControls {
   read(): Promise<number>;
   /** A whole number from 5 to 240; resolves with the length read back after commit. */
   set(minutes: number): Promise<number>;
+}
+/**
+ * Anonymous usage telemetry. The app database owns the saved preference and
+ * whether the disclosure was shown; the Rust core decides every field of the
+ * state. Each call resolves with the state read back after it.
+ */
+export interface TelemetryControls {
+  read(): Promise<TelemetryState>;
+  /** Refused while `XTRACE_TELEMETRY` turns telemetry off. */
+  setEnabled(enabled: boolean): Promise<TelemetryState>;
+  /** Call only once the disclosure is actually visible on screen. */
+  acknowledgeDisclosure(): Promise<TelemetryState>;
+  /** Opens the fixed published event list in the system browser. */
+  openEventList(): Promise<void>;
 }
 /**
  * Host titles for the rows a list is showing, read from the sessions' original
@@ -275,6 +290,8 @@ export interface DataSource {
   readonly typingSpeed?: TypingSpeedControls;
   /** Present only where a writable app database owns the setting. */
   readonly humanBreak?: HumanBreakControls;
+  /** Present only where a writable app database owns the setting. */
+  readonly telemetry?: TelemetryControls;
   /** Present only in the native tray popover window. */
   readonly tray?: TrayControls;
   /** Present only where original local sources can be read. */

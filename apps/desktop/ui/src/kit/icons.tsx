@@ -69,6 +69,8 @@ const drawings = {
       <path d="M12 11v5M12 8h.01" />
     </>
   ),
+  check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  close: <path d="M6 6l12 12M18 6L6 18" />,
 };
 
 export type IconName = keyof typeof navigation | keyof typeof drawings;

@@ -82,9 +82,10 @@ records and original host files; later imports can create new previews.
 Viewing a Claude transcript reads the original local source on demand without
 enabling archival. Account-usage history is stored separately from the database.
 
-There is no telemetry collector or cloud transcript upload in this build.
-Network activity still occurs for account limits, GitHub PR facts and public
-release checks/downloads. Claude usage checks run the installed Claude Code CLI
+There is no cloud transcript upload in this build. Network activity occurs for
+anonymous usage telemetry (on by default after a first notice; see
+[TELEMETRY.md](../TELEMETRY.md) for every event and how to turn it off),
+account limits, GitHub PR facts and public release checks/downloads. Claude usage checks run the installed Claude Code CLI
 at launch and about every ten minutes, with failure backoff, in an app-owned
 probe folder. Claude Code can record that folder's trust and usage cache in its
 own configuration and leave probe files in its history. These checks send no

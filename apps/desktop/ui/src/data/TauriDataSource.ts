@@ -32,6 +32,7 @@ import type { DashboardSpanDetail } from './generated/DashboardSpanDetail';
 import type { RuleActivityResult } from './generated/RuleActivityResult';
 import type { AccountUsage } from './generated/AccountUsage';
 import type { LiveSessionSnapshot } from './generated/LiveSessionSnapshot';
+import type { TelemetryState } from './generated/TelemetryState';
 
 /** This webview's window label; none outside a Tauri webview. */
 const windowLabel = () => {
@@ -123,6 +124,13 @@ export class TauriDataSource implements DataSource {
   readonly humanBreak = {
     read: () => invoke<number>(commands.humanBreak),
     set: (minutes: number) => invoke<number>(commands.setHumanBreak, { minutes }),
+  };
+  readonly telemetry = {
+    read: () => invoke<TelemetryState>(commands.telemetryState),
+    setEnabled: (enabled: boolean) =>
+      invoke<TelemetryState>(commands.telemetrySetEnabled, { enabled }),
+    acknowledgeDisclosure: () => invoke<TelemetryState>(commands.telemetryDisclosureShown),
+    openEventList: () => invoke<void>(commands.openTelemetryDoc),
   };
   dashboard(windowDays: number) {
     return invoke<DashboardMetrics>(commands.dashboard, { windowDays });
