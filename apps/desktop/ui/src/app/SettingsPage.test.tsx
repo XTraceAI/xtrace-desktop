@@ -130,7 +130,9 @@ it('reads the saved mode, defaults to metrics and indexing, and states what the 
   expect(await screen.findByText(exported.app_info.data_dir)).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Native index' })).toBeTruthy();
   // Unimplemented settings are named, not faked with controls.
-  expect(screen.getByText(/This build has no telemetry collector/)).toBeTruthy();
+  expect(screen.getByText(/Cloud sinks, the judge route and price-table selection/)).toBeTruthy();
+  // Without the app's telemetry controls, its section has no switch either.
+  expect(screen.getByText(/Telemetry is saved in the desktop app/)).toBeTruthy();
   expect(screen.getAllByRole('switch')).toHaveLength(1);
   expect(store.set).not.toHaveBeenCalled();
   expect(store.purge).not.toHaveBeenCalled();

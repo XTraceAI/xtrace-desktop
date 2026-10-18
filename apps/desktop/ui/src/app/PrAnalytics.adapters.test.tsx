@@ -116,6 +116,8 @@ it('draws the same report and drilldown from the fixture and the native adapter'
       commands.nativeIndexStatus,
       commands.pullRequestAnalytics,
       commands.pullRequestSessions,
+      // The Shell's one-time telemetry notice reads the saved state.
+      commands.telemetryState,
     ]),
   );
   expect(

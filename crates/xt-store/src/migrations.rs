@@ -145,6 +145,11 @@ const MIGRATIONS: &[Migration] = &[
         "0023_pr_manual_failure",
         "86712a00fbfa88b91d6c22817206b5c861478bced3cae83f36c2fe1916d26617"
     ),
+    migration!(
+        24,
+        "0024_telemetry_events",
+        "f364c5b1e1a93a115eead0a676bbf6d60f1a7cb1b64297dd846426b10ded9977"
+    ),
 ];
 
 /// Which file applied each version. Created inside the history transaction, so
@@ -659,15 +664,11 @@ mod tests {
         DROP TABLE tool_sent_inputs;
         ALTER TABLE tool_sent_inputs_rebuilt RENAME TO tool_sent_inputs;";
 
-    /// Undoes everything migration 22 applied, leaving it pending again.
-    const UNDO_22: &str = "DROP TABLE session_child_checks;
-        ALTER TABLE claude_launch_groups DROP COLUMN unfinished_starts;
-        ALTER TABLE claude_launch_candidates DROP COLUMN child_check_complete;
-        ALTER TABLE claude_launch_candidates DROP COLUMN launch_check_fingerprint;
-        ALTER TABLE claude_launch_staged_candidates DROP COLUMN launch_check_fingerprint;";
-
     /// Undoes everything migration 23 applied, leaving it pending again.
     const UNDO_23: &str = "ALTER TABLE pull_requests DROP COLUMN manual_failed_at;";
+
+    /// Undoes everything migration 24 applied, leaving it pending again.
+    const UNDO_24: &str = "DROP TABLE telemetry_events;";
 
     /// Forgets that migrations from `version` on were applied, leaving what
     /// they wrote in place.
@@ -739,10 +740,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = current(&directory);
         let (expected, (versions, fingerprints)) = (installed(&path), history(&path));
-        // Migration 23 pending again: its column and history are gone.
+        // Migration 24 pending again: its table and history are gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch(&format!("{UNDO_23} {}", forget_from(23)))
+            .execute_batch(&format!("{UNDO_24} {}", forget_from(24)))
             .unwrap();
         drop(Store::open(&path).unwrap());
         assert_eq!(views(&path), expected);
@@ -777,19 +778,19 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = current(&directory);
         let expected = installed(&path);
-        // 22 and 23 pending; 22 can apply, 23 cannot while its column remains.
+        // 23 and 24 pending; 23 can apply, 24 cannot while its table remains.
         Connection::open(&path)
             .unwrap()
-            .execute_batch(&format!("{UNDO_22} {}", forget_from(22)))
+            .execute_batch(&format!("{UNDO_23} {}", forget_from(23)))
             .unwrap();
         assert!(Store::open(&path).is_err());
         let (versions, fingerprints) = history(&path);
-        assert_eq!(versions.last(), Some(&22), "migration 22 stayed committed");
-        assert_eq!(fingerprints.last().map(|(version, _)| *version), Some(22));
+        assert_eq!(versions.last(), Some(&23), "migration 23 stayed committed");
+        assert_eq!(fingerprints.last().map(|(version, _)| *version), Some(23));
         // Once the conflict is gone, the next open finishes and reinstalls.
         Connection::open(&path)
             .unwrap()
-            .execute_batch(UNDO_23)
+            .execute_batch(UNDO_24)
             .unwrap();
         drop(Store::open(&path).unwrap());
         assert_eq!(views(&path), expected);

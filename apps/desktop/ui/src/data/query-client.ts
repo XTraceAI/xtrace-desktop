@@ -50,6 +50,8 @@ export const queryKeys = {
   typingSpeed: ['settings', 'typing-speed'],
   /** Like the typing speed: a saved change re-reads every cached Dashboard range. */
   humanBreak: ['settings', 'human-break'],
+  /** The telemetry state; every change answers with the state read back. */
+  telemetry: ['settings', 'telemetry'],
   /** The prefix of every Dashboard range, for a committed typing-speed change. */
   dashboards: ['metrics', 'dashboard'],
   /** Under `metrics`, so committed-data events refresh it like the Dashboard. */

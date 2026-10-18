@@ -445,7 +445,7 @@ fn a_schema_21_index_upgrades_with_every_session_unchecked_and_its_rows_kept() {
         let connection = sql(&directory);
         connection
             .execute_batch(
-                "ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DROP TABLE session_child_checks;
+                "DROP TABLE telemetry_events; ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DROP TABLE session_child_checks;
                  ALTER TABLE claude_launch_groups DROP COLUMN unfinished_starts;
                  ALTER TABLE claude_launch_candidates DROP COLUMN child_check_complete;
                  ALTER TABLE claude_launch_candidates DROP COLUMN launch_check_fingerprint;
@@ -465,7 +465,7 @@ fn a_schema_21_index_upgrades_with_every_session_unchecked_and_its_rows_kept() {
     };
     let before = counts(&sql(&directory));
     let store = Store::open(path(&directory)).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 23);
+    assert_eq!(store.schema_version().unwrap(), 24);
     assert_eq!(counts(&sql(&directory)), before);
     let rows: i64 = sql(&directory)
         .query_row(

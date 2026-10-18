@@ -229,6 +229,8 @@ for (const state of [
         commands.tokensByHost,
         commands.nativeIndexStatus,
         commands.pullRequests,
+        // The Shell's one-time telemetry notice reads the saved state.
+        commands.telemetryState,
       ]),
     );
     expect(

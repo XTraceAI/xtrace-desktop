@@ -1943,7 +1943,7 @@ fn claude_tail_v4_upgrade_replays_unchanged_history_once_to_enrich_human_classif
     assert_eq!(legacy_checkpoint.1, file_len(&path));
     drop(store);
     sql.execute_batch(
-        "ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DELETE FROM schema_version WHERE version>=5;
+        "DROP TABLE telemetry_events; ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DELETE FROM schema_version WHERE version>=5;
          ALTER TABLE pull_requests DROP COLUMN refresh_error; ALTER TABLE pull_requests DROP COLUMN last_attempted_at;
          ALTER TABLE tool_uses DROP COLUMN group_key;
          ALTER TABLE tool_uses DROP COLUMN group_version;
@@ -1991,7 +1991,7 @@ fn claude_tail_v4_upgrade_replays_unchanged_history_once_to_enrich_human_classif
     );
     tailer.stop();
     let store = home.store();
-    assert_eq!(store.schema_version().unwrap(), 23);
+    assert_eq!(store.schema_version().unwrap(), 24);
     assert_eq!(classified(&store), expected);
     assert_metadata_only(&store, A);
     let rows = store.records(A).unwrap();

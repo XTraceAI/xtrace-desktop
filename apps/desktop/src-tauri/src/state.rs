@@ -88,6 +88,11 @@ pub enum StateError {
     TypingTestUnavailable,
     #[error("public releases could not be opened in the browser")]
     PublicReleasesUnavailable,
+    /// Refused before storage is touched.
+    #[error("telemetry is turned off by XTRACE_TELEMETRY and cannot be changed in the app")]
+    TelemetryEnvironmentOff,
+    #[error("the telemetry event list could not be opened in the browser")]
+    TelemetryDocUnavailable,
     /// A linked-session request named something no report could have shown:
     /// the detail names the part, never the value.
     #[error("invalid pull-request session request: {0}")]

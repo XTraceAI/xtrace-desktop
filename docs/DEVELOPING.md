@@ -26,6 +26,22 @@ names the interpreter for the Codex/Cursor readers, and `XTRACE_DATA_DIR=DIR`
 relocates the database. Settings shows the index status. See
 [architecture](ARCHITECTURE.md) for implemented and planned boundaries.
 
+Usage telemetry ([TELEMETRY.md](../TELEMETRY.md)) is built in: every build
+includes XTrace's public, write-only PostHog project token and the US host
+`https://us.i.posthog.com`. When compiling, `XTRACE_POSTHOG_KEY` sends to
+another project and `XTRACE_POSTHOG_HOST` to another PostHog host (set both
+for a project on another host); `XTRACE_POSTHOG_KEY=""` builds an app that
+never sends anything. Only an app built with the identifier `ai.xtrace.app`
+and using its own data folder sends, and only after its notice was shown and
+while telemetry is on; that includes `pnpm tauri dev` and local debug builds
+on the default data folder, which use that identifier. The identifier checked
+is the one compiled in, so editing a copy's `Info.plist` afterwards does not
+change it. Copies built with another identifier, runs with `XTRACE_DATA_DIR`
+naming another folder, and fixture mode never send. `XTRACE_TELEMETRY=0` turns
+telemetry off at run time. Whether the PostHog
+project stores IP addresses is a project setting outside this repository;
+check it against TELEMETRY.md before a release.
+
 For UI development without a native build:
 
 ```sh
