@@ -255,6 +255,70 @@ fn good_run_returns_the_validated_result() {
     assert!(case.grade.join("work").is_dir());
 }
 
+/// The read-deny list: well-known secret places, each home-relative and
+/// given to both the sandbox and the file tools, with nothing the bundled
+/// skill reads covered.
+#[test]
+fn settings_deny_reading_secret_locations_and_spare_what_the_skill_reads() {
+    let parsed: serde_json::Value = serde_json::from_str(&runner::settings("/p", "/g")).unwrap();
+    let deny_read: Vec<&str> = parsed["sandbox"]["filesystem"]["denyRead"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry.as_str().unwrap())
+        .collect();
+    assert_eq!(deny_read, runner::SECRET_LOCATIONS);
+    for secret in [
+        "~/.ssh",
+        "~/.aws",
+        "~/.gnupg",
+        "~/.config/gh",
+        "~/Library/Keychains",
+        "~/Library/Application Support/Google/Chrome",
+        "~/.claude/.credentials.json",
+    ] {
+        assert!(deny_read.contains(&secret), "{secret}");
+    }
+    let rules: Vec<&str> = parsed["permissions"]["deny"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|rule| rule.as_str().unwrap())
+        .collect();
+    assert_eq!(rules.len(), 2 * runner::SECRET_LOCATIONS.len());
+    for location in runner::SECRET_LOCATIONS {
+        // Home-relative, one plain location each: no glob, no trailing
+        // slash, no `..`, no repeat.
+        assert!(location.starts_with("~/"), "{location}");
+        assert!(!location.ends_with('/'), "{location}");
+        assert!(!location.contains(['*', '?', '[']), "{location}");
+        assert!(!location.contains(".."), "{location}");
+        assert_eq!(
+            deny_read.iter().filter(|entry| **entry == location).count(),
+            1,
+            "{location}"
+        );
+        assert!(rules.contains(&format!("Read({location})").as_str()));
+        assert!(rules.contains(&format!("Read({location}/**)").as_str()));
+    }
+    // What the bundled claude-md-doctor reads stays readable: no location
+    // is one of these or a folder holding one.
+    for needed in [
+        "~/.claude",
+        "~/.claude/projects",
+        "~/.claude/CLAUDE.md",
+        "~/.claude/rules",
+        "~/.claude/settings.json",
+    ] {
+        for location in runner::SECRET_LOCATIONS {
+            assert!(
+                !(needed == location || needed.starts_with(&format!("{location}/"))),
+                "{location} covers {needed}"
+            );
+        }
+    }
+}
+
 #[test]
 fn command_line_environment_and_folder_are_exact() {
     let case = Case::new(WRITE_GOOD);
@@ -270,8 +334,12 @@ fn command_line_environment_and_folder_are_exact() {
         .collect();
     let project = case.project.to_str().unwrap();
     let prompt = skill.prompt(project, grade, &format!("{grade}/work"));
+    let (deny_read, read_rules) = (
+        serde_json::to_string(&runner::SECRET_LOCATIONS[..]).unwrap(),
+        serde_json::to_string(&runner::secret_read_rules()).unwrap(),
+    );
     let settings = format!(
-        r#"{{"disableAllHooks":true,"sandbox":{{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"filesystem":{{"denyWrite":["{project}"],"allowWrite":["{grade}"]}},"network":{{"allowedDomains":[]}}}}}}"#
+        r#"{{"disableAllHooks":true,"permissions":{{"deny":{read_rules}}},"sandbox":{{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"filesystem":{{"denyWrite":["{project}"],"allowWrite":["{grade}"],"denyRead":{deny_read}}},"network":{{"allowedDomains":[]}}}}}}"#
     );
     let expected: Vec<String> = [
         case.claude.to_str().unwrap(),
@@ -316,6 +384,15 @@ fn command_line_environment_and_folder_are_exact() {
         serde_json::json!([])
     );
     assert_eq!(parsed["disableAllHooks"], true);
+    // The secret locations are unreadable to commands and to the file tools.
+    assert_eq!(
+        parsed["sandbox"]["filesystem"]["denyRead"],
+        serde_json::json!(runner::SECRET_LOCATIONS[..])
+    );
+    assert_eq!(
+        parsed["permissions"]["deny"],
+        serde_json::json!(runner::secret_read_rules())
+    );
     // No command needs a rule of its own: the sandbox contains them all.
     assert!(!argv.iter().any(|arg| arg.starts_with("Bash(")));
     assert!(prompt.starts_with(&format!(

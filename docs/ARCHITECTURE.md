@@ -50,8 +50,8 @@ metrics through typed native commands.
 or a skill the user installed and added to Scores because its folder has a valid
 rubric) headless with the user's Claude Code on one project folder, without the user's
 personal Claude Code settings, inside Claude Code's sandbox (the project
-read-only, writes only in the run's grade folder, the network always off, no
-hooks or MCP servers, no saved transcript; Claude Code 2.1.296 or newer). A final step of the same run judges the skill's output against the
+read-only, writes only in the run's grade folder, the network always off,
+well-known secret locations unreadable, no hooks or MCP servers, no saved transcript; Claude Code 2.1.296 or newer). A final step of the same run judges the skill's output against the
 skill's rubric, `xtrace-rubric.md` ([format](GRADING-RUBRIC.md)), and writes
 `result.json`, which one strict protocol v1 reader checks. The score rule
 belongs to the rubric; XTrace never recomputes it. The app stores grades and

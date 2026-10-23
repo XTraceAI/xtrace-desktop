@@ -292,7 +292,15 @@ settings: no user, project or local settings file is loaded, so their own
 permission rules, sandbox exceptions, hooks and plugins do not apply. It runs
 in "don't ask" mode inside Claude Code's sandbox: the project folder is
 read-only, only the run's grade folder is writable, and the network is always
-off. If the sandbox is not available, Claude Code refuses to start and the run
+off. Well-known places that hold secrets (SSH and GPG keys, cloud, database and
+package-registry credentials, other coding tools' sign-ins and settings,
+keychain files and browser profiles; the list is `SECRET_LOCATIONS` in `crates/xt-judge/src/runner.rs`)
+cannot be read: the sandbox refuses them to every command, and `Read` deny
+rules refuse them to Claude Code's own file tools. What the bundled
+claude-md-doctor reads, such as `~/.claude/projects`, stays readable. On
+macOS the sandbox also hides whether anything in those places exists, so a
+project instruction that names one (say `~/.aws/config`) is reported as a
+missing file. If the sandbox is not available, Claude Code refuses to start and the run
 fails with "sandbox unavailable". Claude Code older than 2.1.296 (the version
 these settings were tested with), or one whose version cannot be read, is
 refused before the run starts. MCP servers are off and the run's transcript is

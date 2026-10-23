@@ -278,8 +278,12 @@ fn the_command_line_environment_and_folder_are_the_grading_runs() {
         None,
         None,
     );
+    let (deny_read, read_rules) = (
+        serde_json::to_string(&runner::SECRET_LOCATIONS[..]).unwrap(),
+        serde_json::to_string(&runner::secret_read_rules()).unwrap(),
+    );
     let settings = format!(
-        r#"{{"disableAllHooks":true,"sandbox":{{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"filesystem":{{"denyWrite":["{target}"],"allowWrite":["{out}"]}},"network":{{"allowedDomains":[]}}}}}}"#
+        r#"{{"disableAllHooks":true,"permissions":{{"deny":{read_rules}}},"sandbox":{{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"filesystem":{{"denyWrite":["{target}"],"allowWrite":["{out}"],"denyRead":{deny_read}}},"network":{{"allowedDomains":[]}}}}}}"#
     );
     let expected: Vec<String> = [
         case.claude.to_str().unwrap(),

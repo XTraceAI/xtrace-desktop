@@ -20,7 +20,8 @@
 //!   working folder (`denyWrite`, and `Edit` refused there), the output
 //!   folder the only writable one (`allowWrite`, and `Edit` allowed there),
 //!   the helper's copy the skill folder; no settings file is loaded, hooks,
-//!   MCP servers and the network are off, the transcript is not saved, and
+//!   MCP servers and the network are off, the secret locations are
+//!   unreadable ([`runner::SECRET_LOCATIONS`]), the transcript is not saved, and
 //!   Claude Code's sandbox is required. The same minimum Claude Code version
 //!   is checked first, and the child runs in its own process group with the
 //!   same allow-listed environment, a deadline ([`DEFAULT_DEADLINE`]),
