@@ -6,6 +6,7 @@ import type { MetricLeverageDay } from '../../data/generated/MetricLeverageDay';
 import { RulePopover } from '../../kit/RulePopover';
 import { ruleSummary, type RuleId } from '../../kit/rules';
 import { Segmented } from '../../kit/Segmented';
+import type { TimeRange } from '../../kit/TopBar';
 import { useSurfaceTheme } from '../../theme/ThemeProvider';
 import { InfoIcon } from './DefinitionInfo';
 import { DetailDialog } from './DetailDialog';
@@ -68,15 +69,18 @@ const percent = (fraction: number) => `${fraction * 100}%`;
 export function EffortByType({
   report,
   metric,
+  range,
 }: {
   report: DashboardMetrics;
   metric: EffortMetric;
+  /** The Dashboard's range, which a day card's session links carry. */
+  range: TimeRange;
 }) {
   const { current } = report.pr_effort;
   const chart = useMemo(() => effortChart(current, barMetric(metric)), [current, metric]);
   const empty = current.cohort.sessions === 0;
-  if (metric === 'human') return <HumanTimeline report={report} />;
-  if (metric === 'paired') return <HumanTimeline report={report} withAgents />;
+  if (metric === 'human') return <HumanTimeline report={report} range={range} />;
+  if (metric === 'paired') return <HumanTimeline report={report} range={range} withAgents />;
   return (
     <div className="xt-effort" data-testid="effort-by-type">
       {empty ? (

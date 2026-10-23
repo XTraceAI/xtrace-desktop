@@ -48,6 +48,24 @@ fn context_carries_saved_title_native_start_and_recorded_link_counts() {
     link(store, "blank", 4, PrConfidence::Sha);
     // One pull request shared by two sessions counts once for each.
     link(store, "sharing", 9, PrConfidence::Exact);
+    // Work at two times: its latest is the session's latest activity.
+    let work = |uuid: &str, ts: &str| -> xt_store::CanonicalRecord {
+        serde_json::from_value(
+            serde_json::json!({"uuid":uuid,"type":"assistant","timestamp":ts,
+            "message":{"role":"assistant","content":[]}}),
+        )
+        .unwrap()
+    };
+    store
+        .upsert_records(
+            "mixed",
+            &[
+                work("w1", "2026-09-04T10:00:00Z"),
+                work("w2", "2026-09-06T08:30:00Z"),
+            ],
+            false,
+        )
+        .unwrap();
 
     let metrics = MetricsDb::open(db.path()).unwrap();
     let rows = metrics
@@ -94,10 +112,28 @@ fn context_carries_saved_title_native_start_and_recorded_link_counts() {
                 .count() as u64
         );
         assert_eq!(
-            (&row.title, row.started_at_ms),
-            (&page.title, page.started_at_ms)
+            (&row.title, row.started_at_ms, row.last_activity_at_ms),
+            (&page.title, page.started_at_ms, page.last_activity_at_ms)
         );
     }
+    let mixed = rows.iter().find(|r| r.id == "mixed").unwrap();
+    assert_eq!(
+        mixed.last_activity_at_ms,
+        Some(
+            "2026-09-06T08:30:00Z"
+                .parse::<jiff::Timestamp>()
+                .unwrap()
+                .as_millisecond()
+        )
+    );
+    // No timed work: no latest activity, never a zero.
+    assert_eq!(
+        rows.iter()
+            .find(|r| r.id == "unlinked")
+            .unwrap()
+            .last_activity_at_ms,
+        None
+    );
 }
 
 /// The Dashboard's "recorded pull request links" count leaves out a number

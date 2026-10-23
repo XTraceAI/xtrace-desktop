@@ -261,6 +261,9 @@ pub struct FixtureExport {
     /// The detail of every span the Dashboard lanes return, as the span
     /// detail command answers it.
     pub span_details: Vec<FixtureSpanDetail>,
+    /// The sessions behind every day of every range's report, as the day
+    /// sessions command answers them for that report's window.
+    pub day_sessions: Vec<FixtureDaySessions>,
     pub dashboards: Vec<DashboardMetrics>,
     /// The stored pull requests this fixture's sessions link, before anything
     /// refreshed them.
@@ -308,6 +311,7 @@ pub fn export_types(directory: impl AsRef<std::path::Path>) -> Result<(), ts_rs:
     SessionTitles::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
     SessionCompactions::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
     DashboardSpanDetail::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
+    DashboardDaySessions::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
     PrList::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
     PrRefreshReport::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;
     PrAutoCheckStatus::export_all(&ts_rs::Config::new().with_out_dir(directory.as_ref()))?;

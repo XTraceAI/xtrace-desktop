@@ -17,6 +17,7 @@ import type { ContentPurge } from './generated/ContentPurge';
 import type { TodaySummary } from './generated/TodaySummary';
 import type { SessionTitles } from './generated/SessionTitles';
 import type { SessionCompactions } from './generated/SessionCompactions';
+import type { DashboardDaySessions } from './generated/DashboardDaySessions';
 import type { DashboardSpanDetail } from './generated/DashboardSpanDetail';
 import type { RuleActivityResult } from './generated/RuleActivityResult';
 import type { ProjectList } from './generated/ProjectList';
@@ -352,6 +353,22 @@ export interface DataSource {
   subscribe(event: DataEvent, listener: (payload?: unknown) => void): Promise<Unsubscribe>;
   /** Present natively and in a fixture, which answers as its export read. */
   readonly spanDetails?: SpanDetailControls;
+  /**
+   * The sessions behind one day of a Dashboard report's agent time, each with
+   * its time that day, the most first, capped with the rest counted — read
+   * when that day's card opens. The request names the report's range, the
+   * end of the window it was read over (`window.end_ms`), the zone it was
+   * read in (`window.timezone`) and one of its days; the native side derives
+   * the day itself in that zone, so the list adds up to that day's agent time
+   * in the report even if the system zone has changed since. Metadata only.
+   * Present natively and in a fixture, which answers as its export read.
+   */
+  daySessions?(
+    windowDays: number,
+    windowEndMs: number,
+    timezone: string,
+    date: string,
+  ): Promise<DashboardDaySessions>;
   /** Present only natively, where the app checks pull requests on its own. */
   readonly prAutoCheck?: PrAutoCheckControls;
   /** Present only where a writable app database owns the policy. */

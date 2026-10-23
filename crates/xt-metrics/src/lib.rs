@@ -65,7 +65,7 @@ pub use span_detail::{
     AutomaticText, MAX_PROMPT_CHARS, PromptText, SpanAutomatic, SpanDetail, SpanPrompt, SpanTool,
     notification_summary, prompt_excerpt,
 };
-pub use spans::{ActiveSpan, ActiveSpanReport, DayActive};
+pub use spans::{ActiveSpan, ActiveSpanReport, DayActive, SessionOnDay, SessionsOnDay};
 pub use stats::Delta;
 pub use sweep::Concurrency;
 pub use tokens::{

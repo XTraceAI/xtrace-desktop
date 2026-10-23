@@ -4,16 +4,15 @@
 //! core report and the Sessions page assembler; nothing here refreshes a pull
 //! request, reads a source history or computes a metric of its own.
 use crate::{
-    dashboard::{checked_value, convert, dashboard_window, selected_window, validate_window},
+    dashboard::{
+        JSON_SAFE, checked_value, convert, dashboard_window, selected_window, validate_window,
+    },
     dto::{MetricClock, PrAnalyticsPage, SessionPage},
     state::StateError,
 };
 use jiff::tz::TimeZone;
 use xt_metrics::{MetricsDb, Window};
 use xt_store::pr_link::PrIdentity;
-
-/// The first integer JavaScript cannot represent exactly.
-const JSON_SAFE: u64 = 1 << 53;
 
 /// The report over the preset window ending at the one captured `now_ms`, with
 /// the token gate anchored to the same instant, read in one snapshot.

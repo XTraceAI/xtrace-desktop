@@ -560,3 +560,67 @@
     display: none;
   }
 }
+
+/* "human + agent": a day's date opens its sessions box, and shows that it
+   does on hover, quietly. */
+.xt-human[data-variant='paired'] .xt-human-day {
+  cursor: pointer;
+}
+.xt-human[data-variant='paired'] .xt-human-day:hover,
+.xt-human[data-variant='paired'] .xt-human-day[data-popup-open] {
+  color: var(--secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* The sessions box holds links, so it takes the pointer, unlike the day's
+   card. */
+.xt-rule-positioner.xt-day-sessions-positioner,
+.xt-day-sessions-positioner .xt-effort-tip {
+  pointer-events: auto;
+}
+.xt-day-sessions-positioner .xt-effort-tip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.xt-effort-tip-sessions {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* Each session is one line: its name, cut to fit, and its time that day. It
+   keeps the card's own type and shows it is a link on hover and focus, as a
+   lane's session name does. */
+.xt-effort-tip-session {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 -4px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.xt-effort-tip-session span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xt-effort-tip-session b {
+  flex: none;
+  color: var(--accent-ink);
+  font-family: 'Geist Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.xt-effort-tip-session:hover span {
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
+.xt-effort-tip-session:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}

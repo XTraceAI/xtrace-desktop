@@ -187,7 +187,7 @@ function DashboardReport({
             </>
           }
         >
-          <EffortByType report={report} metric={effortMetric} />
+          <EffortByType report={report} metric={effortMetric} range={range} />
         </DashCard>
         {/* Must sit directly between Effort and Overview: it resizes its siblings. */}
         <SplitHandle

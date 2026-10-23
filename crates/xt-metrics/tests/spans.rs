@@ -553,3 +553,171 @@ fn the_last_day_alone_matches_that_days_bar_in_a_longer_range() {
         .unwrap();
     assert_eq!(bar, day);
 }
+
+/// Every day of `w`, for the events of `read`: the sessions listed for it add
+/// up to that day's bar, and each session's part is its own spans' part of the
+/// bar; a date outside the window has no answer.
+fn check_sessions_on_day(metrics: &MetricsDb, w: Window, read: Window, zone: TimeZone) {
+    let whole = metrics.active_spans(read).unwrap();
+    let bars = whole.by_day(w, zone.clone()).unwrap();
+    for (index, bucket) in w.local_days(zone.clone()).unwrap().iter().enumerate() {
+        let found = metrics
+            .sessions_on_day(w, read, zone.clone(), bucket.date)
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.day, bars[index], "{}", bucket.date);
+        assert_eq!(
+            found.sessions.iter().map(|s| s.active_ms).sum::<u64>(),
+            bars[index].active_ms
+        );
+        for session in &found.sessions {
+            assert!(session.active_ms > 0);
+            let own = ActiveSpanReport {
+                spans: whole
+                    .spans
+                    .iter()
+                    .filter(|s| (&s.session_id, &s.host) == (&session.session_id, &session.host))
+                    .cloned()
+                    .collect(),
+                active_ms: 0,
+            };
+            assert_eq!(
+                own.by_day(w, zone.clone()).unwrap()[index].active_ms,
+                session.active_ms
+            );
+        }
+        // Most time first, then by identifier.
+        for pair in found.sessions.windows(2) {
+            assert!(
+                (pair[0].active_ms, &pair[1].session_id)
+                    >= (pair[1].active_ms, &pair[0].session_id)
+            );
+        }
+    }
+    let after = w
+        .local_days(zone.clone())
+        .unwrap()
+        .last()
+        .unwrap()
+        .date
+        .tomorrow()
+        .unwrap();
+    assert_eq!(metrics.sessions_on_day(w, read, zone, after).unwrap(), None);
+}
+
+#[test]
+fn a_days_sessions_add_up_to_that_days_bar() {
+    let mut db = TempDb::empty().unwrap();
+    // Over midnight; ending one gap after midnight; starting just before the
+    // window; parallel with another; a gap of more than twenty minutes; a
+    // single event; and one on a later day.
+    for (id, times) in [
+        (
+            "over",
+            &["2026-09-02T23:50:00Z", "2026-09-03T00:05:00Z"][..],
+        ),
+        (
+            "edge",
+            &[
+                "2026-09-03T23:40:00Z",
+                "2026-09-04T00:00:00Z",
+                "2026-09-04T00:20:00Z",
+            ][..],
+        ),
+        (
+            "early",
+            &[
+                "2026-08-31T23:55:00Z",
+                "2026-09-01T00:05:00Z",
+                "2026-09-01T00:15:00Z",
+            ][..],
+        ),
+        (
+            "a",
+            &[
+                "2026-09-04T09:00:00Z",
+                "2026-09-04T09:10:00Z",
+                "2026-09-04T09:20:00Z",
+            ][..],
+        ),
+        (
+            "b",
+            &[
+                "2026-09-04T09:05:00Z",
+                "2026-09-04T09:15:00Z",
+                "2026-09-04T09:25:00Z",
+            ][..],
+        ),
+        (
+            "gap",
+            &[
+                "2026-09-04T10:00:00Z",
+                "2026-09-04T10:15:00Z",
+                "2026-09-04T11:00:00Z",
+                "2026-09-04T11:05:00Z",
+            ][..],
+        ),
+        ("single", &["2026-09-04T12:00:00Z"][..]),
+        (
+            "late",
+            &["2026-09-07T22:00:00Z", "2026-09-07T23:59:00Z"][..],
+        ),
+    ] {
+        let rows: Vec<_> = times
+            .iter()
+            .enumerate()
+            .map(|(n, ts)| record(&format!("{id}-{n}"), ts))
+            .collect();
+        seed(&mut db, id, &rows);
+    }
+    let metrics = MetricsDb::open(db.path()).unwrap();
+    check_sessions_on_day(&metrics, window(), window(), TimeZone::UTC);
+    // Midnight elsewhere, and a window that starts and ends mid-day.
+    let pacific = TimeZone::get("America/Los_Angeles").unwrap();
+    check_sessions_on_day(&metrics, window(), window(), pacific.clone());
+    let partial = Window::new(ms("2026-09-01T00:10:00Z"), ms("2026-09-07T22:30:00Z")).unwrap();
+    check_sessions_on_day(&metrics, partial, partial, TimeZone::UTC);
+    check_sessions_on_day(&metrics, partial, partial, pacific.clone());
+    // Whole days whose events end earlier, as a report pinned to its own end
+    // reads them: mid-span, just after a midnight a span crosses, and
+    // between two parallel sessions' events.
+    for until in [
+        "2026-09-07T22:30:00Z",
+        "2026-09-03T00:02:00Z",
+        "2026-09-04T09:12:00Z",
+    ] {
+        let read = Window::new(window().start_ms(), ms(until)).unwrap();
+        check_sessions_on_day(&metrics, window(), read, TimeZone::UTC);
+        check_sessions_on_day(&metrics, window(), read, pacific.clone());
+    }
+    // The parallel day, read whole: both sessions, the gap session's two
+    // spans as one row, no single event, most time first.
+    let day = metrics
+        .sessions_on_day(
+            window(),
+            window(),
+            TimeZone::UTC,
+            "2026-09-04".parse().unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+    let rows: Vec<_> = day
+        .sessions
+        .iter()
+        .map(|s| (s.session_id.as_str(), s.active_ms / 60_000))
+        .collect();
+    assert_eq!(rows, [("a", 20), ("b", 20), ("edge", 20), ("gap", 20)]);
+    assert_eq!(day.day.active_ms, 80 * 60_000);
+    // Before the window's start nothing counts: `early` begins at 00:05.
+    let first = metrics
+        .sessions_on_day(
+            window(),
+            window(),
+            TimeZone::UTC,
+            "2026-09-01".parse().unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.sessions.len(), 1);
+    assert_eq!(first.sessions[0].active_ms, 10 * 60_000);
+}

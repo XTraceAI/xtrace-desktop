@@ -28,6 +28,7 @@ import type { ContentPurge } from './generated/ContentPurge';
 import type { TodaySummary } from './generated/TodaySummary';
 import type { SessionTitles } from './generated/SessionTitles';
 import type { SessionCompactions } from './generated/SessionCompactions';
+import type { DashboardDaySessions } from './generated/DashboardDaySessions';
 import type { DashboardSpanDetail } from './generated/DashboardSpanDetail';
 import type { RuleActivityResult } from './generated/RuleActivityResult';
 import type { ProjectList } from './generated/ProjectList';
@@ -123,6 +124,14 @@ export class TauriDataSource implements DataSource {
       invoke<DashboardSpanDetail>(commands.spanDetail, { sessionId, startMs, endMs, readId }),
     cancel: (readId: string) => invoke<void>(commands.cancelSpanDetail, { readId }),
   };
+  daySessions(windowDays: number, windowEndMs: number, timezone: string, date: string) {
+    return invoke<DashboardDaySessions>(commands.daySessions, {
+      windowDays,
+      windowEndMs,
+      timezone,
+      date,
+    });
+  }
   readonly ruleActivity = {
     read: (readId: string) => invoke<RuleActivityResult>(commands.ruleActivityRead, { readId }),
     cancel: (readId: string) => invoke<void>(commands.ruleActivityCancel, { readId }),

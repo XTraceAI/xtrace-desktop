@@ -218,6 +218,65 @@ fn fixture_mode_builds_isolated_database_and_generated_export_parity() {
         ));
     }
 
+    // Every day's sessions for every range, through the command the day card
+    // calls, pinned to that range's report; each adds up to the report's own
+    // agent time for the day.
+    let day_sessions: Vec<_> = dashboards
+        .iter()
+        .flat_map(|report| {
+            report.leverage.by_day.iter().map(|day| {
+                let sessions = first
+                    .day_sessions(
+                        report.window.days,
+                        report.window.end_ms,
+                        &report.window.timezone,
+                        &day.date,
+                    )
+                    .unwrap();
+                assert_eq!(sessions.agent_ms, day.agent_ms, "{}", day.date);
+                assert_eq!(
+                    sessions.sessions.iter().map(|s| s.agent_ms).sum::<u64>() + sessions.more_ms,
+                    day.agent_ms
+                );
+                xtrace_desktop::dto::FixtureDaySessions {
+                    window_days: report.window.days,
+                    window_end_ms: report.window.end_ms,
+                    timezone: report.window.timezone.clone(),
+                    date: day.date.clone(),
+                    sessions,
+                }
+            })
+        })
+        .collect();
+    assert!(
+        day_sessions
+            .iter()
+            .any(|day| !day.sessions.sessions.is_empty()),
+        "F1 has a day with agent time"
+    );
+    // A day no report could have shown, or a zone that cannot be found, is
+    // refused.
+    let report = &dashboards[0];
+    let first_day = report.leverage.by_day[0].date.as_str();
+    for (days, end, zone, date) in [
+        (5, report.window.end_ms, "UTC", first_day),
+        (7, report.window.end_ms, "UTC", "2026-9-1"),
+        (7, report.window.end_ms, "UTC", "not a day"),
+        (7, report.window.end_ms, "UTC", "1999-01-01"),
+        (7, 1_i64 << 53, "UTC", first_day),
+        (7, report.window.end_ms, "Mars/Olympus_Mons", first_day),
+        (7, report.window.end_ms, "system-local", first_day),
+        (7, report.window.end_ms, "", first_day),
+    ] {
+        assert!(
+            matches!(
+                first.day_sessions(days, end, zone, date),
+                Err(StateError::InvalidDayRequest | StateError::InvalidMetricWindow)
+            ),
+            "{days} {end} {zone} {date}"
+        );
+    }
+
     // The PRs page report, per range and confidence mode, before any refresh:
     // the same command the page calls.
     let analytics = |state: &AppState| -> Vec<_> {
@@ -338,6 +397,7 @@ fn fixture_mode_builds_isolated_database_and_generated_export_parity() {
         sessions,
         session_stretches,
         span_details,
+        day_sessions,
         dashboards,
         pull_requests,
         pr_refresh,

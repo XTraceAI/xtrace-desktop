@@ -176,6 +176,21 @@ macro_rules! own_first_ms_sql {
     };
 }
 
+/// The session's latest timed own work (ms) for the session aliased `s`: the
+/// newest of the same work records [`own_first_ms_sql`] starts from, never
+/// metadata or records a fork shares with the session it was forked from. The
+/// Sessions page shows and sorts by it, and a context read carries it as the
+/// version a view reads a session's host title again by.
+macro_rules! last_activity_ms_sql {
+    () => {
+        concat!(
+            "(SELECT max(r.ts_ms) FROM records r WHERE r.session_id=s.session_id AND ",
+            work_record_sql!(),
+            ")"
+        )
+    };
+}
+
 /// The earliest non-meta time (ms) among the records the session aliased `s`
 /// shares with a session it was forked from. It never sets a start: `first_ts`,
 /// the earliest visible work, reads it, and a fork with no work of its own yet
@@ -219,9 +234,9 @@ const PAGE_SQL: &str = concat!(
                 ",
     copied_first_ms_sql!(),
     " copied_first_ms,
-                (SELECT max(r.ts_ms) FROM records r WHERE r.session_id=s.session_id AND ",
-    work_record_sql!(),
-    ") last_activity_ms
+                ",
+    last_activity_ms_sql!(),
+    " last_activity_ms
               FROM sessions s WHERE s.kind='user' AND (?2 IS NULL OR instr(?2,'|'||s.host||'|')>0)
                 -- A recorded session→PR link of any confidence, before paging.
                 -- A number GitHub said is not a pull request is no link.
@@ -667,6 +682,10 @@ pub struct SessionContext {
     pub pr_links: u64,
     /// The part of `pr_links` whose evidence is only `inferred`.
     pub inferred_pr_links: u64,
+    /// The same latest activity the Sessions page shows
+    /// ([`SessionSummary::last_activity_at_ms`]): the newest timed own work,
+    /// whenever it was. `None` when the session has no timed work record.
+    pub last_activity_at_ms: Option<i64>,
     /// The exactly resolved session that created this one; see
     /// [`SessionParent`].
     pub parent: Option<SessionParent>,
@@ -725,6 +744,9 @@ pub const CONTEXT_SQL: &str = concat!(
     ",
        ",
     crate::child_check::checked_sql!(),
+    ",
+       ",
+    last_activity_ms_sql!(),
     "
      FROM sessions s WHERE s.kind='user'"
 );
@@ -780,6 +802,7 @@ pub fn context(connection: &rusqlite::Connection, ids: &[&str]) -> Result<Vec<Se
                 started_at_ms: row.get(5)?,
                 pr_links: count(6)?,
                 inferred_pr_links: count(7)?,
+                last_activity_at_ms: row.get(10)?,
                 parent: None,
                 known_child,
                 check: if known_child {

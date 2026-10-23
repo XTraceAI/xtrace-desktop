@@ -218,6 +218,12 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 fixture.now().timestamp_millis(),
                 fixture.snapshots().get("prices"),
             )?;
+            // Each day's sessions are activity metadata, which a pull-request
+            // refresh never changes; read for every report's own window.
+            let day_sessions = xtrace_desktop::dashboard::fixture_day_sessions(
+                database.path(),
+                fixture.now().timestamp_millis(),
+            )?;
             // Drilldowns are read before the refresh too, like the Sessions
             // pages: membership is the links, which a refresh never changes,
             // and the preview takes each link's refresh-owned title from its
@@ -275,6 +281,7 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 sessions,
                 session_stretches,
                 span_details,
+                day_sessions,
                 native_index: xtrace_desktop::dto::NativeIndexStatus {
                     phase: xtrace_desktop::dto::NativeIndexPhase::Disabled {
                         reason: "fixture mode uses a disposable database".into(),

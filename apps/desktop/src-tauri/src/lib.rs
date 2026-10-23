@@ -282,6 +282,24 @@ async fn tokens_by_host(
     read_on_worker(app, move |state| state.tokens_by_host(window_days)).await
 }
 
+/// The sessions behind one day of the Dashboard's agent time, read when that
+/// day's card opens: the report's range, the end of the window it was read
+/// over, the zone it was read in (`window.timezone`) and the day. Metadata
+/// only; no transcript is read.
+#[tauri::command]
+async fn metrics_day_sessions(
+    app: tauri::AppHandle,
+    window_days: u32,
+    window_end_ms: i64,
+    timezone: String,
+    date: String,
+) -> Result<dto::DashboardDaySessions, String> {
+    read_on_worker(app, move |state| {
+        state.day_sessions(window_days, window_end_ms, &timezone, &date)
+    })
+    .await
+}
+
 /// Exactly one session's row, or nothing. Named, never searched for.
 #[tauri::command]
 async fn session_row(
@@ -1425,6 +1443,7 @@ pub fn run() {
             metrics_dashboard,
             metrics_span_detail,
             cancel_metrics_span_detail,
+            metrics_day_sessions,
             tokens_by_host,
             session_row,
             session_stretches,

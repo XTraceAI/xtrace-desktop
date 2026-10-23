@@ -778,6 +778,44 @@ it('titles each listed link from the current PR state: before, one, failed and a
   expect(shell.sessions[0].rows[0].pr_links.map((link) => link.title)).toEqual([null, null, null]);
 });
 
+it('invokes the native day sessions command with the report’s range, end, zone and day', async () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  const [entry] = shell.day_sessions;
+  vi.mocked(invoke).mockResolvedValue(entry!.sessions);
+  const source = await nativeSource();
+  expect(
+    await source.daySessions!(7, 1_788_825_600_000, 'America/Los_Angeles', '2026-09-07'),
+  ).toEqual(entry!.sessions);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('metrics_day_sessions', {
+    windowDays: 7,
+    windowEndMs: 1_788_825_600_000,
+    timezone: 'America/Los_Angeles',
+    date: '2026-09-07',
+  });
+});
+
+it('answers a day’s sessions from the export only for the exact report, zone and day', async () => {
+  const fixture = new FixtureDataSource(structuredClone(shell));
+  for (const report of shell.dashboards) {
+    const { days, end_ms, timezone } = report.window;
+    for (const day of report.leverage.by_day) {
+      const answer = await fixture.daySessions(days, end_ms, timezone, day.date);
+      expect(answer.agent_ms).toBe(day.agent_ms);
+      expect(answer.date).toBe(day.date);
+    }
+  }
+  const { days, end_ms } = shell.dashboards[0]!.window;
+  const date = shell.dashboards[0]!.leverage.by_day[0]!.date;
+  for (const [range, end, zone, day] of [
+    [days, end_ms, 'Asia/Tokyo', date],
+    [days, end_ms + 1, 'UTC', date],
+    [days, end_ms, 'UTC', '1999-01-01'],
+  ] as const)
+    await expect(fixture.daySessions(range, end, zone, day)).rejects.toThrow(
+      'no sessions for this day',
+    );
+});
+
 it('invokes the native PRs report and drilldown commands with exactly the request', async () => {
   vi.mocked(isTauri).mockReturnValue(true);
   const [page] = shell.pr_analytics;

@@ -78,6 +78,9 @@ pub enum StateError {
     /// Refused before storage is touched: no lane could have sent it.
     #[error("a span detail request names one session and one span of the lane window")]
     InvalidSpanRequest,
+    /// Refused before anything is listed: no report could have shown that day.
+    #[error("a day's sessions request names one day of a Dashboard range")]
+    InvalidDayRequest,
     /// Refused before storage is touched.
     #[error("typing speed must be a whole number from 1 to 300 words per minute")]
     InvalidTypingSpeed,
@@ -1193,6 +1196,23 @@ impl AppState {
                 )
             },
         )
+    }
+
+    /// The sessions behind one day of a Dashboard report's agent time,
+    /// pinned to the window that report was read over (its `window.end_ms`)
+    /// and to the zone it was read in (its `window.timezone`), so the list
+    /// adds up to the day the report showed even if the system zone changed.
+    pub fn day_sessions(
+        &self,
+        window_days: u32,
+        window_end_ms: i64,
+        timezone: &str,
+        date: &str,
+    ) -> Result<crate::dto::DashboardDaySessions, StateError> {
+        self.with_metrics(window_days, |metrics, inputs| {
+            let zone = crate::dashboard::report_zone(timezone, &inputs.zone, inputs.clock)?;
+            crate::dashboard::day_sessions(metrics, window_days, window_end_ms, date, zone)
+        })
     }
 
     pub fn tokens_by_host(&self, window_days: u32) -> Result<crate::dto::TokensByHost, StateError> {

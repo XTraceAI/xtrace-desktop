@@ -65,16 +65,20 @@ impl Period {
     }
 }
 
+/// The first integer JSON cannot carry exactly (2^53): every integer sent to
+/// the view, or named by a request from it, is below it in magnitude.
+pub(crate) const JSON_SAFE: u64 = 1 << 53;
+
 // Match DbCounts' exact JSON-integer boundary across all nested transport fields.
 // Core float reports already enforce finite arithmetic; tile values are checked
 // separately before serialization so a nonfinite value cannot turn into null.
 fn check_integers(value: &serde_json::Value) -> Result<(), StateError> {
     match value {
         serde_json::Value::Number(number) => {
-            if number.as_u64().is_some_and(|n| n >= 1_u64 << 53)
+            if number.as_u64().is_some_and(|n| n >= JSON_SAFE)
                 || number
                     .as_i64()
-                    .is_some_and(|n| n.unsigned_abs() >= 1_u64 << 53)
+                    .is_some_and(|n| n.unsigned_abs() >= JSON_SAFE)
             {
                 return Err(StateError::CountRange);
             }
@@ -173,6 +177,11 @@ pub(crate) fn dashboard_window(
         clock,
     }
 }
+/// What a report names a system zone with no IANA name.
+const UNNAMED_ZONE: &str = "system-local";
+/// The longest zone name a request may carry; IANA names are far shorter.
+const MAX_ZONE_NAME_BYTES: usize = 64;
+
 /// The zone a report names: its IANA name, `UTC` for the fixture clock, or
 /// `system-local` when the OS reports none.
 pub(crate) fn zone_name(zone: &TimeZone, clock: MetricClock) -> String {
@@ -180,9 +189,32 @@ pub(crate) fn zone_name(zone: &TimeZone, clock: MetricClock) -> String {
         .unwrap_or(if clock == MetricClock::Fixture {
             "UTC"
         } else {
-            "system-local"
+            UNNAMED_ZONE
         })
         .into()
+}
+
+/// The zone a report was read in, from the name it sent (`window.timezone`,
+/// written by [`zone_name`]), so a read that follows the report splits its
+/// days where the report did even if the system zone changed since.
+///
+/// A name the current zone also has is the current zone. Any other IANA name
+/// is looked up; one that cannot be found, an empty or overlong name, and
+/// `system-local` while the current zone has a name are refused. Two zones
+/// without a name cannot be told apart, so `system-local` is taken to be the
+/// current zone when that has no name either.
+pub fn report_zone(
+    name: &str,
+    current: &TimeZone,
+    clock: MetricClock,
+) -> Result<TimeZone, StateError> {
+    if name == zone_name(current, clock) {
+        return Ok(current.clone());
+    }
+    if name.is_empty() || name.len() > MAX_ZONE_NAME_BYTES || name == UNNAMED_ZONE {
+        return Err(StateError::InvalidDayRequest);
+    }
+    TimeZone::get(name).map_err(|_| StateError::InvalidDayRequest)
 }
 
 /// The returned spans of the fixed lane window, how many there were before the
@@ -837,7 +869,8 @@ struct Daily {
     /// same number of whole days just before.
     human: xt_metrics::HumanHoursPeriods,
     /// Agent hours (M-05) over exactly the whole days of `human.current`, so
-    /// leverage divides two measures of one span.
+    /// leverage divides two measures of one span, from the events recorded
+    /// before the report's end ([`agent_events`]).
     agent: xt_metrics::ActiveSpanReport,
     /// The whole days of `human.current`, the span `agent` was read over.
     agent_window: Window,
@@ -858,10 +891,16 @@ impl Daily {
         hands_off: Vec<xt_metrics::DayHandsOff>,
     ) -> xt_metrics::Result<Self> {
         let human = db.human_hours(window, break_length, zone.clone())?;
-        let agent_window = Window::new(human.current.start_ms, human.current.end_ms)?;
+        let agent_window = whole_days(window, zone.clone())?;
+        // The same whole days human time reports as its current period.
+        if (agent_window.start_ms(), agent_window.end_ms())
+            != (human.current.start_ms, human.current.end_ms)
+        {
+            return Err(xt_metrics::Error::InvalidWindow);
+        }
         let previous_window = Window::new(human.previous.start_ms, human.previous.end_ms)?;
         Ok(Self {
-            agent: db.active_spans(agent_window)?,
+            agent: db.active_spans(agent_events(agent_window, window)?)?,
             agent_window,
             previous_agent_ms: db.active_spans(previous_window)?.active_ms,
             human,
@@ -1037,6 +1076,157 @@ pub fn tokens_by_host(
         window: dashboard_window(days, window, &zone, clock),
         hosts: convert(&report.by_host)?,
     })
+}
+
+/// The most sessions a day's card names; the rest are counted with their time.
+pub const DAY_SESSION_LIMIT: usize = 8;
+
+// The listed sessions' context is read in one bounded statement.
+const _: () = assert!(
+    DAY_SESSION_LIMIT <= xt_metrics::MAX_SESSIONS,
+    "DAY_SESSION_LIMIT must not exceed the sessions one context read accepts"
+);
+
+/// The whole local days a report's leverage, its human time and its
+/// day-by-day agent time cover: every local day the selected window touches,
+/// made whole (the span `human_hours` reports as its current period).
+/// [`Daily::read`] and [`day_sessions`] both take the days from here.
+fn whole_days(selected: Window, zone: TimeZone) -> xt_metrics::Result<Window> {
+    selected.whole_local_days(zone)
+}
+
+/// The events a report's whole-day agent time is measured from: those of its
+/// whole days recorded before the report's own end, the instant its selected
+/// window ends (`window.end_ms`, the clock read when the report was asked
+/// for). The rest of today is not read, so an event that arrives while the
+/// report is being read never counts in one report's day and not in its
+/// day card, which reads the same events by the same end.
+fn agent_events(whole: Window, selected: Window) -> xt_metrics::Result<Window> {
+    Window::new(whole.start_ms(), whole.end_ms().min(selected.end_ms()))
+}
+
+/// Which sessions had agent time on one whole local day of a Dashboard
+/// report, and how much each, for the "human + agent" day card.
+///
+/// The request names the report's range, the end of the window it was read
+/// over (`window.end_ms`) and one of its days; the day's bounds and the
+/// events read are derived here, from the same whole days and the same end
+/// the report's leverage uses ([`whole_days`], [`agent_events`]), so the list
+/// adds up to that day's `agent_ms` in the report that was showing, whatever
+/// the clock says now, even while sessions are still running. One gap
+/// remains: an event recorded before the report's end but indexed only after
+/// the report was read counts here and not in that report; the next report
+/// counts it too, and it has a new end, so its card is read again.
+/// A range that is not a preset, an anchor beyond what JSON carries exactly,
+/// or a date that is not one of the range's days is refused before anything
+/// is listed. `zone` is the report's own zone ([`report_zone`]), never the
+/// one the system has when the card opens.
+///
+/// The [`DAY_SESSION_LIMIT`] sessions with the most time are named, with the
+/// saved title and reviewer mark the lanes name them by; the rest are counted
+/// with their time, so the card can say "and N more" and still add up.
+pub fn day_sessions(
+    db: &MetricsDb,
+    days: u32,
+    window_end_ms: i64,
+    date: &str,
+    zone: TimeZone,
+) -> Result<DashboardDaySessions, StateError> {
+    validate_window(days)?;
+    if window_end_ms.unsigned_abs() >= JSON_SAFE || date.len() != "2026-01-01".len() {
+        return Err(StateError::InvalidDayRequest);
+    }
+    let day: jiff::civil::Date = date.parse().map_err(|_| StateError::InvalidDayRequest)?;
+    // One spelling per day, as the report writes it.
+    if day.to_string() != date {
+        return Err(StateError::InvalidDayRequest);
+    }
+    let selected =
+        selected_window(days, window_end_ms).map_err(|_| StateError::InvalidDayRequest)?;
+    let window = whole_days(selected, zone.clone()).map_err(|_| StateError::InvalidDayRequest)?;
+    let events = agent_events(window, selected).map_err(|_| StateError::InvalidDayRequest)?;
+    let (found, context) = db
+        .read_snapshot(|db| {
+            let Some(found) = db.sessions_on_day(window, events, zone, day)? else {
+                return Ok(None);
+            };
+            let mut ids: Vec<&str> = found
+                .sessions
+                .iter()
+                .take(DAY_SESSION_LIMIT)
+                .map(|session| session.session_id.as_str())
+                .collect();
+            ids.sort_unstable();
+            ids.dedup();
+            let context = db.session_context(&ids)?;
+            Ok(Some((found, context)))
+        })?
+        .ok_or(StateError::InvalidDayRequest)?;
+    let context: std::collections::BTreeMap<_, _> = context
+        .into_iter()
+        .map(|row| ((row.id.clone(), row.host.clone()), row))
+        .collect();
+    let more = found.sessions.iter().skip(DAY_SESSION_LIMIT);
+    let more_sessions = more.clone().count() as u64;
+    let more_ms = more
+        .map(|session| session.active_ms)
+        .try_fold(0_u64, u64::checked_add)
+        .ok_or(StateError::CountRange)?;
+    let sessions = found
+        .sessions
+        .into_iter()
+        .take(DAY_SESSION_LIMIT)
+        .map(|session| {
+            let row = context.get(&(session.session_id.clone(), session.host.clone()));
+            DashboardDaySession {
+                title: row.and_then(|row| row.title.clone()),
+                automated_review: row.is_some_and(|row| row.automated_review),
+                session_id: session.session_id,
+                host: session.host,
+                agent_ms: session.active_ms,
+                last_activity_at_ms: row.and_then(|row| row.last_activity_at_ms),
+            }
+        })
+        .collect();
+    let answer = DashboardDaySessions {
+        date: found.day.date,
+        start_ms: found.day.start_ms,
+        end_ms: found.day.end_ms,
+        agent_ms: found.day.active_ms,
+        sessions,
+        more_sessions,
+        more_ms,
+    };
+    checked_value(&answer)?;
+    Ok(answer)
+}
+
+/// Every day's sessions for every range of a fixture's reports, read through
+/// the same function and pinned clock as those reports.
+pub fn fixture_day_sessions(
+    path: &std::path::Path,
+    now_ms: i64,
+) -> Result<Vec<FixtureDaySessions>, StateError> {
+    let metrics = MetricsDb::open(path)?;
+    let mut out = Vec::new();
+    for days in WINDOW_PRESETS {
+        // The zone the fixture's reports name, read back as a request names it.
+        let timezone = zone_name(&TimeZone::UTC, MetricClock::Fixture);
+        let zone = report_zone(&timezone, &TimeZone::UTC, MetricClock::Fixture)?;
+        for bucket in
+            whole_days(selected_window(days, now_ms)?, zone.clone())?.local_days(zone.clone())?
+        {
+            let date = bucket.date.to_string();
+            out.push(FixtureDaySessions {
+                window_days: days,
+                window_end_ms: now_ms,
+                timezone: timezone.clone(),
+                sessions: day_sessions(&metrics, days, now_ms, &date, zone.clone())?,
+                date,
+            });
+        }
+    }
+    Ok(out)
 }
 
 /// The longest stored session identifier a span request names, in bytes. The

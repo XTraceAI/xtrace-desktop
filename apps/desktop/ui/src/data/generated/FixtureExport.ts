@@ -2,6 +2,7 @@
 import type { AppInfo } from "./AppInfo";
 import type { DashboardMetrics } from "./DashboardMetrics";
 import type { DbCounts } from "./DbCounts";
+import type { FixtureDaySessions } from "./FixtureDaySessions";
 import type { FixturePrEffortState } from "./FixturePrEffortState";
 import type { FixturePrSessions } from "./FixturePrSessions";
 import type { FixtureSessionStretches } from "./FixtureSessionStretches";
@@ -28,7 +29,12 @@ session_stretches: Array<FixtureSessionStretches>,
  * The detail of every span the Dashboard lanes return, as the span
  * detail command answers it.
  */
-span_details: Array<FixtureSpanDetail>, dashboards: Array<DashboardMetrics>, 
+span_details: Array<FixtureSpanDetail>, 
+/**
+ * The sessions behind every day of every range's report, as the day
+ * sessions command answers them for that report's window.
+ */
+day_sessions: Array<FixtureDaySessions>, dashboards: Array<DashboardMetrics>, 
 /**
  * The stored pull requests this fixture's sessions link, before anything
  * refreshed them.

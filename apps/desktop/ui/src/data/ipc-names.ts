@@ -7,6 +7,7 @@ export const commands = {
   tokensByHost: 'tokens_by_host',
   spanDetail: 'metrics_span_detail',
   cancelSpanDetail: 'cancel_metrics_span_detail',
+  daySessions: 'metrics_day_sessions',
   sessionsList: 'sessions_list',
   appInfo: 'app_info',
   dbCounts: 'db_counts',

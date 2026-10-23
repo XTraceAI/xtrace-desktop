@@ -11,20 +11,25 @@ const purgeKey = ['content-purges'] as const;
 
 /** The prefix of every lane span's detail. */
 const spanDetails = ['metrics', 'span-detail'] as const;
+/** The prefix of every day card's sessions, which carry saved titles. */
+const daySessions = ['metrics', 'day-sessions'] as const;
 
 export const purgeEpoch = (client: QueryClient) => client.getQueryData<number>(purgeKey) ?? 0;
 
 /**
  * A committed "Delete stored content": span details read before it may hold
- * words that are now deleted, and metric reads no longer wait for the purge,
- * so a read that began before it can answer after. Every span detail is keyed
- * by the epoch it began in; raising the epoch stops those reads and drops
- * their answers, cached or still to come, and the next open reads again.
+ * words that are now deleted, and a day card's sessions saved titles, and
+ * metric reads no longer wait for the purge, so a read that began before it
+ * can answer after. Both are keyed by the epoch they began in; raising the
+ * epoch stops those reads and drops their answers, cached or still to come,
+ * and the next open reads again.
  */
 export function discardStoredWords(client: QueryClient) {
   client.setQueryData<number>(purgeKey, purgeEpoch(client) + 1);
-  void client.cancelQueries({ queryKey: spanDetails });
-  client.removeQueries({ queryKey: spanDetails });
+  for (const queryKey of [spanDetails, daySessions]) {
+    void client.cancelQueries({ queryKey });
+    client.removeQueries({ queryKey });
+  }
 }
 
 /** The current purge epoch, re-rendering when a purge raises it. */

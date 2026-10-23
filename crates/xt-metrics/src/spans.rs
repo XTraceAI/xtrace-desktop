@@ -90,6 +90,28 @@ impl ActiveSpanReport {
     }
 }
 
+/// One session's agent time on one local day: the part of each of its spans
+/// that falls inside the day, allocated exactly as [`ActiveSpanReport::by_day`]
+/// allocates it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SessionOnDay {
+    pub session_id: String,
+    pub host: String,
+    pub active_ms: u64,
+}
+
+/// The sessions behind one local day's agent time.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SessionsOnDay {
+    /// The day as `by_day` reports it over the same window.
+    pub day: DayActive,
+    /// Every session with positive agent time on the day, the most time
+    /// first, then by identifier and host. Their times add up to
+    /// `day.active_ms` exactly; a session whose spans only touch the day
+    /// with no length (a single event) has no time there and is left out.
+    pub sessions: Vec<SessionOnDay>,
+}
+
 /// Pair the allocated durations with the buckets they were allocated over. The
 /// two are the same length by construction and stay in window order.
 fn day_active(days: &[DayBucket], totals: &[i128]) -> Result<Vec<DayActive>> {
@@ -153,6 +175,100 @@ impl MetricsDb {
                 .ok_or(Error::CounterOverflow)?;
         }
         Ok(ActiveSpanReport { spans, active_ms })
+    }
+
+    /// Which sessions had agent time on one local day of `window`, and how
+    /// much each: the day [`ActiveSpanReport::by_day`] reports over `window`
+    /// for `self.active_spans(read)`, split by session. `read` is the events
+    /// the caller's report read: `window` itself, or a part of it that ends
+    /// earlier (a report pinned to its own end). `None` when `date` is not
+    /// one of the window's local days.
+    ///
+    /// Only the events from one gap before the day to one gap after it, kept
+    /// inside `read`, are read. That gives the same answer as reading all of
+    /// `read`: a span adds time to the day only through a pair of consecutive
+    /// events at most one gap apart with the day between or around them, and
+    /// both events of such a pair lie in that stretch, as does every event
+    /// between them. The parts are allocated over the whole window's days,
+    /// so the last day keeps a leap-second remainder exactly as `by_day`
+    /// gives it.
+    pub fn sessions_on_day(
+        &self,
+        window: Window,
+        read: Window,
+        zone: TimeZone,
+        date: jiff::civil::Date,
+    ) -> Result<Option<SessionsOnDay>> {
+        let days = window.local_days(zone)?;
+        let Some(index) = days.iter().position(|day| day.date == date) else {
+            return Ok(None);
+        };
+        let bucket = days[index].window;
+        let from = bucket
+            .start_ms()
+            .checked_sub(MAX_GAP_MS)
+            .ok_or(Error::InvalidWindow)?
+            .max(read.start_ms());
+        let until = bucket
+            .end_ms()
+            .checked_add(MAX_GAP_MS)
+            .ok_or(Error::InvalidWindow)?
+            .min(read.end_ms());
+        // A day the read ends before (or starts after) has nothing read.
+        let spans = if from < until {
+            self.active_spans(Window::new(from, until)?)?.spans
+        } else {
+            Vec::new()
+        };
+        let ends: Vec<i128> = days
+            .iter()
+            .map(|day| i128::from(day.window.end_ms()))
+            .collect();
+        let mut by_session = BTreeMap::<(String, String), i128>::new();
+        let mut totals = vec![0_i128; days.len()];
+        for span in spans {
+            totals.fill(0);
+            allocate(
+                i128::from(window.start_ms()),
+                &ends,
+                (i128::from(span.start_ms), i128::from(span.end_ms)),
+                &mut totals,
+            )?;
+            let part = totals[index];
+            if part > 0 {
+                let sum = by_session.entry((span.session_id, span.host)).or_default();
+                *sum = sum.checked_add(part).ok_or(Error::CounterOverflow)?;
+            }
+        }
+        let mut sessions = by_session
+            .into_iter()
+            .map(|((session_id, host), active)| {
+                Ok(SessionOnDay {
+                    session_id,
+                    host,
+                    active_ms: u64::try_from(active).map_err(|_| Error::CounterOverflow)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        sessions.sort_by(|a, b| {
+            b.active_ms
+                .cmp(&a.active_ms)
+                .then_with(|| a.session_id.cmp(&b.session_id))
+                .then_with(|| a.host.cmp(&b.host))
+        });
+        let active_ms = sessions
+            .iter()
+            .try_fold(0_u64, |sum, session| sum.checked_add(session.active_ms))
+            .ok_or(Error::CounterOverflow)?;
+        Ok(Some(SessionsOnDay {
+            day: DayActive {
+                date: days[index].date.to_string(),
+                start_ms: bucket.start_ms(),
+                end_ms: bucket.end_ms(),
+                active_ms,
+            },
+            sessions,
+        }))
     }
 
     /// Agent time on the last local day of `window`, measured exactly as a
