@@ -281,22 +281,7 @@ impl MetricsDb {
         if eligible.is_none() {
             return Ok(SpanPrompt::Unclassified);
         }
-        // No reader separates the person's part of a wrapped input: its
-        // adjustment records only a length. The joined text would show the
-        // wrapper, so the words are withheld rather than shown wrong.
-        let text = if partial {
-            PromptText::Wrapped
-        } else {
-            match record_text::text(&self.connection, &uuid)? {
-                RecordText::Stored(text) => prompt_excerpt(&text),
-                RecordText::NotStored | RecordText::Missing => {
-                    match record_preview::read(&self.connection, &uuid, PreviewKind::Person)? {
-                        Some(Preview { text, truncated }) => PromptText::Stored { text, truncated },
-                        None => PromptText::NotStored,
-                    }
-                }
-            }
-        };
+        let text = person_words(&self.connection, &uuid, partial)?;
         Ok(SpanPrompt::Found {
             at_ms,
             in_span: at_ms >= start_ms,
@@ -358,6 +343,70 @@ impl MetricsDb {
             text,
         })
     }
+}
+
+/// A person's words, as much of them as the index kept.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PersonText {
+    /// All of the message: its kept content, or a preview that held all of it.
+    Whole(String),
+    /// Only its start: the preview stopped at [`MAX_PROMPT_CHARS`] characters.
+    Start(String),
+    /// Neither content retention nor a preview kept the words.
+    NotStored,
+    /// Only part of the record is the person's and nothing locates it.
+    Wrapped,
+}
+
+/// The words of one record the stored M-02 classification already calls a
+/// person's: from the record's kept content, else from the short preview the
+/// index keeps. `partial` is that classification's own statement that only
+/// part of the record is the person's. Every reader of a person's words (the
+/// last prompt, session warnings) reads them here.
+pub(crate) fn person_text(
+    connection: &rusqlite::Connection,
+    uuid: &str,
+    partial: bool,
+) -> Result<PersonText> {
+    // No reader separates the person's part of a wrapped input: its
+    // adjustment records only a length. The joined text would show the
+    // wrapper, so the words are withheld rather than shown wrong.
+    if partial {
+        return Ok(PersonText::Wrapped);
+    }
+    Ok(match record_text::text(connection, uuid)? {
+        RecordText::Stored(text) => PersonText::Whole(text),
+        RecordText::NotStored | RecordText::Missing => {
+            match record_preview::read(connection, uuid, PreviewKind::Person)? {
+                Some(Preview {
+                    text,
+                    truncated: false,
+                }) => PersonText::Whole(text),
+                Some(Preview {
+                    text,
+                    truncated: true,
+                }) => PersonText::Start(text),
+                None => PersonText::NotStored,
+            }
+        }
+    })
+}
+
+/// [`person_text`] as one bounded line, for a reader that shows the words.
+pub(crate) fn person_words(
+    connection: &rusqlite::Connection,
+    uuid: &str,
+    partial: bool,
+) -> Result<PromptText> {
+    Ok(match person_text(connection, uuid, partial)? {
+        PersonText::Whole(text) => prompt_excerpt(&text),
+        PersonText::Start(text) => PromptText::Stored {
+            text,
+            truncated: true,
+        },
+        PersonText::NotStored => PromptText::NotStored,
+        PersonText::Wrapped => PromptText::Wrapped,
+    })
 }
 
 /// The `<summary>` of a Claude Code task notification's joined text, as one

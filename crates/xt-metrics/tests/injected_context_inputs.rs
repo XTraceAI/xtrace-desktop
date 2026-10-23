@@ -373,7 +373,7 @@ fn installed() -> TempDb {
 fn rewind_to_schema_12(path: &std::path::Path) {
     let sql = Connection::open(path).unwrap();
     sql.execute_batch(&format!(
-        "DROP TABLE grading_added_skills; DROP TABLE grades; DROP TABLE telemetry_events; ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DELETE FROM schema_version WHERE version>=13;
+        "DROP INDEX tool_results_session; DROP TABLE tool_results; DROP INDEX tool_uses_call_id; ALTER TABLE tool_uses DROP COLUMN call_id_conflict; ALTER TABLE tool_uses DROP COLUMN call_id; DROP TABLE grading_added_skills; DROP TABLE grades; DROP TABLE telemetry_events; ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DELETE FROM schema_version WHERE version>=13;
          DROP VIEW v_response_usage; DROP VIEW v_usage_records;
          DROP VIEW v_session_events; DROP VIEW v_records;
          DROP TABLE injected_context_inputs; DROP TABLE IF EXISTS tool_sent_inputs; DROP TABLE IF EXISTS task_notification_inputs; DROP TABLE IF EXISTS record_previews; DROP TABLE IF EXISTS session_child_checks; DROP TABLE IF EXISTS session_child_facts; DROP TABLE IF EXISTS human_input_adjustments; DROP TABLE IF EXISTS human_session_origins; DROP TABLE claude_launch_groups; DROP TABLE claude_launch_group_members; DROP TABLE claude_launch_candidates; DROP TABLE claude_launch_staged_candidates;
@@ -477,7 +477,7 @@ fn a_schema_12_index_upgrades_with_its_621_and_8_confirmations_and_metrics_uncha
 
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 26);
+        assert_eq!(store.schema_version().unwrap(), 27);
         assert!(store.injected_context_proofs(GUARDIAN).unwrap().is_empty());
         drop(store);
         assert!(

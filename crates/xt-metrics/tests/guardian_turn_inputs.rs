@@ -171,7 +171,7 @@ fn build() -> TempDb {
 fn rewind_to_schema_11(path: &std::path::Path) {
     let sql = Connection::open(path).unwrap();
     sql.execute_batch(&format!(
-        "DROP TABLE grading_added_skills; DROP TABLE grades; DROP TABLE telemetry_events; ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DELETE FROM schema_version WHERE version>=12;
+        "DROP INDEX tool_results_session; DROP TABLE tool_results; DROP INDEX tool_uses_call_id; ALTER TABLE tool_uses DROP COLUMN call_id_conflict; ALTER TABLE tool_uses DROP COLUMN call_id; DROP TABLE grading_added_skills; DROP TABLE grades; DROP TABLE telemetry_events; ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DELETE FROM schema_version WHERE version>=12;
          DROP VIEW v_response_usage; DROP VIEW v_usage_records;
          DROP VIEW v_session_events; DROP VIEW v_records;
          DROP TABLE guardian_turn_inputs;
@@ -293,7 +293,7 @@ fn a_schema_11_index_upgrades_with_its_eight_confirmations_and_metrics_unchanged
 
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 26);
+        assert_eq!(store.schema_version().unwrap(), 27);
         assert!(
             store
                 .guardian_turn_confirmations(GUARDIAN)

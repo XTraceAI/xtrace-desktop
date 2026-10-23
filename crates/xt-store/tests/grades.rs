@@ -55,7 +55,7 @@ fn with(
 fn migration_25_adds_the_grades_table() {
     let directory = TempDir::new().unwrap();
     let store = open(&directory);
-    assert_eq!(store.schema_version().unwrap(), 26);
+    assert_eq!(store.schema_version().unwrap(), 27);
     assert!(store.grades(10).unwrap().is_empty());
 }
 
@@ -72,7 +72,7 @@ fn a_succeeded_grade_survives_closing_and_reopening_version_25() {
     let reopened = open(&directory);
     // Reopened at the current version: migration 26 (skills added to
     // Scores) leaves the grades table as migration 25 made it.
-    assert_eq!(reopened.schema_version().unwrap(), 26);
+    assert_eq!(reopened.schema_version().unwrap(), 27);
     let restored = reopened.grade(A).unwrap().unwrap();
     assert_eq!(restored, saved);
     assert_eq!(restored.status, GradeStatus::Succeeded);

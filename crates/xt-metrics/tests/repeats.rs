@@ -153,9 +153,10 @@ fn missing_counts_blocks_keys_versions_or_a_contested_key_are_unknown_not_zero()
             UnknownRepeats::MissingKey,
             "UPDATE tool_uses SET group_version=NULL,group_key=NULL WHERE uuid='a' AND block_index=2",
         ),
+        // A version this build does not derive (1 and 2 it does).
         (
             UnknownRepeats::UnsupportedVersion,
-            "UPDATE tool_uses SET group_version=2 WHERE uuid='a' AND block_index=2",
+            "UPDATE tool_uses SET group_version=3 WHERE uuid='a' AND block_index=2",
         ),
         (
             UnknownRepeats::ConflictingKey,
@@ -683,4 +684,74 @@ fn a_replay_that_changes_which_call_sits_at_a_position_is_not_measured() {
     // The same calls observed again leave the measurement exactly as it was.
     let (before, after) = replayed(&stretch(edits("a", "Edit")), &[edits("a", "Edit")]);
     assert_eq!((before, after), (measured.clone(), measured));
+}
+
+/// Codex `exec` calls, as the pinned reader writes them: the command text in
+/// `input`. An older build keyed every one of them the same; a store that
+/// still holds those keys keeps that answer until the session is read again,
+/// and reading it again corrects it.
+#[test]
+fn old_codex_keys_keep_their_answer_until_the_session_is_read_again() {
+    const EXEC_V1: &str = "22f2a1b254303b3a67faea020a59512fc845e302b6a176066165b696050ac2b0";
+    let mut db = TempDb::empty().unwrap();
+    let mut session = SessionMeta::new("codex-s", "codex", SessionSource::Transcript);
+    session.surface = Some("cli".into());
+    db.store_mut().upsert_session(&session, false).unwrap();
+    let commands: Vec<_> = (0..6)
+        .map(|i| ("exec", json!({"input": format!("cargo test -p crate{i}")})))
+        .collect();
+    let rows = one_stretch(&commands, "2026-09-07T12:04:30Z");
+    db.store_mut()
+        .upsert_records("codex-s", &rows, false)
+        .unwrap();
+    let repeats = |db: &TempDb| match &measured(db, "codex-s")[..] {
+        [stretch] => (stretch.repeats.clone(), stretch.circling),
+        other => panic!("{other:?}"),
+    };
+    // Six different commands: no repeat.
+    let corrected = repeats(&db);
+    assert_eq!(
+        corrected,
+        (
+            RepeatDensity::Measured {
+                repeats: 0,
+                worst: None
+            },
+            Some(false)
+        )
+    );
+
+    // As an older build stored them: one key for every exec call.
+    Connection::open(db.path())
+        .unwrap()
+        .execute(
+            "UPDATE tool_uses SET group_version=1,group_key=?1 WHERE name='exec'",
+            [EXEC_V1],
+        )
+        .unwrap();
+    let (old, circling) = repeats(&db);
+    let RepeatDensity::Measured {
+        repeats: 5,
+        worst: Some(worst),
+    } = &old
+    else {
+        panic!("{old:?}");
+    };
+    assert_eq!((worst.tool_name.as_str(), worst.count), ("exec", 6));
+    assert_eq!(circling, Some(true));
+
+    // The next scan reads the session again and replaces the keys.
+    db.store_mut()
+        .upsert_records("codex-s", &rows, false)
+        .unwrap();
+    assert_eq!(repeats(&db), corrected);
+    let disputed: i64 = Connection::open(db.path())
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM tool_uses WHERE group_conflict=1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(disputed, 0);
 }

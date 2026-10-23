@@ -160,6 +160,11 @@ const MIGRATIONS: &[Migration] = &[
         "0026_grading_added_skills",
         "c13cf797fee46571216aca8d6d856bcbcbcd3171bd2941891b8c6fd0f47b59a3"
     ),
+    migration!(
+        27,
+        "0027_tool_result_outcomes",
+        "cce54663d395af6156d8fcd76e0056f57d6c6faa7b8c1c7389e602a632b36511"
+    ),
 ];
 
 /// Which file applied each version. Created inside the history transaction, so
@@ -674,11 +679,13 @@ mod tests {
         DROP TABLE tool_sent_inputs;
         ALTER TABLE tool_sent_inputs_rebuilt RENAME TO tool_sent_inputs;";
 
-    /// Undoes everything migration 25 applied, leaving it pending again.
-    const UNDO_25: &str = "DROP TABLE grades;";
-
     /// Undoes everything migration 26 applied, leaving it pending again.
     const UNDO_26: &str = "DROP TABLE grading_added_skills;";
+
+    /// Undoes everything migration 27 applied, leaving it pending again.
+    const UNDO_27: &str = "DROP INDEX tool_results_session; DROP TABLE tool_results;
+        DROP INDEX tool_uses_call_id; ALTER TABLE tool_uses DROP COLUMN call_id_conflict;
+        ALTER TABLE tool_uses DROP COLUMN call_id;";
 
     /// Forgets that migrations from `version` on were applied, leaving what
     /// they wrote in place.
@@ -750,10 +757,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = current(&directory);
         let (expected, (versions, fingerprints)) = (installed(&path), history(&path));
-        // Migration 26 pending again: its table and history are gone.
+        // Migration 27 pending again: its columns, table and history are gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch(&format!("{UNDO_26} {}", forget_from(26)))
+            .execute_batch(&format!("{UNDO_27} {}", forget_from(27)))
             .unwrap();
         drop(Store::open(&path).unwrap());
         assert_eq!(views(&path), expected);
@@ -788,19 +795,19 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = current(&directory);
         let expected = installed(&path);
-        // 25 and 26 pending; 25 can apply, 26 cannot while its table remains.
+        // 26 and 27 pending; 26 can apply, 27 cannot while its columns remain.
         Connection::open(&path)
             .unwrap()
-            .execute_batch(&format!("{UNDO_25} {}", forget_from(25)))
+            .execute_batch(&format!("{UNDO_26} {}", forget_from(26)))
             .unwrap();
         assert!(Store::open(&path).is_err());
         let (versions, fingerprints) = history(&path);
-        assert_eq!(versions.last(), Some(&25), "migration 25 stayed committed");
-        assert_eq!(fingerprints.last().map(|(version, _)| *version), Some(25));
+        assert_eq!(versions.last(), Some(&26), "migration 26 stayed committed");
+        assert_eq!(fingerprints.last().map(|(version, _)| *version), Some(26));
         // Once the conflict is gone, the next open finishes and reinstalls.
         Connection::open(&path)
             .unwrap()
-            .execute_batch(UNDO_26)
+            .execute_batch(UNDO_27)
             .unwrap();
         drop(Store::open(&path).unwrap());
         assert_eq!(views(&path), expected);

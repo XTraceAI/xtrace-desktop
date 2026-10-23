@@ -121,6 +121,7 @@ pub mod session_model;
 mod task_notification;
 pub mod telemetry;
 pub mod timestamp;
+pub mod tool_result;
 pub mod tool_sent;
 pub mod tool_use;
 pub mod typing_speed;

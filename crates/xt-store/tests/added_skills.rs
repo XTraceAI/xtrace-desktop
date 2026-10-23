@@ -25,7 +25,7 @@ fn added(id: &str, location: &str, at: i64) -> AddedSkill {
 fn migration_26_adds_an_empty_table() {
     let directory = TempDir::new().unwrap();
     let store = Store::open(directory.path().join("x.sqlite")).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 26);
+    assert_eq!(store.schema_version().unwrap(), 27);
     assert!(store.added_skills().unwrap().is_empty());
 }
 

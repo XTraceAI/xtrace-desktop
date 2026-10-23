@@ -712,7 +712,7 @@ fn a_v6_index_replays_unchanged_transcripts_once_and_links_their_witnesses() {
     // and no refresh status columns.
     let sql = rusqlite::Connection::open(&path).unwrap();
     sql.execute_batch(
-        "DROP TABLE grading_added_skills; DROP TABLE grades; DROP TABLE telemetry_events; ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DELETE FROM pr_links; DELETE FROM pull_requests;
+        "DROP INDEX tool_results_session; DROP TABLE tool_results; DROP INDEX tool_uses_call_id; ALTER TABLE tool_uses DROP COLUMN call_id_conflict; ALTER TABLE tool_uses DROP COLUMN call_id; DROP TABLE grading_added_skills; DROP TABLE grades; DROP TABLE telemetry_events; ALTER TABLE pull_requests DROP COLUMN manual_failed_at; DELETE FROM pr_links; DELETE FROM pull_requests;
          DELETE FROM schema_version WHERE version>=7;
          ALTER TABLE pull_requests DROP COLUMN refresh_error; ALTER TABLE pull_requests DROP COLUMN last_attempted_at;
          ALTER TABLE tool_uses DROP COLUMN group_key;
@@ -737,7 +737,7 @@ fn a_v6_index_replays_unchanged_transcripts_once_and_links_their_witnesses() {
     )];
     for pass in 0..2 {
         let mut store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 26);
+        assert_eq!(store.schema_version().unwrap(), 27);
         let report = run(&mut store, &home);
         assert!(report.complete(), "pass {pass}: {report:?}");
         if pass == 0 {

@@ -68,7 +68,11 @@ src/data/DataSource.test.ts` and `pnpm check`.
   same command, path or pattern form a group; each call after the first in its
   group is one repeat. The grouping is done when the call is indexed, and only
   an opaque comparison key is kept. **No key, digest or argument is part of
-  the answer**, is shown, or is logged; a test asserts none crosses.
+  the answer**, is shown, or is logged; a test asserts none crosses. Codex's
+  command tools (`exec`, `exec_command`, `js`) are compared by their own
+  command field (key version 2); a Codex session indexed before that keeps
+  its old keys, which treated every such call as the same, until its file is
+  read again.
 - **Active time is not length.** Under a stretch's length (M-09's elapsed
   time) it says its active time, labelled as active. Active time is the agent
   minutes rule (M-05) over the stretch's own records, so a long wait inside a

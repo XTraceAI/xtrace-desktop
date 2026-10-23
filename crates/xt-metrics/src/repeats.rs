@@ -90,7 +90,7 @@ impl RepeatThresholds {
 
 /// Why a stretch's repeat count could not be established. Each names a missing
 /// piece of evidence, never a measured absence of repeats.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UnknownRepeats {
     /// A record in the stretch never stated how many calls it made.
@@ -189,11 +189,56 @@ pub enum SessionRepeats {
 
 /// One stored call: its position, the tool's stored name, and the grouping
 /// evidence. `key` is `None` when the row states none.
-struct StoredCall {
-    block_index: u64,
-    name: String,
+pub(crate) struct StoredCall {
+    pub(crate) block_index: u64,
+    pub(crate) name: String,
     key: Option<(u32, String)>,
     conflict: bool,
+}
+
+impl StoredCall {
+    /// The call's comparison key, its derivation version beside its digest,
+    /// when this build can compare it, else which piece of grouping evidence
+    /// is missing. Keys of different versions are never the same call. M-20's
+    /// grouping and every other "is this the same call" question read this
+    /// one answer.
+    pub(crate) fn comparable_key(&self) -> std::result::Result<&(u32, String), UnknownRepeats> {
+        if self.conflict {
+            return Err(UnknownRepeats::ConflictingKey);
+        }
+        let key = self.key.as_ref().ok_or(UnknownRepeats::MissingKey)?;
+        if !xt_store::repeat_key::readable(key.0) {
+            return Err(UnknownRepeats::UnsupportedVersion);
+        }
+        Ok(key)
+    }
+
+    /// Whether the stored key says this call named no identifying argument
+    /// (no command, path or pattern), so every such call of its tool shares
+    /// it: the key then identifies the tool, not one call of it. Read from the
+    /// stored key alone; it changes how a group is named, never how calls are
+    /// grouped.
+    pub(crate) fn names_no_argument(&self) -> bool {
+        !self.conflict
+            && self.key.as_ref().is_some_and(|(version, digest)| {
+                xt_store::repeat_key::names_no_argument(&self.name, i64::from(*version), digest)
+            })
+    }
+}
+
+/// One session's stored calls, by record UUID, in block order.
+pub(crate) type StoredCalls = BTreeMap<String, Vec<StoredCall>>;
+
+/// Which calls one repeat measurement compares. M-20, the Dashboard's
+/// number, compares every call. M-21's circling warning compares every call
+/// except the expected repeats [`crate::session_warnings::expected_repeat`]
+/// names. Everything else (the stretches, the fold, the grouping and the
+/// thresholds) is M-20's own and unchanged: this is one formula over two
+/// stated sets of calls, not a second formula.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CallScope {
+    Every,
+    WithoutExpectedRepeats,
 }
 
 /// A group under construction. `first` is the position of its earliest call in
@@ -211,8 +256,9 @@ struct Group {
 fn density(
     stretch: &hands_off::Stretch<'_>,
     blocks: &BTreeMap<String, Vec<StoredCall>>,
+    scope: CallScope,
 ) -> std::result::Result<RepeatDensity, UnknownRepeats> {
-    let mut groups = BTreeMap::<String, Group>::new();
+    let mut groups = BTreeMap::<(u32, String), Group>::new();
     for (order, (uuid, stated)) in stretch.records().enumerate() {
         // A record that never stated its call count could have made calls this
         // stretch's total does not include.
@@ -228,13 +274,14 @@ fn density(
             return Err(UnknownRepeats::MissingBlocks);
         }
         for call in calls {
-            if call.conflict {
-                return Err(UnknownRepeats::ConflictingKey);
+            // Left out before its key is read: a call the scope does not
+            // compare cannot make the stretch's count unknown either.
+            if scope == CallScope::WithoutExpectedRepeats
+                && crate::session_warnings::expected_repeat(&call.name)
+            {
+                continue;
             }
-            let (version, key) = call.key.as_ref().ok_or(UnknownRepeats::MissingKey)?;
-            if *version != xt_store::repeat_key::VERSION {
-                return Err(UnknownRepeats::UnsupportedVersion);
-            }
+            let key = call.comparable_key()?;
             groups
                 .entry(key.clone())
                 .or_insert_with(|| Group {
@@ -298,66 +345,107 @@ impl MetricsDb {
             };
             let surfaces = hands_off::load(&db.connection, window)?;
             let sessions = surfaces.get(&(host.clone(), surface.clone()));
-            if let Some(excluded) = sessions.and_then(|s| hands_off::health(&host, &surface, s)) {
-                return Ok(SessionRepeats::Unmeasured {
-                    excluded_surface: Some(excluded),
-                });
-            }
-            let Some(events) = sessions.and_then(|s| s.get(session_id)) else {
-                return Ok(SessionRepeats::Measured {
-                    thresholds,
-                    stretches: vec![],
-                });
-            };
-            let Some(collected) = hands_off::collect(events)? else {
-                return Ok(SessionRepeats::Unmeasured {
-                    excluded_surface: None,
-                });
-            };
-
-            let blocks = if collected.is_empty() {
-                BTreeMap::new()
-            } else {
-                db.stored_calls(session_id)?
-            };
-            let stretches = collected
-                .iter()
-                .map(|stretch| {
-                    let (start_uuid, start) = stretch.start();
-                    let (end_uuid, end) = stretch.end();
-                    // M-05's fold, over this stretch's own records.
-                    let active_duration_ms = spans::fold(&stretch.timeline(), |_, _| {})?;
-                    let repeats = density(stretch, &blocks)
-                        .unwrap_or_else(|reason| RepeatDensity::Unknown { reason });
-                    let circling = match &repeats {
-                        RepeatDensity::Unknown { .. } => None,
-                        RepeatDensity::Measured { repeats, .. } => Some(
-                            active_duration_ms >= thresholds.active_ms
-                                && *repeats >= thresholds.repeats,
-                        ),
-                    };
-                    Ok(StretchRepeats {
-                        start_uuid: start_uuid.to_owned(),
-                        end_uuid: end_uuid.to_owned(),
-                        start: start.to_owned(),
-                        end: end.to_owned(),
-                        duration_ms: stretch.duration_ms(),
-                        active_duration_ms,
-                        repeats,
-                        circling,
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?;
-            Ok(SessionRepeats::Measured {
+            db.loaded_repeats(
+                sessions.and_then(|s| hands_off::health(&host, &surface, s)),
+                sessions.and_then(|s| s.get(session_id)).map(Vec::as_slice),
+                session_id,
                 thresholds,
-                stretches,
-            })
+                CallScope::Every,
+                &mut None,
+            )
         })
+    }
+
+    /// M-20 for one session from events already loaded for the window: the
+    /// body [`MetricsDb::session_repeats`] runs after its own load, also run
+    /// by a caller that measures many sessions from one load. `excluded` is
+    /// M-09's health verdict for the session's surface over that window and
+    /// `events` the session's own in-window events, both exactly as the load
+    /// produced them. `scope` says which calls are compared; M-20 itself
+    /// always compares [`CallScope::Every`]. `stored` holds the session's
+    /// stored calls once any reader of this session has read them.
+    pub(crate) fn loaded_repeats(
+        &self,
+        excluded: Option<hands_off::ExcludedSurface>,
+        events: Option<&[hands_off::Event]>,
+        session_id: &str,
+        thresholds: RepeatThresholds,
+        scope: CallScope,
+        stored: &mut Option<StoredCalls>,
+    ) -> Result<SessionRepeats> {
+        if let Some(excluded) = excluded {
+            return Ok(SessionRepeats::Unmeasured {
+                excluded_surface: Some(excluded),
+            });
+        }
+        let Some(events) = events else {
+            return Ok(SessionRepeats::Measured {
+                thresholds,
+                stretches: vec![],
+            });
+        };
+        let Some(collected) = hands_off::collect(events)? else {
+            return Ok(SessionRepeats::Unmeasured {
+                excluded_surface: None,
+            });
+        };
+
+        let none = BTreeMap::new();
+        let blocks = if collected.is_empty() {
+            &none
+        } else {
+            self.stored_calls_once(stored, session_id)?
+        };
+        let stretches = collected
+            .iter()
+            .map(|stretch| {
+                let (start_uuid, start) = stretch.start();
+                let (end_uuid, end) = stretch.end();
+                // M-05's fold, over this stretch's own records.
+                let active_duration_ms = spans::fold(&stretch.timeline(), |_, _| {})?;
+                let repeats = density(stretch, blocks, scope)
+                    .unwrap_or_else(|reason| RepeatDensity::Unknown { reason });
+                let circling = match &repeats {
+                    RepeatDensity::Unknown { .. } => None,
+                    RepeatDensity::Measured { repeats, .. } => Some(
+                        active_duration_ms >= thresholds.active_ms
+                            && *repeats >= thresholds.repeats,
+                    ),
+                };
+                Ok(StretchRepeats {
+                    start_uuid: start_uuid.to_owned(),
+                    end_uuid: end_uuid.to_owned(),
+                    start: start.to_owned(),
+                    end: end.to_owned(),
+                    duration_ms: stretch.duration_ms(),
+                    active_duration_ms,
+                    repeats,
+                    circling,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(SessionRepeats::Measured {
+            thresholds,
+            stretches,
+        })
+    }
+
+    /// [`MetricsDb::stored_calls`], read at most once per session: `cache`
+    /// keeps the first read for every later reader of the same session.
+    pub(crate) fn stored_calls_once<'a>(
+        &self,
+        cache: &'a mut Option<StoredCalls>,
+        session_id: &str,
+    ) -> Result<&'a StoredCalls> {
+        if cache.is_none() {
+            *cache = Some(self.stored_calls(session_id)?);
+        }
+        Ok(cache.get_or_insert_with(BTreeMap::new))
     }
 
     /// One session's stored record-bound calls, by record UUID. Metadata only:
     /// the position, the stored tool name and the grouping evidence.
-    fn stored_calls(&self, session_id: &str) -> Result<BTreeMap<String, Vec<StoredCall>>> {
+    fn stored_calls(&self, session_id: &str) -> Result<StoredCalls> {
         let mut stored = BTreeMap::<String, Vec<StoredCall>>::new();
         let mut statement = self.connection.prepare(BLOCK_QUERY)?;
         let mut rows = statement.query([session_id])?;

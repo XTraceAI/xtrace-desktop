@@ -1,0 +1,7 @@
+{
+  "what_happened": "After fixing the login test, the agent ran the wrong e2e command twice with no emulator running, then tried to install Android tools. The person stopped the install and gave the emulator and test steps, and all 8 tests passed.",
+  "real_problem": "yes",
+  "suggestion": "make_skill",
+  "draft": "---\nname: field-notes-e2e-android\ndescription: Use when running the end-to-end tests in field-notes.\n---\n\n# Run field-notes e2e tests on Android\n\n1. Do not install any tools; everything needed is already there.\n2. Start the emulator: `emulator -avd Pixel_8 -no-window &`.\n3. Wait for it: `adb wait-for-device`.\n4. Run the tests: `DETOX_CONFIGURATION=android.emu.debug pnpm e2e:android`.\n5. Do not use `pnpm e2e`; it is the old iOS command. \"No connected devices found\" means step 2 was skipped.",
+  "why": "[7] and [9] show the same no-device error from pnpm e2e, [13] shows the declined install, and [14] gives the steps that make [18] pass."
+}

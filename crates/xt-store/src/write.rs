@@ -502,6 +502,9 @@ pub(crate) fn upsert_records(
             stored_has_conflict: Some(stored_has_conflict),
         });
     }
+    // How each call ended, from this write's own blocks, before retention
+    // drops them; only for records this session owns.
+    crate::tool_result::apply(connection, session_id, records, &outcomes)?;
     // Compare native instants, not lexically different RFC3339 offsets.
     // A native started_at_ms is never inferred from this imported range.
     (session.first_ts, session.last_ts) = read::timestamp_range(connection, session_id)?;
@@ -890,26 +893,40 @@ fn merge_content(
     // stands; what changes is only whether it is still trusted.
     //
     // A stored key is disputed when this observation puts a different call at
-    // its position: another key, another tool name (the name is part of what
-    // the key compares, so it contests the key even when this observation
-    // could derive none), or no call at all from an observation that saw the
-    // record's content. That is judged from this one position alone, never
-    // from an unrelated conflict elsewhere in the record, and the mark stays
-    // on the call: the key is outside the record's measurement projection, so
-    // it may not blank the facts a compatible observation still enriches.
+    // its position: another key under the same derivation version, another
+    // tool name (the name is part of what the key compares, so it contests
+    // the key even when this observation could derive none), or no call at
+    // all from an observation that saw the record's content. That is judged
+    // from this one position alone, never from an unrelated conflict
+    // elsewhere in the record, and the mark stays on the call: the key is
+    // outside the record's measurement projection, so it may not blank the
+    // facts a compatible observation still enriches.
+    //
+    // Keys of different versions are different derivations of the same call,
+    // not two observations that disagree. A key from a higher version than
+    // the stored one replaces it with no dispute; one from a lower version (an
+    // older build reading again) changes nothing. Neither clears a dispute
+    // already marked: that mark may be about the call itself.
     let incoming_blocks: std::collections::BTreeMap<i64, &StoredToolUse> = incoming
         .tool_uses
         .iter()
         .map(|tool| (tool.block_index, tool))
         .collect();
     for old_tool in old.tool_uses.iter_mut().filter(|tool| tool.group.is_some()) {
-        old_tool.group_conflict |= match incoming_blocks.get(&old_tool.block_index) {
-            Some(new_tool) => {
-                old_tool.name != new_tool.name || differs(&old_tool.group, &new_tool.group)
-            }
+        let disputed = match incoming_blocks.get(&old_tool.block_index) {
+            Some(new_tool) if old_tool.name != new_tool.name => true,
+            Some(new_tool) => match (&old_tool.group, &new_tool.group) {
+                (Some(stored), Some(observed)) if observed.version() > stored.version() => {
+                    old_tool.group = Some(observed.clone());
+                    false
+                }
+                (Some(stored), Some(observed)) if observed.version() < stored.version() => false,
+                (stored, observed) => differs(stored, observed),
+            },
             // An observation that saw no content enumerates no block.
             None => incoming.text_len.is_some(),
         };
+        old_tool.group_conflict |= disputed;
     }
     // Retained content and its tool-input projection are one observation. Check
     // every known part before acquiring any missing part from a conflicting array.

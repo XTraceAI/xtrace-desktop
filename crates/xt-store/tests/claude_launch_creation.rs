@@ -644,7 +644,7 @@ fn a_schema_14_index_upgrades_with_every_relation_unchanged() {
         .unwrap();
     for _ in 0..2 {
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 26);
+        assert_eq!(store.schema_version().unwrap(), 27);
         assert_eq!(dump(), before);
         let parents: Vec<(String, String, ParentEvidence)> = shown(&store);
         assert!(parents.contains(&(
