@@ -80,6 +80,12 @@ async function open(
   await page.setViewportSize({ width, height });
   await page.emulateMedia({ colorScheme: scheme });
   await page.goto('/dashboard');
+  // The card opens on human + agent; these checks are about the agent h bar
+  // chart. It is chosen from the keyboard, so later focus still counts as
+  // keyboard focus and opens the definition's tip.
+  await page.getByRole('radio', { name: 'human + agent', exact: true }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('radio', { name: 'agent h', exact: true })).toBeChecked();
   await expect(page.getByTestId('effort-by-type')).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
 }

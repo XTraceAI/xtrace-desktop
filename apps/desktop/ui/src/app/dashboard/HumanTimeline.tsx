@@ -1,6 +1,5 @@
 import { Tooltip } from '@base-ui/react/tooltip';
 import {
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -10,16 +9,18 @@ import {
 } from 'react';
 import type { DashboardMetrics } from '../../data/generated/DashboardMetrics';
 import { UNMEASURED } from '../../kit/format';
+import { Icon } from '../../kit/icons';
 import { useSurfaceTheme } from '../../theme/ThemeProvider';
 import { agentTime } from '../agent-duration';
-import { continuous } from '../metric-format';
+import { leverageText } from '../metric-format';
 import {
   QUARTERS,
-  RIDGE_HEIGHT,
-  RIDGE_WIDTH,
-  agentRidges,
+  LINE_HEIGHT,
+  LINE_WIDTH,
+  AT_OR_BELOW_EVEN,
+  agentLines,
   timelineRows,
-  type AgentRidge,
+  type AgentLine,
   type TimelineRow,
 } from './overview';
 import '../../styles/overview.css';
@@ -28,7 +29,9 @@ import '../../styles/overview.css';
 export const VISIBLE_ROWS = 8;
 /** Below this a row's bar and its gap stop reading as separate rows. */
 const MIN_ROW_PX = 28;
-/** With the agent ridge: a taller track, so the ridge's height reads. */
+/** The totals columns whose widths follow their widest text. */
+const TOTAL_COLUMNS = ['you', 'agents', 'leverage'] as const;
+/** With the agents line: a taller track, so the line's height reads. */
 const MIN_PAIRED_ROW_PX = 34;
 const HOURS = ['00', '06', '12', '18', '24'];
 
@@ -55,22 +58,49 @@ export function HumanTimeline({
 }: {
   report: DashboardMetrics;
   /**
-   * The "human + agent" view: each day's agent time as a ridge rising from
-   * the bottom of its track, as tall as the agents running on average in
-   * each wall-clock quarter-hour on the report's one scale, and your time as
-   * a thin line along the bottom.
+   * The "human + agent" view: each day's agent time as a thin line across
+   * its track, as high as the agents running on average in each wall-clock
+   * quarter-hour on the report's one scale, over soft bands where you were
+   * working.
    */
   withAgents?: boolean;
 }) {
   const human = report.human_hours.current;
   const rows = useMemo(() => timelineRows(human.by_day, report.window), [human, report.window]);
-  const ridges = useMemo(
+  const lines = useMemo(
     () =>
-      withAgents ? agentRidges(report.leverage.by_day, report.leverage.ridge_top_agents) : null,
+      withAgents ? agentLines(report.leverage.by_day, report.leverage.agents_scale_top) : null,
     [withAgents, report.leverage],
   );
   const minRow = withAgents ? MIN_PAIRED_ROW_PX : MIN_ROW_PX;
+  const root = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
+  // No total is capped: a busy day's agent hours or a tiny day's leverage
+  // can be far wider than usual. Each totals column is as wide as its
+  // widest text in any row, never narrower than its usual width (in CSS);
+  // the axis and every row read the same widths, so they stay aligned.
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (!withAgents || !element) return;
+    let live = true;
+    const fit = () => {
+      if (!live) return;
+      for (const key of TOTAL_COLUMNS) {
+        const widths = [
+          ...element.querySelectorAll<HTMLElement>(
+            `.xt-human-total[data-key="${key}"] > .xt-human-total-text`,
+          ),
+        ].map((text) => text.getBoundingClientRect().width);
+        element.style.setProperty(`--${key}-col`, `${Math.ceil(Math.max(0, ...widths))}px`);
+      }
+    };
+    fit();
+    // Measured again once the mono font has loaded.
+    void document.fonts?.ready.then(fit);
+    return () => {
+      live = false;
+    };
+  }, [withAgents, rows, lines]);
   const [rowHeight, setRowHeight] = useState<number | null>(null);
   const [above, setAbove] = useState(false);
   /** The range the view last opened on today for; `null` before the first. */
@@ -128,6 +158,7 @@ export function HumanTimeline({
   const unknown = human.active_ms === null;
   return (
     <div
+      ref={root}
       className="xt-effort xt-human"
       data-testid="human-timeline"
       data-variant={withAgents ? 'paired' : undefined}
@@ -153,7 +184,29 @@ export function HumanTimeline({
               <span key={hour}>{hour}</span>
             ))}
           </span>
-          <span />
+          {withAgents ? (
+            <>
+              <span className="xt-human-total-head" data-testid="human-total-head">
+                <Icon name="person" size={13} />
+              </span>
+              <span
+                className="xt-human-total-head"
+                data-key="agents"
+                data-testid="agent-total-head"
+              >
+                <Icon name="bot" size={13} />
+              </span>
+              <span
+                className="xt-human-total-head"
+                data-key="leverage"
+                data-testid="leverage-total-head"
+              >
+                <Icon name="bolt" size={13} />
+              </span>
+            </>
+          ) : (
+            <span />
+          )}
         </div>
         <div
           ref={body}
@@ -175,7 +228,7 @@ export function HumanTimeline({
             <Row
               key={row.date}
               row={row}
-              ridge={ridges?.get(row.date) ?? (ridges ? null : undefined)}
+              line={lines?.get(row.date) ?? (lines ? null : undefined)}
               lower={index >= rows.length / 2}
               current={index === current}
               onFocus={() => setChosen(row.date)}
@@ -199,24 +252,30 @@ function PairedHeadline({ report }: { report: DashboardMetrics }) {
   return (
     <p className="xt-effort-headline xt-paired-headline" data-testid="effort-headline">
       <span className="xt-paired-stat">
-        <span className="xt-paired-key" data-key="you" aria-hidden="true" />
+        <span className="xt-paired-key" data-key="you" role="img" aria-label="Your time">
+          <Icon name="person" size={16} />
+          <span className="xt-paired-swatch" data-key="band" />
+        </span>
         <strong data-testid="effort-total">
           {unknown ? 'human time unknown' : agentTime(human.active_ms!)}
         </strong>
-        {!unknown && <small>you</small>}
       </span>
       <span className="xt-paired-stat">
-        <span className="xt-paired-key" data-key="ridge" aria-hidden="true" />
+        <span className="xt-paired-key" data-key="agents" role="img" aria-label="Agent time">
+          <Icon name="bot" size={16} />
+          <svg className="xt-paired-swatch" data-key="line" viewBox="0 0 22 12" focusable="false">
+            <path d="M0,10 L5,9 L8,4 L12,6 L16,2 L22,7" />
+          </svg>
+        </span>
         <strong data-testid="effort-agent-total">{agentTime(report.leverage.agent_ms)}</strong>
-        <small>agents</small>
       </span>
+      {unknown && <small>Could not tell which messages a person sent.</small>}
       <span className="xt-paired-stat" data-stat="leverage">
         <strong data-testid="effort-leverage">
-          {leverage === null ? UNMEASURED : `${continuous(leverage)}×`}
+          {leverage === null ? UNMEASURED : leverageText(leverage)}
         </strong>
         <small>agent time per hour of yours</small>
       </span>
-      {unknown && <small>Could not tell which messages a person sent.</small>}
     </p>
   );
 }
@@ -232,24 +291,22 @@ const isAtBottom = (element: HTMLElement) =>
  */
 function Row({
   row,
-  ridge,
+  line,
   lower,
   current,
   onFocus,
 }: {
   row: TimelineRow;
-  /** The day's agent ridge in the "human + agent" view; `null` there when the report has none. */
-  ridge?: AgentRidge | null;
+  /** The day's agents line in the "human + agent" view; `null` there when the report has none. */
+  line?: AgentLine | null;
   lower: boolean;
   current: boolean;
   onFocus: () => void;
 }) {
   const theme = useSurfaceTheme();
-  const paired = ridge !== undefined;
+  const paired = line !== undefined;
   /** The quarter under the pointer, and where along the track it is, in pixels. */
   const [pointer, setPointer] = useState<{ quarter: number; x: number } | null>(null);
-  // One gradient per row: an id the document can reference.
-  const gradient = `xt-ridge-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const track = (
     <span
       className="xt-human-track"
@@ -266,24 +323,6 @@ function Row({
       }
       onPointerLeave={paired ? () => setPointer(null) : undefined}
     >
-      {paired && ridge?.path && (
-        <svg
-          className="xt-agent-ridge"
-          data-testid="agent-ridge"
-          viewBox={`0 0 ${RIDGE_WIDTH} ${RIDGE_HEIGHT}`}
-          preserveAspectRatio="none"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <defs>
-            <linearGradient id={gradient} x1="0" y1="1" x2="0" y2="0">
-              <stop offset="0" className="xt-agent-ridge-stop" stopOpacity={0.55} />
-              <stop offset="1" className="xt-agent-ridge-stop" stopOpacity={0.18} />
-            </linearGradient>
-          </defs>
-          <path d={ridge.path} fill={`url(#${gradient})`} />
-        </svg>
-      )}
       {row.bars.map((bar, index) => (
         <span
           key={index}
@@ -316,6 +355,18 @@ function Row({
           ))}
         </span>
       ))}
+      {paired && line?.path && (
+        <svg
+          className="xt-agent-line"
+          data-testid="agent-line"
+          viewBox={`0 0 ${LINE_WIDTH} ${LINE_HEIGHT}`}
+          preserveAspectRatio="none"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path d={line.path} vectorEffect="non-scaling-stroke" />
+        </svg>
+      )}
       {pointer && (
         <span
           className="xt-human-hair"
@@ -327,7 +378,7 @@ function Row({
     </span>
   );
   const name = paired
-    ? `${row.name}; agents: ${ridge ? `${ridge.spoken}${ridge.busiest ? `, busiest 15 minutes at ${ridge.busiest}` : ''}` : 'unknown'}`
+    ? `${row.name}; agents: ${line ? `${line.spoken}${line.busiest ? `, busiest 15 minutes at ${line.busiest}` : ''}` : 'unknown'}; agent time per hour of yours: ${line?.leverageWords ?? 'unknown'}`
     : row.name;
   return (
     <Tooltip.Root disableHoverablePopup>
@@ -350,7 +401,33 @@ function Row({
           {row.label}
         </span>
         {track}
-        <span className="xt-human-total">{row.total ?? '—'}</span>
+        <span
+          className="xt-human-total"
+          data-key={paired ? 'you' : undefined}
+          data-unknown={paired && row.total === null ? '' : undefined}
+        >
+          {paired ? (
+            <span className="xt-human-total-text">{line?.yourHours ?? UNMEASURED}</span>
+          ) : (
+            (row.total ?? '—')
+          )}
+        </span>
+        {paired && (
+          <span className="xt-human-total" data-key="agents" data-testid="agent-row-total">
+            <span className="xt-human-total-text">{line ? line.hours : UNMEASURED}</span>
+          </span>
+        )}
+        {paired && (
+          <span
+            className="xt-human-total"
+            data-key="leverage"
+            data-unknown={line?.leverage ? undefined : ''}
+            data-low={line?.atOrBelowEven ? '' : undefined}
+            data-testid="leverage-row-total"
+          >
+            <span className="xt-human-total-text">{line?.leverage ?? UNMEASURED}</span>
+          </span>
+        )}
       </Tooltip.Trigger>
       <Tooltip.Portal data-theme={theme}>
         <Tooltip.Positioner
@@ -382,18 +459,27 @@ function Row({
                 <span className="xt-effort-tip-divider" />
                 <span className="xt-effort-tip-row" data-agent="">
                   <span>Agent time</span>
-                  <b data-testid="agent-day-total">{ridge ? ridge.total : 'unknown'}</b>
+                  <b data-testid="agent-day-total">{line ? line.total : 'unknown'}</b>
                 </span>
-                {ridge?.busiest && (
+                {line?.busiest && (
                   <span className="xt-effort-tip-row">
                     <span>Busiest 15 min</span>
-                    <em>{ridge.busiest}</em>
+                    <em>{line.busiest}</em>
                   </span>
                 )}
-                {ridge && pointer && (
+                <span
+                  className="xt-effort-tip-row"
+                  data-low={line?.atOrBelowEven ? '' : undefined}
+                  data-testid="leverage-day"
+                >
+                  <span>Agent time per hour of yours</span>
+                  <b>{line?.leverage ?? line?.leverageWords ?? 'unknown'}</b>
+                  {line?.atOrBelowEven && <em>{AT_OR_BELOW_EVEN}</em>}
+                </span>
+                {line && pointer && (
                   <span className="xt-effort-tip-row" data-pointer="" data-testid="agent-quarter">
-                    <span>{ridge.quarter(pointer.quarter).span}</span>
-                    <em>{ridge.quarter(pointer.quarter).agents}</em>
+                    <span>{line.quarter(pointer.quarter).span}</span>
+                    <em>{line.quarter(pointer.quarter).agents}</em>
                   </span>
                 )}
               </>

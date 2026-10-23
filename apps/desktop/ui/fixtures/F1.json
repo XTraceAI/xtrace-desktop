@@ -1807,7 +1807,7 @@
       "leverage": {
         "agent_ms": 1380000,
         "previous_agent_ms": 0,
-        "ridge_top_agents": 10,
+        "agents_scale_top": 10,
         "by_day": [
           {
             "date": "2026-09-01",
@@ -1816,6 +1816,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -1923,6 +1924,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -2030,6 +2032,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -2137,6 +2140,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -2244,6 +2248,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -2351,6 +2356,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -2458,6 +2464,7 @@
             "agent_ms": 1380000,
             "human_ms": 1200000,
             "value": 1.15,
+            "at_or_below_even": false,
             "quarter_agents": [
               0.0,
               0.0,
@@ -4110,7 +4117,7 @@
       "leverage": {
         "agent_ms": 1380000,
         "previous_agent_ms": 0,
-        "ridge_top_agents": 10,
+        "agents_scale_top": 10,
         "by_day": [
           {
             "date": "2026-08-25",
@@ -4119,6 +4126,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -4226,6 +4234,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -4333,6 +4342,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -4440,6 +4450,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -4547,6 +4558,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -4654,6 +4666,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -4761,6 +4774,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -4868,6 +4882,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -4975,6 +4990,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -5082,6 +5098,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -5189,6 +5206,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -5296,6 +5314,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -5403,6 +5422,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -5510,6 +5530,7 @@
             "agent_ms": 1380000,
             "human_ms": 1200000,
             "value": 1.15,
+            "at_or_below_even": false,
             "quarter_agents": [
               0.0,
               0.0,
@@ -8259,7 +8280,7 @@
       "leverage": {
         "agent_ms": 1380000,
         "previous_agent_ms": 0,
-        "ridge_top_agents": 10,
+        "agents_scale_top": 10,
         "by_day": [
           {
             "date": "2026-08-09",
@@ -8268,6 +8289,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -8375,6 +8397,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -8482,6 +8505,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -8589,6 +8613,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -8696,6 +8721,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -8803,6 +8829,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -8910,6 +8937,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -9017,6 +9045,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -9124,6 +9153,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -9231,6 +9261,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -9338,6 +9369,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -9445,6 +9477,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -9552,6 +9585,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -9659,6 +9693,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -9766,6 +9801,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -9873,6 +9909,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -9980,6 +10017,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -10087,6 +10125,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -10194,6 +10233,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -10301,6 +10341,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -10408,6 +10449,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -10515,6 +10557,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -10622,6 +10665,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -10729,6 +10773,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -10836,6 +10881,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -10943,6 +10989,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -11050,6 +11097,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -11157,6 +11205,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -11264,6 +11313,7 @@
             "agent_ms": 0,
             "human_ms": 0,
             "value": null,
+            "at_or_below_even": null,
             "quarter_agents": [
               0.0,
               0.0,
@@ -11371,6 +11421,7 @@
             "agent_ms": 1380000,
             "human_ms": 1200000,
             "value": 1.15,
+            "at_or_below_even": false,
             "quarter_agents": [
               0.0,
               0.0,

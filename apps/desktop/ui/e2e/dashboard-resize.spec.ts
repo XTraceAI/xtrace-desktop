@@ -74,6 +74,9 @@ async function open(page: Page, body: FixtureExport, width: number, height: numb
   await page.goto('/dashboard');
   await expect(page.getByTestId('dashboard-summary')).toBeVisible();
   await expect(page.getByTestId('overview-grid')).toBeVisible();
+  // The card opens on human + agent; these checks are about the agent h bar chart.
+  await page.getByRole('radio', { name: 'agent h', exact: true }).click();
+  await expect(page.getByTestId('effort-chart')).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
 }
 

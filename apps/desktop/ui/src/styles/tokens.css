@@ -34,6 +34,8 @@
   --warning-tint: rgba(251, 146, 60, 0.12);
   --info: #60a5fa;
   --info-tint: rgba(96, 165, 250, 0.12);
+  --human: #2dd4bf;
+  --human-ink: #2dd4bf;
   --danger: #ff6b6d;
   --danger-tint: rgba(255, 107, 109, 0.12);
   --cell: #2c2b32;
@@ -68,6 +70,8 @@
   --warning-tint: #fff2e8;
   --info: #2563eb;
   --info-tint: #eaf1ff;
+  --human: #0d9488;
+  --human-ink: #0f766e;
   --danger: #c23b3c;
   --danger-tint: #fff0f0;
   --cell: #ededf2;

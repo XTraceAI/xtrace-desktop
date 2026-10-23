@@ -10,7 +10,7 @@ import { MetricCell } from '../../kit/MetricCell';
 import { MetricIcon, type MetricIconName } from '../../kit/metric-icons';
 import type { RuleId } from '../../kit/rules';
 import type { TimeRange } from '../../kit/TopBar';
-import { continuous, handsOffTime } from '../metric-format';
+import { continuous, handsOffTime, leverageText } from '../metric-format';
 import { agentTime, decimalHours } from '../agent-duration';
 import { DashCard } from './DashCard';
 import { DayLine } from './DayLine';
@@ -100,7 +100,7 @@ export function OverviewCard({
           <DayChart
             days={leverage}
             average={tiles.leverage.value}
-            format={(value) => `${continuous(value)}×`}
+            format={leverageText}
             name="Leverage by day"
           />
         </OverviewTile>

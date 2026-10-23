@@ -32,7 +32,8 @@ export function DashboardPage() {
   const range = useSelectedRange();
   const report = useDashboardReport(range);
   // Kept while another range loads, like the open measurement detail.
-  const [effortMetric, setEffortMetric] = useState<EffortMetric>('agent');
+  // Opens on human + agent; not remembered, so every visit starts there.
+  const [effortMetric, setEffortMetric] = useState<EffortMetric>('paired');
   const autoCheck = source.prAutoCheck;
   const auto = useQuery({
     queryKey: queryKeys.prAutoCheck,

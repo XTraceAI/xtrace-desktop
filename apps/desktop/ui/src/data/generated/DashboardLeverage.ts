@@ -19,10 +19,10 @@ agent_ms: number,
  */
 previous_agent_ms: number, 
 /**
- * The average number of agents running that fills a day's agent ridge
- * to the top, on one scale for every day: a quarter's height is
- * `min(quarter_agents, ridge_top_agents) / ridge_top_agents`, so a
+ * The average number of agents running at the top of the one scale
+ * every day's agents are drawn on: a quarter's height is
+ * `min(quarter_agents, agents_scale_top) / agents_scale_top`, so a
  * busier quarter is drawn at the top while its card still gives the
  * exact number.
  */
-ridge_top_agents: number, by_day: Array<MetricLeverageDay>, };
+agents_scale_top: number, by_day: Array<MetricLeverageDay>, };

@@ -30,6 +30,12 @@ export const continuous = (value: number): string =>
 export const hoursText = (hours: number): string => `${continuous(hours)} h`;
 
 /**
+ * Leverage (agent time per hour of yours) written as a ratio, the one way
+ * outside the Leverage tile's split number and unit: `12.9×`.
+ */
+export const leverageText = (value: number): string => `${continuous(value)}×`;
+
+/**
  * Hands-off time (M-09), the one way it is written wherever it is shown — a
  * stretch's length on a session's timeline, a session's or a pull request's
  * median, the Dashboard's median, p90 and daily line: minutes on the shared

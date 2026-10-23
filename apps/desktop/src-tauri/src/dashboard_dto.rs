@@ -248,6 +248,10 @@ pub struct MetricLeverageDay {
     #[ts(type = "number | null")]
     pub human_ms: Option<u64>,
     pub value: Option<f64>,
+    /// Whether the day's leverage, as the screen writes it (one decimal),
+    /// is at or below even, 1×: `value` under `ABOVE_EVEN_FROM`. `null` when
+    /// `value` is.
+    pub at_or_below_even: Option<bool>,
     /// The average number of agents running in each local wall-clock
     /// quarter-hour of the day, exactly 96 from 00:00 (agent time over the
     /// real time the quarter covered; their agent time adds up to
@@ -277,12 +281,12 @@ pub struct DashboardLeverage {
     /// Agent hours over the same number of whole days just before.
     #[ts(type = "number")]
     pub previous_agent_ms: u64,
-    /// The average number of agents running that fills a day's agent ridge
-    /// to the top, on one scale for every day: a quarter's height is
-    /// `min(quarter_agents, ridge_top_agents) / ridge_top_agents`, so a
+    /// The average number of agents running at the top of the one scale
+    /// every day's agents are drawn on: a quarter's height is
+    /// `min(quarter_agents, agents_scale_top) / agents_scale_top`, so a
     /// busier quarter is drawn at the top while its card still gives the
     /// exact number.
-    pub ridge_top_agents: u32,
+    pub agents_scale_top: u32,
     pub by_day: Vec<MetricLeverageDay>,
 }
 

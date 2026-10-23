@@ -7,6 +7,12 @@
  */
 export type MetricLeverageDay = { date: string, start_ms: number, end_ms: number, agent_ms: number, human_ms: number | null, value: number | null, 
 /**
+ * Whether the day's leverage, as the screen writes it (one decimal),
+ * is at or below even, 1×: `value` under `ABOVE_EVEN_FROM`. `null` when
+ * `value` is.
+ */
+at_or_below_even: boolean | null, 
+/**
  * The average number of agents running in each local wall-clock
  * quarter-hour of the day, exactly 96 from 00:00 (agent time over the
  * real time the quarter covered; their agent time adds up to

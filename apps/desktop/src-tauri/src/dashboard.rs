@@ -908,6 +908,7 @@ impl Daily {
                 agent_ms: agent.active_ms,
                 human_ms: human.active_ms,
                 value,
+                at_or_below_even: value.map(at_or_below_even),
                 quarter_agents,
                 busiest_quarter: quarters.busiest,
             });
@@ -915,15 +916,29 @@ impl Daily {
         Ok(DashboardLeverage {
             agent_ms: self.agent.active_ms,
             previous_agent_ms: self.previous_agent_ms,
-            ridge_top_agents: RIDGE_TOP_AGENTS,
+            agents_scale_top: AGENTS_SCALE_TOP,
             by_day,
         })
     }
 }
 
-/// The average number of agents running that fills a day's agent ridge to
-/// the top, the same for every day; a busier quarter is drawn at the top.
-pub const RIDGE_TOP_AGENTS: u32 = 10;
+/// The smallest leverage the screen writes as more than 1×. The screen
+/// writes leverage to one decimal, rounding the exact value half up
+/// (`Intl.NumberFormat`, `maximumFractionDigits: 1`), so every value under
+/// 1.05 reads `1×` or less and 1.05 itself (as stored, a hair above 1.05)
+/// reads `1.1×`. Comparing the same stored `f64` with this one keeps the
+/// flag and the written number in step.
+pub const ABOVE_EVEN_FROM: f64 = 1.05;
+
+/// Is a day's leverage, as written, at or below even (1×)?
+fn at_or_below_even(value: f64) -> bool {
+    value < ABOVE_EVEN_FROM
+}
+
+/// The average number of agents running at the top of the scale the
+/// screen draws each day's agents on, the same for every day; a busier
+/// quarter is drawn at the top.
+pub const AGENTS_SCALE_TOP: u32 = 10;
 
 /// A whole day's quarter-hours as the screen gets them: each quarter's
 /// average agents at display precision. The day must be the
@@ -1484,6 +1499,23 @@ mod leverage_tests {
     use super::*;
 
     const Q: u64 = 15 * 60_000;
+
+    #[test]
+    fn at_or_below_even_follows_the_written_number() {
+        // Written as `0.9×`, `1×`, `1×`, `1.1×` (1.05 rounds up), `1.1×`.
+        for (value, flag) in [
+            (0.95, true),
+            (1.0, true),
+            (1.04, true),
+            (1.049_999_999_999_999_8, true),
+            (1.05, false),
+            (1.1, false),
+            (0.0, true),
+            (0.01, true),
+        ] {
+            assert_eq!(at_or_below_even(value), flag, "{value}");
+        }
+    }
 
     #[test]
     fn quarter_agents_are_sent_at_one_decimal_and_a_small_positive_stays_above_zero() {

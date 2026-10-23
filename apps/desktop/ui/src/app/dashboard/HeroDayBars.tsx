@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { DashboardDay } from '../../data/generated/DashboardDay';
-import { continuous } from '../metric-format';
+import { hoursText } from '../metric-format';
 import { DetailDialog } from './DetailDialog';
 import { heroSeries, type HeroBar } from './hero-days';
 
@@ -10,7 +10,7 @@ const shortDate = (date: string) => {
   return `${month}-${day}`;
 };
 const barText = (bar: HeroBar) =>
-  bar.state === 'measured' && bar.value !== null ? `${continuous(bar.value)} h` : UNMEASURED;
+  bar.state === 'measured' && bar.value !== null ? hoursText(bar.value) : UNMEASURED;
 
 /**
  * One reported day of the selected range, agent beside estimated human, on the
@@ -42,8 +42,8 @@ export function HeroDayChart({ days }: { days: readonly DashboardDay[] }) {
           {peak === null
             ? 'no measured day'
             : humanMeasured
-              ? `peak ${continuous(peak)} h`
-              : `peak ${continuous(peak)} h · estimate ${UNMEASURED}`}
+              ? `peak ${hoursText(peak)}`
+              : `peak ${hoursText(peak)} · estimate ${UNMEASURED}`}
         </small>
       </p>
       <div

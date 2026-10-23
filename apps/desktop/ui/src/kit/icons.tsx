@@ -70,6 +70,21 @@ const drawings = {
       <path d="M12 11v5M12 8h.01" />
     </>
   ),
+  person: (
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4.5 21c0-4.2 3.4-7 7.5-7s7.5 2.8 7.5 7" />
+    </>
+  ),
+  bot: (
+    <>
+      <rect x="4" y="8" width="16" height="12" rx="3" />
+      <path d="M12 4v4M2 13v3M22 13v3" />
+      <circle cx="12" cy="3.5" r="1" fill="currentColor" />
+      <circle cx="9" cy="14" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="14" r="1.2" fill="currentColor" stroke="none" />
+    </>
+  ),
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
   close: <path d="M6 6l12 12M18 6L6 18" />,
 };

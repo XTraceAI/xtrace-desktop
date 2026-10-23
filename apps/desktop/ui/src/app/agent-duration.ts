@@ -57,7 +57,8 @@ export const agentTime = (agentMs: number) => agentDuration(agentMs).visible;
 
 /**
  * A time in milliseconds as decimal hours, rounded to the nearest tenth:
- * `53.9 h`, written by `hoursText`. For the Leverage tile's two sides;
- * everywhere else agent time stays `agentTime`'s hours and minutes.
+ * `53.9 h`, written by `hoursText`. For narrow day columns and the Leverage
+ * tile's two sides; everywhere else agent time stays `agentTime`'s hours and
+ * minutes.
  */
 export const decimalHours = (ms: number) => hoursText(ms / MS_PER_HOUR);

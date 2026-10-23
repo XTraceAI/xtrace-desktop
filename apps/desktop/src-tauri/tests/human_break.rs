@@ -229,8 +229,8 @@ fn leverage_agent_hours_are_the_whole_day_bars_of_your_hours_days() {
         assert_eq!(quarters.busiest, day.busiest_quarter, "{}", day.date);
     }
     assert!(leverage.agent_ms > 0);
-    // One shared ridge scale for every day.
-    assert_eq!(leverage.ridge_top_agents, 10);
+    // One shared agents scale for every day.
+    assert_eq!(leverage.agents_scale_top, 10);
     // The total beside human time is those whole days' agent hours added up.
     assert_eq!(
         leverage.agent_ms,

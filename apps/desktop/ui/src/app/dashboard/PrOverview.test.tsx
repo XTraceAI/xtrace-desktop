@@ -130,6 +130,8 @@ async function method() {
 it('F19: one shared session counts once, on its event day, beside two merge markers', async () => {
   mount(nativeSource(sectioned(F19_SHARED)));
   await loaded();
+  // The card opens on human + agent; these read the agent h bars.
+  fireEvent.click(measure('agent h'));
   expect(tile().textContent).toContain('2');
   expect(tile().textContent).not.toContain('unknown');
   // No legend of assignments: one total and one bar per day.
@@ -164,6 +166,8 @@ it('F19: one shared session counts once, on its event day, beside two merge mark
 it('confirmed only: an inferred link is gone before the tile and the markers', async () => {
   mount(nativeSource(sectioned(F19_CONFIRMED)));
   await loaded();
+  // The card opens on human + agent; these read the agent h bars.
+  fireEvent.click(measure('agent h'));
   expect(tile().textContent).toContain('1');
   expect(screen.getByTestId('effort-marker-count').textContent).toBe('1 PR');
   // The static method is one dialog away from the card's header, together with
@@ -220,6 +224,8 @@ it('confirmed only: an inferred link is gone before the tile and the markers', a
 it('unknown facts: the known merged count is shown with how many are not checked yet', async () => {
   mount(nativeSource(sectioned(UNKNOWN_FACTS)));
   await loaded();
+  // The card opens on human + agent; these read the agent h bars.
+  fireEvent.click(measure('agent h'));
   expect(tile().textContent).toBe('Merged PRs1so far1 not checked yet');
   // An unresolved session's effort is in the day totals like any other's; the
   // card draws no type, so no unresolved-type triangle is in its header.
@@ -230,33 +236,49 @@ it('unknown facts: the known merged count is shown with how many are not checked
   );
 });
 
-it('the human + agent method note explains the human timeline and the agent ridge', async () => {
+it('opens on human + agent, its timeline drawn and its note in the definition dialog', async () => {
+  mount(nativeSource(sectioned(F19_CONFIRMED)));
+  await loaded();
+  // Nothing chosen yet: human + agent is the selected measure and its view shows.
+  expect(measure('human + agent').getAttribute('aria-checked')).toBe('true');
+  expect(measure('agent h').getAttribute('aria-checked')).toBe('false');
+  expect(screen.getByTestId('human-timeline').dataset.variant).toBe('paired');
+  expect(screen.queryByTestId('effort-by-type')).toBeNull();
+  const notes = within(await method()).getByTestId('effort-notes').textContent;
+  expect(notes).toContain('the thin purple line across each day is that whole day’s agent time');
+});
+
+it('the human + agent method note explains the human timeline, the bands and the agents line', async () => {
   mount(nativeSource(sectioned(F19_CONFIRMED)));
   await loaded();
   fireEvent.click(measure('human + agent'));
   const notes = within(await method()).getByTestId('effort-notes').textContent;
   expect(notes).toContain('Human time comes from the times you sent messages to agents');
-  expect(notes).toContain('the soft purple shape rising from it is that whole day’s agent time');
+  expect(notes).toContain(
+    'the soft bands, in the colour of the person icon above them, are when you were working',
+  );
+  expect(notes).not.toMatch(/amber|teal/);
+  expect(notes).toContain('the thin purple line across each day is that whole day’s agent time');
   expect(notes).toContain('how many agents ran then on average, on one scale for every day');
-  expect(notes).toContain('full height at 10 agents');
-  // Plain about the smoothing: flat only where none ran for a while, and the
-  // card, not the shape, gives the exact number.
-  expect(notes).toContain('flat where no agents ran for a while');
+  expect(notes).toContain('at the top at 10 agents');
+  // Plain about the smoothing: the card, not the line, gives exact numbers.
   expect(notes).toContain('smoothed between 15-minute pieces');
-  expect(notes).toContain('the card under the pointer gives the exact number');
-  expect(notes).not.toContain('flat when none ran');
+  expect(notes).toContain('the card under the pointer gives the exact numbers');
+  expect(notes).not.toContain('purple shape');
   expect(notes).not.toContain('shaded');
   fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   fireEvent.click(measure('human h'));
   const human = within(await method()).getByTestId('effort-notes').textContent;
   expect(human).toContain('Human time comes from the times you sent messages to agents');
-  expect(human).not.toContain('purple shape');
+  expect(human).not.toContain('purple line');
 });
 
 it('zero: no link at all is a measured 0 and the work still shows', async () => {
   mount(nativeSource(sectioned(NO_LINKS)));
   await loaded();
+  // The card opens on human + agent; these read the agent h bars.
+  fireEvent.click(measure('agent h'));
   expect(within(mergedTile()).getByText('0')).toBeTruthy();
   expect(tile().textContent).not.toMatch(/known|unknown|Unmeasured/);
   expect(barred()).toEqual(['2026-09-02']);
@@ -341,6 +363,8 @@ it('hovering or focusing a day opens its card with every model and its share', a
     ),
   );
   await loaded();
+  // The card opens on human + agent; these read the agent h bars.
+  fireEvent.click(measure('agent h'));
   expect(within(effort()).getByTestId('effort-reference').textContent).toBe('24 h');
   expect(within(effort()).getByTestId('effort-headline').textContent).toBe('26 h 0 m agent hrs');
   const busy = day(
@@ -363,9 +387,14 @@ it('switches the measure from the keyboard and keeps it across a range change', 
   const source = nativeSource(sectioned(F19_SHARED));
   mount(source);
   await loaded();
+  // From the default, human + agent, the arrow keys walk the measures.
+  const paired = measure('human + agent');
+  expect(paired.getAttribute('aria-checked')).toBe('true');
+  paired.focus();
+  fireEvent.keyDown(paired, { key: 'ArrowRight' });
+  await waitFor(() => expect(measure('agent h').getAttribute('aria-checked')).toBe('true'));
   const agent = measure('agent h');
-  expect(agent.getAttribute('aria-checked')).toBe('true');
-  agent.focus();
+  expect(document.activeElement).toBe(agent);
   fireEvent.keyDown(agent, { key: 'ArrowRight' });
   await waitFor(() => expect(measure('human h').getAttribute('aria-checked')).toBe('true'));
   expect(document.activeElement).toBe(measure('human h'));

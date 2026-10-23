@@ -369,8 +369,8 @@
   filter: brightness(1.15);
 }
 
-/* ---- Effort: "human + agent", one track per day: the agents' ridge rising
-   from its bottom and your time as a thin line along it ---- */
+/* ---- Effort: "human + agent", one track per day: soft bands (--human) where
+   you were working, and the agents as a thin purple line over them ---- */
 /* The track grows with the row up to the human view's 30px. */
 .xt-human[data-variant='paired'] .xt-human-body {
   --row-h: 34px;
@@ -378,35 +378,46 @@
 .xt-human[data-variant='paired'] .xt-human-track {
   height: min(30px, calc(var(--row-h) - 8px));
   overflow: hidden;
+  /* No 06/12/18 lines inside the rows; the axis above keeps its labels. */
+  background: var(--track);
 }
-/* Height is the quarter's average agents on the report's one scale; the
-   fill fades from the bottom up. */
-.xt-agent-ridge {
+/* Your time: full-height bands; a single message stays a thin band. */
+.xt-human[data-variant='paired'] .xt-human-bar {
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--human) 22%, transparent);
+}
+.xt-human[data-variant='paired'] .xt-human-bar[data-tick] {
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 0;
+}
+/* A stretch through a repeated (fall-back) hour: the first pass fills the
+   top half of the track and the second the bottom half, as in human h. */
+.xt-human[data-variant='paired'] .xt-human-track[data-fold] .xt-human-bar {
+  top: 0;
+  bottom: 50%;
+}
+.xt-human[data-variant='paired'] .xt-human-track[data-fold] .xt-human-bar[data-lane='1'] {
+  top: 50%;
+  bottom: 0;
+}
+/* Height is the quarter's average agents on the report's one scale. */
+.xt-agent-line {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
+  overflow: visible;
   pointer-events: none;
 }
-.xt-agent-ridge-stop {
-  stop-color: var(--accent);
-}
-/* Your time: a 4px line along the bottom; a single message stays a tick. */
-.xt-human[data-variant='paired'] .xt-human-bar {
-  top: auto;
-  bottom: 0;
-  height: 4px;
-  border-radius: 2px;
-}
-/* A stretch through a repeated (fall-back) hour: the second pass is a
-   second thin line just above the first. */
-.xt-human[data-variant='paired'] .xt-human-track[data-fold] .xt-human-bar {
-  top: auto;
-  bottom: 0;
-}
-.xt-human[data-variant='paired'] .xt-human-track[data-fold] .xt-human-bar[data-lane='1'] {
-  top: auto;
-  bottom: 6px;
+.xt-agent-line path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.6px;
+  stroke-linejoin: round;
 }
 /* Follows the pointer along the track; the day's card names its quarter. */
 .xt-human-hair {
@@ -418,9 +429,60 @@
   opacity: 0.55;
   pointer-events: none;
 }
-/* The headline's three totals, each after a key drawn like its line. */
-.xt-paired-headline {
-  gap: 0;
+/* Three totals columns, the first two in decimal hours: your time (a day
+   holds at most 25 h, `23.9 h` is 36px), the agents' (`999.9 h` is 46px)
+   and the day's leverage (`99,999.9×` is 61px). Those are their usual
+   widths; neither the agents' hours nor the leverage has an upper bound,
+   so each column also grows to its widest text in any row (`--you-col`,
+   `--agents-col`, `--leverage-col`, measured by the timeline). The axis and
+   every row read the same widths, so each column stays under its icon. */
+.xt-human[data-variant='paired'] :is(.xt-human-axis, .xt-human-row) {
+  grid-template-columns:
+    52px minmax(0, 1fr) max(40px, var(--you-col, 0px)) max(48px, var(--agents-col, 0px))
+    max(62px, var(--leverage-col, 0px));
+}
+.xt-human-total[data-key='leverage'] {
+  color: var(--secondary);
+}
+.xt-human-total[data-key='leverage'][data-unknown] {
+  color: var(--meta);
+}
+/* A day the report marks at or below even (1×): its leverage in red. */
+.xt-human-total[data-key='leverage'][data-low],
+.xt-effort-tip-row[data-low] b {
+  color: var(--danger);
+}
+.xt-human-total-head[data-key='leverage'] {
+  color: var(--secondary);
+}
+/* Your daily totals in your colour's text-safe shade; an unknown day's
+   dash keeps the plain total colour. */
+.xt-human-total[data-key='you']:not([data-unknown]) {
+  color: var(--human-ink);
+}
+.xt-human-total[data-key='agents'] {
+  color: var(--accent);
+}
+.xt-human-total-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  color: var(--human);
+}
+.xt-human-total-head[data-key='agents'] {
+  color: var(--accent);
+}
+/* The headline's two totals on the left, each after its icon and a key
+   drawn like its mark, and the leverage at the right, its right edge on
+   the totals columns' (the plot's 4px inset). Narrow cards wrap whole
+   items onto a second line. */
+/* Both classes, so this wins over the shared headline's fixed height
+   whichever stylesheet loads last. */
+.xt-effort-headline.xt-paired-headline {
+  flex-wrap: wrap;
+  gap: 4px 0;
+  height: auto;
+  min-height: 22px;
 }
 .xt-paired-headline .xt-paired-stat {
   display: inline-flex;
@@ -436,6 +498,11 @@
 .xt-paired-headline .xt-paired-stat strong {
   font-size: 16px;
 }
+.xt-paired-headline .xt-paired-stat[data-stat='leverage'] {
+  margin-left: auto;
+  padding: 0 4px 0 12px;
+  border-left: 0;
+}
 .xt-paired-headline .xt-paired-stat[data-stat='leverage'] strong {
   color: var(--secondary);
   font-size: 13px;
@@ -445,24 +512,35 @@
   color: var(--meta);
 }
 .xt-paired-key {
+  display: inline-flex;
   flex: 0 0 auto;
+  align-items: center;
   align-self: center;
-  width: 14px;
-  border-radius: 2px;
+  gap: 4px;
 }
 .xt-paired-key[data-key='you'] {
-  height: 10px;
-  border-radius: 3px;
-  background: var(--info);
+  color: var(--human);
 }
-.xt-paired-key[data-key='ridge'] {
-  height: 10px;
-  border-radius: 3px 3px 0 0;
-  background: linear-gradient(
-    to top,
-    color-mix(in srgb, var(--accent) 60%, transparent),
-    color-mix(in srgb, var(--accent) 15%, transparent)
-  );
+.xt-paired-key[data-key='agents'] {
+  color: var(--accent);
+}
+.xt-paired-swatch[data-key='band'] {
+  display: inline-block;
+  width: 18px;
+  height: 12px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--human) 22%, transparent);
+}
+.xt-paired-swatch[data-key='line'] {
+  width: 22px;
+  height: 12px;
+}
+.xt-paired-swatch[data-key='line'] path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .xt-paired-headline > small {
   margin-left: 12px;

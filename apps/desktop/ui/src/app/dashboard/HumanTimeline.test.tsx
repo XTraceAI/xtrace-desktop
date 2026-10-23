@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import fixture from '../../../fixtures/F1.json';
 import type { DashboardMetrics } from '../../data/generated/DashboardMetrics';
@@ -260,6 +260,10 @@ function paired(edit?: (report: DashboardMetrics) => void) {
       day.agent_ms = 0;
       day.quarter_agents = Array.from({ length: 96 }, () => 0);
       day.busiest_quarter = null;
+      day.value = null;
+      day.at_or_below_even = null;
+      // Your time on the leverage day is the row's: measured as zero.
+      day.human_ms = 0;
     }
     const last = r.leverage.by_day.at(-1)!;
     // 00:00–00:30 one agent, 00:30–00:45 three, 08:00 a fifth of one.
@@ -272,6 +276,10 @@ function paired(edit?: (report: DashboardMetrics) => void) {
       last.quarter_agents[index] = agents;
     last.agent_ms = 5 * Q + Q / 5;
     last.busiest_quarter = 2;
+    // The report's own leverage for the day: 78 agent minutes per 30 of yours.
+    last.value = 2.6;
+    last.at_or_below_even = false;
+    last.human_ms = 0.5 * H;
     r.leverage.agent_ms = last.agent_ms;
     r.tiles.leverage = { ...r.tiles.leverage, value: 3.4 };
     edit?.(r);
@@ -288,42 +296,71 @@ it('human + agent: the headline sets your time beside the agents’ and the leve
   mountPaired(paired());
   expect(screen.getByTestId('human-timeline').dataset.variant).toBe('paired');
   expect(screen.getByTestId('effort-headline').textContent).toBe(
-    '1 h 30 myou1 h 18 magents3.4×agent time per hour of yours',
+    '1 h 30 m1 h 18 m3.4×agent time per hour of yours',
   );
   // No break threshold here, and no colour legend.
   expect(screen.queryByText(/break threshold/)).toBeNull();
 });
 
-it('human + agent: one track per day, the agents’ ridge in it and only your total beside it', () => {
+it('human + agent: one track per day, your bands and the agents line in it, your total and the agents’ beside it', () => {
   mountPaired(paired());
   const rows = screen.getAllByTestId('human-day');
   expect(rows).toHaveLength(7);
   for (const row of rows) expect(row.querySelectorAll('.xt-human-track')).toHaveLength(1);
-  // A day with no agent time draws no ridge.
-  const ridges = screen.getAllByTestId('agent-ridge');
-  expect(ridges).toHaveLength(1);
-  expect(rows[6]!.contains(ridges[0]!)).toBe(true);
-  expect(ridges[0]!.getAttribute('viewBox')).toBe('0 0 960 100');
-  // 3 agents on the report's scale of 10: 30% up, the 08:00 fifth of one 2%.
-  const path = ridges[0]!.querySelector('path')!;
-  expect(path.getAttribute('d')).toContain(' 25,70');
-  expect(path.getAttribute('d')).toContain(' 325,98');
-  expect(path.getAttribute('fill')).toMatch(/^url\(#xt-ridge-[\w-]+\)$/);
-  const gradient = path.getAttribute('fill')!.slice(5, -1);
-  expect(ridges[0]!.querySelector(`linearGradient[id="${gradient}"]`)).not.toBeNull();
-  // The right column is your time only; the agents' total is in the card.
-  expect(rows[6]!.querySelector('.xt-human-total')!.textContent).toBe('0 h 30 m');
-  expect(rows[6]!.textContent).toBe('Sep 70 h 30 m');
+  // A day with no agent time draws no line.
+  const lines = screen.getAllByTestId('agent-line');
+  expect(lines).toHaveLength(1);
+  expect(rows[6]!.contains(lines[0]!)).toBe(true);
+  expect(lines[0]!.getAttribute('viewBox')).toBe('0 0 960 26');
+  // 3 agents on the report's scale of 10: 30% of the way up (25 → 18.1);
+  // the 08:00 fifth of one 2% (24.54). An open, unfilled line.
+  const path = lines[0]!.querySelector('path')!;
+  expect(path.getAttribute('d')).toContain(' 25,18.1');
+  expect(path.getAttribute('d')).toContain(' 325,24.54');
+  expect(path.getAttribute('d')).not.toContain('Z');
+  expect(path.getAttribute('vector-effect')).toBe('non-scaling-stroke');
+  // The line is drawn over your bands.
+  const track = rows[6]!.querySelector('.xt-human-track')!;
+  expect(track.lastElementChild).toBe(lines[0]);
+  expect(track.querySelectorAll('[data-testid="human-stretch"]')).toHaveLength(2);
+  // Your total, then the agents' (the report's whole-day agent time), in
+  // decimal hours on the row; the card keeps hours and minutes.
+  expect(
+    [...rows[6]!.querySelectorAll('.xt-human-total')].map((total) => total.textContent),
+  ).toEqual(['0.5 h', '1.3 h', '2.6×']);
+  expect(rows[6]!.textContent).toBe('Sep 70.5 h1.3 h2.6×');
+  // A day with no leverage says so in the meta colour, never a computed 0.
+  const leverage = screen.getAllByTestId('leverage-row-total');
+  expect(leverage.map((cell) => cell.textContent)).toEqual([...Array(6).fill('—'), '2.6×']);
+  expect(leverage[0]!.dataset.unknown).toBe('');
+  expect(leverage[6]!.dataset.unknown).toBeUndefined();
+  expect(screen.getByTestId('leverage-total-head').querySelector('svg')).not.toBeNull();
+  expect(screen.getAllByTestId('agent-row-total').map((total) => total.textContent)).toEqual([
+    ...Array(6).fill('0 h'),
+    '1.3 h',
+  ]);
   expect(screen.queryAllByTestId('agent-day-total')).toHaveLength(0);
   expect(rows[6]!.getAttribute('aria-label')).toBe(
-    'Sep 7: 30 minutes; 12:00 AM–12:30 AM, one message at 2:00 AM; agents: 1 hour 18 minutes, busiest 15 minutes at 12:30 AM · 3 agents',
+    'Sep 7: 30 minutes; 12:00 AM–12:30 AM, one message at 2:00 AM; agents: 1 hour 18 minutes, busiest 15 minutes at 12:30 AM · 3 agents; agent time per hour of yours: 2.6×',
   );
+  // The person icon heads your column, the robot the agents'.
+  expect(screen.getByTestId('human-total-head').querySelector('svg')).not.toBeNull();
+  expect(screen.getByTestId('agent-total-head').querySelector('svg')).not.toBeNull();
+});
+
+it('human + agent: the headline keys are named icons, without the words you and agents', () => {
+  mountPaired(paired());
+  expect(screen.getByRole('img', { name: 'Your time' }).querySelector('svg')).not.toBeNull();
+  expect(screen.getByRole('img', { name: 'Agent time' }).querySelector('svg')).not.toBeNull();
+  const headline = screen.getByTestId('effort-headline').textContent!;
+  expect(headline).not.toMatch(/\byou\b/);
+  expect(headline).not.toMatch(/\bagents\b/);
 });
 
 it('human + agent: a taller quarter than the scale is drawn at the top', () => {
   mountPaired(paired((r) => (r.leverage.by_day.at(-1)!.quarter_agents[2] = 14)));
-  expect(screen.getByTestId('agent-ridge').querySelector('path')!.getAttribute('d')).toContain(
-    ' 25,0',
+  expect(screen.getByTestId('agent-line').querySelector('path')!.getAttribute('d')).toContain(
+    ' 25,2',
   );
 });
 
@@ -336,6 +373,7 @@ it('human + agent: the day card adds agent time, the busiest quarter and the qua
   expect(screen.getByText('12:30 AM · 3 agents')).toBeTruthy();
   expect(screen.getByText('Agent time').nextSibling!.textContent).toBe('1 h 18 m');
   expect(screen.getByTestId('agent-day-total').textContent).toBe('1 h 18 m');
+  expect(screen.getByTestId('leverage-day').textContent).toBe('Agent time per hour of yours2.6×');
   expect(screen.queryByTestId('agent-quarter')).toBeNull();
   expect(screen.queryByTestId('agent-hairline')).toBeNull();
   // The pointer over 08:00–08:15 (a third of the track) names that quarter.
@@ -348,6 +386,68 @@ it('human + agent: the day card adds agent time, the busiest quarter and the qua
   expect(screen.getByTestId('agent-quarter').textContent).toBe('12:30 PM–12:45 PMno agents');
   fireEvent.pointerLeave(lane);
   expect(screen.queryByTestId('agent-quarter')).toBeNull();
+});
+
+it('human + agent: a day without leverage says none when your time was zero, unknown when it is unknown', async () => {
+  mountPaired(
+    paired((r) => {
+      // Sep 1: your time unknown that day; the others measured as zero.
+      r.human_hours.current.by_day[0]!.active_ms = null;
+      r.leverage.by_day[0]!.human_ms = null;
+    }),
+  );
+  const rows = screen.getAllByTestId('human-day');
+  const cells = screen.getAllByTestId('leverage-row-total');
+  // The column draws a dash for both.
+  expect(cells[0]!.textContent).toBe('—');
+  expect(cells[1]!.textContent).toBe('—');
+  expect(rows[0]!.getAttribute('aria-label')).toMatch(/; agent time per hour of yours: unknown$/);
+  expect(rows[1]!.getAttribute('aria-label')).toMatch(/; agent time per hour of yours: none$/);
+  fireEvent.focus(rows[1]!);
+  await waitFor(() =>
+    expect(screen.getByTestId('leverage-day').textContent).toBe('Agent time per hour of yoursnone'),
+  );
+  fireEvent.blur(rows[1]!);
+  fireEvent.focus(rows[0]!);
+  await waitFor(() =>
+    expect(
+      screen
+        .getAllByTestId('leverage-day')
+        .some((line) => line.textContent === 'Agent time per hour of yoursunknown'),
+    ).toBe(true),
+  );
+});
+
+it('human + agent: a day the report marks at or below even is red, and says so in words', async () => {
+  mountPaired(
+    paired((r) => {
+      const day = r.leverage.by_day[2]!;
+      day.value = 0.8;
+      day.at_or_below_even = true;
+      day.human_ms = 3_600_000;
+    }),
+  );
+  const cells = screen.getAllByTestId('leverage-row-total');
+  expect(cells[2]!.textContent).toBe('0.8×');
+  expect(cells[2]!.dataset.low).toBe('');
+  expect(cells[6]!.dataset.low).toBeUndefined();
+  const rows = screen.getAllByTestId('human-day');
+  expect(rows[2]!.getAttribute('aria-label')).toMatch(
+    /; agent time per hour of yours: 0\.8×, at or below even$/,
+  );
+  expect(rows[6]!.getAttribute('aria-label')).toMatch(/; agent time per hour of yours: 2\.6×$/);
+  fireEvent.focus(rows[2]!);
+  await waitFor(() =>
+    expect(
+      screen
+        .getAllByTestId('leverage-day')
+        .some(
+          (line) =>
+            line.dataset.low === '' &&
+            line.textContent === 'Agent time per hour of yours0.8×at or below even',
+        ),
+    ).toBe(true),
+  );
 });
 
 it('human + agent: unknown human time still says so', () => {
@@ -364,11 +464,19 @@ it('human + agent: unknown human time still says so', () => {
   );
 });
 
-it('the plain human h view draws no agent ridge, agent totals or pointer line', () => {
+it('the plain human h view draws no agents line, agent totals, person icon or pointer line', () => {
   mount(paired());
   expect(screen.getByTestId('human-timeline').dataset.variant).toBeUndefined();
-  expect(screen.queryAllByTestId('agent-ridge')).toHaveLength(0);
+  expect(screen.queryAllByTestId('agent-line')).toHaveLength(0);
+  expect(screen.queryByTestId('human-total-head')).toBeNull();
+  expect(screen.queryByTestId('agent-total-head')).toBeNull();
+  expect(screen.queryAllByTestId('agent-row-total')).toHaveLength(0);
+  expect(screen.queryAllByTestId('leverage-row-total')).toHaveLength(0);
+  expect(screen.queryByTestId('leverage-total-head')).toBeNull();
   expect(screen.queryAllByTestId('agent-day-total')).toHaveLength(0);
+  expect(
+    screen.getAllByTestId('human-day').at(-1)!.querySelectorAll('.xt-human-total'),
+  ).toHaveLength(1);
   const track = screen
     .getAllByTestId('human-day')
     .at(-1)!

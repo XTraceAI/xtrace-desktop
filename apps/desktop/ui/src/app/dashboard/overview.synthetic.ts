@@ -115,7 +115,7 @@ export function syntheticOverview(
   report.leverage = {
     agent_ms: Math.round(agent * H),
     previous_agent_ms: Math.round(agent * H * 0.99),
-    ridge_top_agents: report.leverage.ridge_top_agents,
+    agents_scale_top: report.leverage.agents_scale_top,
     by_day: human.by_day.map((day, index) => {
       const agentMs = Math.round(report.days[index]!.agent_hours * H);
       const quarters = syntheticQuarters(day.date, day.end_ms - 24 * H, day.stretches);
@@ -126,6 +126,8 @@ export function syntheticOverview(
         agent_ms: agentMs,
         human_ms: day.active_ms,
         value: day.active_ms ? agentMs / day.active_ms : null,
+        // Synthetic leverage is 2.5× to 8.5×: never at or below even.
+        at_or_below_even: day.active_ms ? false : null,
         ...quarters,
       };
     }),
@@ -192,9 +194,9 @@ export function syntheticOverview(
 const QUARTER = 15 * M;
 
 /**
- * A day's synthetic agent ridge: agents start when each of your stretches
+ * A day's synthetic agents line: agents start when each of your stretches
  * begins and run on for up to an hour after it, a repeatable level of them
- * per stretch with a gentle wobble (some quarters above the ridge's top). The day's agent
+ * per stretch with a gentle wobble (some quarters above the scale's top). The day's agent
  * time is the synthetic total beside it; the screen does not add the
  * quarters up.
  */

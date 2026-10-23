@@ -298,6 +298,10 @@ async function open(
   await page.goto('/dashboard');
   await expect(page.getByTestId('dashboard-summary')).toBeVisible();
   await expect(page.getByTestId('overview-grid')).toBeVisible();
+  // The card opens on human + agent; these checks start from the agent h
+  // bar chart, as they were written for it.
+  await page.getByRole('radio', { name: 'agent h', exact: true }).click();
+  await expect(page.getByTestId('effort-chart')).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
 }
 
@@ -308,7 +312,7 @@ async function expectMeasure(
 ) {
   if (measure === 'human h' || measure === 'human + agent') {
     await expect(page.getByTestId('human-timeline')).toBeVisible();
-    await expect(page.getByTestId('agent-ridge').first()).toBeVisible({
+    await expect(page.getByTestId('agent-line').first()).toBeVisible({
       visible: measure === 'human + agent',
     });
     await expect(page.getByTestId('effort-chart')).toHaveCount(0);

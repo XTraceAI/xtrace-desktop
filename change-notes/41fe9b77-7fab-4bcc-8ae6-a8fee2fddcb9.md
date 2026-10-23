@@ -1,0 +1,1 @@
+- Show each day's leverage beside your hours and the agents' hours in the human + agent tab.

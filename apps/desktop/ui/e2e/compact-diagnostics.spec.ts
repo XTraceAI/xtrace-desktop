@@ -121,6 +121,8 @@ for (const [width, viewportHeight] of [
       await open(page, '/dashboard', width, viewportHeight, scheme);
       const effort = card(page, 'Effort');
       const overview = card(page, 'Overview');
+      // The card opens on human + agent; these checks are about the agent h bar chart.
+      await page.getByRole('radio', { name: 'agent h', exact: true }).click();
       await expect(effort.getByTestId('effort-by-type')).toBeVisible();
       await expect(overview.getByTestId('overview-tile')).toHaveCount(4);
       await page.evaluate(() => document.fonts.ready);
